@@ -154,7 +154,7 @@ type (
 )
 
 type ListPagesInput struct {
-	Port int `json:"port,omitempty" jsonschema:"device port (from list_devices URL), defaults to 9222. Each device gets an incremented port starting at 9222."`
+	Port int `json:"port,omitempty" jsonschema:"device port (from list_devices URL), defaults to 9224. Each device gets an incremented port starting at 9224."`
 }
 type ListPagesOutput struct {
 	Pages []webkit.PageEntry `json:"pages"`
@@ -607,7 +607,7 @@ func registerTools(server *mcp.Server) {
 	})
 
 	addTool(server, &mcp.Tool{
-		Name: "list_pages", Description: "List open Safari tabs/pages on a device port. Use list_devices to find each device's port (default: 9222 for first device, 9223 for second, etc.)",
+		Name: "list_pages", Description: "List open Safari tabs/pages on a device port. Use list_devices to find each device's port (default: 9224 for first device, 9225 for second, etc.)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListPagesInput) (*mcp.CallToolResult, any, error) {
 		if err := proxy.EnsureRunning(ctx); err != nil {
 			return nil, ListPagesOutput{}, err

@@ -19,9 +19,9 @@ const (
 	DefaultListingPort = 9221
 
 	// DefaultFirstDevicePort is the port iwdp assigns to the first device.
-	// Each additional device gets the next port (9223, 9224, ...).
-	// http://localhost:9222/json → JSON array of pages for that device
-	DefaultFirstDevicePort = 9222
+	// Each additional device gets the next port (9225, 9226, ...).
+	// http://localhost:9224/json → JSON array of pages for that device
+	DefaultFirstDevicePort = 9224
 )
 
 // IsRunning checks if ios_webkit_debug_proxy is reachable by hitting the
@@ -40,7 +40,7 @@ func IsRunning() bool {
 // Start launches ios_webkit_debug_proxy as a background process.
 // Uses a detached context so iwdp outlives the MCP server if needed.
 func Start(_ context.Context) error {
-	cmd := exec.Command("ios_webkit_debug_proxy", "-F")
+	cmd := exec.Command("ios_webkit_debug_proxy", "-F", "-c", "null:9221,:9224-9229")
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting ios_webkit_debug_proxy: %w\nMake sure it is installed: brew install ios-webkit-debug-proxy", err)
 	}
@@ -84,7 +84,7 @@ func Restart(ctx context.Context) error {
 }
 
 // ListDevices fetches connected devices from the listing port (9221).
-// Each device entry contains a URL like "localhost:9222" indicating
+// Each device entry contains a URL like "localhost:9224" indicating
 // which port to query for that device's pages.
 func ListDevices() ([]webkit.DeviceEntry, error) {
 	return listDevicesFromURL(fmt.Sprintf("http://localhost:%d/json", DefaultListingPort))
@@ -110,7 +110,7 @@ func listDevicesFromURL(u string) ([]webkit.DeviceEntry, error) {
 }
 
 // ListPages fetches open pages/tabs from a device-specific port.
-// The port comes from DeviceEntry.URL (e.g., "localhost:9222").
+// The port comes from DeviceEntry.URL (e.g., "localhost:9224").
 func ListPages(devicePort int) ([]webkit.PageEntry, error) {
 	u := fmt.Sprintf("http://localhost:%d/json", devicePort)
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -165,7 +165,7 @@ func ListAllPages() ([]webkit.PageEntry, error) {
 }
 
 // DevicePort extracts the port number from a DeviceEntry's URL field.
-// The URL is typically "localhost:9222".
+// The URL is typically "localhost:9224".
 func DevicePort(d webkit.DeviceEntry) (int, error) {
 	if d.URL == "" {
 		return 0, fmt.Errorf("device %q has no URL", d.DeviceName)

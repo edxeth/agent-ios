@@ -279,7 +279,7 @@ Usage: iwdp-cli <command> [options]
 
 Core:
   devices                          List connected iOS devices
-  pages [port]                     List open Safari tabs (default port: 9222)
+  pages [port]                     List open Safari tabs (default port: 9224)
   status                           Check if ios_webkit_debug_proxy is running
   restart-iwdp                     Restart ios_webkit_debug_proxy
   eval <expr> [ws-url]             Evaluate JavaScript
@@ -415,16 +415,16 @@ Browser:
 
 Port assignment:
   ios_webkit_debug_proxy listens on port 9221 for device listing.
-  Each connected device gets an incremented port starting at 9222:
-    Device 1 -> localhost:9222
-    Device 2 -> localhost:9223
+  Each connected device gets an incremented port starting at 9224:
+    Device 1 -> localhost:9224
+    Device 2 -> localhost:9225
 
 The ws-url argument is the WebSocket URL from 'pages' output.
 If omitted, connects to the first available page across all devices.
 
 Environment:
   IWDP_WS_URL    Default WebSocket URL to connect to
-  IWDP_PORT      Default device port (default: 9222)
+  IWDP_PORT      Default device port (default: 9224)
 `)
 }
 
