@@ -417,7 +417,7 @@ Port assignment:
   ios_webkit_debug_proxy listens on port 9221 for device listing.
   Each connected device gets an incremented port starting at 9224:
     Device 1 -> localhost:9224
-    Device 2 -> localhost:9225
+    Extra devices and the SIMULATOR ghost entry -> localhost:9225+
 
 The ws-url argument is the WebSocket URL from 'pages' output.
 If omitted, connects to the first available page across all devices.

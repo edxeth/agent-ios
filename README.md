@@ -79,7 +79,7 @@ ios_webkit_debug_proxy --no-frontend &
 # List connected devices (port 9221)
 iwdp-cli devices
 
-# List Safari tabs on the first device (port 9222)
+# List Safari tabs on the first device (port 9224)
 iwdp-cli pages
 
 # Evaluate JavaScript

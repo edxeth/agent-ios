@@ -26,9 +26,10 @@ Before committing, always run `make fmt` and `make lint` and fix any issues.
 ## How ios-webkit-debug-proxy Works
 
 - **Port 9221** — listing port: `http://localhost:9221/json` returns connected devices
-- **Port 9222+** — each device gets an incremented port starting at 9222
-  - `http://localhost:9222/json` → pages for first device
-  - `http://localhost:9223/json` → pages for second device, etc.
+- **Port 9224+** — each device gets an incremented port starting at 9224
+  - `http://localhost:9224/json` → pages for first device
+  - `http://localhost:9225/json` → pages for second device, etc.
+  - iwdp enumerates a SIMULATOR pseudo-device before real devices, so an unpinned config gives that ghost entry the first range port. Auto-start (`proxy.Start`) pins the first UDID to 9224 to keep the default port on a real device.
 - Each page has a `webSocketDebuggerUrl` for WebSocket connection
 - The WebSocket speaks **WebKit Inspector Protocol**
 
@@ -80,7 +81,7 @@ Two binaries, one shared `internal/` package tree:
   - `ListDevices()` — HTTP GET on port 9221
   - `ListPages(port)` — HTTP GET on a device-specific port
   - `ListAllPages()` — discovers all devices, queries each for pages
-  - `DevicePort(entry)` — extracts port from device entry URL (e.g., `localhost:9222` → 9222)
+  - `DevicePort(entry)` — extracts port from device entry URL (e.g., `localhost:9224` → 9224)
 
 ### Key Patterns
 

@@ -18,17 +18,30 @@ const (
 	// http://localhost:9221 → JSON array of devices
 	DefaultListingPort = 9221
 
-	// DefaultFirstDevicePort is the port iwdp assigns to the first device.
-	// Each additional device gets the next port (9225, 9226, ...).
+	// DefaultFirstDevicePort is the port pinned to the first real device
+	// when auto-starting the proxy. Each additional device gets the next
+	// port (9225, 9226, ...).
 	// http://localhost:9224/json → JSON array of pages for that device
 	DefaultFirstDevicePort = 9224
+
+	// DefaultLastDevicePort is the end of the device port range used when
+	// auto-starting the proxy (9224-9229).
+	DefaultLastDevicePort = 9229
 )
+
+// listingHost is used for all proxy HTTP requests. Use 127.0.0.1, not
+// localhost: localhost resolves to ::1 first, and some hosts' firewalls drop
+// ::1, turning probes into multi-second hangs instead of fast dials.
+const listingHost = "127.0.0.1"
 
 // IsRunning checks if ios_webkit_debug_proxy is reachable by hitting the
 // listing port (9221). This is the canonical way to detect a running proxy.
 func IsRunning() bool {
-	u := fmt.Sprintf("http://localhost:%d/json", DefaultListingPort)
-	client := &http.Client{Timeout: 2 * time.Second}
+	u := fmt.Sprintf("http://%s:%d/json", listingHost, DefaultListingPort)
+	// iwdp is a single-threaded event loop; under heavy WebKit inspector
+	// traffic /json can stall past 2s and report a false negative, so match
+	// the 5s budget used by ListDevices/ListPages.
+	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(u)
 	if err != nil {
 		return false
@@ -40,7 +53,7 @@ func IsRunning() bool {
 // Start launches ios_webkit_debug_proxy as a background process.
 // Uses a detached context so iwdp outlives the MCP server if needed.
 func Start(_ context.Context) error {
-	cmd := exec.Command("ios_webkit_debug_proxy", "-F", "-c", "null:9221,:9224-9229")
+	cmd := exec.Command("ios_webkit_debug_proxy", "-F", "-c", BuildConfig(DeviceUDIDs()))
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting ios_webkit_debug_proxy: %w\nMake sure it is installed: brew install ios-webkit-debug-proxy", err)
 	}
@@ -87,7 +100,7 @@ func Restart(ctx context.Context) error {
 // Each device entry contains a URL like "localhost:9224" indicating
 // which port to query for that device's pages.
 func ListDevices() ([]webkit.DeviceEntry, error) {
-	return listDevicesFromURL(fmt.Sprintf("http://localhost:%d/json", DefaultListingPort))
+	return listDevicesFromURL(fmt.Sprintf("http://%s:%d/json", listingHost, DefaultListingPort))
 }
 
 func listDevicesFromURL(u string) ([]webkit.DeviceEntry, error) {
@@ -112,7 +125,7 @@ func listDevicesFromURL(u string) ([]webkit.DeviceEntry, error) {
 // ListPages fetches open pages/tabs from a device-specific port.
 // The port comes from DeviceEntry.URL (e.g., "localhost:9224").
 func ListPages(devicePort int) ([]webkit.PageEntry, error) {
-	u := fmt.Sprintf("http://localhost:%d/json", devicePort)
+	u := fmt.Sprintf("http://%s:%d/json", listingHost, devicePort)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(u)
 	if err != nil {
