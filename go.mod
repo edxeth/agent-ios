@@ -8,6 +8,7 @@ require (
 	github.com/google/jsonschema-go v0.4.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.4.0
+	golang.org/x/net v0.55.0
 	howett.net/plist v1.0.1
 )
 
@@ -23,7 +24,6 @@ require (
 	go.mozilla.org/pkcs7 v0.9.0 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect

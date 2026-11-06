@@ -1,0 +1,6 @@
+- generic
+  - button "Shadow button" [ref=e1]
+  - StaticText "Slotted"
+- button "Save Slotted" [ref=e2]
+  - StaticText "Save Slotted"
+- StaticText "No slot here"

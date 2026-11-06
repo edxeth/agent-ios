@@ -80,6 +80,151 @@ func TestCallInstallsOnceWhenMissing(t *testing.T) {
 	}
 }
 
+// Design 3.1 owner epoch: with an owner, every call first hands the owner
+// to the page (__iwdp.own), which resets the page maps when it differs; the
+// call stays in the form the fake page parses.
+func TestOwnedCallCarriesOwner(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	var gotFn string
+	f.SetRuntime(func(_ fakewebkit.Call, fn string, _ json.RawMessage) any {
+		gotFn = fn
+		return map[string]any{"ok": true, "value": 1}
+	})
+	r := New(session(t, f), nil)
+	r.SetOwner(Owner{Daemon: "d1", Session: "s\"1", Epoch: 4})
+	if err := r.Call(context.Background(), "ping", nil, nil); err != nil || gotFn != "ping" {
+		t.Fatalf("Call = %v, page saw %q", err, gotFn)
+	}
+	expr := string(f.ReceivedMethod("Runtime.evaluate")[0].Params)
+	if !strings.Contains(expr, `window.__iwdp.own({\"daemon\":\"d1\",\"session\":\"s\\\"1\",\"epoch\":4})`) {
+		t.Fatalf("call does not hand the owner to the page: %s", expr)
+	}
+	if o, ok := r.Owner(); !ok || o.Epoch != 4 {
+		t.Fatalf("Owner() = %+v, %v", o, ok)
+	}
+}
+
+// Design 3.1: the page accepts an owner with the first call that carries
+// it. A refusal of an older epoch (stale_owner) does not confirm it; any
+// other envelope does, also one with another error.
+func TestOwnerConfirmedByTheFirstAcceptedCall(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	f.SetRuntime(func(_ fakewebkit.Call, fn string, _ json.RawMessage) any {
+		switch fn {
+		case "refused":
+			return map[string]any{"ok": false, "error": map[string]string{"code": CodeStaleOwner, "message": "lease epoch 1 is older"}}
+		case "fail":
+			return map[string]any{"ok": false, "error": map[string]string{"code": "not_found", "message": "no element"}}
+		}
+		return map[string]any{"ok": true, "value": 1}
+	})
+	r := New(session(t, f), nil)
+	if !r.OwnerConfirmed() {
+		t.Fatal("a runtime without an owner is not confirmed")
+	}
+	r.SetOwner(Owner{Daemon: "d1", Session: "s", Epoch: 1})
+	if r.OwnerConfirmed() {
+		t.Fatal("an owner is confirmed before any call carried it")
+	}
+	if err := r.Call(context.Background(), "refused", nil, nil); err == nil || r.OwnerConfirmed() {
+		t.Fatalf("after a stale_owner refusal: err %v, confirmed %v", err, r.OwnerConfirmed())
+	}
+	if err := r.Call(context.Background(), "fail", nil, nil); err == nil || !r.OwnerConfirmed() {
+		t.Fatalf("after a not_found envelope: err %v, confirmed %v", err, r.OwnerConfirmed())
+	}
+	r.SetOwner(Owner{Daemon: "d1", Session: "s", Epoch: 2})
+	if r.OwnerConfirmed() {
+		t.Fatal("a new owner is confirmed before any call carried it")
+	}
+	if err := r.Call(context.Background(), "ping", nil, nil); err != nil || !r.OwnerConfirmed() {
+		t.Fatalf("after an accepted call: err %v, confirmed %v", err, r.OwnerConfirmed())
+	}
+}
+
+// The page reports a reset of its maps in the envelope; OnReset receives it
+// once, also when the call itself fails.
+func TestResetReportReachesOnReset(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	f.SetRuntime(func(_ fakewebkit.Call, fn string, _ json.RawMessage) any {
+		reset := map[string]any{"reason": "daemon", "maxRef": 7}
+		if fn == "fail" {
+			return map[string]any{"ok": false, "error": map[string]string{"code": "unknown_ref", "message": "no element"}, "reset": reset}
+		}
+		return map[string]any{"ok": true, "value": 1, "reset": reset}
+	})
+	r := New(session(t, f), nil)
+	var got []ResetInfo
+	r.OnReset(func(i ResetInfo) { got = append(got, i) })
+	if err := r.Call(context.Background(), "ping", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Call(context.Background(), "fail", nil, nil); err == nil {
+		t.Fatal("failing call succeeded")
+	}
+	if len(got) != 2 || got[0] != (ResetInfo{Reason: "daemon", MaxRef: 7}) {
+		t.Fatalf("OnReset got %+v", got)
+	}
+}
+
+// RuntimeCaller (core.SchedulerOptions.Runtime) runs a call through the
+// operation's caller with the runtime's owner.
+func TestRuntimeCallerUsesGivenCaller(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	f.SetRuntime(func(_ fakewebkit.Call, fn string, args json.RawMessage) any {
+		return map[string]any{"ok": true, "value": map[string]any{"fn": fn, "args": args}}
+	})
+	s := session(t, f)
+	r := New(nil, nil)
+	r.SetOwner(Owner{Daemon: "d", Session: "s", Epoch: 1})
+	raw, err := r.RuntimeCaller()(context.Background(), s, "clock", map[string]int{"a": 1})
+	if err != nil || !strings.Contains(string(raw), `"fn":"clock"`) {
+		t.Fatalf("RuntimeCaller = %s, %v", raw, err)
+	}
+	if !strings.Contains(string(f.ReceivedMethod("Runtime.evaluate")[0].Params), "window.__iwdp.own(") {
+		t.Fatal("RuntimeCaller call carries no owner")
+	}
+}
+
+// Design 3.1: the installed script defines this Version; the bundle text
+// carries a placeholder that the install replaces.
+func TestSourceCarriesVersion(t *testing.T) {
+	if !strings.Contains(Source(), Version) || strings.Contains(Source(), "__IWDP_VERSION__") {
+		t.Fatal("Source() does not carry the runtime Version")
+	}
+}
+
+// Design 3.1: the install message is checked against the transport's
+// MaxOutgoing on its wire bytes, and an oversized install fails before
+// anything is written.
+func TestInstallOverWireLimitFailsBeforeWriting(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	f.SetRuntime(func(fakewebkit.Call, string, json.RawMessage) any { return MissingSentinel })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	limit := len(Source()) / 2
+	s, err := webkit.Dial(ctx, func(ctx context.Context) (transport.MessageConn, error) {
+		return webkit.DialWebSocket(ctx, f.URL, transport.Limits{Routed: true, MaxOutgoing: limit})
+	}, webkit.SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	err = New(s, nil).Call(ctx, "ping", nil, nil)
+	var wl *webkit.WireLimitError
+	if !errors.As(err, &wl) || wl.Limit != limit || !strings.Contains(err.Error(), "installing the agent runtime") ||
+		!strings.Contains(err.Error(), "bytes on the wire; the limit for this transport is") {
+		t.Fatalf("oversized install gave %v", err)
+	}
+	if n := len(f.ReceivedMethod("Runtime.evaluate")); n != 1 {
+		t.Fatalf("the fake received %d evaluates, want only the first call (no install written)", n)
+	}
+}
+
 func TestCallAsyncAwaitsPromise(t *testing.T) {
 	f := fakewebkit.New(fakewebkit.Options{})
 	defer f.Close()

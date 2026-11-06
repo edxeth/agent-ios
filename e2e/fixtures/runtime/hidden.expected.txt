@@ -1,0 +1,28 @@
+# Expected visibility (design 3.4, Playwright rules), hand-written.
+# id visible|hidden  reason
+v-plain visible
+h-display-none hidden display none
+h-parent-none hidden ancestor display none
+h-button-in-none hidden ancestor display none
+v-button-aria-hidden visible aria-hidden does not change visibility
+h-hidden-attr hidden hidden attribute is display none
+h-visibility hidden visibility hidden
+h-collapse hidden visibility collapse
+h-hidden-clickable hidden visibility hidden, also with cursor pointer and onclick
+v-visible-in-hidden visible visibility is inherited and can be set back
+v-opacity visible opacity 0 counts as visible
+h-zero hidden empty bounding box
+h-empty hidden empty bounding box
+v-offscreen visible off-screen boxes count
+v-contents visible display contents with a visible child
+h-contents-hidden hidden display contents without a visible child
+v-contents-text visible display contents with a visible text child
+h-cv-child hidden ancestor content-visibility hidden
+v-cv-self visible content-visibility hidden on the element itself
+v-listbox-option visible option in a list-box select uses the select
+h-dropdown-option hidden option of a drop-down select has no box
+v-summary visible
+h-details-closed hidden content of a closed details element has no box
+h-details-button hidden control in a closed details element
+v-in-shadow visible
+h-in-hidden-shadow hidden flat-tree ancestor display none

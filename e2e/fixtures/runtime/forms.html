@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><title>Forms</title></head>
+<body>
+<header>
+  <nav><a href="/">Home</a></nav>
+  <button id="signin">Sign In</button>
+</header>
+<main>
+  <h1>Welcome</h1>
+  <form aria-label="Login" onsubmit="return false">
+    <label for="email">Email</label>
+    <input id="email" type="email" required value="user@example.com">
+    <label><input type="checkbox" id="remember"> Remember me</label>
+    <label>Password <input type="password" placeholder="Secret"></label>
+    <textarea aria-label="Notes"></textarea>
+    <select aria-label="Size"><option>S</option><option selected>M</option></select>
+    <input type="submit" value="Log In">
+    <button disabled>Disabled</button>
+  </form>
+  <div id="menu" onclick="void 0" style="cursor: pointer">Open menu</div>
+  <section id="a"><button class="save">Save</button><button class="save">Save</button></section>
+  <section id="b"><a href="#one">One</a><a href="#two">Two</a></section>
+</main>
+</body></html>

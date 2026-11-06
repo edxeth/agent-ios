@@ -1,0 +1,14 @@
+- StaticText "plain"
+- StaticText "shown again"
+- StaticText "transparent"
+- StaticText "zero"
+- StaticText "offscreen"
+- StaticText "child"
+- StaticText "text only"
+- listbox [ref=e1]
+  - option "a" [ref=e2]
+- combobox [expanded=false, ref=e3]: b
+  - option "b" [selected, ref=e4]
+- group
+  - button "more" [expanded=false, ref=e5]
+- StaticText "in shadow"

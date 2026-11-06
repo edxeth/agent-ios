@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><title>ARIA</title></head>
+<body>
+<div role="tablist" aria-label="Sections">
+  <div role="tab" aria-selected="true">One</div>
+  <div role="tab" aria-selected="false">Two</div>
+</div>
+<div role="switch" aria-checked="true" aria-label="Wifi" tabindex="0"></div>
+<div role="checkbox" aria-checked="mixed">Partial</div>
+<button aria-expanded="false" aria-haspopup="menu">More</button>
+<div role="slider" aria-valuenow="30" aria-label="Volume"></div>
+<span id="lbl">Search query</span><input type="search" aria-labelledby="lbl">
+<div aria-hidden="true"><button>Hidden from AT</button></div>
+<ul><li>Alpha</li><li><a href="#b">Beta</a></li></ul>
+<h2 aria-level="3">Level three</h2>
+<img alt="Logo" width="10" height="10" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+<div role="button" aria-disabled="true">Off</div>
+<p>Some <b>bold</b> text</p>
+<div style="display: none"><button>Not rendered</button></div>
+</body></html>

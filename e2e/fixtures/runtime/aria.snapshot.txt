@@ -1,0 +1,19 @@
+- tablist "Sections"
+  - tab "One" [selected, ref=e1]
+  - tab "Two" [ref=e2]
+- switch "Wifi" [checked=true, ref=e3]
+- checkbox "Partial" [checked=mixed, ref=e4]
+- button "More" [expanded=false, ref=e5]
+- slider "Volume" [ref=e6]: 30
+- StaticText "Search query"
+- searchbox "Search query" [ref=e7]
+- list
+  - listitem
+    - StaticText "Alpha"
+  - listitem
+    - link "Beta" [ref=e8]
+- heading "Level three" [level=3, ref=e9]
+- img "Logo"
+- button "Off" [disabled, ref=e10]
+- paragraph
+  - StaticText "Some bold text"

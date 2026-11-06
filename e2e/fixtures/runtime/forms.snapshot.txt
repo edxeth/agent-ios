@@ -1,0 +1,29 @@
+- banner
+  - navigation
+    - link "Home" [ref=e1]
+  - button "Sign In" [ref=e2]
+- main
+  - heading "Welcome" [level=1, ref=e3]
+  - form "Login"
+    - StaticText "Email"
+    - textbox "Email" [required, ref=e4]: user@example.com
+    - generic
+      - checkbox "Remember me" [checked=false, ref=e5]
+      - StaticText "Remember me"
+    - generic
+      - StaticText "Password"
+      - textbox "Password" [ref=e6]
+    - textbox "Notes" [ref=e7]
+    - combobox "Size" [expanded=false, ref=e8]: M
+      - option "S" [ref=e9]
+      - option "M" [selected, ref=e10]
+    - button "Log In" [ref=e11]
+    - button "Disabled" [disabled, ref=e12]
+  - generic [ref=e13] clickable [cursor:pointer, onclick]
+    - StaticText "Open menu"
+  - generic
+    - button "Save" [ref=e14]
+    - button "Save" [ref=e15]
+  - generic
+    - link "One" [ref=e16]
+    - link "Two" [ref=e17]

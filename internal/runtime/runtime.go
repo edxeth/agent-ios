@@ -1,12 +1,13 @@
 // Package runtime is the Go side of the agent runtime, the JavaScript that
 // iwdp-mcp injects into the page (design docs/design/agentic-parity.md,
-// section 3.1). W1a provides the call contract (expression, envelope,
-// install-and-retry, async calls); W3a adds the JavaScript and the
-// owner-epoch handling.
+// sections 3.1 to 3.4): the bundle in js/, the call contract (expression,
+// envelope, install-and-retry, async calls), the owner epoch and the
+// snapshot renderer.
 package runtime
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
@@ -28,10 +30,27 @@ var jsFiles embed.FS
 // this Version is not installed in the document.
 const MissingSentinel = "__IWDP_MISSING__"
 
+// versionPlaceholder is the string in js/10-core.js that the install
+// replaces with Version: the bundle cannot contain its own hash.
+const versionPlaceholder = "__IWDP_VERSION__"
+
+// MaxSourceBytes is the size budget of the joined bundle (design 3.1).
+const MaxSourceBytes = 64 << 10
+
 var (
 	source  string
 	Version string // first 12 hex digits of the SHA-256 of the bundle
+	// DaemonID identifies this process as a page owner (design 3.1). A
+	// daemon that keeps its id across restarts may set it before the first
+	// call; the default is random per process.
+	DaemonID = randomID()
 )
+
+func randomID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b) // never fails (crypto/rand documentation)
+	return hex.EncodeToString(b)
+}
 
 func init() {
 	names, err := fs.Glob(jsFiles, "js/*.js")
@@ -48,12 +67,18 @@ func init() {
 		b.Write(data)
 		b.WriteString("\n")
 	}
-	source = b.String()
-	sum := sha256.Sum256([]byte(source))
+	bundle := b.String()
+	sum := sha256.Sum256([]byte(bundle))
 	Version = hex.EncodeToString(sum[:])[:12]
+	// The bundle's files run in name order; 10-core.js exposes the runtime
+	// under construction to the later files as window.__iwdpBuilding, and
+	// this last statement removes it.
+	source = strings.ReplaceAll(bundle, versionPlaceholder, Version) + "try { delete window.__iwdpBuilding; } catch (e) {}\n"
 }
 
-// Source returns the joined runtime bundle.
+// Source returns the runtime bundle as it is installed: the joined files
+// with this Version. It is the expression of the on-demand install and the
+// runtime part of the bootstrap script (design 3.1 install paths).
 func Source() string { return source }
 
 var fnName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
@@ -84,6 +109,11 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
 
+// CodeStaleOwner is the error code of a call that the page refused because
+// its owner is an older lease epoch of the daemon that owns the page now
+// (design 3.1: lease epochs only grow within one daemon).
+const CodeStaleOwner = "stale_owner"
+
 // ErrNotInstalled: the bundle did not define this Version's __iwdp.
 var ErrNotInstalled = errors.New("the agent runtime is not installed in the page after an install attempt")
 
@@ -93,16 +123,118 @@ type Envelope struct {
 	Value    json.RawMessage `json:"value"`
 	Warnings []string        `json:"warnings,omitempty"`
 	Error    *Error          `json:"error,omitempty"`
+	// Reset is set on the first call after the page reset its maps for a
+	// new owner (design 3.1).
+	Reset *ResetInfo `json:"reset,omitempty"`
+}
+
+// Owner is the owner of the page runtime: the daemon, the logical session
+// and its lease epoch (design 3.1). A call with another owner first makes
+// the page run __iwdp.reset, which clears the ref maps and pending dialog
+// answers.
+type Owner struct {
+	Daemon  string `json:"daemon"`
+	Session string `json:"session"`
+	Epoch   uint64 `json:"epoch"`
+}
+
+// ResetInfo describes a reset of the page maps: why (refs.ResetDaemon,
+// ResetSession or ResetEpoch) and the highest ref the page had handed out.
+type ResetInfo struct {
+	Reason string `json:"reason"`
+	MaxRef int    `json:"maxRef"`
 }
 
 // Runtime calls runtime functions in one page.
 type Runtime struct {
 	c   webkit.Caller
 	gen func() uint64
+
+	mu    sync.Mutex
+	owner *Owner
+	// confirmed is the owner of the last call that the page answered
+	// without refusing its owner.
+	confirmed *Owner
+	onReset   func(ResetInfo)
 }
 
 // New returns a Runtime on c. gen returns the document generation (it may be nil).
 func New(c webkit.Caller, gen func() uint64) *Runtime { return &Runtime{c: c, gen: gen} }
+
+// SetOwner sets the owner that every later call hands to the page. The
+// daemon sets it when it grants the lease.
+func (r *Runtime) SetOwner(o Owner) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.owner = &o
+}
+
+// Owner returns the owner set by SetOwner.
+func (r *Runtime) Owner() (Owner, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.owner == nil {
+		return Owner{}, false
+	}
+	return *r.owner, true
+}
+
+// OwnerConfirmed reports whether the page has accepted the current owner:
+// no owner is set, or a call that carried it got an envelope that does not
+// refuse it. Until then the page can still hold the refs of an earlier
+// owner, and the reset report that drops them arrives with the next call.
+func (r *Runtime) OwnerConfirmed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.owner == nil || (r.confirmed != nil && *r.confirmed == *r.owner)
+}
+
+// OnReset sets the function that receives the page's reset reports; the
+// session's ref table uses it (refs.Table.NoteReset). A later call
+// replaces it.
+func (r *Runtime) OnReset(f func(ResetInfo)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onReset = f
+}
+
+// Generation returns the document generation of the page, 1 without a source.
+func (r *Runtime) Generation() uint64 {
+	if r.gen == nil {
+		return 1
+	}
+	return r.gen()
+}
+
+// RuntimeCaller returns a function with the signature of
+// core.SchedulerOptions.Runtime: it runs fn through the given caller (an
+// operation's fenced caller) with this runtime's owner and returns the
+// envelope's value.
+func (r *Runtime) RuntimeCaller() func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
+	return func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
+		var v json.RawMessage
+		if _, err := r.callVia(ctx, c, fn, args, false, &v); err != nil {
+			return nil, err
+		}
+		return v, nil
+	}
+}
+
+// ownedExpression is Expression with the owner check of design 3.1 in the
+// condition: __iwdp.own(owner) resets the page maps for a new owner and
+// returns true.
+func ownedExpression(fn string, args any, o *Owner) (string, error) {
+	expr, err := Expression(fn, args)
+	if err != nil || o == nil {
+		return expr, err
+	}
+	ob, err := json.Marshal(o)
+	if err != nil {
+		return "", fmt.Errorf("runtime call %s: marshaling owner: %w", fn, err)
+	}
+	cond := fmt.Sprintf("(window.__iwdp && window.__iwdp.v === %q)", Version)
+	return strings.Replace(expr, cond, fmt.Sprintf("(window.__iwdp && window.__iwdp.v === %q && window.__iwdp.own(%s))", Version, ob), 1), nil
+}
 
 type remoteObject struct {
 	Type     string          `json:"type"`
@@ -121,31 +253,48 @@ type evalResult struct {
 // (out may be nil). It installs the bundle and retries once when the
 // runtime is missing.
 func (r *Runtime) Call(ctx context.Context, fn string, args, out any) error {
-	env, err := r.call(ctx, fn, args, false)
-	if err != nil {
-		return err
-	}
-	return decodeEnvelope(fn, env, out)
+	_, err := r.callVia(ctx, r.c, fn, args, false, out)
+	return err
+}
+
+// CallWarn is Call that also returns the envelope's warnings.
+func (r *Runtime) CallWarn(ctx context.Context, fn string, args, out any) ([]string, error) {
+	return r.callVia(ctx, r.c, fn, args, false, out)
 }
 
 // CallAsync runs a runtime function that returns a promise: Runtime.evaluate
 // by reference, then Runtime.awaitPromise (WIP Runtime.evaluate has no
 // awaitPromise parameter).
 func (r *Runtime) CallAsync(ctx context.Context, fn string, args, out any) error {
-	env, err := r.call(ctx, fn, args, true)
-	if err != nil {
-		return err
-	}
-	return decodeEnvelope(fn, env, out)
+	_, err := r.callVia(ctx, r.c, fn, args, true, out)
+	return err
 }
 
-func (r *Runtime) call(ctx context.Context, fn string, args any, async bool) (json.RawMessage, error) {
-	expr, err := Expression(fn, args)
+func (r *Runtime) callVia(ctx context.Context, c webkit.Caller, fn string, args any, async bool, out any) ([]string, error) {
+	r.mu.Lock()
+	owner := r.owner
+	r.mu.Unlock()
+	env, err := r.call(ctx, c, fn, args, async, owner)
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := r.decodeEnvelope(fn, env, out)
+	var re *Error
+	if owner != nil && (err == nil || (errors.As(err, &re) && re.Code != CodeStaleOwner)) {
+		r.mu.Lock()
+		r.confirmed = owner
+		r.mu.Unlock()
+	}
+	return warnings, err
+}
+
+func (r *Runtime) call(ctx context.Context, c webkit.Caller, fn string, args any, async bool, owner *Owner) (json.RawMessage, error) {
+	expr, err := ownedExpression(fn, args, owner)
 	if err != nil {
 		return nil, err
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		v, err := r.eval(ctx, fn, expr, async)
+		v, err := r.eval(ctx, c, fn, expr, async)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +303,7 @@ func (r *Runtime) call(ctx context.Context, fn string, args any, async bool) (js
 			return v, nil
 		}
 		if attempt == 0 {
-			if err := r.install(ctx); err != nil {
+			if err := install(ctx, c); err != nil {
 				return nil, err
 			}
 		}
@@ -162,8 +311,8 @@ func (r *Runtime) call(ctx context.Context, fn string, args any, async bool) (js
 	return nil, fmt.Errorf("runtime call %s: %w", fn, ErrNotInstalled)
 }
 
-func (r *Runtime) install(ctx context.Context) error {
-	raw, err := r.c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": Source(), "returnByValue": true})
+func install(ctx context.Context, c webkit.Caller) error {
+	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": Source(), "returnByValue": true})
 	if err != nil {
 		return fmt.Errorf("installing the agent runtime: %w", err)
 	}
@@ -177,8 +326,8 @@ func (r *Runtime) install(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) eval(ctx context.Context, fn, expr string, async bool) (json.RawMessage, error) {
-	raw, err := r.c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": !async})
+func (r *Runtime) eval(ctx context.Context, c webkit.Caller, fn, expr string, async bool) (json.RawMessage, error) {
+	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": !async})
 	if err != nil {
 		return nil, fmt.Errorf("runtime call %s: %w", fn, err)
 	}
@@ -192,7 +341,7 @@ func (r *Runtime) eval(ctx context.Context, fn, expr string, async bool) (json.R
 	if !async || res.Result.ObjectID == "" {
 		return res.Result.Value, nil
 	}
-	raw, err = r.c.Send(ctx, "Runtime.awaitPromise", map[string]any{"promiseObjectId": res.Result.ObjectID, "returnByValue": true})
+	raw, err = c.Send(ctx, "Runtime.awaitPromise", map[string]any{"promiseObjectId": res.Result.ObjectID, "returnByValue": true})
 	if err != nil {
 		return nil, fmt.Errorf("runtime call %s: awaiting promise: %w", fn, err)
 	}
@@ -205,22 +354,30 @@ func (r *Runtime) eval(ctx context.Context, fn, expr string, async bool) (json.R
 	return res.Result.Value, nil
 }
 
-func decodeEnvelope(fn string, raw json.RawMessage, out any) error {
+func (r *Runtime) decodeEnvelope(fn string, raw json.RawMessage, out any) ([]string, error) {
 	var env Envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return fmt.Errorf("runtime call %s: result is not an envelope: %w", fn, err)
+		return nil, fmt.Errorf("runtime call %s: result is not an envelope: %w", fn, err)
+	}
+	if env.Reset != nil {
+		r.mu.Lock()
+		f := r.onReset
+		r.mu.Unlock()
+		if f != nil {
+			f(*env.Reset)
+		}
 	}
 	if !env.OK {
 		if env.Error == nil {
-			return fmt.Errorf("runtime call %s: ok=false without an error", fn)
+			return env.Warnings, fmt.Errorf("runtime call %s: ok=false without an error", fn)
 		}
-		return env.Error
+		return env.Warnings, env.Error
 	}
 	if out == nil || len(env.Value) == 0 {
-		return nil
+		return env.Warnings, nil
 	}
 	if err := json.Unmarshal(env.Value, out); err != nil {
-		return fmt.Errorf("runtime call %s: decoding value: %w", fn, err)
+		return env.Warnings, fmt.Errorf("runtime call %s: decoding value: %w", fn, err)
 	}
-	return nil
+	return env.Warnings, nil
 }

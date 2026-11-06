@@ -1,0 +1,17 @@
+- link "Home" [ref=e1, url={{ORIGIN}}/]
+- button "Sign In" [ref=e2]
+- heading "Welcome" [level=1, ref=e3]
+- textbox "Email" [required, ref=e4]: user@example.com
+- checkbox "Remember me" [checked=false, ref=e5]
+- textbox "Password" [ref=e6]
+- textbox "Notes" [ref=e7]
+- combobox "Size" [expanded=false, ref=e8]: M
+  - option "S" [ref=e9]
+  - option "M" [selected, ref=e10]
+- button "Log In" [ref=e11]
+- button "Disabled" [disabled, ref=e12]
+- generic "Open menu" [ref=e13] clickable [cursor:pointer, onclick]
+- button "Save" [ref=e14]
+- button "Save" [ref=e15]
+- link "One" [ref=e16, url={{ORIGIN}}/forms.html#one]
+- link "Two" [ref=e17, url={{ORIGIN}}/forms.html#two]

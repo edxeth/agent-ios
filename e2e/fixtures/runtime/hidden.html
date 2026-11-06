@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><title>Hidden variants</title>
+<style>
+  .abs { position: absolute; left: -9999px; top: 0; width: 20px; height: 20px; }
+</style></head>
+<body>
+<div id="v-plain">plain</div>
+<div id="h-display-none" style="display: none">none</div>
+<div style="display: none"><span id="h-parent-none">child of none</span></div>
+<div style="display: none"><button id="h-button-in-none">button in none</button></div>
+<div aria-hidden="true"><button id="v-button-aria-hidden">aria-hidden button</button></div>
+<div id="h-hidden-attr" hidden>hidden attribute</div>
+<div id="h-visibility" style="visibility: hidden">hidden</div>
+<div id="h-collapse" style="visibility: collapse">collapse</div>
+<div id="h-hidden-clickable" style="visibility: hidden; cursor: pointer" onclick="void 0">hidden click</div>
+<div style="visibility: hidden"><span id="v-visible-in-hidden" style="visibility: visible">shown again</span></div>
+<div id="v-opacity" style="opacity: 0">transparent</div>
+<div id="h-zero" style="width: 0; height: 0; overflow: hidden">zero</div>
+<div id="h-empty"></div>
+<div id="v-offscreen" class="abs">offscreen</div>
+<div id="v-contents" style="display: contents"><span>child</span></div>
+<div id="h-contents-hidden" style="display: contents"><span style="display: none">gone</span></div>
+<div id="v-contents-text" style="display: contents">text only</div>
+<div style="content-visibility: hidden; width: 50px; height: 20px"><span id="h-cv-child">skipped</span></div>
+<div id="v-cv-self" style="content-visibility: hidden; width: 50px; height: 20px">self</div>
+<select multiple id="v-listbox"><option id="v-listbox-option">a</option></select>
+<select id="v-dropdown"><option id="h-dropdown-option">b</option></select>
+<details><summary id="v-summary">more</summary><span id="h-details-closed">inside</span><button id="h-details-button">closed button</button></details>
+<div id="host"></div>
+<div id="hidden-host" style="display: none"></div>
+<script>
+  document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = '<span id="v-in-shadow">in shadow</span>';
+  document.getElementById("hidden-host").attachShadow({ mode: "open" }).innerHTML = '<span id="h-in-hidden-shadow">in hidden shadow</span>';
+</script>
+</body></html>

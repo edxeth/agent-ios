@@ -233,6 +233,12 @@ func TestMCPSchemasAreCodexCompatible(t *testing.T) {
 }
 
 func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
+	// Production commands (other files of this package) are in the
+	// manifest too; the fixtures add exactly their own entries.
+	production, err := Manifest(ProfileCore, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	withFixtures(t)
 	m, err := Manifest(ProfileCore, []string{"fixture_click", "eval_js", "list_pages"})
 	if err != nil {
@@ -245,7 +251,7 @@ func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
 		}
 		names[e.Name] = e.Cmd
 	}
-	if names["fixture_click"] == nil || names["eval_js"] != nil || len(names) != 3 {
+	if names["fixture_click"] == nil || names["eval_js"] != nil || len(names) != len(production)+3 {
 		t.Fatalf("manifest = %+v; want the registry tool to replace the legacy one", m)
 	}
 	if _, ok := names["fixture_type"]; ok {
@@ -263,6 +269,10 @@ func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
 }
 
 func TestRegisterMCPRunsCommands(t *testing.T) {
+	production, err := Manifest(ProfileAll, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	withFixtures(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	RegisterMCP(server, ProfileAll, func(context.Context, Globals) (Env, error) { return fakeEnv{}, nil })
@@ -280,8 +290,8 @@ func TestRegisterMCPRunsCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 2 {
-		t.Fatalf("tools = %d, want the 2 fixture MCP tools", len(tools.Tools))
+	if len(tools.Tools) != len(production)+2 {
+		t.Fatalf("tools = %d, want the %d production tools and the 2 fixture MCP tools", len(tools.Tools), len(production))
 	}
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "fixture_type", Arguments: map[string]any{"target": "@e1", "text": []any{"a", "b"}, "delay": "10ms", "count": 2}})
 	if err != nil || res.IsError {

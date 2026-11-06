@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><title>Shadow</title></head>
+<body>
+<div id="host"><span>Slotted</span></div>
+<div id="slot-host">Save Slotted</div>
+<div id="noslot-host"><button id="unassigned">Unassigned</button></div>
+<script>
+  var root = document.getElementById("host").attachShadow({ mode: "open" });
+  root.innerHTML = '<button id="inner">Shadow button</button><slot></slot>';
+  // The button's name comes from the light-DOM text assigned to its slot.
+  document.getElementById("slot-host").attachShadow({ mode: "open" }).innerHTML = '<button><slot></slot></button>';
+  // No slot: the light-DOM button is not in the flat tree, so not in the snapshot.
+  document.getElementById("noslot-host").attachShadow({ mode: "open" }).innerHTML = '<span>No slot here</span>';
+</script>
+</body></html>

@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><title>Probes</title></head>
+<body>
+<!-- Hand-written probes that AGG [318], [319], [331], [335] replaced: element
+     boxes, visibility, hit tests at a point and computed styles. -->
+<div id="box" style="position: absolute; left: 10px; top: 20px; width: 100px; height: 50px; background-color: rgb(255, 0, 0)">Box</div>
+<button id="covered" style="position: absolute; left: 10px; top: 100px; width: 80px; height: 30px">Under</button>
+<div id="cover" style="position: absolute; left: 0; top: 90px; width: 200px; height: 60px; z-index: 5"></div>
+<input id="field" style="position: absolute; left: 10px; top: 200px" value="typed">
+<input id="ro" readonly value="fixed" style="position: absolute; left: 10px; top: 240px">
+<fieldset disabled style="position: absolute; left: 300px; top: 0"><input id="in-disabled-fieldset" value="x"></fieldset>
+<input type="checkbox" id="checked" checked style="position: absolute; left: 300px; top: 100px">
+<a id="link" href="#x" data-testid="go-link" title="Go there" style="position: absolute; left: 300px; top: 150px">Go</a>
+<input id="ph" placeholder="Your name" aria-label="Name" style="position: absolute; left: 300px; top: 200px">
+<img id="pic" alt="Picture" width="10" height="10" style="position: absolute; left: 300px; top: 250px" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+<p id="para" style="position: absolute; left: 500px; top: 0">Hello <b>world</b></p>
+</body></html>
