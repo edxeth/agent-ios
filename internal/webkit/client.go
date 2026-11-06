@@ -31,8 +31,9 @@ type Client struct {
 	pending  map[int64]chan *Message
 
 	eventMu        sync.RWMutex
-	handlers       map[string][]EventHandler
+	handlers       map[string][]handlerEntry
 	globalHandlers []EventHandler
+	nextHandler    int
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -90,7 +91,7 @@ func NewClientWithDialer(ctx context.Context, wsURL string, dialer *websocket.Di
 		url:         wsURL,
 		pending:     make(map[int64]chan *Message),
 		writeSem:    make(chan struct{}, 1),
-		handlers:    make(map[string][]EventHandler),
+		handlers:    make(map[string][]handlerEntry),
 		done:        make(chan struct{}),
 		targetReady: make(chan struct{}),
 		Dialer:      dialer,
@@ -282,11 +283,37 @@ func (c *Client) SendWithTimeout(method string, params interface{}, timeout time
 	return c.Send(ctx, method, params)
 }
 
+// handlerEntry is a registered event handler; id lets Subscribe remove it.
+type handlerEntry struct {
+	id int
+	h  EventHandler
+}
+
 // OnEvent registers a handler for a specific event method.
 func (c *Client) OnEvent(method string, handler EventHandler) {
+	c.Subscribe(method, handler)
+}
+
+// Subscribe registers a handler for a specific event method and returns a
+// function that removes it. Client handlers run synchronously in the read
+// loop, as they always have.
+func (c *Client) Subscribe(method string, handler EventHandler) func() {
 	c.eventMu.Lock()
-	defer c.eventMu.Unlock()
-	c.handlers[method] = append(c.handlers[method], handler)
+	id := c.nextHandler
+	c.nextHandler++
+	c.handlers[method] = append(c.handlers[method], handlerEntry{id: id, h: handler})
+	c.eventMu.Unlock()
+	return func() {
+		c.eventMu.Lock()
+		defer c.eventMu.Unlock()
+		hs := c.handlers[method]
+		for i, e := range hs {
+			if e.id == id {
+				c.handlers[method] = append(hs[:i:i], hs[i+1:]...)
+				return
+			}
+		}
+	}
 }
 
 // OnAnyEvent registers a handler that receives all events.
@@ -403,14 +430,14 @@ func (c *Client) handleDispatchFromTarget(params json.RawMessage) {
 func (c *Client) dispatchEvent(method string, params json.RawMessage) {
 	c.eventMu.RLock()
 	// Copy slices so handlers can safely call OnEvent/OnAnyEvent without deadlock or race.
-	handlers := make([]EventHandler, len(c.handlers[method]))
+	handlers := make([]handlerEntry, len(c.handlers[method]))
 	copy(handlers, c.handlers[method])
 	globals := make([]EventHandler, len(c.globalHandlers))
 	copy(globals, c.globalHandlers)
 	c.eventMu.RUnlock()
 
-	for _, h := range handlers {
-		h(method, params)
+	for _, e := range handlers {
+		e.h(method, params)
 	}
 	for _, h := range globals {
 		h(method, params)

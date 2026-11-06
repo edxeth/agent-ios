@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -80,12 +81,12 @@ func assertCodexCompatibleInputSchema(t *testing.T, toolName string, schema any,
 	t.Helper()
 	switch s := schema.(type) {
 	case map[string]any:
-		if schemaTypeIncludes(s["type"], "object") {
+		if commands.SchemaTypeIncludes(s["type"], "object") {
 			if _, ok := s["properties"].(map[string]any); !ok {
 				t.Fatalf("tool %s object input schema is missing properties at %s", toolName, path)
 			}
 		}
-		if schemaTypeIncludes(s["type"], "array") {
+		if commands.SchemaTypeIncludes(s["type"], "array") {
 			if _, ok := s["items"].(map[string]any); !ok {
 				t.Fatalf("tool %s array input schema items is not an object at %s", toolName, path)
 			}

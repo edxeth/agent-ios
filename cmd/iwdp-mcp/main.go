@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -74,7 +77,44 @@ func main() {
 	}
 }
 
+// legacyToolNames lists the legacy tools that registerTools registered, in
+// order; the registration manifest (commands.Manifest) checks it.
+var legacyToolNames []string
+
+// errNoRegistryPage is what registry tools get from Env.Page: this server
+// has no daemon-backed page session for them yet.
+var errNoRegistryPage = errors.New("this iwdp-mcp build has no page session for registry tools yet; use the legacy page tools (select_page first)")
+
+// registryEnv is the commands.Env of registry tools in this server.
+// Commands that need no page run normally.
+type registryEnv struct{}
+
+func (registryEnv) Page(context.Context) (*core.PageSession, error) { return nil, errNoRegistryPage }
+
+// Emit writes streaming output to the server log (stderr): an MCP tool
+// call returns one result, and stdout carries the protocol.
+func (registryEnv) Emit(line string) { log.Print(line) }
+
+// ResolvePath returns p unchanged: an MCP client has no working directory
+// of its own here, so a relative path resolves against the server's.
+func (registryEnv) ResolvePath(p string) string { return p }
+
+// registerRegistryTools registers every registry tool of the selected
+// profile (design 2.10). addTool skips the legacy tools whose names they
+// reuse, so both sources come from the same profile selection.
+func registerRegistryTools(s *mcp.Server) {
+	commands.RegisterMCP(s, commands.SelectedProfile(os.Getenv), func(context.Context, commands.Globals) (commands.Env, error) {
+		return registryEnv{}, nil
+	})
+}
+
 func addTool[In, Out any](s *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	// A registry command that reuses this tool name replaces the legacy
+	// handler (design 2.10, deduplicated registration manifest).
+	if commands.ProvidesMCPTool(commands.SelectedProfile(os.Getenv), t.Name) {
+		return
+	}
+	legacyToolNames = append(legacyToolNames, t.Name)
 	copy := *t
 	if copy.InputSchema == nil {
 		schema, err := jsonschema.For[In](nil)
@@ -88,54 +128,10 @@ func addTool[In, Out any](s *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, O
 	mcp.AddTool(s, &copy, h)
 }
 
+// codexCompatibleInputSchema makes every object schema carry "properties"
+// and every array schema carry "items" (commands.CodexCompatibleInputSchema).
 func codexCompatibleInputSchema(toolName string, schema any) map[string]any {
-	data, err := json.Marshal(schema)
-	if err != nil {
-		panic(fmt.Sprintf("AddTool: tool %q: marshal input schema: %v", toolName, err))
-	}
-	var out map[string]any
-	if err := json.Unmarshal(data, &out); err != nil {
-		panic(fmt.Sprintf("AddTool: tool %q: unmarshal input schema: %v", toolName, err))
-	}
-	normalizeSchema(out)
-	return out
-}
-
-func normalizeSchema(schema any) {
-	switch s := schema.(type) {
-	case map[string]any:
-		for _, value := range s {
-			normalizeSchema(value)
-		}
-		if schemaTypeIncludes(s["type"], "object") {
-			if _, ok := s["properties"].(map[string]any); !ok {
-				s["properties"] = map[string]any{}
-			}
-		}
-		if schemaTypeIncludes(s["type"], "array") {
-			if _, ok := s["items"].(map[string]any); !ok {
-				s["items"] = map[string]any{}
-			}
-		}
-	case []any:
-		for _, value := range s {
-			normalizeSchema(value)
-		}
-	}
-}
-
-func schemaTypeIncludes(value any, typ string) bool {
-	switch v := value.(type) {
-	case string:
-		return v == typ
-	case []any:
-		for _, item := range v {
-			if item == typ {
-				return true
-			}
-		}
-	}
-	return false
+	return commands.CodexCompatibleInputSchema(toolName, schema)
 }
 
 // --- Input/Output types for MCP tools ---
@@ -567,6 +563,8 @@ func largeResultToFile(result any, prefix string) (*mcp.CallToolResult, error) {
 }
 
 func registerTools(server *mcp.Server) {
+	registerRegistryTools(server)
+
 	// --- iwdp status ---
 	addTool(server, &mcp.Tool{
 		Name: "iwdp_status", Description: "Check if ios-webkit-debug-proxy is running and optionally start it. Call this first before any other tool to ensure iwdp is available.",

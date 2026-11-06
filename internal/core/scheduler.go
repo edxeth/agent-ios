@@ -1,0 +1,915 @@
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
+	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+)
+
+// Class is the admission class of an operation (design 2.5 and 2.10).
+type Class int
+
+const (
+	// ClassRead runs in parallel with other reads.
+	ClassRead Class = iota
+	// ClassMutate runs alone, in FIFO order; ref allocation counts as a mutation.
+	ClassMutate
+	// ClassExclusive runs alone, like a mutation: legacy multi-send
+	// operations and barriers.
+	ClassExclusive
+)
+
+func (c Class) String() string {
+	switch c {
+	case ClassRead:
+		return "read"
+	case ClassMutate:
+		return "mutate"
+	case ClassExclusive:
+		return "exclusive"
+	}
+	return fmt.Sprintf("Class(%d)", int(c))
+}
+
+// Errors of the scheduler.
+var (
+	ErrStaleEpoch     = errors.New("the lease epoch of the operation is no longer current; the page lease changed")
+	ErrLeaseEnded     = errors.New("the page lease ended")
+	ErrOpEnded        = errors.New("the operation has ended")
+	ErrDeadline       = errors.New("the operation deadline passed")
+	ErrNoDeadline     = errors.New("an operation needs a deadline")
+	ErrControlRefused = errors.New("control message refused")
+	// ErrAttemptClosed: RunSteps stopped waiting for the attempt (its reply
+	// was lost or the operation stopped), so no send of it is admitted.
+	ErrAttemptClosed = errors.New("the attempt is closed; the daemon no longer waits for its reply")
+)
+
+// Defaults of SchedulerOptions (design 2.5, 2.6 and 2.10).
+const (
+	DefaultMaxInFlight    = 8 // protocol calls in flight per page (MAP fact 8)
+	DefaultAttemptBudget  = 250 * time.Millisecond
+	DefaultMaxUncertainty = 100 * time.Millisecond
+	DefaultReplyGrace     = 2 * time.Second
+	DefaultRetryBackoff   = 20 * time.Millisecond
+	DefaultCancelBudget   = time.Second
+	DefaultControlBudget  = 10 * time.Second
+)
+
+// RuntimeCaller runs one runtime function through c and returns the value
+// of its result envelope.
+type RuntimeCaller func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error)
+
+// CallRuntime is the default RuntimeCaller: runtime.Runtime.Call.
+func CallRuntime(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
+	var v json.RawMessage
+	if err := runtime.New(c, nil).Call(ctx, fn, args, &v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// AttemptEvent describes one attempt as the daemon sent it (log and test
+// hook). OnAttempt runs once per attempt, when its first send is admitted.
+type AttemptEvent struct {
+	OpID   string
+	Step   int
+	SentAt time.Duration // scheduler clock
+	Args   AttemptArgs
+}
+
+// SchedulerOptions configure a Scheduler. Zero fields take the defaults.
+type SchedulerOptions struct {
+	Clock          Clock
+	Runtime        RuntimeCaller
+	Generation     func() uint64 // document generation; nil: one document
+	MaxInFlight    int
+	AttemptBudget  time.Duration
+	MaxUncertainty time.Duration
+	ReplyGrace     time.Duration // wait for an attempt reply after its boundary
+	RetryBackoff   time.Duration
+	CancelBudget   time.Duration
+	OnAttempt      func(AttemptEvent)
+}
+
+// Scheduler is the per-page operation scheduler of design 2.10. Every entry
+// point (registry command, legacy operation, CDP message) is an operation.
+// Mutations and exclusive operations run one at a time in FIFO order and
+// exclude reads; reads run in parallel with at most MaxInFlight protocol
+// calls. Control-lane messages that let a running operation finish never
+// queue behind it, and barriers close admission.
+type Scheduler struct {
+	c webkit.Caller
+	o SchedulerOptions
+
+	mu       sync.Mutex
+	holder   string // logical session that holds the lease
+	epoch    uint64
+	released bool // the lease ended; operations of every epoch stop
+	closed   bool // a barrier closed admission
+	queue    []*Op
+	running  map[*Op]bool
+	changed  chan struct{} // closed and replaced when running shrinks
+	nextOp   int
+	clocks   map[uint64]*ClockMap // by document generation
+
+	// Pending control items (design 2.10). Each is completed at most once:
+	// an item stays pending while its completion is being written, and a
+	// completion that was never written (webkit.ErrNotSent) leaves it open.
+	intercepted    map[string]*heldRequest
+	holdSeq        uint64 // counts interception events
+	debuggerPaused bool
+	pauseSeq       uint64 // counts Debugger.paused events
+	resumedSeq     uint64 // the pause that a Debugger.resume completed or is completing
+	resuming       bool   // a Debugger.resume is being written
+
+	sem   chan struct{}
+	unsub []func()
+}
+
+// NewScheduler returns the scheduler of the page reached through c.
+func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
+	if o.Clock == nil {
+		o.Clock = NewRealClock()
+	}
+	if o.Runtime == nil {
+		o.Runtime = CallRuntime
+	}
+	if o.Generation == nil {
+		o.Generation = func() uint64 { return 1 }
+	}
+	if o.MaxInFlight <= 0 {
+		o.MaxInFlight = DefaultMaxInFlight
+	}
+	if o.AttemptBudget <= 0 {
+		o.AttemptBudget = DefaultAttemptBudget
+	}
+	if o.MaxUncertainty <= 0 {
+		o.MaxUncertainty = DefaultMaxUncertainty
+	}
+	if o.ReplyGrace <= 0 {
+		o.ReplyGrace = DefaultReplyGrace
+	}
+	if o.RetryBackoff <= 0 {
+		o.RetryBackoff = DefaultRetryBackoff
+	}
+	if o.CancelBudget <= 0 {
+		o.CancelBudget = DefaultCancelBudget
+	}
+	s := &Scheduler{
+		c:           c,
+		o:           o,
+		running:     make(map[*Op]bool),
+		changed:     make(chan struct{}),
+		clocks:      make(map[uint64]*ClockMap),
+		intercepted: make(map[string]*heldRequest),
+		sem:         make(chan struct{}, o.MaxInFlight),
+	}
+	// Pending items are recorded inside the read loop when the caller
+	// allows it, so that whoever sees the event later finds the item.
+	sub := c.Subscribe
+	if ss, ok := c.(interface {
+		SubscribeSync(string, webkit.EventHandler) func()
+	}); ok {
+		sub = ss.SubscribeSync
+	}
+	addRequest := func(_ string, p json.RawMessage) {
+		var v struct {
+			RequestID string `json:"requestId"`
+		}
+		if json.Unmarshal(p, &v) == nil && v.RequestID != "" {
+			s.mu.Lock()
+			s.holdSeq++
+			h := s.intercepted[v.RequestID]
+			if h == nil {
+				h = &heldRequest{}
+				s.intercepted[v.RequestID] = h
+			}
+			// A new hold of the same id (the response stage) is open
+			// even while a completion of the earlier hold is in flight.
+			h.seq, h.inflight = s.holdSeq, false
+			s.mu.Unlock()
+		}
+	}
+	setPaused := func(paused bool) webkit.EventHandler {
+		return func(string, json.RawMessage) {
+			s.mu.Lock()
+			s.debuggerPaused = paused
+			if paused {
+				s.pauseSeq++
+			}
+			s.mu.Unlock()
+		}
+	}
+	s.unsub = append(s.unsub,
+		sub("Network.requestIntercepted", addRequest),
+		sub("Network.responseIntercepted", addRequest),
+		sub("Debugger.paused", setPaused(true)),
+		sub("Debugger.resumed", setPaused(false)),
+	)
+	return s
+}
+
+// Close removes the scheduler's event subscriptions.
+func (s *Scheduler) Close() {
+	for _, u := range s.unsub {
+		u()
+	}
+}
+
+// SetLease records the session that holds the page lease and its epoch.
+// Queued operations of another epoch fail with ErrStaleEpoch; running ones
+// can send nothing more.
+func (s *Scheduler) SetLease(session string, epoch uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holder, s.epoch, s.released = session, epoch, false
+	s.pumpLocked()
+}
+
+// Lease returns the current holder and epoch.
+func (s *Scheduler) Lease() (string, uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.holder, s.epoch
+}
+
+// OpSpec describes an operation.
+type OpSpec struct {
+	Name    string
+	Class   Class
+	Session string // logical session that runs the operation
+	Epoch   uint64 // lease epoch the operation was admitted under
+	// PageWork: the operation runs page-side work fenced by its op id, so a
+	// cancel also sends __iwdp.cancel(opId) on the control lane.
+	PageWork bool
+	// Deadline is absolute on the scheduler clock. Zero: taken from the
+	// ctx deadline at Begin.
+	Deadline time.Duration
+}
+
+// Op is an admitted operation. End must be called exactly once.
+type Op struct {
+	ID         string
+	Spec       OpSpec
+	AdmittedAt time.Duration // scheduler clock
+
+	s        *Scheduler
+	ctx      context.Context
+	cancel   context.CancelCauseFunc
+	deadline time.Duration
+	admitted chan error
+	pageWork atomic.Bool
+
+	mu       sync.Mutex
+	ended    bool
+	inflight *inflightAttempt
+}
+
+type inflightAttempt struct {
+	boundary time.Duration // slot-release boundary H
+	replied  chan struct{}
+	gen      uint64 // document generation the attempt's clock mapping belongs to
+
+	mu        sync.Mutex
+	committed bool // a Send of the attempt was admitted; the page may run it
+	closed    bool // RunSteps stopped waiting; no Send is admitted any more
+}
+
+// admit admits one Send of the attempt's runtime call (design 2.6 rule 3):
+// only while RunSteps still waits for it, the operation is active (not
+// ended, canceled or expired, lease epoch current) and the page shows the
+// document the clock mapping was measured on. The first admitted Send
+// commits the attempt; commit runs once, after the admission.
+func (inf *inflightAttempt) admit(op *Op, commit func()) error {
+	inf.mu.Lock()
+	if inf.closed {
+		inf.mu.Unlock()
+		// The operation can still be active here (a lost reply closes the
+		// attempt), so the refusal never depends on its context.
+		if cause := context.Cause(op.ctx); cause != nil {
+			return fmt.Errorf("%w: %w", ErrAttemptClosed, cause)
+		}
+		return ErrAttemptClosed
+	}
+	if err := op.active(); err != nil {
+		inf.mu.Unlock()
+		return err
+	}
+	if op.s.o.Generation() != inf.gen {
+		inf.mu.Unlock()
+		return ErrDocumentChanged
+	}
+	first := !inf.committed
+	inf.committed = true
+	inf.mu.Unlock()
+	if first && commit != nil {
+		commit()
+	}
+	return nil
+}
+
+// close stops further admission and reports whether the attempt was
+// committed, that is, whether the page may have run it.
+func (inf *inflightAttempt) close() bool {
+	inf.mu.Lock()
+	defer inf.mu.Unlock()
+	inf.closed = true
+	return inf.committed
+}
+
+func (inf *inflightAttempt) isCommitted() bool {
+	inf.mu.Lock()
+	defer inf.mu.Unlock()
+	return inf.committed
+}
+
+// attemptCaller sends the runtime call of one attempt. Each Send passes
+// inflightAttempt.admit first and sends nothing when it fails. The reply
+// wait is not bound to the operation's context: after a cancel the daemon
+// still waits for the reply, so that the page is released early.
+type attemptCaller struct {
+	op     *Op
+	inf    *inflightAttempt
+	commit func()
+}
+
+func (c attemptCaller) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	if err := c.op.setupReady(ctx); err != nil {
+		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
+	}
+	if err := c.inf.admit(c.op, c.commit); err != nil {
+		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
+	}
+	return c.op.s.c.Send(ctx, method, params)
+}
+
+func (c attemptCaller) OnEvent(method string, h webkit.EventHandler) { c.op.s.c.OnEvent(method, h) }
+func (c attemptCaller) Subscribe(method string, h webkit.EventHandler) func() {
+	return c.op.s.c.Subscribe(method, h)
+}
+func (c attemptCaller) IsTargetRouted() bool  { return c.op.s.c.IsTargetRouted() }
+func (c attemptCaller) Done() <-chan struct{} { return c.op.s.c.Done() }
+
+// Begin queues an operation and waits for admission. The operation's
+// deadline covers the wait. Canceling ctx while queued removes it from the
+// queue without sending anything. At admission, when the page connection
+// reports a failed provisional setup of its active target (webkit.Session
+// ActiveSetup, design 2.7), the operation is refused with that error: the
+// page lacks required desired state until it is applied again. A setup in
+// progress is waited for within the operation's deadline.
+func (s *Scheduler) Begin(ctx context.Context, spec OpSpec) (*Op, error) {
+	now := s.o.Clock.Now()
+	d := spec.Deadline
+	if d == 0 {
+		dl, ok := ctx.Deadline()
+		if !ok {
+			return nil, fmt.Errorf("operation %s: %w", spec.Name, ErrNoDeadline)
+		}
+		d = now + time.Until(dl)
+	}
+	opCtx, cancel := context.WithCancelCause(ctx)
+	op := &Op{Spec: spec, s: s, ctx: opCtx, cancel: cancel, deadline: d, admitted: make(chan error, 1)}
+	// One absolute deadline covers the queue, the setup wait and the run
+	// (design 2.6): the expiry starts now, whatever ctx allows.
+	go op.watch(s.o.Clock.After(d - now))
+	s.mu.Lock()
+	if s.released || spec.Epoch != s.epoch {
+		err := ErrStaleEpoch
+		if s.released {
+			err = ErrLeaseEnded
+		}
+		s.mu.Unlock()
+		cancel(err)
+		return nil, fmt.Errorf("operation %s: %w", spec.Name, err)
+	}
+	s.nextOp++
+	op.ID = fmt.Sprintf("op-%d", s.nextOp)
+	s.queue = append(s.queue, op)
+	s.pumpLocked()
+	s.mu.Unlock()
+
+	var cause error
+	select {
+	case err := <-op.admitted:
+		if err != nil {
+			cancel(err)
+			return nil, fmt.Errorf("operation %s: %w", spec.Name, err)
+		}
+		// The setup gate holds when the operation can use the target: the
+		// active target may have changed while the operation was queued.
+		if err := op.setupReady(context.Background()); err != nil {
+			op.End()
+			return nil, fmt.Errorf("operation %s: %w", spec.Name, err)
+		}
+		// Page work starts only after admission; watch sends no page
+		// cancel for an operation that never ran.
+		op.pageWork.Store(spec.PageWork)
+		return op, nil
+	case <-opCtx.Done():
+		cause = context.Cause(opCtx)
+		if errors.Is(cause, ErrDeadline) {
+			cause = fmt.Errorf("%w while queued", ErrDeadline)
+		}
+	}
+	s.mu.Lock()
+	removed := s.removeLocked(op)
+	s.mu.Unlock()
+	if !removed {
+		// Admitted at the same moment: give the slot back.
+		if err := <-op.admitted; err == nil {
+			op.End()
+		}
+	}
+	cancel(cause)
+	return nil, fmt.Errorf("operation %s: %w", spec.Name, cause)
+}
+
+func (s *Scheduler) removeLocked(op *Op) bool {
+	for i, q := range s.queue {
+		if q == op {
+			s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			s.pumpLocked()
+			return true
+		}
+	}
+	return false
+}
+
+// pumpLocked admits queued operations in FIFO order.
+func (s *Scheduler) pumpLocked() {
+	if s.closed {
+		return
+	}
+	writer := false
+	for op := range s.running {
+		if op.Spec.Class != ClassRead {
+			writer = true
+		}
+	}
+	for len(s.queue) > 0 {
+		op := s.queue[0]
+		if s.released || op.Spec.Epoch != s.epoch {
+			s.queue = s.queue[1:]
+			if s.released {
+				op.admitted <- ErrLeaseEnded
+			} else {
+				op.admitted <- ErrStaleEpoch
+			}
+			continue
+		}
+		if writer || (op.Spec.Class != ClassRead && len(s.running) > 0) {
+			return
+		}
+		s.queue = s.queue[1:]
+		s.running[op] = true
+		op.AdmittedAt = s.o.Clock.Now()
+		op.admitted <- nil
+		if op.Spec.Class != ClassRead {
+			return
+		}
+	}
+}
+
+// setupReady waits, at most until ctx or the operation ends, for the
+// provisional setup of the page's active target and returns its failure
+// (webkit.Session ActiveSetup, design 2.7). It returns nil when the page
+// connection has no provisional setup.
+func (op *Op) setupReady(ctx context.Context) error {
+	as, ok := op.s.c.(interface{ ActiveSetup(context.Context) error })
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stop := context.AfterFunc(op.ctx, func() { cancel(context.Cause(op.ctx)) })
+	defer stop()
+	err := as.ActiveSetup(ctx)
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("%w: %w", err, context.Cause(ctx))
+	}
+	return err
+}
+
+// watch cancels the operation at its deadline and sends the page cancel
+// for page work when the operation is canceled before it ends.
+func (op *Op) watch(expiry <-chan struct{}) {
+	select {
+	case <-op.ctx.Done():
+	case <-expiry:
+		op.cancel(ErrDeadline)
+	}
+	// A normal End cancels with ErrOpEnded; any other cause is a cancel or
+	// an expiry while page work may run, even when End follows at once.
+	if !errors.Is(context.Cause(op.ctx), ErrOpEnded) && op.pageWork.Load() {
+		op.s.sendCancel(op)
+	}
+}
+
+// Context ends when the operation is canceled, expires or ends.
+func (op *Op) Context() context.Context { return op.ctx }
+
+// Deadline is the absolute deadline on the scheduler clock.
+func (op *Op) Deadline() time.Duration { return op.deadline }
+
+// Cancel cancels the operation with cause (the client went away).
+func (op *Op) Cancel(cause error) { op.cancel(cause) }
+
+// active returns nil while the operation may still send.
+func (op *Op) active() error {
+	op.mu.Lock()
+	ended := op.ended
+	op.mu.Unlock()
+	if ended {
+		return ErrOpEnded
+	}
+	if err := op.ctx.Err(); err != nil {
+		return context.Cause(op.ctx)
+	}
+	s := op.s
+	s.mu.Lock()
+	released, epoch := s.released, s.epoch
+	s.mu.Unlock()
+	if released {
+		return ErrLeaseEnded
+	}
+	if epoch != op.Spec.Epoch {
+		return ErrStaleEpoch
+	}
+	if s.o.Clock.Now() >= op.deadline {
+		return ErrDeadline
+	}
+	return nil
+}
+
+// End ends the operation. When an attempt is still in flight, the slot is
+// released only at its reply or its slot-release boundary (design 2.6), so a
+// conflicting successor never overlaps it. End does not wait for that.
+func (op *Op) End() {
+	op.mu.Lock()
+	if op.ended {
+		op.mu.Unlock()
+		return
+	}
+	op.ended = true
+	inf := op.inflight
+	op.mu.Unlock()
+	op.cancel(ErrOpEnded)
+	if inf == nil {
+		op.s.release(op)
+		return
+	}
+	go func() {
+		select {
+		case <-inf.replied:
+		case <-op.s.o.Clock.After(inf.boundary - op.s.o.Clock.Now()):
+		}
+		op.s.release(op)
+	}()
+}
+
+func (s *Scheduler) release(op *Op) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.running[op] {
+		return
+	}
+	delete(s.running, op)
+	close(s.changed)
+	s.changed = make(chan struct{})
+	s.pumpLocked()
+}
+
+// Caller returns a Caller fenced by the operation: every Send first checks
+// that the operation is active (not ended, canceled or expired, lease epoch
+// current) and sends nothing otherwise.
+func (op *Op) Caller() webkit.Caller { return opCaller{op} }
+
+type opCaller struct{ op *Op }
+
+func (c opCaller) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	op := c.op
+	if err := op.active(); err != nil {
+		return nil, fmt.Errorf("%s: not sent: %w", method, err)
+	}
+	select {
+	case op.s.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%s: not sent: %w", method, ctx.Err())
+	case <-op.ctx.Done():
+		return nil, fmt.Errorf("%s: not sent: %w", method, context.Cause(op.ctx))
+	}
+	defer func() { <-op.s.sem }()
+	if err := op.active(); err != nil {
+		return nil, fmt.Errorf("%s: not sent: %w", method, err)
+	}
+	// The active target may have changed since admission (design 2.7).
+	if err := op.setupReady(ctx); err != nil {
+		return nil, fmt.Errorf("%s: not sent: %w", method, err)
+	}
+	callCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stop := context.AfterFunc(op.ctx, func() { cancel(context.Cause(op.ctx)) })
+	defer stop()
+	return op.s.c.Send(callCtx, method, params)
+}
+
+func (c opCaller) OnEvent(method string, h webkit.EventHandler) { c.op.s.c.OnEvent(method, h) }
+func (c opCaller) Subscribe(method string, h webkit.EventHandler) func() {
+	return c.op.s.c.Subscribe(method, h)
+}
+func (c opCaller) IsTargetRouted() bool  { return c.op.s.c.IsTargetRouted() }
+func (c opCaller) Done() <-chan struct{} { return c.op.s.c.Done() }
+
+// ControlKind is the kind of a control-lane message (design 2.10).
+type ControlKind int
+
+const (
+	// ControlCancel: __iwdp.cancel(opId) for a running operation.
+	ControlCancel ControlKind = iota + 1
+	// ControlCompleteRequest: continue, fulfill or fail a held request.
+	ControlCompleteRequest
+	// ControlDebuggerResume: Debugger.resume while the page is paused.
+	ControlDebuggerResume
+	// ControlTargetResume: Target.resume for a target paused on start.
+	ControlTargetResume
+)
+
+// interceptCompletions are the WIP methods that complete a held request.
+var interceptCompletions = map[string]bool{
+	"Network.interceptContinue":            true,
+	"Network.interceptWithRequest":         true,
+	"Network.interceptWithResponse":        true,
+	"Network.interceptRequestWithResponse": true,
+	"Network.interceptRequestWithError":    true,
+}
+
+// ControlMsg is a control-lane message.
+type ControlMsg struct {
+	Kind      ControlKind
+	Session   string // logical session of the sender
+	Epoch     uint64 // lease epoch the sender acts under
+	OpID      string // ControlCancel
+	RequestID string // ControlCompleteRequest
+	TargetID  string // ControlTargetResume
+	Method    string // ControlCompleteRequest: one of the five completion methods
+	Params    map[string]any
+}
+
+// Control sends a control-lane message without waiting behind ordinary
+// operations. It is validated first: the epoch is current, the sender acts
+// for the session that holds the lease, and the message names an open
+// pending item, which it completes at most once. A refused message is
+// never sent.
+func (s *Scheduler) Control(ctx context.Context, m ControlMsg) (json.RawMessage, error) {
+	s.mu.Lock()
+	holder, epoch, released := s.holder, s.epoch, s.released
+	s.mu.Unlock()
+	switch {
+	case released:
+		return nil, fmt.Errorf("%w: %w", ErrControlRefused, ErrLeaseEnded)
+	case m.Epoch != epoch:
+		return nil, fmt.Errorf("%w: epoch %d is not the current lease epoch %d", ErrControlRefused, m.Epoch, epoch)
+	case m.Session != holder:
+		return nil, fmt.Errorf("%w: sent for session %q; the page is leased by session %q", ErrControlRefused, m.Session, holder)
+	}
+	return s.control(ctx, m)
+}
+
+// heldRequest is a request held by interception (design 2.10).
+type heldRequest struct {
+	seq      uint64 // interception event that opened this hold
+	inflight bool   // a completion is being written
+}
+
+// control validates the pending item and sends; barriers call it directly.
+func (s *Scheduler) control(ctx context.Context, m ControlMsg) (json.RawMessage, error) {
+	switch m.Kind {
+	case ControlCompleteRequest:
+		if !interceptCompletions[m.Method] {
+			return nil, fmt.Errorf("%w: %q does not complete a held request", ErrControlRefused, m.Method)
+		}
+		s.mu.Lock()
+		h := s.intercepted[m.RequestID]
+		if h == nil || h.inflight {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("%w: no open intercepted request %q", ErrControlRefused, m.RequestID)
+		}
+		h.inflight = true
+		seq := h.seq
+		s.mu.Unlock()
+		params := map[string]any{}
+		for k, v := range m.Params {
+			params[k] = v
+		}
+		params["requestId"] = m.RequestID
+		res, err := s.controlSend(ctx, DefaultControlBudget, m.Method, params)
+		s.mu.Lock()
+		if h.seq == seq { // no newer hold of this id arrived meanwhile
+			if errors.Is(err, webkit.ErrNotSent) {
+				h.inflight = false // never written: still open
+			} else if s.intercepted[m.RequestID] == h {
+				delete(s.intercepted, m.RequestID) // completed, or the outcome is unknown
+			}
+		}
+		s.mu.Unlock()
+		return res, err
+	case ControlDebuggerResume:
+		s.mu.Lock()
+		if !s.pauseOpenLocked() {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("%w: the debugger is not paused", ErrControlRefused)
+		}
+		seq := s.pauseSeq
+		s.resuming = true
+		s.mu.Unlock()
+		res, err := s.controlSend(ctx, DefaultControlBudget, "Debugger.resume", nil)
+		s.mu.Lock()
+		s.resuming = false
+		if !errors.Is(err, webkit.ErrNotSent) {
+			s.resumedSeq = seq // completed, or the outcome is unknown: never resume this pause again
+			if err == nil && s.pauseSeq == seq {
+				s.debuggerPaused = false
+			}
+		}
+		s.mu.Unlock()
+		return res, err
+	case ControlTargetResume:
+		pt, ok := s.c.(interface {
+			ResumeTarget(context.Context, string) error
+		})
+		if !ok {
+			return nil, fmt.Errorf("%w: the page connection has no targets paused on start", ErrControlRefused)
+		}
+		err := pt.ResumeTarget(ctx, m.TargetID)
+		if errors.Is(err, webkit.ErrTargetNotPaused) {
+			return nil, fmt.Errorf("%w: target %q is not paused on start", ErrControlRefused, m.TargetID)
+		}
+		return nil, err
+	case ControlCancel:
+		s.mu.Lock()
+		var op *Op
+		for r := range s.running {
+			if r.ID == m.OpID {
+				op = r
+			}
+		}
+		s.mu.Unlock()
+		if op == nil {
+			return nil, fmt.Errorf("%w: no running operation %q", ErrControlRefused, m.OpID)
+		}
+		op.Cancel(fmt.Errorf("canceled through the control lane"))
+		return nil, nil
+	}
+	return nil, fmt.Errorf("%w: unknown kind %d", ErrControlRefused, m.Kind)
+}
+
+// pauseOpenLocked reports whether the current debugger pause is an open
+// pending item: paused, not resumed yet, and no resume being written.
+func (s *Scheduler) pauseOpenLocked() bool {
+	return s.debuggerPaused && !s.resuming && s.resumedSeq != s.pauseSeq
+}
+
+// controlCaller sends on the control lane of the page connection. A
+// webkit.Session refuses ordinary commands to a target whose setup failed or
+// still runs (design 2.7); control-lane messages and the release barrier's
+// cleanup pass that check through its SendControl (design 2.10), so that
+// held items and recovery can complete. The page cancel stays ordinary: it
+// matters only for page work on a target that passed the check.
+type controlCaller struct{ webkit.Caller }
+
+func (c controlCaller) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	if cs, ok := c.Caller.(interface {
+		SendControl(context.Context, string, any) (json.RawMessage, error)
+	}); ok {
+		return cs.SendControl(ctx, method, params)
+	}
+	return c.Caller.Send(ctx, method, params)
+}
+
+func (s *Scheduler) controlSend(ctx context.Context, budget time.Duration, method string, params any) (json.RawMessage, error) {
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	return controlCaller{s.c}.Send(ctx, method, params)
+}
+
+// sendCancel sends __iwdp.cancel(opId) on the control lane with the cancel
+// budget. Losing it changes only how soon page work ends (design 2.6).
+func (s *Scheduler) sendCancel(op *Op) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.o.CancelBudget)
+	defer cancel()
+	_, _ = s.o.Runtime(ctx, s.c, "cancel", map[string]string{"opId": op.ID})
+}
+
+// PendingRequests returns the intercepted requests that are not completed.
+func (s *Scheduler) PendingRequests() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pendingRequestsLocked()
+}
+
+func (s *Scheduler) pendingRequestsLocked() []string {
+	var out []string
+	for id, h := range s.intercepted {
+		if !h.inflight {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// Release is the release barrier (design 2.10): it closes admission,
+// cancels the running operations, completes every pending control item
+// through the control lane (continues held requests, resumes the debugger
+// and targets paused on start), waits until the running operations have
+// released the page, runs cleanup on the control lane, and ends the lease.
+// Queued operations fail with ErrLeaseEnded.
+func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Context, c webkit.Caller) error) error {
+	s.mu.Lock()
+	s.closed = true
+	var running []*Op
+	for op := range s.running {
+		running = append(running, op)
+	}
+	requests := s.pendingRequestsLocked()
+	paused := s.pauseOpenLocked()
+	s.mu.Unlock()
+
+	for _, op := range running {
+		op.Cancel(fmt.Errorf("%w: released", ErrLeaseEnded))
+	}
+	var firstErr error
+	// A refusal means that another sender completed the item after the
+	// snapshot above; the item no longer needs the barrier.
+	note := func(err error) {
+		if err != nil && firstErr == nil && !errors.Is(err, ErrControlRefused) {
+			firstErr = err
+		}
+	}
+	for _, id := range requests {
+		_, err := s.control(ctx, ControlMsg{Kind: ControlCompleteRequest, RequestID: id, Method: "Network.interceptContinue"})
+		note(err)
+	}
+	if paused {
+		_, err := s.control(ctx, ControlMsg{Kind: ControlDebuggerResume})
+		note(err)
+	}
+	if pt, ok := s.c.(interface{ PausedTargets() []string }); ok {
+		for _, id := range pt.PausedTargets() {
+			_, err := s.control(ctx, ControlMsg{Kind: ControlTargetResume, TargetID: id})
+			note(err)
+		}
+	}
+	for {
+		s.mu.Lock()
+		n, changed := len(s.running), s.changed
+		s.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return fmt.Errorf("release: waiting for running operations: %w", ctx.Err())
+		}
+	}
+	if cleanup != nil {
+		note(cleanup(ctx, controlCaller{s.c}))
+	}
+	s.mu.Lock()
+	s.released = true
+	s.holder = ""
+	s.closed = false
+	s.pumpLocked() // fails the queued operations with ErrLeaseEnded
+	s.mu.Unlock()
+	return firstErr
+}
+
+// clockMap returns the clock mapping of document generation g.
+func (s *Scheduler) clockMap(g uint64) *ClockMap {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.clocks[g]
+	if m == nil {
+		m = &ClockMap{}
+		s.clocks[g] = m
+	}
+	return m
+}
+
+// dropClock forgets m, the mapping of generation g, after the page showed
+// another document under the same generation; the next attempt measures
+// the page again.
+func (s *Scheduler) dropClock(g uint64, m *ClockMap) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clocks[g] == m {
+		delete(s.clocks, g)
+	}
+}
