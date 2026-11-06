@@ -106,8 +106,10 @@ iwdpctl
 iwdp-cli pages
 iwdp-cli eval 'document.title'
 iwdp-cli eval 'location.href'
-iwdp-cli screenshot -o iphone-safari.png
+iwdp-cli screenshot                 # viewport PNG in $TMPDIR, path printed
 ```
+
+Every command has a 30 s deadline (`--timeout 10s` or `IWDP_TIMEOUT` to change it). A deadline error exits 124 and names the page and the likely causes; after two timeouts on one page, stop and report instead of retrying. `iwdp-cli <command> --help` prints usage and never connects.
 
 `iwdp-cli` auto-connects to the first available Safari page when no WebSocket URL is passed. That is the right default for one tab.
 
@@ -127,6 +129,24 @@ iwdp-cli fill 'input[name=email]' 'user@example.com'
 iwdp-cli type-text 'hello'
 ```
 
+Promises, exceptions and screenshots:
+
+```bash
+iwdp-cli eval --await 'fetch("/api/me").then(r => r.status)'
+iwdp-cli screenshot --selector '#summary' -o /tmp/summary.png
+iwdp-cli screenshot --full-page
+```
+
+A thrown exception or rejected Promise prints its message and stack and exits 1.
+
+Cookie setup for a signed-in page:
+
+```bash
+iwdp-cli set-cookie session "$TOKEN" example.com --same-site Lax --secure --http-only --expires 24h
+```
+
+`set-cookie` reads the cookie back and exits 1 when WebKit rejected it or stored other attributes. It never prints the value.
+
 DOM discovery:
 
 ```bash
@@ -138,7 +158,8 @@ Logs and storage:
 
 ```bash
 iwdp-cli console-messages -d 5
-iwdp-cli cookies
+iwdp-cli console -d 10s             # prints messages, then a count; --follow streams
+iwdp-cli cookies                    # values redacted; --show-values prints them
 iwdp-cli get-local-storage 'https://example.com'
 iwdp-cli get-session-storage 'https://example.com'
 ```

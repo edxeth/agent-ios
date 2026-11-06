@@ -28,18 +28,29 @@ func (mc *mockConn) writeMessage(messageType int, data []byte) error {
 }
 
 // MockServer simulates a WebKit Inspector Protocol endpoint.
+//
+// By default it answers in direct mode, like a plain WebKit endpoint. Call
+// EnableTargetRouting before a client connects to simulate
+// ios-webkit-debug-proxy instead: the server then announces a page target and
+// expects every command wrapped in Target.sendMessageToTarget.
 type MockServer struct {
 	Server   *httptest.Server
 	URL      string // WebSocket URL (ws://...)
 	mu       sync.Mutex
 	handlers map[string]Handler
 	conns    []*mockConn
+
+	silent      map[string]bool // methods that never get a response
+	received    []string        // methods received, unwrapped when Target-routed
+	connections int             // WebSocket connections accepted so far
+	targetID    string          // non-empty: simulate iwdp Target routing
 }
 
 // NewMockServer creates and starts a mock WebSocket server.
 func NewMockServer() *MockServer {
 	m := &MockServer{
 		handlers: make(map[string]Handler),
+		silent:   make(map[string]bool),
 	}
 
 	upgrader := websocket.Upgrader{
@@ -54,7 +65,19 @@ func NewMockServer() *MockServer {
 		mc := &mockConn{conn: conn}
 		m.mu.Lock()
 		m.conns = append(m.conns, mc)
+		m.connections++
+		targetID := m.targetID
 		m.mu.Unlock()
+
+		if targetID != "" {
+			created, _ := json.Marshal(map[string]interface{}{
+				"method": "Target.targetCreated",
+				"params": map[string]interface{}{
+					"targetInfo": map[string]interface{}{"targetId": targetID, "type": "page"},
+				},
+			})
+			_ = mc.writeMessage(websocket.TextMessage, created)
+		}
 
 		go m.handleConn(mc)
 	}))
@@ -68,6 +91,41 @@ func (m *MockServer) Handle(method string, handler Handler) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.handlers[method] = handler
+}
+
+// NeverRespond makes the server read the given method and never answer it,
+// like a page that is stalled or held by another inspector session.
+func (m *MockServer) NeverRespond(method string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.silent[method] = true
+}
+
+// EnableTargetRouting makes the server behave like ios-webkit-debug-proxy for
+// connections accepted after the call: it sends Target.targetCreated with the
+// given targetID on connect, unwraps Target.sendMessageToTarget commands, and
+// answers them through Target.dispatchMessageFromTarget.
+func (m *MockServer) EnableTargetRouting(targetID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.targetID = targetID
+}
+
+// ReceivedMethods returns the methods received so far, in order. Commands
+// wrapped in Target.sendMessageToTarget are listed by their inner method.
+func (m *MockServer) ReceivedMethods() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, len(m.received))
+	copy(out, m.received)
+	return out
+}
+
+// ConnectionCount returns how many WebSocket connections the server accepted.
+func (m *MockServer) ConnectionCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.connections
 }
 
 // HandleFunc registers a simple handler that returns a fixed result.
@@ -103,6 +161,15 @@ func (m *MockServer) SendEvent(method string, params interface{}) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.targetID != "" {
+		data, err = json.Marshal(map[string]interface{}{
+			"method": "Target.dispatchMessageFromTarget",
+			"params": map[string]string{"targetId": m.targetID, "message": string(data)},
+		})
+		if err != nil {
+			return err
+		}
+	}
 	for _, mc := range m.conns {
 		_ = mc.writeMessage(websocket.TextMessage, data)
 	}
@@ -137,36 +204,86 @@ func (m *MockServer) handleConn(mc *mockConn) {
 			continue
 		}
 
-		m.mu.Lock()
-		handler, ok := m.handlers[msg.Method]
-		m.mu.Unlock()
-
-		var resp []byte
-		if ok {
-			result, herr := handler(msg.Method, msg.Params)
-			if herr != nil {
-				resp, _ = json.Marshal(map[string]interface{}{
-					"id": msg.ID,
-					"error": map[string]interface{}{
-						"code":    -32000,
-						"message": herr.Error(),
-					},
-				})
-			} else {
-				resultJSON, _ := json.Marshal(result)
-				resp, _ = json.Marshal(map[string]interface{}{
-					"id":     msg.ID,
-					"result": json.RawMessage(resultJSON),
-				})
-			}
-		} else {
-			// Default: return empty result
-			resp, _ = json.Marshal(map[string]interface{}{
-				"id":     msg.ID,
-				"result": json.RawMessage("{}"),
-			})
+		if msg.Method == "Target.sendMessageToTarget" {
+			m.handleTargetMessage(mc, msg.ID, msg.Params)
+			continue
 		}
 
-		_ = mc.writeMessage(websocket.TextMessage, resp)
+		if resp, ok := m.respond(msg.ID, msg.Method, msg.Params); ok {
+			_ = mc.writeMessage(websocket.TextMessage, resp)
+		}
 	}
+}
+
+// handleTargetMessage acknowledges a Target.sendMessageToTarget command and
+// answers its inner command through Target.dispatchMessageFromTarget, as iwdp does.
+func (m *MockServer) handleTargetMessage(mc *mockConn, outerID int64, params json.RawMessage) {
+	var outer struct {
+		TargetID string `json:"targetId"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal(params, &outer); err != nil {
+		return
+	}
+	ack, _ := json.Marshal(map[string]interface{}{"id": outerID, "result": json.RawMessage("{}")})
+	_ = mc.writeMessage(websocket.TextMessage, ack)
+
+	var inner struct {
+		ID     int64           `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(outer.Message), &inner); err != nil {
+		return
+	}
+	resp, ok := m.respond(inner.ID, inner.Method, inner.Params)
+	if !ok {
+		return
+	}
+	wrapped, _ := json.Marshal(map[string]interface{}{
+		"method": "Target.dispatchMessageFromTarget",
+		"params": map[string]string{"targetId": outer.TargetID, "message": string(resp)},
+	})
+	_ = mc.writeMessage(websocket.TextMessage, wrapped)
+}
+
+// respond records the method and builds its response. It returns false when
+// the method is registered with NeverRespond.
+func (m *MockServer) respond(id int64, method string, params json.RawMessage) ([]byte, bool) {
+	m.mu.Lock()
+	m.received = append(m.received, method)
+	handler, ok := m.handlers[method]
+	silent := m.silent[method]
+	m.mu.Unlock()
+
+	if silent {
+		return nil, false
+	}
+
+	var resp []byte
+	if ok {
+		result, herr := handler(method, params)
+		if herr != nil {
+			resp, _ = json.Marshal(map[string]interface{}{
+				"id": id,
+				"error": map[string]interface{}{
+					"code":    -32000,
+					"message": herr.Error(),
+				},
+			})
+		} else {
+			resultJSON, _ := json.Marshal(result)
+			resp, _ = json.Marshal(map[string]interface{}{
+				"id":     id,
+				"result": json.RawMessage(resultJSON),
+			})
+		}
+	} else {
+		// Default: return empty result
+		resp, _ = json.Marshal(map[string]interface{}{
+			"id":     id,
+			"result": json.RawMessage("{}"),
+		})
+	}
+	return resp, true
 }

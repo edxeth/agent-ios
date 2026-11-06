@@ -5,26 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 )
 
 func cmdTimelineRecord(ctx context.Context, args []string) {
-	duration := 3 * time.Second
-	var wsArgs []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
-			secs, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				duration = time.Duration(secs) * time.Second
-			}
-			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
-		}
-	}
+	duration, wsArgs := recordingDurationOrExit("timeline-record", args)
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
 		fatal(err)
@@ -46,19 +33,7 @@ func cmdTimelineRecord(ctx context.Context, args []string) {
 }
 
 func cmdMemoryTrack(ctx context.Context, args []string) {
-	duration := 3 * time.Second
-	var wsArgs []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
-			secs, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				duration = time.Duration(secs) * time.Second
-			}
-			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
-		}
-	}
+	duration, wsArgs := recordingDurationOrExit("memory-track", args)
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
 		fatal(err)
@@ -94,19 +69,7 @@ func cmdHeapSnapshot(ctx context.Context, args []string) {
 }
 
 func cmdHeapTrack(ctx context.Context, args []string) {
-	duration := 3 * time.Second
-	var wsArgs []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
-			secs, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				duration = time.Duration(secs) * time.Second
-			}
-			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
-		}
-	}
+	duration, wsArgs := recordingDurationOrExit("heap-track", args)
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
 		fatal(err)
@@ -141,19 +104,7 @@ func cmdHeapGC(ctx context.Context, args []string) {
 }
 
 func cmdCPUProfile(ctx context.Context, args []string) {
-	duration := 3 * time.Second
-	var wsArgs []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
-			secs, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				duration = time.Duration(secs) * time.Second
-			}
-			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
-		}
-	}
+	duration, wsArgs := recordingDurationOrExit("cpu-profile", args)
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
 		fatal(err)
@@ -175,19 +126,7 @@ func cmdCPUProfile(ctx context.Context, args []string) {
 }
 
 func cmdScriptProfile(ctx context.Context, args []string) {
-	duration := 3 * time.Second
-	var wsArgs []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
-			secs, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				duration = time.Duration(secs) * time.Second
-			}
-			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
-		}
-	}
+	duration, wsArgs := recordingDurationOrExit("script-profile", args)
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
 		fatal(err)

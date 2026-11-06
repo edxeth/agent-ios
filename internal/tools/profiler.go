@@ -96,10 +96,7 @@ func (c *CPUProfilerCollector) Stop(ctx context.Context, client *webkit.Client) 
 
 	// Wait for trackingComplete event.
 	if ch != nil {
-		select {
-		case <-ch:
-		case <-ctx.Done():
-		}
+		waitForSignal(ctx, ch)
 	}
 
 	c.mu.Lock()
@@ -216,10 +213,7 @@ func (c *ScriptProfilerCollector) Stop(ctx context.Context, client *webkit.Clien
 
 	// Wait for trackingComplete event (carries samples).
 	if ch != nil {
-		select {
-		case <-ch:
-		case <-ctx.Done():
-		}
+		waitForSignal(ctx, ch)
 	}
 
 	c.mu.Lock()

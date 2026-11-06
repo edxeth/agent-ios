@@ -6,37 +6,22 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
 func cmdSetCookie(ctx context.Context, args []string) {
+	const usage = "Usage: iwdp-cli set-cookie <name> <value> <domain> [--same-site Lax|Strict|None] [--path /] [--expires <time>] [--secure] [--http-only] [ws-url]"
 	if len(args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: iwdp-cli set-cookie <name> <value> <domain> [--path /] [--secure] [--httpOnly] [ws-url]")
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(1)
 	}
-	cookie := webkit.Cookie{
-		Name:   args[0],
-		Value:  args[1],
-		Domain: args[2],
-		Path:   "/",
-	}
-	var wsArgs []string
-	for i := 3; i < len(args); i++ {
-		switch args[i] {
-		case "--path":
-			if i+1 < len(args) {
-				cookie.Path = args[i+1]
-				i++
-			}
-		case "--secure":
-			cookie.Secure = true
-		case "--httpOnly":
-			cookie.HTTPOnly = true
-		default:
-			wsArgs = append(wsArgs, args[i])
-		}
+	cookie, wsArgs, err := parseSetCookieArgs(args, time.Now())
+	if err != nil {
+		usageError(usage, err)
 	}
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
@@ -44,10 +29,82 @@ func cmdSetCookie(ctx context.Context, args []string) {
 	}
 	defer func() { _ = client.Close() }()
 
-	if err := tools.SetCookie(ctx, client, cookie); err != nil {
+	stored, err := tools.SetCookieVerified(ctx, client, cookie)
+	if err != nil {
 		fatal(err)
 	}
-	fmt.Printf("Cookie %s set\n", cookie.Name)
+	redacted := *stored
+	redacted.Value = tools.RedactCookieValue(stored.Value)
+	fmt.Printf("Cookie %s set and verified: %s\n", cookie.Name, formatCookie(redacted))
+}
+
+// parseSetCookieArgs parses "<name> <value> <domain> [options] [ws-url]".
+// now anchors relative --expires values.
+func parseSetCookieArgs(args []string, now time.Time) (webkit.Cookie, []string, error) {
+	cookie := webkit.Cookie{
+		Name:     args[0],
+		Value:    args[1],
+		Domain:   args[2],
+		Path:     "/",
+		SameSite: tools.DefaultSameSite,
+	}
+	var wsArgs []string
+	for i := 3; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--path", "--same-site", "--sameSite", "--expires":
+			if i+1 >= len(args) {
+				return cookie, nil, fmt.Errorf("%s needs a value", a)
+			}
+			value := args[i+1]
+			i++
+			switch a {
+			case "--path":
+				cookie.Path = value
+			case "--expires":
+				expires, err := parseCookieExpiry(value, now)
+				if err != nil {
+					return cookie, nil, err
+				}
+				cookie.Expires = float64(expires.UnixMilli())
+				cookie.Session = false
+			default:
+				sameSite, err := tools.NormalizeSameSite(value)
+				if err != nil {
+					return cookie, nil, err
+				}
+				cookie.SameSite = sameSite
+			}
+		case "--secure":
+			cookie.Secure = true
+		case "--http-only", "--httpOnly":
+			cookie.HTTPOnly = true
+		default:
+			if strings.HasPrefix(a, "-") {
+				return cookie, nil, fmt.Errorf("unknown option %s", a)
+			}
+			wsArgs = append(wsArgs, a)
+		}
+	}
+	if cookie.Expires == 0 {
+		cookie.Session = true
+	}
+	return cookie, wsArgs, nil
+}
+
+// parseCookieExpiry accepts Unix seconds, an RFC 3339 time, or a duration
+// from now (24h).
+func parseCookieExpiry(v string, now time.Time) (time.Time, error) {
+	if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return time.Unix(secs, 0), nil
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, nil
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return now.Add(d), nil
+	}
+	return time.Time{}, fmt.Errorf("invalid --expires %q: use Unix seconds, RFC 3339 (2026-12-31T00:00:00Z) or a duration from now (24h)", v)
 }
 
 func cmdDeleteCookie(ctx context.Context, args []string) {

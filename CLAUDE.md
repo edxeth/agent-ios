@@ -47,7 +47,7 @@ iwdp → Client
 - The outer `sendMessageToTarget` gets an empty ack `{"result":{},"id":N}` — this is ignored
 - The inner command has its own ID used for response matching (dual-ID routing)
 - `webkit.Client` handles this transparently: it waits up to 100ms for `Target.targetCreated` on connect; if received, all `Send()` calls auto-wrap in Target routing
-- Mock test servers don't send `Target.targetCreated`, so the client falls back to direct mode (no wrapping)
+- Mock test servers don't send `Target.targetCreated` by default, so the client falls back to direct mode (no wrapping). `MockServer.EnableTargetRouting(id)` makes the mock behave like iwdp for tests of Target routing.
 
 ### Domain Enable/Disable Through Target Routing
 
@@ -55,8 +55,16 @@ Some `<Domain>.enable` methods work through iwdp Target routing (e.g., `Debugger
 
 ### Known Limitations
 
-- `CSS.enable`, `CSS.getAllStyleSheets`, `CSS.getStyleSheetText` hang through iwdp Target routing. The command is sent but no response comes back, and the hang corrupts the connection pipeline (all subsequent commands on the same connection will also hang). The tool implementations detect Target routing and return an error immediately instead.
-- `Page.snapshotRect` requires explicit pixel dimensions — compute them first via `Runtime.evaluate` (see `TakeScreenshot` in page.go).
+- `CSS.enable`, `CSS.getAllStyleSheets`, `CSS.getStyleSheetText` hang through iwdp Target routing. The command is sent but no response comes back, and the hang corrupts the connection pipeline (all subsequent commands on the same connection will also hang). The tool implementations detect Target routing and return an error immediately instead, and `webkit.Client.Send` refuses these three methods when Target-routed (`ErrHangsThroughTarget`).
+- `Page.snapshotRect` requires explicit pixel dimensions — compute them first via `Runtime.evaluate` (see `CaptureScreenshot` in page.go). `coordinateSystem` is `Viewport` (default screenshot) or `Page` (full page); element screenshots use `Page.snapshotNode`.
+- WebKit's `Runtime.evaluate` has no `awaitPromise` parameter (iOS 16.7 and current WebKit). `EvaluateScriptWithOptions` evaluates by reference and calls `Runtime.awaitPromise` on a returned Promise. A thrown value comes back as `result` with `wasThrown: true` (no `exceptionDetails`); the stack is read from the thrown object.
+- `Page.Cookie.expires` is in milliseconds since the Unix epoch. `sameSite` must be `None`, `Lax` or `Strict`; an empty value is rejected, so `tools.SetCookie` defaults it to `Lax`. A session cookie is sent with `session: true` and no `expires` key: iOS 16.7 WebKit keeps any `expires`, and 0 becomes an expiry at the Unix epoch. `session` is always sent, because iOS 16.7 reads it without a check.
+
+### Deadlines
+
+- `webkit.Client.Send` applies `DefaultSendTimeout` (30 s) when the context has no deadline, and `NewClient` uses a 5 s WebSocket handshake timeout (`DialTimeout`).
+- Every `iwdp-cli` command runs under a deadline: 30 s, `--timeout <duration>` or `IWDP_TIMEOUT`. Recording commands add their `-d` duration; `heap-snapshot` defaults to 5 min; `console`/`network --follow` bound only the connect and enable steps. A deadline error exits 124 and names the command, page, elapsed time and likely causes; a watchdog ends commands that ignore the context.
+- `iwdp-cli <command> --help` (or `-h`) prints usage and exits before any connection. Add every new command to both `commands` (main.go) and `helpSections` (usage.go); `TestEveryCommandHasHelp` checks this.
 - Only **one WebSocket debugger connection per page** — simulator tests use a `sync.Once` shared connection pattern.
 - iwdp sends error `data` as a JSON array `[{"code":...,"message":...}]` — `ErrorData.Data` is `json.RawMessage` to handle this.
 
@@ -70,7 +78,7 @@ Two binaries, one shared `internal/` package tree:
 ### Package Layout
 
 - `internal/webkit/` — WebKit Inspector Protocol client
-  - `client.go` — WebSocket connection with Target-based message routing for iwdp, concurrent-safe writes (`writeMu`), dual-ID request/response routing, event dispatch
+  - `client.go` — WebSocket connection with Target-based message routing for iwdp, concurrent-safe writes (`writeSem`), dual-ID request/response routing, event dispatch
   - `types.go` — Protocol type definitions for all domains (DOM, CSS, Network, Runtime, Debugger, etc.)
   - `domains.go` — Domain enable/disable helpers
   - `testutil/mock.go` — Mock WebSocket server for unit tests
@@ -87,11 +95,12 @@ Two binaries, one shared `internal/` package tree:
 
 - All WebKit protocol communication goes through `webkit.Client`
 - Tools return structured results; formatting is done by the caller (MCP or CLI)
-- Unit tests use mock WebSocket server from `internal/webkit/testutil/`
+- Unit tests use mock WebSocket server from `internal/webkit/testutil/` (`NeverRespond(method)` simulates a stalled page; `ReceivedMethods()` and `ConnectionCount()` show what a command sent)
+- CLI behavior tests in `cmd/iwdp-cli/cli_w0_test.go` re-run the test binary as `iwdp-cli` (`runCLI`) to check exit codes, output and written files
 - E2E tests in `e2e/` cover CLI binary smoke tests, MCP server JSON-RPC, and simulator-based tool tests (`-tags=simulator`) that test ALL tools against real Safari via iOS Simulator + iwdp
 - Error messages should be actionable (tell the user what to do)
 - Network/Console/Timeline use collector patterns: `Start()` registers event handlers, `Get*()` returns collected data
-- gorilla/websocket is not concurrent-write-safe — `Client.writeMu` mutex protects `conn.WriteMessage`
+- gorilla/websocket is not concurrent-write-safe — the one-token channel `Client.writeSem` protects `conn.WriteMessage`; `Send` stops waiting for it when its context ends
 - E2E simulator tests share a single WebSocket connection via `sync.Once` (`getSimClient` in `e2e/sim_helpers_test.go`) — never create multiple connections to the same page
 - Use `simOrigin()` helper to get the page's actual origin for storage tests — never hardcode origins
 - Almost never use `t.Skipf`/`t.Skip`. Use `t.Fatalf`/`t.Fatal` instead. The env-var check in `getSimClient` is the only legitimate `t.Skip` in e2e tests.

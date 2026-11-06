@@ -230,7 +230,7 @@ type Cookie struct {
 	Value    string  `json:"value"`
 	Domain   string  `json:"domain"`
 	Path     string  `json:"path"`
-	Expires  float64 `json:"expires"`
+	Expires  float64 `json:"expires"` // milliseconds since the Unix epoch; 0 for session cookies
 	HTTPOnly bool    `json:"httpOnly"`
 	Secure   bool    `json:"secure"`
 	Session  bool    `json:"session"`

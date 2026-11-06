@@ -1,431 +1,212 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"image/png"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
-func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
-
-	ctx := context.Background()
-	cmd := os.Args[1]
-	args := os.Args[2:]
-
-	switch cmd {
+// commands maps each command name to its handler. Every name has a help
+// entry in helpSections (pinned by TestEveryCommandHasHelp).
+var commands = map[string]func(context.Context, []string){
 	// Core
-	case "devices":
-		cmdDevices(ctx)
-	case "pages":
-		cmdPages(ctx, args)
-	case "status":
-		cmdStatus(ctx)
-	case "restart-iwdp":
-		cmdRestartIWDP(ctx)
-	case "eval":
-		cmdEval(ctx, args)
-	case "navigate":
-		cmdNavigate(ctx, args)
-	case "reload":
-		cmdReload(ctx, args)
-	case "screenshot":
-		cmdScreenshot(ctx, args)
-	case "snapshot-node":
-		cmdSnapshotNode(ctx, args)
-	case "cookies":
-		cmdCookies(ctx, args)
-	case "dom":
-		cmdDOM(ctx, args)
-	case "console":
-		cmdConsole(ctx, args)
-	case "network":
-		cmdNetwork(ctx, args)
+	"devices":       func(ctx context.Context, _ []string) { cmdDevices(ctx) },
+	"pages":         cmdPages,
+	"status":        func(ctx context.Context, _ []string) { cmdStatus(ctx) },
+	"restart-iwdp":  func(ctx context.Context, _ []string) { cmdRestartIWDP(ctx) },
+	"eval":          cmdEval,
+	"navigate":      cmdNavigate,
+	"reload":        cmdReload,
+	"screenshot":    cmdScreenshot,
+	"snapshot-node": cmdSnapshotNode,
+	"cookies":       cmdCookies,
+	"dom":           cmdDOM,
+	"console":       cmdConsole,
+	"network":       cmdNetwork,
 
 	// Runtime
-	case "call-function":
-		cmdCallFunction(ctx, args)
-	case "get-properties":
-		cmdGetProperties(ctx, args)
+	"call-function":  cmdCallFunction,
+	"get-properties": cmdGetProperties,
 
 	// DOM
-	case "query-selector":
-		cmdQuerySelector(ctx, args)
-	case "query-selector-all":
-		cmdQuerySelectorAll(ctx, args)
-	case "get-outer-html":
-		cmdGetOuterHTML(ctx, args)
-	case "get-attributes":
-		cmdGetAttributes(ctx, args)
-	case "get-event-listeners":
-		cmdGetEventListeners(ctx, args)
-	case "highlight-node":
-		cmdHighlightNode(ctx, args)
-	case "hide-highlight":
-		cmdHideHighlight(ctx, args)
+	"query-selector":      cmdQuerySelector,
+	"query-selector-all":  cmdQuerySelectorAll,
+	"get-outer-html":      cmdGetOuterHTML,
+	"get-attributes":      cmdGetAttributes,
+	"get-event-listeners": cmdGetEventListeners,
+	"highlight-node":      cmdHighlightNode,
+	"hide-highlight":      cmdHideHighlight,
 
 	// CSS
-	case "get-matched-styles":
-		cmdGetMatchedStyles(ctx, args)
-	case "get-computed-style":
-		cmdGetComputedStyle(ctx, args)
-	case "get-inline-styles":
-		cmdGetInlineStyles(ctx, args)
-	case "set-style-text":
-		cmdSetStyleText(ctx, args)
-	case "get-all-stylesheets":
-		cmdGetAllStylesheets(ctx, args)
-	case "get-stylesheet-text":
-		cmdGetStylesheetText(ctx, args)
-	case "force-pseudo-state":
-		cmdForcePseudoState(ctx, args)
+	"get-matched-styles":  cmdGetMatchedStyles,
+	"get-computed-style":  cmdGetComputedStyle,
+	"get-inline-styles":   cmdGetInlineStyles,
+	"set-style-text":      cmdSetStyleText,
+	"get-all-stylesheets": cmdGetAllStylesheets,
+	"get-stylesheet-text": cmdGetStylesheetText,
+	"force-pseudo-state":  cmdForcePseudoState,
 
 	// Interaction
-	case "click":
-		cmdClick(ctx, args)
-	case "fill":
-		cmdFill(ctx, args)
-	case "type-text":
-		cmdTypeText(ctx, args)
+	"click":     cmdClick,
+	"fill":      cmdFill,
+	"type-text": cmdTypeText,
 
 	// Storage
-	case "set-cookie":
-		cmdSetCookie(ctx, args)
-	case "delete-cookie":
-		cmdDeleteCookie(ctx, args)
-	case "get-local-storage":
-		cmdGetLocalStorage(ctx, args)
-	case "set-local-storage-item":
-		cmdSetLocalStorageItem(ctx, args)
-	case "remove-local-storage-item":
-		cmdRemoveLocalStorageItem(ctx, args)
-	case "clear-local-storage":
-		cmdClearLocalStorage(ctx, args)
-	case "get-session-storage":
-		cmdGetSessionStorage(ctx, args)
-	case "set-session-storage-item":
-		cmdSetSessionStorageItem(ctx, args)
-	case "remove-session-storage-item":
-		cmdRemoveSessionStorageItem(ctx, args)
-	case "clear-session-storage":
-		cmdClearSessionStorage(ctx, args)
-	case "list-indexed-databases":
-		cmdListIndexedDatabases(ctx, args)
-	case "get-indexed-db-data":
-		cmdGetIndexedDBData(ctx, args)
-	case "clear-indexed-db-store":
-		cmdClearIndexedDBStore(ctx, args)
+	"set-cookie":                  cmdSetCookie,
+	"delete-cookie":               cmdDeleteCookie,
+	"get-local-storage":           cmdGetLocalStorage,
+	"set-local-storage-item":      cmdSetLocalStorageItem,
+	"remove-local-storage-item":   cmdRemoveLocalStorageItem,
+	"clear-local-storage":         cmdClearLocalStorage,
+	"get-session-storage":         cmdGetSessionStorage,
+	"set-session-storage-item":    cmdSetSessionStorageItem,
+	"remove-session-storage-item": cmdRemoveSessionStorageItem,
+	"clear-session-storage":       cmdClearSessionStorage,
+	"list-indexed-databases":      cmdListIndexedDatabases,
+	"get-indexed-db-data":         cmdGetIndexedDBData,
+	"clear-indexed-db-store":      cmdClearIndexedDBStore,
 
 	// Network (extended)
-	case "get-response-body":
-		cmdGetResponseBody(ctx, args)
-	case "set-extra-headers":
-		cmdSetExtraHeaders(ctx, args)
-	case "set-request-interception":
-		cmdSetRequestInterception(ctx, args)
-	case "intercept-continue":
-		cmdInterceptContinue(ctx, args)
-	case "intercept-respond":
-		cmdInterceptWithResponse(ctx, args)
-	case "set-network-conditions":
-		cmdSetEmulatedConditions(ctx, args)
-	case "disable-cache":
-		cmdSetResourceCachingDisabled(ctx, args)
+	"get-response-body":        cmdGetResponseBody,
+	"set-extra-headers":        cmdSetExtraHeaders,
+	"set-request-interception": cmdSetRequestInterception,
+	"intercept-continue":       cmdInterceptContinue,
+	"intercept-respond":        cmdInterceptWithResponse,
+	"set-network-conditions":   cmdSetEmulatedConditions,
+	"disable-cache":            cmdSetResourceCachingDisabled,
 
 	// Console (extended)
-	case "console-messages":
-		cmdConsoleMessages(ctx, args)
-	case "clear-console":
-		cmdClearConsole(ctx, args)
-	case "set-log-level":
-		cmdSetLogLevel(ctx, args)
+	"console-messages": cmdConsoleMessages,
+	"clear-console":    cmdClearConsole,
+	"set-log-level":    cmdSetLogLevel,
 
 	// Debugger
-	case "debugger-enable":
-		cmdDebuggerEnable(ctx, args)
-	case "debugger-disable":
-		cmdDebuggerDisable(ctx, args)
-	case "set-breakpoint":
-		cmdSetBreakpoint(ctx, args)
-	case "remove-breakpoint":
-		cmdRemoveBreakpoint(ctx, args)
-	case "pause":
-		cmdPause(ctx, args)
-	case "resume":
-		cmdResume(ctx, args)
-	case "step-over":
-		cmdStepOver(ctx, args)
-	case "step-into":
-		cmdStepInto(ctx, args)
-	case "step-out":
-		cmdStepOut(ctx, args)
-	case "get-script-source":
-		cmdGetScriptSource(ctx, args)
-	case "search-in-content":
-		cmdSearchInContent(ctx, args)
-	case "eval-on-frame":
-		cmdEvalOnFrame(ctx, args)
-	case "set-pause-on-exceptions":
-		cmdSetPauseOnExceptions(ctx, args)
+	"debugger-enable":         cmdDebuggerEnable,
+	"debugger-disable":        cmdDebuggerDisable,
+	"set-breakpoint":          cmdSetBreakpoint,
+	"remove-breakpoint":       cmdRemoveBreakpoint,
+	"pause":                   cmdPause,
+	"resume":                  cmdResume,
+	"step-over":               cmdStepOver,
+	"step-into":               cmdStepInto,
+	"step-out":                cmdStepOut,
+	"get-script-source":       cmdGetScriptSource,
+	"search-in-content":       cmdSearchInContent,
+	"eval-on-frame":           cmdEvalOnFrame,
+	"set-pause-on-exceptions": cmdSetPauseOnExceptions,
 
 	// DOMDebugger
-	case "set-dom-breakpoint":
-		cmdSetDOMBreakpoint(ctx, args)
-	case "remove-dom-breakpoint":
-		cmdRemoveDOMBreakpoint(ctx, args)
-	case "set-event-breakpoint":
-		cmdSetEventBreakpoint(ctx, args)
-	case "remove-event-breakpoint":
-		cmdRemoveEventBreakpoint(ctx, args)
-	case "set-url-breakpoint":
-		cmdSetURLBreakpoint(ctx, args)
-	case "remove-url-breakpoint":
-		cmdRemoveURLBreakpoint(ctx, args)
+	"set-dom-breakpoint":      cmdSetDOMBreakpoint,
+	"remove-dom-breakpoint":   cmdRemoveDOMBreakpoint,
+	"set-event-breakpoint":    cmdSetEventBreakpoint,
+	"remove-event-breakpoint": cmdRemoveEventBreakpoint,
+	"set-url-breakpoint":      cmdSetURLBreakpoint,
+	"remove-url-breakpoint":   cmdRemoveURLBreakpoint,
 
 	// Performance & Profiling
-	case "timeline-record":
-		cmdTimelineRecord(ctx, args)
-	case "memory-track":
-		cmdMemoryTrack(ctx, args)
-	case "heap-snapshot":
-		cmdHeapSnapshot(ctx, args)
-	case "heap-track":
-		cmdHeapTrack(ctx, args)
-	case "heap-gc":
-		cmdHeapGC(ctx, args)
-	case "cpu-profile":
-		cmdCPUProfile(ctx, args)
-	case "script-profile":
-		cmdScriptProfile(ctx, args)
+	"timeline-record": cmdTimelineRecord,
+	"memory-track":    cmdMemoryTrack,
+	"heap-snapshot":   cmdHeapSnapshot,
+	"heap-track":      cmdHeapTrack,
+	"heap-gc":         cmdHeapGC,
+	"cpu-profile":     cmdCPUProfile,
+	"script-profile":  cmdScriptProfile,
 
 	// Animation
-	case "animation-enable":
-		cmdAnimationEnable(ctx, args)
-	case "animation-disable":
-		cmdAnimationDisable(ctx, args)
-	case "animation-track":
-		cmdAnimationTrack(ctx, args)
-	case "get-animation-effect":
-		cmdGetAnimationEffect(ctx, args)
-	case "resolve-animation":
-		cmdResolveAnimation(ctx, args)
+	"animation-enable":     cmdAnimationEnable,
+	"animation-disable":    cmdAnimationDisable,
+	"animation-track":      cmdAnimationTrack,
+	"get-animation-effect": cmdGetAnimationEffect,
+	"resolve-animation":    cmdResolveAnimation,
 
 	// Canvas
-	case "canvas-enable":
-		cmdCanvasEnable(ctx, args)
-	case "canvas-disable":
-		cmdCanvasDisable(ctx, args)
-	case "get-canvas-content":
-		cmdGetCanvasContent(ctx, args)
-	case "start-canvas-recording":
-		cmdStartCanvasRecording(ctx, args)
-	case "stop-canvas-recording":
-		cmdStopCanvasRecording(ctx, args)
-	case "get-shader-source":
-		cmdGetShaderSource(ctx, args)
+	"canvas-enable":          cmdCanvasEnable,
+	"canvas-disable":         cmdCanvasDisable,
+	"get-canvas-content":     cmdGetCanvasContent,
+	"start-canvas-recording": cmdStartCanvasRecording,
+	"stop-canvas-recording":  cmdStopCanvasRecording,
+	"get-shader-source":      cmdGetShaderSource,
 
 	// LayerTree
-	case "get-layer-tree":
-		cmdGetLayerTree(ctx, args)
-	case "get-compositing-reasons":
-		cmdGetCompositingReasons(ctx, args)
+	"get-layer-tree":          cmdGetLayerTree,
+	"get-compositing-reasons": cmdGetCompositingReasons,
 
 	// Workers
-	case "worker-enable":
-		cmdWorkerEnable(ctx, args)
-	case "worker-disable":
-		cmdWorkerDisable(ctx, args)
-	case "send-to-worker":
-		cmdSendToWorker(ctx, args)
-	case "get-service-worker-info":
-		cmdGetServiceWorkerInfo(ctx, args)
+	"worker-enable":           cmdWorkerEnable,
+	"worker-disable":          cmdWorkerDisable,
+	"send-to-worker":          cmdSendToWorker,
+	"get-service-worker-info": cmdGetServiceWorkerInfo,
 
 	// Audit & Security
-	case "run-audit":
-		cmdRunAudit(ctx, args)
-	case "get-certificate-info":
-		cmdGetCertificateInfo(ctx, args)
+	"run-audit":            cmdRunAudit,
+	"get-certificate-info": cmdGetCertificateInfo,
 
 	// Browser
-	case "browser-extensions-enable":
-		cmdBrowserExtensionsEnable(ctx, args)
-	case "browser-extensions-disable":
-		cmdBrowserExtensionsDisable(ctx, args)
-
-	case "help", "--help", "-h":
-		printUsage()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		printUsage()
-		os.Exit(1)
-	}
+	"browser-extensions-enable":  cmdBrowserExtensionsEnable,
+	"browser-extensions-disable": cmdBrowserExtensionsDisable,
 }
 
-func printUsage() {
-	fmt.Fprintf(os.Stderr, `iwdp-cli — iOS Safari debugging CLI
+func main() {
+	args, opts, err := parseGlobalOptions(os.Args[1:], os.Getenv(timeoutEnv))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if len(args) == 0 {
+		printUsage(os.Stderr)
+		os.Exit(1)
+	}
 
-Usage: iwdp-cli <command> [options]
+	name, cmdArgs := args[0], args[1:]
+	switch name {
+	case "help", "--help", "-h":
+		if len(cmdArgs) == 0 {
+			printUsage(os.Stdout)
+			return
+		}
+		if !printCommandHelp(os.Stdout, cmdArgs[0]) {
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmdArgs[0])
+			os.Exit(1)
+		}
+		return
+	}
 
-Core:
-  devices                          List connected iOS devices
-  pages [port]                     List open Safari tabs (default port: 9224)
-  status                           Check if ios_webkit_debug_proxy is running
-  restart-iwdp                     Restart ios_webkit_debug_proxy
-  eval <expr> [ws-url]             Evaluate JavaScript
-  navigate <url> [ws-url]          Navigate to URL
-  reload [--ignore-cache] [ws-url] Reload page
-  screenshot [-o file] [ws-url]    Take screenshot
-  snapshot-node <nodeId> [-o file]  Snapshot a DOM node
-  cookies [ws-url]                 Show all cookies (incl. httpOnly)
-  dom [selector] [ws-url]          Inspect DOM tree or element
-  console [ws-url]                 Stream console messages (Ctrl+C to stop)
-  network [ws-url]                 Stream network requests (Ctrl+C to stop)
+	run, ok := commands[name]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", name)
+		printUsage(os.Stderr)
+		os.Exit(1)
+	}
+	// Help must never connect to a page or write files.
+	if wantsHelp(cmdArgs) {
+		printCommandHelp(os.Stdout, name)
+		return
+	}
 
-Runtime:
-  call-function <objectId> <func> [ws-url]   Call function on object
-  get-properties <objectId> [ws-url]         Get object properties
-
-DOM:
-  query-selector <selector> [ws-url]         Find first matching element
-  query-selector-all <selector> [ws-url]     Find all matching elements
-  get-outer-html <nodeId> [ws-url]           Get element outer HTML
-  get-attributes <nodeId> [ws-url]           Get element attributes
-  get-event-listeners <nodeId> [ws-url]      Get event listeners
-  highlight-node <nodeId> [ws-url]           Highlight element in browser
-  hide-highlight [ws-url]                    Hide highlight overlay
-
-CSS:
-  get-matched-styles <nodeId> [ws-url]       Get matching CSS rules
-  get-computed-style <nodeId> [ws-url]       Get computed style
-  get-inline-styles <nodeId> [ws-url]        Get inline styles
-  set-style-text <styleId> <text> [ws-url]   Modify style declaration
-  get-all-stylesheets [ws-url]               List all stylesheets
-  get-stylesheet-text <id> [ws-url]          Get stylesheet source
-  force-pseudo-state <nodeId> <states>       Force :hover,:focus etc.
-
-Interaction:
-  click <selector> [ws-url]                  Click element
-  fill <selector> <value> [ws-url]           Fill input field
-  type-text <text> [ws-url]                  Type text into focused element
-
-Storage:
-  set-cookie <name> <val> <domain> [opts]    Set a cookie
-  delete-cookie <name> <url> [ws-url]        Delete a cookie
-  get-local-storage <origin> [ws-url]        Get localStorage items
-  set-local-storage-item <origin> <k> <v>    Set localStorage item
-  remove-local-storage-item <origin> <key>   Remove localStorage item
-  clear-local-storage <origin> [ws-url]      Clear all localStorage
-  get-session-storage <origin> [ws-url]      Get sessionStorage items
-  set-session-storage-item <origin> <k> <v>  Set sessionStorage item
-  remove-session-storage-item <origin> <key> Remove sessionStorage item
-  clear-session-storage <origin> [ws-url]    Clear all sessionStorage
-  list-indexed-databases <origin> [ws-url]   List IndexedDB databases
-  get-indexed-db-data <origin> <db> <store>  Query IndexedDB store
-  clear-indexed-db-store <origin> <db> <store> Clear IndexedDB store
-
-Network:
-  get-response-body <requestId> [ws-url]     Get response body
-  set-extra-headers <json> [ws-url]          Set custom HTTP headers
-  set-request-interception <true/false>      Enable/disable interception
-  intercept-continue <requestId> [opts]      Continue intercepted request
-  intercept-respond <id> <status> <body>     Respond to intercepted request
-  set-network-conditions <bytes/sec>         Throttle network
-  disable-cache <true/false> [ws-url]        Disable resource caching
-
-Console:
-  console-messages [-d secs] [ws-url]        Collect console messages
-  clear-console [ws-url]                     Clear console
-  set-log-level <source> <level> [ws-url]    Set logging level
-
-Debugger:
-  debugger-enable [ws-url]                   Enable debugger
-  debugger-disable [ws-url]                  Disable debugger
-  set-breakpoint <url> <line> [col] [opts]   Set breakpoint by URL
-  remove-breakpoint <id> [ws-url]            Remove breakpoint
-  pause [ws-url]                             Pause execution
-  resume [ws-url]                            Resume execution
-  step-over [ws-url]                         Step over
-  step-into [ws-url]                         Step into
-  step-out [ws-url]                          Step out
-  get-script-source <scriptId> [ws-url]      Get script source
-  search-in-content <scriptId> <query>       Search in script
-  eval-on-frame <frameId> <expr> [ws-url]    Evaluate on call frame
-  set-pause-on-exceptions <none|uncaught|all> Configure exception pausing
-
-DOMDebugger:
-  set-dom-breakpoint <nodeId> <type>         Break on DOM change
-  remove-dom-breakpoint <nodeId> <type>      Remove DOM breakpoint
-  set-event-breakpoint <event> [--type t]    Break on event
-  remove-event-breakpoint <event> [--type t] Remove event breakpoint
-  set-url-breakpoint <url> [--regex]         Break on URL request
-  remove-url-breakpoint <url> [ws-url]       Remove URL breakpoint
-
-Performance:
-  timeline-record [-d secs] [ws-url]         Record timeline events
-  memory-track [-d secs] [ws-url]            Track memory usage
-  heap-snapshot [ws-url]                     Take heap snapshot
-  heap-track [-d secs] [ws-url]              Track heap allocations
-  heap-gc [ws-url]                           Force garbage collection
-  cpu-profile [-d secs] [ws-url]             CPU profiling
-  script-profile [-d secs] [ws-url]          Script execution profiling
-
-Animation:
-  animation-enable [ws-url]                  Enable animation tracking
-  animation-disable [ws-url]                 Disable animation tracking
-  animation-track [-d secs] [ws-url]         Track animations
-  get-animation-effect <id> [ws-url]         Get animation effect
-  resolve-animation <id> [ws-url]            Resolve animation object
-
-Canvas:
-  canvas-enable [ws-url]                     Enable canvas tracking
-  canvas-disable [ws-url]                    Disable canvas tracking
-  get-canvas-content <canvasId> [ws-url]     Get canvas image
-  start-canvas-recording <id> [frames]       Start canvas recording
-  stop-canvas-recording <canvasId> [ws-url]  Stop canvas recording
-  get-shader-source <progId> <type>          Get WebGL shader source
-
-LayerTree:
-  get-layer-tree <nodeId> [ws-url]           Get compositing layers
-  get-compositing-reasons <layerId>          Get compositing reasons
-
-Workers:
-  worker-enable [ws-url]                     Enable worker tracking
-  worker-disable [ws-url]                    Disable worker tracking
-  send-to-worker <workerId> <msg> [ws-url]   Send message to worker
-  get-service-worker-info [ws-url]           Get service worker info
-
-Audit & Security:
-  run-audit <testJSON> [ws-url]              Run audit
-  get-certificate-info <requestId> [ws-url]  Get TLS certificate info
-
-Browser:
-  browser-extensions-enable [ws-url]         Enable browser extensions
-  browser-extensions-disable [ws-url]        Disable browser extensions
-
-Port assignment:
-  ios_webkit_debug_proxy listens on port 9221 for device listing.
-  Each connected device gets an incremented port starting at 9224:
-    Device 1 -> localhost:9224
-    Extra devices and the SIMULATOR ghost entry -> localhost:9225+
-
-The ws-url argument is the WebSocket URL from 'pages' output.
-If omitted, connects to the first available page across all devices.
-
-Environment:
-  IWDP_WS_URL    Default WebSocket URL to connect to
-  IWDP_PORT      Default device port (default: 9224)
-`)
+	budget, unlimited, err := commandBudget(name, cmdArgs, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	ctx, cancel := current.begin(name, opts.timeout, budget, unlimited)
+	defer cancel()
+	run(ctx, cmdArgs)
 }
 
 func getPort(args []string) int {
@@ -457,6 +238,7 @@ func getWSURL(args []string) string {
 func connectToPage(ctx context.Context, args []string) (*webkit.Client, error) {
 	wsURL := getWSURL(args)
 	if wsURL != "" {
+		current.setPage(wsURL)
 		return webkit.NewClient(ctx, wsURL)
 	}
 
@@ -480,6 +262,7 @@ func connectToPage(ctx context.Context, args []string) (*webkit.Client, error) {
 	for _, p := range pages {
 		if p.WebSocketDebuggerURL != "" {
 			fmt.Fprintf(os.Stderr, "Connecting to: %s (%s)\n", p.Title, p.URL)
+			current.setPage(fmt.Sprintf("%q %s (%s)", p.Title, p.URL, p.WebSocketDebuggerURL))
 			return webkit.NewClient(ctx, p.WebSocketDebuggerURL)
 		}
 	}
@@ -528,13 +311,20 @@ func cmdPages(ctx context.Context, args []string) {
 }
 
 func cmdEval(ctx context.Context, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: iwdp-cli eval <expression> [ws-url]")
+	awaitPromise := hasFlag(args, "--await")
+	var rest []string
+	for _, a := range args {
+		if a != "--await" {
+			rest = append(rest, a)
+		}
+	}
+	if len(rest) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: iwdp-cli eval [--await] <expression> [ws-url]")
 		os.Exit(1)
 	}
 
-	expr := args[0]
-	client, err := connectToPage(ctx, args[1:])
+	expr := rest[0]
+	client, err := connectToPage(ctx, rest[1:])
 	if err != nil {
 		fatal(err)
 	}
@@ -544,9 +334,9 @@ func cmdEval(ctx context.Context, args []string) {
 		}
 	}()
 
-	result, err := tools.EvaluateScript(ctx, client, expr, true)
+	result, err := tools.EvaluateScriptWithOptions(ctx, client, expr, tools.EvalOptions{ReturnByValue: true, AwaitPromise: awaitPromise})
 	if err != nil {
-		fatal(err)
+		fatal(err) // a *tools.JSException prints its message and stack
 	}
 
 	if result.Result.Value != nil {
@@ -590,16 +380,33 @@ func cmdNavigate(ctx context.Context, args []string) {
 }
 
 func cmdScreenshot(ctx context.Context, args []string) {
-	outputFile := "screenshot.png"
+	const usage = "Usage: iwdp-cli screenshot [--full-page | --selector <css>] [-o file] [ws-url]"
+	var opts tools.ScreenshotOptions
+	outputFile := ""
 	var wsArgs []string
-
 	for i := 0; i < len(args); i++ {
-		if args[i] == "-o" && i+1 < len(args) {
-			outputFile = args[i+1]
+		switch a := args[i]; a {
+		case "-o", "--output", "--selector":
+			if i+1 >= len(args) {
+				usageError(usage, fmt.Errorf("%s needs a value", a))
+			}
+			if a == "--selector" {
+				opts.Selector = args[i+1]
+			} else {
+				outputFile = args[i+1]
+			}
 			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
+		case "--full-page":
+			opts.FullPage = true
+		default:
+			if strings.HasPrefix(a, "-") {
+				usageError(usage, fmt.Errorf("unknown option %s", a))
+			}
+			wsArgs = append(wsArgs, a)
 		}
+	}
+	if opts.FullPage && opts.Selector != "" {
+		usageError(usage, errors.New("use either --full-page or --selector, not both"))
 	}
 
 	client, err := connectToPage(ctx, wsArgs)
@@ -612,30 +419,94 @@ func cmdScreenshot(ctx context.Context, args []string) {
 		}
 	}()
 
-	dataURL, err := tools.TakeScreenshot(ctx, client)
+	dataURL, err := tools.CaptureScreenshot(ctx, client, opts)
 	if err != nil {
 		fatal(err)
 	}
+	path, info, err := saveCapture(dataURL, outputFile, "iwdp-screenshot")
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("Screenshot saved to %s (%s)\n", path, info)
+}
 
-	// Strip data URL prefix to get raw base64
+// captureTimestamp names default capture files; milliseconds keep quick
+// successive captures apart.
+const captureTimestamp = "20060102-150405.000"
+
+// saveCapture decodes a PNG data URL and writes it to outputFile, or, when
+// outputFile is empty, to a new file $TMPDIR/<prefix>-<timestamp>.png. It
+// never writes into the current directory unless asked to. It returns the
+// path and a description of the pixel and byte size.
+func saveCapture(dataURL, outputFile, prefix string) (string, string, error) {
 	b64Data := dataURL
 	if idx := strings.Index(dataURL, ","); idx >= 0 {
 		b64Data = dataURL[idx+1:]
 	}
-
 	data, err := base64.StdEncoding.DecodeString(b64Data)
 	if err != nil {
-		fatal(fmt.Errorf("decoding screenshot: %w", err))
+		return "", "", fmt.Errorf("decoding capture: %w", err)
 	}
 
-	if err := os.WriteFile(outputFile, data, 0o644); err != nil {
-		fatal(err)
+	path := outputFile
+	if path != "" {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return "", "", err
+		}
+	} else {
+		path, err = writeNewTempFile(prefix, data)
+		if err != nil {
+			return "", "", err
+		}
 	}
-	fmt.Printf("Screenshot saved to %s (%d bytes)\n", outputFile, len(data))
+
+	size := fmt.Sprintf("%d bytes", len(data))
+	if cfg, err := png.DecodeConfig(bytes.NewReader(data)); err == nil {
+		size = fmt.Sprintf("%dx%d px, %s", cfg.Width, cfg.Height, size)
+	} else {
+		size = fmt.Sprintf("pixel size unknown: %v; %s", err, size)
+	}
+	return path, size, nil
+}
+
+// writeNewTempFile writes data to $TMPDIR/<prefix>-<timestamp>.png without
+// replacing an existing file. Captures can show secrets, so the file is
+// private to the user.
+func writeNewTempFile(prefix string, data []byte) (string, error) {
+	name := prefix + "-" + time.Now().Format(captureTimestamp)
+	path := filepath.Join(os.TempDir(), name+".png")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		f, err = os.CreateTemp(os.TempDir(), name+"-*.png")
+	}
+	if err != nil {
+		return "", fmt.Errorf("creating capture file: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return "", fmt.Errorf("writing %s: %w", f.Name(), err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("writing %s: %w", f.Name(), err)
+	}
+	return f.Name(), nil
 }
 
 func cmdCookies(ctx context.Context, args []string) {
-	client, err := connectToPage(ctx, args)
+	showValues := false
+	var wsArgs []string
+	for _, a := range args {
+		switch {
+		case a == "--show-values":
+			showValues = true
+		case strings.HasPrefix(a, "-"):
+			usageError("Usage: iwdp-cli cookies [--show-values] [ws-url]", fmt.Errorf("unknown option %s", a))
+		default:
+			wsArgs = append(wsArgs, a)
+		}
+	}
+
+	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
 		fatal(err)
 	}
@@ -654,20 +525,36 @@ func cmdCookies(ctx context.Context, args []string) {
 		fmt.Println("No cookies.")
 		return
 	}
+	if !showValues {
+		cookies = tools.RedactCookies(cookies)
+		fmt.Fprintln(os.Stderr, "Cookie values are redacted; pass --show-values to print them.")
+	}
 
 	for _, c := range cookies {
-		flags := ""
-		if c.HTTPOnly {
-			flags += " httpOnly"
-		}
-		if c.Secure {
-			flags += " secure"
-		}
-		if c.Session {
-			flags += " session"
-		}
-		fmt.Printf("%s=%s  domain=%s path=%s%s\n", c.Name, c.Value, c.Domain, c.Path, flags)
+		fmt.Println(formatCookie(c))
 	}
+}
+
+// formatCookie renders a cookie as one line: name=value and its attributes.
+func formatCookie(c webkit.Cookie) string {
+	flags := ""
+	if c.HTTPOnly {
+		flags += " httpOnly"
+	}
+	if c.Secure {
+		flags += " secure"
+	}
+	if c.Session {
+		flags += " session"
+	}
+	line := fmt.Sprintf("%s=%s  domain=%s path=%s", c.Name, c.Value, c.Domain, c.Path)
+	if c.SameSite != "" {
+		line += " sameSite=" + c.SameSite
+	}
+	if !c.Session && c.Expires > 0 {
+		line += " expires=" + time.UnixMilli(int64(c.Expires)).UTC().Format(time.RFC3339)
+	}
+	return line + flags
 }
 
 func cmdDOM(ctx context.Context, args []string) {
@@ -711,18 +598,116 @@ func cmdDOM(ctx context.Context, args []string) {
 	}
 }
 
+// streamDisableTimeout bounds the Console.disable or Network.disable call at
+// the end of a stream; the page may be gone by then.
+const streamDisableTimeout = 5 * time.Second
+
+// streamCleanupAfterDeadline bounds the disable call when the command
+// deadline has already passed. It is shorter than watchdogGrace, so the
+// deadline error comes from fatal and not from the watchdog.
+const streamCleanupAfterDeadline = time.Second
+
+// streamOptions parses the flags of console and network.
+func streamOptions(command string, args []string) (duration time.Duration, follow bool, wsArgs []string) {
+	usage := fmt.Sprintf("Usage: iwdp-cli %s [-d 10s] [--follow] [ws-url]", command)
+	duration, rest, err := recordingDuration(command, args)
+	if err != nil {
+		usageError(usage, err)
+	}
+	for _, a := range rest {
+		switch {
+		case a == "--follow" || a == "-f":
+			follow = true
+		case strings.HasPrefix(a, "-"):
+			usageError(usage, fmt.Errorf("unknown option %s", a))
+		default:
+			wsArgs = append(wsArgs, a)
+		}
+	}
+	return duration, follow, wsArgs
+}
+
+// streamSetupContext bounds the connect and enable steps. A bounded stream
+// already runs under the command deadline; a --follow stream has none, so its
+// setup gets the --timeout value.
+func streamSetupContext(ctx context.Context, follow bool) (context.Context, context.CancelFunc) {
+	if !follow {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, current.setupTimeout())
+}
+
+// waitForStream blocks until the duration ends (unless follow), the user
+// interrupts, the connection closes or ctx ends. It returns the reason, and
+// an error when ctx ended the stream before the duration.
+func waitForStream(ctx context.Context, client *webkit.Client, duration time.Duration, follow bool) (string, error) {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+
+	var timeout <-chan time.Time
+	if !follow {
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
+		timeout = timer.C
+	}
+	select {
+	case <-timeout:
+		return "duration reached", nil
+	case <-sig:
+		return "interrupted", nil
+	case <-client.Done():
+		return "connection closed by the page or iwdp", nil
+	case <-ctx.Done():
+		return "deadline reached", fmt.Errorf("streaming ended before -d %s: %w", duration, ctx.Err())
+	}
+}
+
+// endStream disables the domain and closes the connection, so the page is
+// free for the next inspector session. The disable call ends at the command
+// deadline, or after streamCleanupAfterDeadline when that has passed. It
+// returns the disable error after printing it as a warning.
+func endStream(ctx context.Context, client *webkit.Client, disableMethod string) error {
+	disableCtx, cancel := context.WithTimeout(ctx, streamDisableTimeout)
+	if ctx.Err() != nil {
+		cancel()
+		disableCtx, cancel = context.WithTimeout(context.Background(), streamCleanupAfterDeadline)
+	}
+	defer cancel()
+	_, disableErr := client.Send(disableCtx, disableMethod, nil)
+	if disableErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s: %v\n", disableMethod, disableErr)
+	}
+	if err := client.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: closing connection: %v\n", err)
+	}
+	return disableErr
+}
+
+// finishStream exits with the deadline error when the command deadline ended
+// the stream or its disable call. Other disable failures stay warnings: the
+// capture already happened.
+func finishStream(ctx context.Context, waitErr, disableErr error) {
+	if waitErr != nil {
+		fatal(waitErr)
+	}
+	if disableErr != nil && ctx.Err() != nil {
+		fatal(disableErr)
+	}
+}
+
 func cmdConsole(ctx context.Context, args []string) {
-	client, err := connectToPage(ctx, args)
+	duration, follow, wsArgs := streamOptions("console", args)
+	setupCtx, cancelSetup := streamSetupContext(ctx, follow)
+	defer cancelSetup()
+
+	client, err := connectToPage(setupCtx, wsArgs)
 	if err != nil {
 		fatal(err)
 	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing connection: %v\n", err)
-		}
-	}()
 
 	// Register a handler that prints console messages immediately as they arrive.
+	var count atomic.Int64
 	client.OnEvent("Console.messageAdded", func(method string, params json.RawMessage) {
 		var envelope struct {
 			Message struct {
@@ -736,6 +721,7 @@ func cmdConsole(ctx context.Context, args []string) {
 		if err := json.Unmarshal(params, &envelope); err != nil {
 			return
 		}
+		count.Add(1)
 		m := envelope.Message
 		loc := ""
 		if m.URL != "" {
@@ -744,26 +730,34 @@ func cmdConsole(ctx context.Context, args []string) {
 		fmt.Printf("[%s] %s%s\n", m.Level, m.Text, loc)
 	})
 
-	if _, err := client.Send(ctx, "Console.enable", nil); err != nil {
+	if _, err := client.Send(setupCtx, "Console.enable", nil); err != nil {
 		fatal(err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Listening for console messages (Ctrl+C to stop)...")
-	<-client.Done()
+	start := time.Now()
+	if follow {
+		fmt.Fprintln(os.Stderr, "Listening for console messages (Ctrl+C to stop)...")
+	} else {
+		fmt.Fprintf(os.Stderr, "Listening for console messages for %s (--follow streams until Ctrl+C)...\n", duration)
+	}
+	reason, waitErr := waitForStream(ctx, client, duration, follow)
+	disableErr := endStream(ctx, client, "Console.disable")
+	fmt.Fprintf(os.Stderr, "Captured %d console messages in %s (%s).\n", count.Load(), time.Since(start).Round(100*time.Millisecond), reason)
+	finishStream(ctx, waitErr, disableErr)
 }
 
 func cmdNetwork(ctx context.Context, args []string) {
-	client, err := connectToPage(ctx, args)
+	duration, follow, wsArgs := streamOptions("network", args)
+	setupCtx, cancelSetup := streamSetupContext(ctx, follow)
+	defer cancelSetup()
+
+	client, err := connectToPage(setupCtx, wsArgs)
 	if err != nil {
 		fatal(err)
 	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing connection: %v\n", err)
-		}
-	}()
 
 	// Register handlers that print network events immediately as they arrive.
+	var requests, responses, failures atomic.Int64
 	client.OnEvent("Network.requestWillBeSent", func(method string, params json.RawMessage) {
 		var evt struct {
 			Request struct {
@@ -774,6 +768,7 @@ func cmdNetwork(ctx context.Context, args []string) {
 		if err := json.Unmarshal(params, &evt); err != nil {
 			return
 		}
+		requests.Add(1)
 		fmt.Printf("→ %s %s\n", evt.Request.Method, evt.Request.URL)
 	})
 
@@ -789,6 +784,7 @@ func cmdNetwork(ctx context.Context, args []string) {
 		if err := json.Unmarshal(params, &evt); err != nil {
 			return
 		}
+		responses.Add(1)
 		fmt.Printf("← %d %s %s (%s)\n", evt.Response.Status, evt.Response.StatusText, evt.Response.URL, evt.Response.MIMEType)
 	})
 
@@ -801,6 +797,7 @@ func cmdNetwork(ctx context.Context, args []string) {
 		if err := json.Unmarshal(params, &evt); err != nil {
 			return
 		}
+		failures.Add(1)
 		if evt.Canceled {
 			fmt.Printf("✕ %s (canceled)\n", evt.RequestID)
 		} else {
@@ -808,15 +805,36 @@ func cmdNetwork(ctx context.Context, args []string) {
 		}
 	})
 
-	if _, err := client.Send(ctx, "Network.enable", nil); err != nil {
+	if _, err := client.Send(setupCtx, "Network.enable", nil); err != nil {
 		fatal(err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Monitoring network requests (Ctrl+C to stop)...")
-	<-client.Done()
+	start := time.Now()
+	if follow {
+		fmt.Fprintln(os.Stderr, "Monitoring network requests (Ctrl+C to stop)...")
+	} else {
+		fmt.Fprintf(os.Stderr, "Monitoring network requests for %s (--follow streams until Ctrl+C)...\n", duration)
+	}
+	reason, waitErr := waitForStream(ctx, client, duration, follow)
+	disableErr := endStream(ctx, client, "Network.disable")
+	fmt.Fprintf(os.Stderr, "Captured %d requests, %d responses, %d failures in %s (%s).\n",
+		requests.Load(), responses.Load(), failures.Load(), time.Since(start).Round(100*time.Millisecond), reason)
+	finishStream(ctx, waitErr, disableErr)
 }
 
+// usageError reports a bad command line and exits 1 before any connection.
+func usageError(usage string, err error) {
+	fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, usage)
+	os.Exit(1)
+}
+
+// fatal reports err and exits. A deadline error exits exitTimeout with the
+// command, page, elapsed time and likely causes.
 func fatal(err error) {
+	if current.deadlineHit(err) {
+		fmt.Fprintln(os.Stderr, current.timeoutMessage(err))
+		os.Exit(exitTimeout)
+	}
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	os.Exit(1)
 }

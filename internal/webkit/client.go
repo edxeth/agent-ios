@@ -3,7 +3,9 @@ package webkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,12 +20,15 @@ type EventHandler func(method string, params json.RawMessage)
 // When connected through ios-webkit-debug-proxy, messages are automatically
 // wrapped/unwrapped using Target.sendMessageToTarget routing.
 type Client struct {
-	conn    *websocket.Conn
-	url     string
-	nextID  atomic.Int64
-	writeMu sync.Mutex // protects conn.WriteMessage (gorilla/websocket is not concurrent-write-safe)
-	mu      sync.Mutex
-	pending map[int64]chan *Message
+	conn   *websocket.Conn
+	url    string
+	nextID atomic.Int64
+	// writeSem holds one token while a goroutine writes to conn
+	// (gorilla/websocket is not concurrent-write-safe). It is a channel, not a
+	// mutex, so Send can stop waiting for it when its context ends.
+	writeSem chan struct{}
+	mu       sync.Mutex
+	pending  map[int64]chan *Message
 
 	eventMu        sync.RWMutex
 	handlers       map[string][]EventHandler
@@ -45,11 +50,38 @@ type Client struct {
 // is enough for local iwdp connections. Increase for slower environments (CI).
 var TargetWaitTimeout = 100 * time.Millisecond
 
+// DefaultSendTimeout bounds one Send call when its context has no deadline.
+// A page that is stalled, or held by another inspector session, never answers;
+// without a bound the caller would wait forever.
+var DefaultSendTimeout = 30 * time.Second
+
+// DialTimeout bounds the WebSocket handshake in NewClient. iwdp runs on the
+// local machine, so a healthy handshake takes milliseconds; gorilla's default
+// of 45 s only delays the error.
+var DialTimeout = 5 * time.Second
+
+// ErrHangsThroughTarget is returned by Send for methods that never get a
+// response through ios-webkit-debug-proxy Target routing. Sending them would
+// also stall every later command on the same connection.
+var ErrHangsThroughTarget = errors.New("method hangs through ios-webkit-debug-proxy Target routing and would stall the connection, so it was not sent")
+
+// hangsThroughTarget lists the methods that get no response through iwdp
+// Target routing (see CLAUDE.md, "Known Limitations").
+var hangsThroughTarget = map[string]bool{
+	"CSS.enable":            true,
+	"CSS.getAllStyleSheets": true,
+	"CSS.getStyleSheetText": true,
+}
+
 // NewClient creates a new WebKit Inspector Protocol client connected to the given WebSocket URL.
 // If the endpoint uses Target-based routing (ios-webkit-debug-proxy), the client
 // automatically wraps/unwraps messages via Target.sendMessageToTarget.
 func NewClient(ctx context.Context, wsURL string) (*Client, error) {
-	return NewClientWithDialer(ctx, wsURL, websocket.DefaultDialer)
+	dialer := &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment, // same as websocket.DefaultDialer
+		HandshakeTimeout: DialTimeout,
+	}
+	return NewClientWithDialer(ctx, wsURL, dialer)
 }
 
 // NewClientWithDialer creates a client with a custom WebSocket dialer.
@@ -57,6 +89,7 @@ func NewClientWithDialer(ctx context.Context, wsURL string, dialer *websocket.Di
 	c := &Client{
 		url:         wsURL,
 		pending:     make(map[int64]chan *Message),
+		writeSem:    make(chan struct{}, 1),
 		handlers:    make(map[string][]EventHandler),
 		done:        make(chan struct{}),
 		targetReady: make(chan struct{}),
@@ -118,6 +151,7 @@ func (c *Client) IsTargetRouted() bool {
 
 // Send sends a method call and waits for the response.
 // If Target routing is active, the message is automatically wrapped.
+// When ctx has no deadline, Send waits at most DefaultSendTimeout.
 func (c *Client) Send(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
 	// Early check: if already closed, fail fast.
 	select {
@@ -125,6 +159,14 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		return nil, fmt.Errorf("connection closed")
 	default:
 	}
+
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultSendTimeout)
+		defer cancel()
+	}
+	deadline, _ := ctx.Deadline()
+	start := time.Now()
 
 	innerID := c.nextID.Add(1)
 
@@ -148,6 +190,10 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 	c.mu.Lock()
 	tid := c.targetID
 	c.mu.Unlock()
+
+	if tid != "" && hangsThroughTarget[method] {
+		return nil, fmt.Errorf("%s: %w", method, ErrHangsThroughTarget)
+	}
 
 	var wireData []byte
 	if tid != "" {
@@ -188,16 +234,34 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		c.mu.Unlock()
 	}()
 
-	c.writeMu.Lock()
-	err := c.conn.WriteMessage(websocket.TextMessage, wireData)
-	c.writeMu.Unlock()
+	// Wait for the socket at most until ctx ends: another command's write may
+	// be stalled. The write deadline keeps a stalled socket from blocking this
+	// write past ctx.
+	select {
+	case c.writeSem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%s: not sent, another command was still writing after %s: %w", method, time.Since(start).Round(time.Millisecond), ctx.Err())
+	case <-c.done:
+		return nil, fmt.Errorf("connection closed")
+	}
+	// select picks at random among ready cases, so ctx can have ended while
+	// the token was free; never send a command whose caller has given up.
+	if err := ctx.Err(); err != nil {
+		<-c.writeSem
+		return nil, fmt.Errorf("%s: not sent after %s: %w", method, time.Since(start).Round(time.Millisecond), err)
+	}
+	err := c.conn.SetWriteDeadline(deadline)
+	if err == nil {
+		err = c.conn.WriteMessage(websocket.TextMessage, wireData)
+	}
+	<-c.writeSem
 	if err != nil {
-		return nil, fmt.Errorf("writing message: %w", err)
+		return nil, fmt.Errorf("%s: writing message: %w", method, err)
 	}
 
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("%s: no response after %s: %w", method, time.Since(start).Round(time.Millisecond), ctx.Err())
 	case <-c.done:
 		return nil, fmt.Errorf("connection closed")
 	case resp := <-ch:

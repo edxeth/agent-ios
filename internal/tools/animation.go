@@ -115,10 +115,7 @@ func (c *AnimationTrackingCollector) Stop(ctx context.Context, client *webkit.Cl
 
 	// Wait for trackingComplete event.
 	if ch != nil {
-		select {
-		case <-ch:
-		case <-ctx.Done():
-		}
+		waitForSignal(ctx, ch)
 	}
 
 	c.mu.Lock()

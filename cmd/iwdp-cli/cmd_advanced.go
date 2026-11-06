@@ -40,19 +40,7 @@ func cmdAnimationDisable(ctx context.Context, args []string) {
 }
 
 func cmdAnimationTrack(ctx context.Context, args []string) {
-	duration := 3 * time.Second
-	var wsArgs []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
-			secs, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				duration = time.Duration(secs) * time.Second
-			}
-			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
-		}
-	}
+	duration, wsArgs := recordingDurationOrExit("animation-track", args)
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {
 		fatal(err)

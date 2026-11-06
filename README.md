@@ -82,15 +82,30 @@ iwdp-cli devices
 # List Safari tabs on the first device (port 9224)
 iwdp-cli pages
 
-# Evaluate JavaScript
+# Evaluate JavaScript (exceptions print message and stack and exit 1)
 iwdp-cli eval "document.title"
+iwdp-cli eval --await "fetch('/api/me').then(r => r.status)"
 
-# Take a screenshot
-iwdp-cli screenshot -o page.png
+# Take a screenshot: viewport by default, or --full-page, or --selector <css>.
+# Without -o the PNG goes to $TMPDIR/iwdp-screenshot-<timestamp>.png.
+iwdp-cli screenshot
+iwdp-cli screenshot --selector '#checkout' -o checkout.png
 
-# Show all cookies (including httpOnly)
+# Show all cookies (including httpOnly); values are redacted unless --show-values
 iwdp-cli cookies
+
+# Set a cookie (SameSite defaults to Lax) and verify it by reading it back
+iwdp-cli set-cookie session abc123 example.com --same-site Lax --secure --http-only --expires 24h
+
+# Print console messages or network requests for 10s (-d 30s, or --follow to stream)
+iwdp-cli console
+iwdp-cli network -d 30s
+
+# Help for one command (never connects to a page)
+iwdp-cli screenshot --help
 ```
+
+Every command runs under a deadline: 30 s by default, set with `--timeout <duration>` (any position) or `IWDP_TIMEOUT`. Recording commands add their `-d` duration; `heap-snapshot` defaults to 5 min. On expiry the command exits 124 and prints the page, the elapsed time and the likely causes (another inspector session holds the page, the page is stalled or shows a dialog, the device is locked).
 
 ### MCP Server
 
@@ -347,8 +362,8 @@ Check if there are any web workers running
 | `list_pages` | List Safari tabs (HTTP GET :9222+) |
 | `select_page` | Connect to a specific tab |
 | `navigate` | Go to URL |
-| `take_screenshot` | Capture page as PNG |
-| `evaluate_script` | Run JavaScript |
+| `take_screenshot` | Capture the viewport (default), the full page (`full_page`) or one element (`selector`) as PNG |
+| `evaluate_script` | Run JavaScript (`await_promise` waits for a returned Promise; exceptions return message and stack) |
 | `get_document` | Get DOM tree |
 | `query_selector` | Find elements by CSS selector |
 
@@ -359,7 +374,7 @@ Check if there are any web workers running
 `network_enable`, `list_network_requests`, `get_response_body`, `set_request_interception`, `intercept_continue`, `intercept_with_response`, `set_emulated_conditions`, `set_resource_caching_disabled`.
 
 ### Storage
-`get_cookies` (httpOnly + secure), `set_cookie`, `delete_cookie`, `get_local_storage`, `get_session_storage`, `list_indexed_databases`, `get_indexed_db_data`.
+`get_cookies` (httpOnly + secure; values redacted unless `show_values`), `set_cookie` (SameSite defaults to Lax, `expires` in Unix seconds, verified by reading back), `delete_cookie`, `get_local_storage`, `get_session_storage`, `list_indexed_databases`, `get_indexed_db_data`.
 
 ### Debugging
 `debugger_enable`, `set_breakpoint`, `pause`, `resume`, `step_over`, `step_into`, `step_out`, `get_script_source`, `evaluate_on_call_frame`, `set_pause_on_exceptions`.

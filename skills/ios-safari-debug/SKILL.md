@@ -37,7 +37,7 @@ Each device entry from port 9221 includes a URL field (e.g., `localhost:9222`) i
    - `take_screenshot` — capture the page as a PNG file (returns path — use Read to view)
    - `get_document` / `query_selector` / `get_outer_html` — inspect the DOM
    - `click` / `fill` / `type_text` — interact with page elements
-   - `get_cookies` / `set_cookie` / `delete_cookie` — manage cookies (incl. httpOnly)
+   - `get_cookies` / `set_cookie` / `delete_cookie` — manage cookies (incl. httpOnly); `get_cookies` redacts values unless `show_values` is true
    - `get_local_storage` / `get_session_storage` — read web storage
    - `get_computed_style` / `get_matched_styles` — inspect CSS
    - `network_enable` / `list_network_requests` — monitor network traffic
@@ -102,17 +102,19 @@ The `ws-url` argument (WebSocket URL from `iwdp-cli pages`) is always optional a
 
 ```bash
 iwdp-cli devices                    # List connected iOS devices
-iwdp-cli pages [port]               # List Safari tabs (default port: 9222)
+iwdp-cli pages [port]               # List Safari tabs (default port: 9224)
 iwdp-cli status                     # Check if iwdp is running
-iwdp-cli eval "document.title"      # Evaluate JavaScript
+iwdp-cli eval [--await] "document.title"  # Evaluate JavaScript (--await settles a Promise)
 iwdp-cli navigate "https://..."     # Navigate to URL
 iwdp-cli reload [--ignore-cache]    # Reload page
-iwdp-cli screenshot [-o file.png]   # Take screenshot
-iwdp-cli cookies                    # Show all cookies (incl. httpOnly)
+iwdp-cli screenshot [--full-page | --selector css] [-o file.png]  # Viewport by default; $TMPDIR without -o
+iwdp-cli cookies [--show-values]    # Show all cookies (incl. httpOnly); values redacted by default
 iwdp-cli dom [selector]             # Inspect DOM tree or element
-iwdp-cli console                    # Stream console messages (Ctrl+C)
-iwdp-cli network                    # Stream network requests (Ctrl+C)
+iwdp-cli console [-d 10s] [--follow]  # Print console messages for 10s, then a count
+iwdp-cli network [-d 10s] [--follow]  # Print network requests for 10s, then a count
 ```
+
+Every command has a 30 s deadline (`--timeout <duration>` or `IWDP_TIMEOUT`); on expiry it exits 124 with the page and the likely causes. `<command> --help` prints usage without connecting.
 
 ### DOM & CSS
 
@@ -135,7 +137,7 @@ iwdp-cli type-text "hello"                # Type into focused element
 ### Storage
 
 ```bash
-iwdp-cli set-cookie name val .example.com  # Set cookie
+iwdp-cli set-cookie name val example.com --same-site Lax --secure --http-only --expires 24h  # Set and verify cookie
 iwdp-cli delete-cookie name "https://..."  # Delete cookie
 iwdp-cli get-local-storage "https://..."   # Get localStorage
 iwdp-cli get-session-storage "https://..." # Get sessionStorage

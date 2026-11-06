@@ -173,7 +173,10 @@ type NavigateInput struct {
 }
 
 type (
-	TakeScreenshotInput  struct{}
+	TakeScreenshotInput struct {
+		FullPage bool   `json:"full_page,omitempty" jsonschema:"capture the whole scrollable document instead of the visible viewport"`
+		Selector string `json:"selector,omitempty" jsonschema:"capture only the first element matching this CSS selector"`
+	}
 	TakeScreenshotOutput struct {
 		FilePath string `json:"file_path"`
 	}
@@ -186,6 +189,7 @@ type SnapshotNodeInput struct {
 type EvaluateScriptInput struct {
 	Expression    string `json:"expression" jsonschema:"JavaScript expression to evaluate"`
 	ReturnByValue bool   `json:"return_by_value,omitempty" jsonschema:"return result by value instead of reference"`
+	AwaitPromise  bool   `json:"await_promise,omitempty" jsonschema:"if the expression returns a Promise, wait for it and return the settled value"`
 }
 type EvaluateScriptOutput struct {
 	Result any    `json:"result"`
@@ -314,8 +318,10 @@ type SetResourceCachingDisabledInput struct {
 }
 
 type (
-	GetCookiesInput struct{}
-	SetCookieInput  struct {
+	GetCookiesInput struct {
+		ShowValues bool `json:"show_values,omitempty" jsonschema:"return cookie values in full; by default each value is redacted to its length and a short prefix"`
+	}
+	SetCookieInput struct {
 		Name     string  `json:"name"`
 		Value    string  `json:"value"`
 		Domain   string  `json:"domain,omitempty"`
@@ -324,6 +330,10 @@ type (
 		Secure   bool    `json:"secure,omitempty"`
 		HTTPOnly bool    `json:"http_only,omitempty"`
 		SameSite string  `json:"same_site,omitempty" jsonschema:"cookie SameSite attribute: None, Lax, or Strict (default: Lax)"`
+	}
+	SetCookieOutput struct {
+		OK     bool          `json:"ok"`
+		Cookie webkit.Cookie `json:"cookie" jsonschema:"the cookie as read back from the page, value redacted"`
 	}
 )
 
@@ -691,13 +701,13 @@ func registerTools(server *mcp.Server) {
 	})
 
 	addTool(server, &mcp.Tool{
-		Name: "take_screenshot", Description: "Capture page screenshot as PNG file. Returns the file path — use the Read tool to view it.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ TakeScreenshotInput) (*mcp.CallToolResult, any, error) {
+		Name: "take_screenshot", Description: "Capture the visible viewport (default), the full page (full_page) or one element (selector) as a PNG file. Returns the file path — use the Read tool to view it.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input TakeScreenshotInput) (*mcp.CallToolResult, any, error) {
 		c, err := getClient(ctx)
 		if err != nil {
 			return nil, TakeScreenshotOutput{}, err
 		}
-		dataURL, err := tools.TakeScreenshot(ctx, c)
+		dataURL, err := tools.CaptureScreenshot(ctx, c, tools.ScreenshotOptions{FullPage: input.FullPage, Selector: input.Selector})
 		if err != nil {
 			return nil, TakeScreenshotOutput{}, err
 		}
@@ -728,13 +738,13 @@ func registerTools(server *mcp.Server) {
 
 	// --- Runtime ---
 	addTool(server, &mcp.Tool{
-		Name: "evaluate_script", Description: "Evaluate JavaScript expression in page context",
+		Name: "evaluate_script", Description: "Evaluate JavaScript expression in page context. A thrown exception or rejected Promise returns an error with its message and stack.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input EvaluateScriptInput) (*mcp.CallToolResult, any, error) {
 		c, err := getClient(ctx)
 		if err != nil {
 			return nil, EvaluateScriptOutput{}, err
 		}
-		result, err := tools.EvaluateScript(ctx, c, input.Expression, input.ReturnByValue)
+		result, err := tools.EvaluateScriptWithOptions(ctx, c, input.Expression, tools.EvalOptions{ReturnByValue: input.ReturnByValue, AwaitPromise: input.AwaitPromise})
 		if err != nil {
 			return nil, EvaluateScriptOutput{}, err
 		}
@@ -1211,8 +1221,8 @@ func registerTools(server *mcp.Server) {
 
 	// --- Cookies ---
 	addTool(server, &mcp.Tool{
-		Name: "get_cookies", Description: "Get all cookies including httpOnly and secure",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ GetCookiesInput) (*mcp.CallToolResult, any, error) {
+		Name: "get_cookies", Description: "Get all cookies including httpOnly and secure. Values are redacted to their length and a short prefix unless show_values is true.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetCookiesInput) (*mcp.CallToolResult, any, error) {
 		c, err := getClient(ctx)
 		if err != nil {
 			return nil, RawOutput{}, err
@@ -1221,32 +1231,38 @@ func registerTools(server *mcp.Server) {
 		if err != nil {
 			return nil, RawOutput{}, err
 		}
+		if !input.ShowValues {
+			cookies = tools.RedactCookies(cookies)
+		}
 		return nil, RawOutput{Result: cookies}, nil
 	})
 
 	addTool(server, &mcp.Tool{
-		Name: "set_cookie", Description: "Set a cookie",
+		Name: "set_cookie", Description: "Set a cookie and verify it by reading it back. Fails when the cookie is missing or stored with other attributes. The returned cookie has its value redacted.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SetCookieInput) (*mcp.CallToolResult, any, error) {
 		c, err := getClient(ctx)
 		if err != nil {
-			return nil, OKOutput{}, err
-		}
-		sameSite := input.SameSite
-		if sameSite == "" {
-			sameSite = "Lax"
+			return nil, SetCookieOutput{}, err
 		}
 		cookie := webkit.Cookie{
-			Name:     input.Name,
-			Value:    input.Value,
-			Domain:   input.Domain,
-			Path:     input.Path,
-			Expires:  input.Expires,
+			Name:   input.Name,
+			Value:  input.Value,
+			Domain: input.Domain,
+			Path:   input.Path,
+			// The input is in seconds; WebKit's Page.Cookie.expires is in milliseconds.
+			Expires:  input.Expires * 1000,
 			Session:  input.Expires == 0,
 			Secure:   input.Secure,
 			HTTPOnly: input.HTTPOnly,
-			SameSite: sameSite,
+			SameSite: input.SameSite, // tools.SetCookie turns an empty value into Lax
 		}
-		return nil, ok(), tools.SetCookie(ctx, c, cookie)
+		stored, err := tools.SetCookieVerified(ctx, c, cookie)
+		if err != nil {
+			return nil, SetCookieOutput{}, err
+		}
+		redacted := *stored
+		redacted.Value = tools.RedactCookieValue(stored.Value)
+		return nil, SetCookieOutput{OK: true, Cookie: redacted}, nil
 	})
 
 	addTool(server, &mcp.Tool{

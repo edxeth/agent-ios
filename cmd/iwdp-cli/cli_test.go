@@ -445,7 +445,7 @@ func TestPrintUsageDoesNotPanic(t *testing.T) {
 	defer func() { os.Stderr = old }()
 
 	// Should not panic.
-	printUsage()
+	printUsage(os.Stderr)
 }
 
 // TestGetPortEdgeCases tests boundary conditions for getPort.

@@ -5,26 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 )
 
 func cmdConsoleMessages(ctx context.Context, args []string) {
-	duration := 3 * time.Second
-	var wsArgs []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
-			secs, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				duration = time.Duration(secs) * time.Second
-			}
-			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
-		}
-	}
+	duration, wsArgs := recordingDurationOrExit("console-messages", args)
 
 	client, err := connectToPage(ctx, wsArgs)
 	if err != nil {

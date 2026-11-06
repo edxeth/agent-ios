@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -59,14 +58,21 @@ func cmdSnapshotNode(ctx context.Context, args []string) {
 		fatal(fmt.Errorf("invalid nodeId: %s", args[0]))
 	}
 
-	outputFile := "snapshot.png"
+	const usage = "Usage: iwdp-cli snapshot-node <nodeId> [-o file] [ws-url]"
+	outputFile := ""
 	var wsArgs []string
 	for i := 1; i < len(args); i++ {
-		if args[i] == "-o" && i+1 < len(args) {
+		switch a := args[i]; {
+		case a == "-o" || a == "--output":
+			if i+1 >= len(args) {
+				usageError(usage, fmt.Errorf("%s needs a value", a))
+			}
 			outputFile = args[i+1]
 			i++
-		} else {
-			wsArgs = append(wsArgs, args[i])
+		case strings.HasPrefix(a, "-"):
+			usageError(usage, fmt.Errorf("unknown option %s", a))
+		default:
+			wsArgs = append(wsArgs, a)
 		}
 	}
 
@@ -80,17 +86,9 @@ func cmdSnapshotNode(ctx context.Context, args []string) {
 	if err != nil {
 		fatal(err)
 	}
-
-	b64Data := dataURL
-	if idx := strings.Index(dataURL, ","); idx >= 0 {
-		b64Data = dataURL[idx+1:]
-	}
-	data, err := base64.StdEncoding.DecodeString(b64Data)
+	path, info, err := saveCapture(dataURL, outputFile, "iwdp-snapshot")
 	if err != nil {
-		fatal(fmt.Errorf("decoding snapshot: %w", err))
-	}
-	if err := os.WriteFile(outputFile, data, 0o644); err != nil {
 		fatal(err)
 	}
-	fmt.Printf("Snapshot saved to %s (%d bytes)\n", outputFile, len(data))
+	fmt.Printf("Snapshot saved to %s (%s)\n", path, info)
 }
