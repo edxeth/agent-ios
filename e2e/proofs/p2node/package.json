@@ -1,0 +1,10 @@
+{
+  "name": "iwdp-mcp-proof-p2",
+  "private": true,
+  "description": "Proof P2 (docs/design/agentic-parity.md 7.1): pinned CDP clients against the minimal bridge. W5 deletes it.",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.65.0",
+    "puppeteer-core": "25.16.0"
+  }
+}
