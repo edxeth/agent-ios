@@ -135,7 +135,11 @@ func TestDeadProbeStallsThenRecoversOnce(t *testing.T) {
 // 7.3 test 3 [W1b]: with a live probe the call ends with ErrCallTimeout at
 // its budget, and the page stays attached.
 func TestLiveProbeGivesCallTimeout(t *testing.T) {
-	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{Session: webkit.SessionOptions{CallTimeout: 300 * time.Millisecond}})
+	// The session keeps its default call budget, so the attach and its
+	// replay of the desired state are bounded only by the deadline. Only
+	// the stalled call gets the 300 ms budget (webkit.WithCallBudget); its
+	// probe inherits it (Session.Probe).
+	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
 	r.reserve(t, "agent")
 	r.f.Stall("DOM.getDocument")
 	ctx := ctxFor(t, 3*time.Second)
@@ -145,7 +149,7 @@ func TestLiveProbeGivesCallTimeout(t *testing.T) {
 	}
 	defer r.m.End(mo.ID)
 	start := time.Now()
-	_, err = mo.Op.Caller().Send(ctx, "DOM.getDocument", nil)
+	_, err = mo.Op.Caller().Send(webkit.WithCallBudget(ctx, 300*time.Millisecond), "DOM.getDocument", nil)
 	if !errors.Is(err, webkit.ErrCallTimeout) || errors.Is(err, webkit.ErrSessionStalled) {
 		t.Fatalf("Send = %v, want ErrCallTimeout", err)
 	}
@@ -161,14 +165,23 @@ func TestLiveProbeGivesCallTimeout(t *testing.T) {
 // inside its deadline; a read that is not retry-safe is not.
 func TestRetrySafeReadRetriedOnceAfterReconnect(t *testing.T) {
 	for _, retrySafe := range []bool{true, false} {
-		r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{Session: webkit.SessionOptions{CallTimeout: 300 * time.Millisecond}})
+		// The session keeps its default call budget, so the reconnect's
+		// replay of the desired state and the retried read are bounded only
+		// by the 8 s deadline. Only the read on the stalled connection gets
+		// a short budget (webkit.WithCallBudget), so that it fails with
+		// ErrCallTimeout and its probe fails fast.
+		r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
 		r.reserve(t, "agent")
 		ctx := ctxFor(t, 8*time.Second)
 		if err := r.m.Do(ctx, r.req, agent, "attach", ClassRead, false, func(context.Context, *ManagedOp) error { return nil }); err != nil {
 			t.Fatalf("attach: %v", err)
 		}
 		r.f.StallConnection(1)
+		runs := 0
 		err := r.m.Do(ctx, r.req, agent, "get title", ClassRead, retrySafe, func(ctx context.Context, mo *ManagedOp) error {
+			if runs++; runs == 1 {
+				ctx = webkit.WithCallBudget(ctx, 300*time.Millisecond)
+			}
 			_, err := mo.Op.Caller().Send(ctx, "DOM.getDocument", nil)
 			return err
 		})

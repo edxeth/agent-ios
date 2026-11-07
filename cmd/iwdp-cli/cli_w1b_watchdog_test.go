@@ -27,9 +27,18 @@ import (
 // the cleanup still ends within its budget.
 const cleanupPastDeadline = 3500 * time.Millisecond
 
-// shortDeadline is the --timeout of the tests below: the watchdog fires at
-// shortDeadline + watchdogGrace, inside the held cleanup.
-const shortDeadline = "500ms"
+// shortDeadline is the --timeout of three tests below. In the two
+// set-breakpoint tests, the command must connect, enable and set its
+// breakpoint before it, or no breakpoint exists for the cleanup to remove;
+// 500 ms was too short on a loaded host. Their cleanup starts when that
+// setup ends, at most shortDeadline after the start. In
+// TestCLINoDaemonRegistryWatchdogWaitsForTheCleanup, the idle command waits
+// for its deadline, so its cleanup starts at shortDeadline. In all three,
+// the page holds a reply of the cleanup for cleanupPastDeadline. So the
+// cleanup runs at the deadline (shortDeadline) or starts there, the
+// watchdog (shortDeadline + watchdogGrace, 3 s) fires while it runs, and
+// the cleanup still ends within daemon.ShutdownBudget.
+const shortDeadline = "1s"
 
 // startHeldCleanup starts set-breakpoint under IWDP_NO_DAEMON=1 with
 // --timeout shortDeadline and waits until main's cleanup sent
@@ -147,11 +156,12 @@ func TestCLINoDaemonRegistrySignalRunsCleanup(t *testing.T) {
 }
 
 // A registry command of IWDP_NO_DAEMON=1 gets the watchdog of legacy
-// commands: the command ends at its 500 ms deadline (exit 124 from the
-// command; no call is in flight then, so no liveness probe can mark the
-// page stalled before the cleanup), main's cleanup then waits for the held Console.disable past the
-// deadline plus watchdogGrace, and the watchdog fires during it. The
-// watchdog waits for the cleanup and reports the expired deadline.
+// commands: the command ends at its deadline, shortDeadline (exit 124 from
+// the command; no call is in flight then, so no liveness probe can mark the
+// page stalled before the cleanup), main's cleanup then waits for the held
+// Console.disable past the deadline plus watchdogGrace, and the watchdog
+// fires during it. The watchdog waits for the cleanup and reports the
+// expired deadline.
 func TestCLINoDaemonRegistryWatchdogWaitsForTheCleanup(t *testing.T) {
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)

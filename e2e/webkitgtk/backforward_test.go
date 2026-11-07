@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -70,7 +69,7 @@ func (s *twoSites) request(url string) ([2]string, bool) {
 // script. WebKit does not cache a page that was loaded by a reload, so
 // the test checks new documents with same-site navigations instead.
 func TestBackAndForwardAcrossSites(t *testing.T) {
-	backAndForward(t, fmt.Sprintf(":%d", 200+time.Now().Nanosecond()%50), false)
+	backAndForward(t, false)
 }
 
 // W1b closure review (tree ef4d5221): a page cached while the connection
@@ -84,22 +83,21 @@ func TestBackAndForwardAcrossSites(t *testing.T) {
 // know before it enables it. Now the restored A target gets the desired
 // state of the second connection, as in TestBackAndForwardAcrossSites.
 func TestBackAcrossAConnectionChange(t *testing.T) {
-	backAndForward(t, fmt.Sprintf(":%d", 20000+os.Getpid()%10000), true)
+	backAndForward(t, true)
 }
 
 // backAndForward runs the back and forward checks on its own broadway
-// display. With reconnect, the page caller, its daemon connection and the
+// display (broadway). With reconnect, the page caller, its daemon connection and the
 // daemon end while A is in the back/forward cache and B is active; a new
 // daemon attaches B and the same desired state is set again before back.
-func backAndForward(t *testing.T, display string, reconnect bool) {
+func backAndForward(t *testing.T, reconnect bool) {
 	sites := &twoSites{reqs: map[string][2]string{}}
 	sites.a, sites.b = sites.serve(t, "127.0.0.1"), sites.serve(t, "localhost")
-	startProcess(t, nil, "broadwayd", display)
-	time.Sleep(500 * time.Millisecond)
+	display := broadway(t)
 	addr := freeAddr(t)
 	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr}, miniBrowser, sites.a+"/a.html")
 	tr := webkitgtk.New(addr)
-	for end := time.Now().Add(15 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+	for end := time.Now().Add(browserStart); ; time.Sleep(200 * time.Millisecond) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		pages, err := tr.Pages(ctx, "webkitgtk-"+addr)
 		cancel()
@@ -107,7 +105,7 @@ func backAndForward(t *testing.T, display string, reconnect bool) {
 			break
 		}
 		if time.Now().After(end) {
-			t.Fatalf("MiniBrowser did not list a page at %s within 15 s", addr)
+			t.Fatalf("MiniBrowser did not list a page at %s within %v", addr, browserStart)
 		}
 	}
 	if r := cli(t, "daemon", "start", "--transport", "webkitgtk", "--addr", addr); r.code != 0 {

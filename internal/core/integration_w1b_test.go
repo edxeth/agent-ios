@@ -165,7 +165,9 @@ func TestFirstEnableBatchKeepsHangDetection(t *testing.T) {
 		{name: "owner cancels", cancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{Session: webkit.SessionOptions{CallTimeout: 300 * time.Millisecond}})
+			// The session keeps its default call budget, so the attach and its
+			// replay of the desired state are bounded only by the deadline.
+			r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
 			r.reserve(t, "agent")
 			r.m.recoveryHold = func(ctx context.Context) { <-ctx.Done() } // keep a stalled page stalled
 			ctx := ctxFor(t, 5*time.Second)
@@ -187,7 +189,15 @@ func TestFirstEnableBatchKeepsHangDetection(t *testing.T) {
 					mo.Op.Cancel(errors.New("the client went away"))
 				}()
 			}
-			_, err = mo.Op.Caller().Send(ctx, "Console.enable", nil)
+			sendCtx := ctx
+			if !tc.cancel {
+				// Only the batch whose budget must expire gets the 300 ms
+				// budget; its probe inherits it (Session.Probe). The owner's
+				// cancellation must end the batch, so that case keeps the
+				// default budget and has no race against it.
+				sendCtx = webkit.WithCallBudget(ctx, 300*time.Millisecond)
+			}
+			_, err = mo.Op.Caller().Send(sendCtx, "Console.enable", nil)
 			if got := len(r.f.ReceivedMethod("Console.disable")); got != 1 {
 				t.Fatalf("Console.disable sent %d times, want 1: the reset of the unknown agent", got)
 			}

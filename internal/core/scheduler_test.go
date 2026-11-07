@@ -85,6 +85,19 @@ func (h *harness) queueLen() int {
 	return len(h.s.queue)
 }
 
+// hasWaiterAt reports whether c holds a timer that fires at exactly at.
+// Test-only: it reads the waiters under the clock's lock.
+func (c *ManualClock) hasWaiterAt(at time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, w := range c.waiters {
+		if w.at == at {
+			return true
+		}
+	}
+	return false
+}
+
 func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -274,31 +287,44 @@ func TestCancelWithAttemptInFlightHoldsSlot(t *testing.T) {
 		dropReply bool
 	}{{"reply arrives", false}, {"reply lost", true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t, SchedulerOptions{})
-			const replyDelay = 150 * time.Millisecond
-			h.f.DelayReplies("runtime:act", replyDelay)
+			// Design 2.6: a cancel is answered at once, and the slot stays
+			// held until the attempt's reply or its slot-release boundary
+			// H = min(s + 250 ms, D), whichever comes first. The test orders
+			// both events itself, so a late test goroutine cannot reorder
+			// them: the fake holds the attempt's reply until the test sends
+			// releaseReply, and the scheduler and the page run on a manual
+			// clock that reaches H only when the test sets it. The long reply
+			// grace keeps the real-time limit of the reply wait (H - s plus
+			// the grace) from ending the attempt during the test.
+			const releaseReply = "Test.releaseAttemptReply"
+			clock := NewManualClock(time.Second)
+			sent := make(chan AttemptEvent, 1)
+			var h *harness
+			h = newHarness(t, SchedulerOptions{Clock: clock, ReplyGrace: time.Minute, OnAttempt: func(e AttemptEvent) {
+				// OnAttempt runs before the attempt is written, so the
+				// attempt is the next Runtime.evaluate the fake receives.
+				if !tc.dropReply {
+					h.f.HoldUntil("Runtime.evaluate", releaseReply)
+				}
+				sent <- e
+			}})
+			h.rt.Now = clock.Now
 			if tc.dropReply {
 				h.rt.DropReplyOfStep = 1
 			}
+			h.f.SetRuntime(h.rt.Handler()) // publishes the settings above under the fake's lock
 			ctx, _ := timeoutCtx(t, 5*time.Second)
-			// Measure the clock first so that the attempt is the only call in flight.
 			opCtx, cancel := context.WithCancel(ctx)
 			op, err := h.s.Begin(opCtx, OpSpec{Class: ClassMutate, Session: testSession, Epoch: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
-			sent := make(chan struct{}, 1)
-			h.s.o.OnAttempt = func(AttemptEvent) {
-				h.mu.Lock()
-				h.sends = append(h.sends, AttemptEvent{})
-				h.hosts = append(h.hosts, time.Now())
-				h.mu.Unlock()
-				sent <- struct{}{}
-			}
 			errc := make(chan error, 1)
 			go func() { _, err := op.RunSteps(Action{Name: "click", Fn: "act", Steps: 1}); errc <- err }()
-			<-sent
-			time.Sleep(50 * time.Millisecond)
+			attempt := <-sent
+			// The page received the attempt (and its reply is held or
+			// dropped), so the cancel's runtime call cannot take the hold.
+			waitUntil(t, "the attempt to reach the page", func() bool { return attemptFn(h) == 1 })
 			cancelHost := time.Now()
 			cancel()
 			err = <-errc
@@ -309,19 +335,64 @@ func TestCancelWithAttemptInFlightHoldsSlot(t *testing.T) {
 				t.Fatalf("err = %v, want canceled; outcome unknown", err)
 			}
 			op.End()
-			succ := h.begin(t, ctx, ClassMutate)
+			admitted := make(chan *Op, 1)
+			go func() {
+				succ, err := h.s.Begin(ctx, OpSpec{Name: "successor", Class: ClassMutate, Session: testSession, Epoch: 1})
+				if err != nil {
+					t.Errorf("successor Begin: %v", err)
+				}
+				admitted <- succ
+			}()
+			// A slot released at End would admit the successor at once.
+			waitUntil(t, "the successor to queue behind the held slot", func() bool { return h.queueLen() == 1 })
+			boundary := attempt.SentAt + DefaultAttemptBudget // D is 5 s away
+			// End registers its boundary timer in its own goroutine, as an
+			// offset from the clock's time then. A clock moved before that
+			// would shift the timer past H, so the test moves it only after
+			// the timer at H exists.
+			waitUntil(t, "End's timer at the slot-release boundary", func() bool { return clock.hasWaiterAt(boundary) })
+			if tc.dropReply {
+				clock.Set(boundary - time.Microsecond)
+			}
+			select {
+			case <-admitted:
+				t.Fatal("successor admitted while the attempt's reply and its slot-release boundary were both pending")
+			case <-time.After(30 * time.Millisecond):
+			}
+			if tc.dropReply {
+				clock.Set(boundary)
+			} else if _, err := h.sess.Send(ctx, releaseReply, nil); err != nil {
+				t.Fatal(err)
+			}
+			var succ *Op
+			select {
+			case succ = <-admitted:
+			case <-ctx.Done():
+				t.Fatal("successor not admitted after the attempt's reply or its slot-release boundary")
+			}
+			if succ == nil {
+				t.FailNow() // Begin failed; the goroutine reported it
+			}
 			if _, err := succ.Caller().Send(ctx, "Test.successor", nil); err != nil {
 				t.Fatal(err)
 			}
 			succ.End()
-			_, hosts := h.attempts()
-			arrival := h.f.ReceivedMethod("Test.successor")[0].At
-			wantAfter := hosts[0].Add(replyDelay) // the attempt's reply
 			if tc.dropReply {
-				wantAfter = hosts[0].Add(DefaultAttemptBudget) // its slot-release boundary
+				if succ.AdmittedAt < boundary {
+					t.Fatalf("successor admitted at %s, before the slot-release boundary %s", succ.AdmittedAt, boundary)
+				}
+				return
 			}
-			if arrival.Before(wantAfter.Add(-5 * time.Millisecond)) {
-				t.Fatalf("successor reached the fake %s after the attempt; want no earlier than %s", arrival.Sub(hosts[0]), wantAfter.Sub(hosts[0]))
+			// The successor reached the page after the message that released
+			// the attempt's reply.
+			var order []string
+			for _, r := range h.f.Received() {
+				if strings.HasPrefix(r.Method, "Test.") {
+					order = append(order, r.Method)
+				}
+			}
+			if want := releaseReply + ",Test.successor"; strings.Join(order, ",") != want {
+				t.Fatalf("fake received %v, want %s", order, want)
 			}
 		})
 	}

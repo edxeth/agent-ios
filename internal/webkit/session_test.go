@@ -345,25 +345,35 @@ func TestSessionRepliesArriveWhileSubscriberBlocks(t *testing.T) {
 	block := make(chan struct{})
 	defer close(block)
 	s.Subscribe("Test.flood", func(string, json.RawMessage) { <-block })
-	var other sync.WaitGroup
-	other.Add(1)
+	otherRan := make(chan struct{})
 	var once sync.Once
-	s.Subscribe("Test.other", func(string, json.RawMessage) { once.Do(other.Done) })
+	s.Subscribe("Test.other", func(string, json.RawMessage) { once.Do(func() { close(otherRan) }) })
 
 	for i := 0; i < 2000; i++ {
 		f.Emit("Test.flood", map[string]int{"i": i})
 	}
 	f.Emit("Test.other", nil)
+	// The read loop reads events in wire order, so Test.other reaches its
+	// subscriber only after the read loop got past the whole flood while
+	// the flood subscriber blocks: a blocked subscriber blocks neither the
+	// read loop nor other subscribers. Waiting for it keeps the time the
+	// read loop needs to decode 2000 earlier events out of the reply
+	// measurement below; the 50 ms bound of design 7.3 test 10 is about a
+	// reply while a subscriber blocks, not about decoding speed.
+	select {
+	case <-otherRan:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Test.other was not delivered behind the flood: the blocked subscriber blocks the read loop")
+	}
+	if s.DroppedEvents() == 0 {
+		t.Fatal("DroppedEvents = 0, want the overflow of the blocked subscriber counted")
+	}
 	start := time.Now()
 	if _, err := s.Send(context.Background(), "Test.ping", nil); err != nil {
 		t.Fatalf("Send during flood: %v", err)
 	}
 	if el := time.Since(start); el > 50*time.Millisecond {
-		t.Fatalf("reply took %s during an event flood, want under 50 ms", el)
-	}
-	other.Wait() // a blocked subscriber does not block other subscribers
-	if s.DroppedEvents() == 0 {
-		t.Fatal("DroppedEvents = 0, want the overflow of the blocked subscriber counted")
+		t.Fatalf("reply took %s while a subscriber blocks with a full queue, want under 50 ms", el)
 	}
 }
 

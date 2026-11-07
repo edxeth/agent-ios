@@ -104,11 +104,14 @@ func runSuite(m *testing.M) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	display := fmt.Sprintf(":%d", 100+time.Now().Nanosecond()%50)
-	if err := start(nil, "broadwayd", display); err != nil {
+	display, skipped, stopBroadway, err := startBroadway()
+	if err != nil {
 		return 1, err
 	}
-	time.Sleep(500 * time.Millisecond)
+	defer stopBroadway()
+	if len(skipped) > 0 {
+		log.Printf("webkitgtk suite: broadwayd runs on %s after skipping %s", display, strings.Join(skipped, "; "))
+	}
 	pl, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 1, err
@@ -120,7 +123,7 @@ func runSuite(m *testing.M) (int, error) {
 	}
 	tr := webkitgtk.New(addr)
 	var page transport.Page
-	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+	for deadline := time.Now().Add(browserStart); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		pages, err := tr.Pages(ctx, "webkitgtk-"+addr)
 		cancel()
@@ -130,7 +133,7 @@ func runSuite(m *testing.M) (int, error) {
 		}
 	}
 	if page.ID == "" {
-		return 1, fmt.Errorf("MiniBrowser did not list a page at %s within 15 s", addr)
+		return 1, fmt.Errorf("MiniBrowser did not list a page at %s within %v", addr, browserStart)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

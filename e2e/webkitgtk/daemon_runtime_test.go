@@ -4,7 +4,6 @@ package webkitgtk
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"regexp"
@@ -34,14 +33,12 @@ func runtimeBrowser(t *testing.T, page string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	display := fmt.Sprintf(":%d", 150+time.Now().Nanosecond()%50)
-	startProcess(t, nil, "broadwayd", display)
-	time.Sleep(500 * time.Millisecond)
+	display := broadway(t)
 	addr := freeAddr(t)
 	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr, "LD_PRELOAD=" + shim},
 		miniBrowser, "http://"+l.Addr().String()+"/"+page)
 	tr := webkitgtk.New(addr)
-	for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
+	for end := time.Now().Add(browserStart); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		pages, err := tr.Pages(ctx, "webkitgtk-"+addr)
 		cancel()
@@ -49,7 +46,7 @@ func runtimeBrowser(t *testing.T, page string) string {
 			return addr
 		}
 	}
-	t.Fatalf("MiniBrowser did not list the page %s at %s within 15 s", page, addr)
+	t.Fatalf("MiniBrowser did not list the page %s at %s within %v", page, addr, browserStart)
 	return ""
 }
 

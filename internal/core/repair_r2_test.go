@@ -160,11 +160,18 @@ func TestRecoveryIgnoresItsOwnBusyHint(t *testing.T) {
 	eventually(t, 10*time.Second, "the recovery to reconnect", func() bool {
 		return r.f.ConnectionCount() == 2 && pg.ConnState() == ConnOK
 	})
-	pg.mu.Lock()
-	rec := pg.recovering
-	pg.mu.Unlock()
-	if rec {
-		t.Fatal("recovering still set after the reconnect")
+	// The recovery installs the new connection and only then returns and
+	// clears pg.recovering (Manager.recover), so the flag can still be set
+	// for a moment after the state shows the connection attached. The
+	// recovery must end: the flag clears, and the page is still attached on
+	// the second connection afterwards.
+	eventually(t, 10*time.Second, "the recovery to end after the reconnect (pg.recovering cleared)", func() bool {
+		pg.mu.Lock()
+		defer pg.mu.Unlock()
+		return !pg.recovering
+	})
+	if n, st := r.f.ConnectionCount(), pg.ConnState(); n != 2 || st != ConnOK {
+		t.Fatalf("after the recovery ended: %d connections, state %s; want 2 and attached", n, st)
 	}
 }
 

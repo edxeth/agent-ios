@@ -39,6 +39,28 @@ func evalString(ctx context.Context, c webkit.Caller, expr string) (string, erro
 	return fmt.Sprint(r.Result.Value), nil
 }
 
+// waitStartPage waits until the start page has committed and loaded.
+// MiniBrowser lists its page before the start URL commits, and WebKit keeps
+// the process for any navigation from a web process that has not committed
+// a load yet (WebProcessPool::processForNavigationInternal, "Process has
+// not yet committed any provisional loads", also in webkitgtk-2.54.2), so
+// run 1 must start from the loaded start page to be a process swap.
+func waitStartPage(ctx context.Context, t *testing.T, c webkit.Caller, startURL string) {
+	t.Helper()
+	want := startURL + " complete"
+	var last string
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		v, err := evalString(cctx, c, "location.href + ' ' + document.readyState")
+		cancel()
+		if err == nil && v == want {
+			return
+		}
+		last = fmt.Sprintf("%q, %v", v, err)
+	}
+	t.Fatalf("the start page %s did not load within 30 s; last answer %s", startURL, last)
+}
+
 type targetLog struct {
 	mu     sync.Mutex
 	events []string
@@ -58,10 +80,13 @@ func (l *targetLog) snapshot() []string {
 
 // TestP1ProvisionalSetup: a cross-origin navigation between two local
 // ports; the session sends Page.enable and a bootstrap part to the
-// provisional target before commit. Pass: the first inline script of the
-// new document sees the marker in 10 of 10 runs, with pause-on-start on and
-// off; the active target changes at commit; an abandoned provisional target
-// is dropped.
+// provisional target before commit. Pass: with pause-on-start on, the first
+// inline script of the new document sees the marker in 10 of 10 runs; in
+// both modes the active target changes at commit and an abandoned
+// provisional target is dropped. With pause-on-start off the marker count
+// is only logged: design 2.7 item 3 amended the original criterion of 7.1
+// after this proof ("Runs before page scripts" requires pause-on-start and
+// is partial without it; the setup races the new document).
 func TestP1ProvisionalSetup(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +101,8 @@ func TestP1ProvisionalSetup(t *testing.T) {
 	for _, pause := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pauseOnStart=%v", pause), func(t *testing.T) {
 			// A fresh browser per mode: WebKitGTK refuses quick reconnects (spike A step B).
-			tr, page := browser(t, origins[0]+"/page?start")
+			startURL := origins[0] + "/page?start"
+			tr, page := browser(t, startURL)
 			ds := core.NewDesiredState()
 			ds.Acquire("session", "Page")
 			if err := ds.SetPart("session", "p1-marker", core.RankRuntime, markerPart); err != nil {
@@ -84,10 +110,15 @@ func TestP1ProvisionalSetup(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
+			var setupMu sync.Mutex
+			setups := map[string]error{} // provisional target -> result of its setup
 			s, err := webkit.Dial(ctx, func(ctx context.Context) (transport.MessageConn, error) { return tr.Open(ctx, page) },
 				webkit.SessionOptions{TargetWait: 12 * time.Second, PauseOnStart: pause, Setup: func(ctx context.Context, tc webkit.TargetCaller) error {
 					err := ds.Apply(ctx, tc)
 					t.Logf("setup of provisional target %s: %v", tc.TargetID(), err)
+					setupMu.Lock()
+					setups[tc.TargetID()] = err
+					setupMu.Unlock()
 					return err
 				}})
 			if err != nil {
@@ -103,6 +134,7 @@ func TestP1ProvisionalSetup(t *testing.T) {
 			if err := ds.Apply(ctx, s); err != nil {
 				t.Fatalf("applying desired state to the current target: %v", err)
 			}
+			waitStartPage(ctx, t, s, startURL)
 
 			pass := 0
 			for run := 1; run <= 10; run++ {
@@ -127,6 +159,15 @@ func TestP1ProvisionalSetup(t *testing.T) {
 				}
 				if s.ActiveTarget() == before {
 					t.Errorf("run %d: the active target did not change; the navigation was not a process swap", run)
+				} else {
+					// In both modes the setup of the committed target completes
+					// (design 2.7); only its order against page scripts differs.
+					setupMu.Lock()
+					serr, ran := setups[s.ActiveTarget()]
+					setupMu.Unlock()
+					if !ran || serr != nil {
+						t.Errorf("run %d: setup of the committed target %s: ran %v, error %v; want a completed setup", run, s.ActiveTarget(), ran, serr)
+					}
 				}
 				ok := saw == url+" bootstrap-ran"
 				if ok {
@@ -135,7 +176,7 @@ func TestP1ProvisionalSetup(t *testing.T) {
 				t.Logf("run %d: target %s -> %s, generation %d, first script saw %q, pass=%v", run, before, s.ActiveTarget(), s.Generation(), saw, ok)
 			}
 			t.Logf("P1 pauseOnStart=%v: %d of 10 runs passed", pause, pass)
-			if pass != 10 {
+			if pause && pass != 10 { // design 2.7 item 3: guaranteed only with pause-on-start
 				t.Errorf("P1 pauseOnStart=%v: %d of 10 runs saw the marker in the first inline script", pause, pass)
 			}
 

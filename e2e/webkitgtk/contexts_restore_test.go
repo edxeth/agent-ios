@@ -48,13 +48,11 @@ type managedPage struct {
 // page through a Manager on the WebKitGTK transport.
 func attachManaged(t *testing.T, url string) *managedPage {
 	t.Helper()
-	display := fmt.Sprintf(":%d", 30000+time.Now().Nanosecond()%5000)
-	startProcess(t, nil, "broadwayd", display)
-	time.Sleep(500 * time.Millisecond)
+	display := broadway(t)
 	addr := freeAddr(t)
 	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr}, miniBrowser, url)
 	tr := webkitgtk.New(addr)
-	for end := time.Now().Add(15 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+	for end := time.Now().Add(browserStart); ; time.Sleep(200 * time.Millisecond) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		pages, err := tr.Pages(ctx, "webkitgtk-"+addr)
 		cancel()
@@ -62,7 +60,7 @@ func attachManaged(t *testing.T, url string) *managedPage {
 			break
 		}
 		if time.Now().After(end) {
-			t.Fatalf("MiniBrowser did not list a page at %s within 15 s", addr)
+			t.Fatalf("MiniBrowser did not list a page at %s within %v", addr, browserStart)
 		}
 	}
 	m := core.NewManager(core.ManagerOptions{

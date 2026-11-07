@@ -564,6 +564,17 @@ func TestFollowSetupStillTimesOut(t *testing.T) {
 			mock := testutil.NewMockServer()
 			defer mock.Close()
 			mock.NeverRespond(tc.domain + ".enable")
+			mock.HandleFunc("Runtime.evaluate", map[string]any{"result": map[string]any{"type": "number", "value": 1}})
+			// The 500 ms --timeout must end the command while it waits for
+			// the stalled enable, so the daemon's start and the page's
+			// attach, which are not what this test pins, happen before it:
+			// startTestDaemon waits until the daemon answers, and an eval
+			// attaches the page in the daemon, whose connection the command
+			// below reuses.
+			startTestDaemon(t)
+			if res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "eval", "1"); res.code != 0 {
+				t.Fatalf("attaching the page: exit %d, stderr %q", res.code, res.stderr)
+			}
 			res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, tc.command, "--follow", "--timeout", "500ms")
 			if res.code != exitTimeout || !strings.Contains(res.stderr, tc.domain+".enable") {
 				t.Errorf("exit %d stderr %q; want %d and an error naming %s.enable", res.code, res.stderr, exitTimeout, tc.domain)

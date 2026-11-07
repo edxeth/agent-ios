@@ -133,7 +133,10 @@ func TestShutdownCancellationDoesNotLoseCleanup(t *testing.T) {
 // step 2): the call returns its own error, not a stall, the page stays
 // attached and the release cleanup still runs.
 func TestOperationCancelDuringTheProbeIsNotAStall(t *testing.T) {
-	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{Session: webkit.SessionOptions{CallTimeout: 200 * time.Millisecond}})
+	// The session keeps its default call budget, so the attach, the replay
+	// of the desired state and Close's cleanup are bounded only by their
+	// deadlines. Only the stalled call gets the short budget below.
+	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
 	r.reserve(t, "agent")
 	pg := consoleOwner(t, r)
 	ctx := ctxFor(t, 5*time.Second)
@@ -146,7 +149,8 @@ func TestOperationCancelDuringTheProbeIsNotAStall(t *testing.T) {
 	before := evalsOf(r.f, "1")
 	sent := make(chan error, 1)
 	go func() {
-		_, err := mo.Op.Caller().Send(ctx, "DOM.getDocument", nil)
+		// The probe that follows inherits this budget (Session.Probe).
+		_, err := mo.Op.Caller().Send(webkit.WithCallBudget(ctx, 200*time.Millisecond), "DOM.getDocument", nil)
 		sent <- err
 	}()
 	eventually(t, 5*time.Second, "the probe after the call budget", func() bool { return evalsOf(r.f, "1") > before })
