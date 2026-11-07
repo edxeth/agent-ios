@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -15,22 +16,36 @@ import (
 var ErrRequestReset = errors.New("request was released by a network reset")
 
 // ResetHeldRequests continues every open held request unmodified, at the
-// stage of its hold, through the control lane (step 2 of the Network
-// reinitialization barrier, design 2.4) and records each id, so that a later
-// completion for it fails with ErrRequestReset. It returns the continued ids.
-// A hold that it could not close (answerHold failed) stays open for the
-// release barrier and is not recorded.
+// stage of its hold and on the target that holds it, through the control
+// lane (step 2 of the Network reinitialization barrier, design 2.4) and
+// records each one per target, so that a later completion for it fails
+// with ErrRequestReset. It returns the continued request ids. A hold that
+// it could not close (answerHold failed) stays open for the release
+// barrier and is not recorded.
 func (s *Scheduler) ResetHeldRequests(ctx context.Context) ([]string, error) {
+	return s.resetHolds(ctx, func(holdKey) bool { return true })
+}
+
+// resetTargetHolds is ResetHeldRequests for the holds of target only
+// (setupHolds).
+func (s *Scheduler) resetTargetHolds(ctx context.Context, target string) ([]string, error) {
+	return s.resetHolds(ctx, func(k holdKey) bool { return k.target == target })
+}
+
+// resetHolds is ResetHeldRequests for the holds that match.
+func (s *Scheduler) resetHolds(ctx context.Context, match func(holdKey) bool) ([]string, error) {
 	s.mu.Lock()
-	ids := make([]string, 0, len(s.intercepted))
-	for id := range s.intercepted {
-		ids = append(ids, id)
+	keys := make([]holdKey, 0, len(s.intercepted))
+	for k := range s.intercepted {
+		if match(k) {
+			keys = append(keys, k)
+		}
 	}
 	s.mu.Unlock()
 	var firstErr error
 	var done []string
-	for _, id := range ids {
-		if err := s.answerHold(ctx, id); err != nil {
+	for _, k := range keys {
+		if err := s.answerHold(ctx, k); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -38,11 +53,11 @@ func (s *Scheduler) ResetHeldRequests(ctx context.Context) ([]string, error) {
 		}
 		s.mu.Lock()
 		if s.resetReqs == nil {
-			s.resetReqs = map[string]bool{}
+			s.resetReqs = map[holdKey]bool{}
 		}
-		s.resetReqs[id] = true
+		s.resetReqs[k] = true
 		s.mu.Unlock()
-		done = append(done, id)
+		done = append(done, k.id)
 	}
 	return done, firstErr
 }
@@ -58,21 +73,66 @@ func (s *Scheduler) ResetHeldRequests(ctx context.Context) ([]string, error) {
 // continuePendingRequests/continuePendingResponses, webkitgtk-2.54.2
 // InspectorNetworkAgent.cpp:848-867, 898-910). A continue for one of them
 // would get "Missing pending intercept ..." and fail the release barrier.
-// It returns the forgotten ids.
+// Every target's holds are forgotten, each recorded for its own target. It
+// returns the forgotten request ids.
 func (s *Scheduler) forgetHeldRequests() []string {
+	return s.forgetHolds(func(holdKey) bool { return true })
+}
+
+// forgetTargetHolds is forgetHeldRequests for the holds of target only
+// (setupHolds): a setup's Network.disable on target continued them.
+func (s *Scheduler) forgetTargetHolds(target string) []string {
+	return s.forgetHolds(func(k holdKey) bool { return k.target == target })
+}
+
+// disabledOn records the holds of target as reset after c's target replied
+// to Network.disable (DesiredState.networkDisabled), when c is the
+// connection the scheduler sends through (pageConn); a page connection
+// that cannot tell counts as that connection.
+func (s *Scheduler) disabledOn(c webkit.Caller, target string) {
+	if pc, ok := s.c.(interface{ installed(webkit.Caller) bool }); ok && !pc.installed(c) {
+		return
+	}
+	s.forgetTargetHolds(target)
+}
+
+// forgetHolds is forgetHeldRequests for the holds that match. A hold whose
+// completion is in flight is recorded too: that completion gets WebKit's
+// "Missing pending intercept ..." (requestGone), or completed it first.
+func (s *Scheduler) forgetHolds(match func(holdKey) bool) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var ids []string
-	for id := range s.intercepted {
-		if s.resetReqs == nil {
-			s.resetReqs = map[string]bool{}
+	for k := range s.intercepted {
+		if !match(k) {
+			continue
 		}
-		s.resetReqs[id] = true
-		delete(s.intercepted, id)
-		ids = append(ids, id)
+		if s.resetReqs == nil {
+			s.resetReqs = map[holdKey]bool{}
+		}
+		s.resetReqs[k] = true
+		delete(s.intercepted, k)
+		ids = append(ids, k.id)
 	}
 	slices.Sort(ids)
 	return ids
+}
+
+// holdAdmission closes admission until reopen, without waiting for the
+// running operations (setupHolds; Barrier waits for them).
+func (s *Scheduler) holdAdmission() (reopen func()) {
+	s.mu.Lock()
+	s.barriers++
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			s.barriers--
+			s.pumpLocked()
+			s.mu.Unlock()
+		})
+	}
 }
 
 // newConnectionReset is the Network reset that a new connection of the page

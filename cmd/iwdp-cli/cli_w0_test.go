@@ -506,25 +506,39 @@ func TestFollowOutlivesSetupTimeoutUntilSignal(t *testing.T) {
 		t.Run(tc.command, func(t *testing.T) {
 			mock := testutil.NewMockServer()
 			defer mock.Close()
-			const setupTimeout = 300 * time.Millisecond
-			// The setup timeout bounds connect and enable; a cold daemon
-			// start under -race on a loaded host took most of it (R6-5).
+			// The setup timeout bounds connect and enable, so it must exceed
+			// their latency, which is not what this test pins: through the
+			// daemon they take about 130 ms on an idle host, 100 ms of it
+			// the legacy client's wait for a Target.targetCreated that the
+			// mock never sends, and they took over 300 ms, the earlier
+			// value, under -race on a loaded host (docs/notes/w1b.md,
+			// "core-events r2: the --follow setup timeout of a CLI test").
+			// A cold daemon start is kept out of it too (R6-5).
+			const setupTimeout = 2 * time.Second
 			startTestDaemon(t)
+			start := time.Now()
 			p := startCLI(t, []string{"IWDP_WS_URL=" + mock.URL}, tc.command, "--follow", "--timeout", setupTimeout.String())
-			eventually(t, 5*time.Second, tc.domain+".enable", func() bool {
+			exited := func(what string) {
 				select {
 				case <-p.done:
-					t.Fatalf("iwdp-cli exited %d before %s.enable; stderr %q", p.code, tc.domain, p.stderr.String())
+					t.Fatalf("iwdp-cli exited %d %s; stderr %q", p.code, what, p.stderr.String())
 				default:
 				}
-				return contains(mock.ReceivedMethods(), tc.domain+".enable")
+			}
+			eventually(t, setupTimeout+5*time.Second, "the stream after "+tc.domain+".enable", func() bool {
+				exited("before streaming")
+				return contains(mock.ReceivedMethods(), tc.domain+".enable") && strings.Contains(p.stderr.String(), "(Ctrl+C to stop)")
 			})
 
-			time.Sleep(2 * setupTimeout) // well past the setup timeout
+			// Well past the setup timeout, which the CLI started after start.
+			time.Sleep(time.Until(start.Add(setupTimeout * 3 / 2)))
 			if err := mock.SendEvent(tc.event, tc.params); err != nil {
 				t.Fatal(err)
 			}
-			eventually(t, 5*time.Second, "the event on stdout", func() bool { return strings.Contains(p.stdout.String(), tc.printed) })
+			eventually(t, 5*time.Second, "the event on stdout", func() bool {
+				exited("before printing the event")
+				return strings.Contains(p.stdout.String(), tc.printed)
+			})
 
 			if err := p.cmd.Process.Signal(os.Interrupt); err != nil {
 				t.Fatal(err)

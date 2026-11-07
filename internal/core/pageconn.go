@@ -47,17 +47,24 @@ type pageConn struct {
 	expected map[webkit.Caller]bool // connections the daemon closes itself
 	done     chan struct{}          // closed when the page is lost or closed
 	dropped  time.Time              // last transport messageDropped event
+	// stall ends, with the stall error as its cause, when the liveness
+	// probe declares cur stalled; swap gives the new connection its own.
+	// Every call that waits on cur is bounded by it (bound), so the probe's
+	// verdict ends them at once (core-events r5).
+	stall      context.Context
+	stallFired context.CancelCauseFunc
 }
 
 type connSub struct {
 	method string
-	h      webkit.EventHandler
+	h      webkit.TargetEventHandler
 	sync   bool
 	unsub  func()
 }
 
 func newPageConn(c webkit.Caller, onStall func(), background func(func(ctx context.Context)) bool, logf func(string, ...any)) *pageConn {
 	p := &pageConn{cur: c, onStall: onStall, background: background, logf: logf, subs: map[int]*connSub{}, expected: map[webkit.Caller]bool{}, done: make(chan struct{})}
+	p.stall, p.stallFired = context.WithCancelCause(context.Background())
 	p.watch(c)
 	return p
 }
@@ -91,6 +98,10 @@ func (p *pageConn) State() ConnState {
 func (p *pageConn) current() (webkit.Caller, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.currentLocked()
+}
+
+func (p *pageConn) currentLocked() (webkit.Caller, error) {
 	switch p.state {
 	case ConnLost:
 		return nil, &CodedError{Code: CodeBusy, Err: ErrLost}
@@ -100,6 +111,14 @@ func (p *pageConn) current() (webkit.Caller, error) {
 		return nil, &CodedError{Code: CodeBusy, Err: webkit.ErrSessionClosed}
 	}
 	return p.cur, nil
+}
+
+// installed reports whether c is the current connection, whatever its
+// state (Scheduler.disabledOn).
+func (p *pageConn) installed(c webkit.Caller) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cur == c
 }
 
 // swap replaces the connection (recovery or takeover); the old one is
@@ -117,6 +136,7 @@ func (p *pageConn) swap(c webkit.Caller) {
 		p.done = make(chan struct{})
 	}
 	p.state, p.stallErr = ConnOK, nil
+	p.stall, p.stallFired = context.WithCancelCause(context.Background())
 	for _, s := range p.subs {
 		s.unsub()
 		s.unsub = subscribeOn(c, s)
@@ -160,16 +180,12 @@ func closeCaller(c webkit.Caller) {
 
 func subscribeOn(c webkit.Caller, s *connSub) func() {
 	if s.sync {
-		if ss, ok := c.(interface {
-			SubscribeSync(string, webkit.EventHandler) func()
-		}); ok {
-			return ss.SubscribeSync(s.method, s.h)
-		}
+		return subscribeItems(c, s.method, s.h)
 	}
-	return c.Subscribe(s.method, s.h)
+	return webkit.SubscribeTarget(c, s.method, s.h)
 }
 
-func (p *pageConn) subscribe(method string, h webkit.EventHandler, inLoop bool) func() {
+func (p *pageConn) subscribe(method string, h webkit.TargetEventHandler, inLoop bool) func() {
 	p.mu.Lock()
 	id := p.nextSub
 	p.nextSub++
@@ -191,11 +207,22 @@ func (p *pageConn) subscribe(method string, h webkit.EventHandler, inLoop bool) 
 }
 
 func (p *pageConn) Subscribe(method string, h webkit.EventHandler) func() {
+	return p.subscribe(method, func(_, m string, params json.RawMessage) { h(m, params) }, false)
+}
+
+// SubscribeTarget is Subscribe with each event's source target
+// (webkit.TargetEventHandler).
+func (p *pageConn) SubscribeTarget(method string, h webkit.TargetEventHandler) func() {
 	return p.subscribe(method, h, false)
 }
 
 // SubscribeSync keeps the scheduler's bookkeeping inside the read loop.
 func (p *pageConn) SubscribeSync(method string, h webkit.EventHandler) func() {
+	return p.subscribe(method, func(_, m string, params json.RawMessage) { h(m, params) }, true)
+}
+
+// SubscribeTargetSync is SubscribeSync with each event's source target.
+func (p *pageConn) SubscribeTargetSync(method string, h webkit.TargetEventHandler) func() {
 	return p.subscribe(method, h, true)
 }
 
@@ -225,13 +252,56 @@ func (p *pageConn) Generation() uint64 {
 	return 1
 }
 
+// ActiveTarget is the active target of the current connection, or "" for
+// a connection without targets.
+func (p *pageConn) ActiveTarget() string {
+	p.mu.Lock()
+	c := p.cur
+	p.mu.Unlock()
+	if at, ok := c.(interface{ ActiveTarget() string }); ok {
+		return at.ActiveTarget()
+	}
+	return ""
+}
+
+// ExecutionContexts returns the execution contexts of target on the
+// current connection (webkit.Session.ExecutionContexts); nil for a
+// connection without targets.
+func (p *pageConn) ExecutionContexts(target string) []webkit.ExecutionContext {
+	p.mu.Lock()
+	c := p.cur
+	p.mu.Unlock()
+	if ec, ok := c.(interface {
+		ExecutionContexts(string) []webkit.ExecutionContext
+	}); ok {
+		return ec.ExecutionContexts(target)
+	}
+	return nil
+}
+
 func (p *pageConn) ActiveSetup(ctx context.Context) error {
-	c, err := p.current()
+	b, err := p.bound(ctx)
 	if err != nil {
 		return nil // the send itself reports the state
 	}
-	if as, ok := c.(interface{ ActiveSetup(context.Context) error }); ok {
-		return as.ActiveSetup(ctx)
+	defer b.stop()
+	if as, ok := b.c.(interface{ ActiveSetup(context.Context) error }); ok {
+		return b.cut("waiting for the setup of the active page target", as.ActiveSetup(b.ctx))
+	}
+	return nil
+}
+
+// ReapplySetup runs the setup of the active target again
+// (webkit.Session.ReapplySetup, Manager.recoverSetup). A connection
+// without provisional setups has nothing to apply.
+func (p *pageConn) ReapplySetup(ctx context.Context) error {
+	b, err := p.bound(ctx)
+	if err != nil {
+		return err
+	}
+	defer b.stop()
+	if rs, ok := b.c.(interface{ ReapplySetup(context.Context) error }); ok {
+		return b.cut("applying the page state again", rs.ReapplySetup(b.ctx))
 	}
 	return nil
 }
@@ -248,14 +318,15 @@ func (p *pageConn) PausedTargets() []string {
 }
 
 func (p *pageConn) ResumeTarget(ctx context.Context, id string) error {
-	c, err := p.current()
+	b, err := p.bound(ctx)
 	if err != nil {
 		return err
 	}
-	if rt, ok := c.(interface {
+	defer b.stop()
+	if rt, ok := b.c.(interface {
 		ResumeTarget(context.Context, string) error
 	}); ok {
-		return rt.ResumeTarget(ctx, id)
+		return b.cut("resuming page target "+id, rt.ResumeTarget(b.ctx, id))
 	}
 	return webkit.ErrTargetNotPaused
 }
@@ -271,20 +342,25 @@ func (p *pageConn) SendControl(ctx context.Context, method string, params any) (
 }
 
 func (p *pageConn) send(ctx context.Context, control bool, method string, params any) (json.RawMessage, error) {
-	c, err := p.current()
+	b, err := p.bound(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s: not sent: %w", method, notSentWrap(err))
 	}
+	defer b.stop()
+	c := b.c
 	var res json.RawMessage
 	if cs, ok := c.(interface {
 		SendControl(context.Context, string, any) (json.RawMessage, error)
 	}); ok && control {
-		res, err = cs.SendControl(ctx, method, params)
+		res, err = cs.SendControl(b.ctx, method, params)
 	} else {
-		res, err = c.Send(ctx, method, params)
+		res, err = c.Send(b.ctx, method, params)
 	}
 	if err == nil {
 		return res, nil
+	}
+	if cut := b.cut(method, err); cut != err {
+		return nil, cut
 	}
 	p.noteDropped(&err)
 	switch {
@@ -307,6 +383,63 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 		})
 	}
 	return nil, err
+}
+
+// boundCall is one call on the connection c, bounded by c's stall (bound).
+type boundCall struct {
+	c     webkit.Caller
+	ctx   context.Context // the caller's ctx, also ended by c's stall
+	stall context.Context // c's stall (pageConn.stall)
+	stop  func()          // releases ctx
+}
+
+// cut is stallCut for this call.
+func (b boundCall) cut(what string, err error) error { return stallCut(b.ctx, b.stall, what, err) }
+
+// bound returns the current connection and ctx bounded by that
+// connection's stall: when the liveness probe declares it stalled, the
+// returned context ends with the stall error as its cause, so a call that
+// waits on it (a reply, the write slot, the setup gate, a setup) ends at
+// once instead of at its deadline (core-events r5; stallCut), and probe
+// interrupts a write in progress. It fails like current for a page that is
+// not attached.
+func (p *pageConn) bound(ctx context.Context) (boundCall, error) {
+	p.mu.Lock()
+	c, err := p.currentLocked()
+	stall := p.stall
+	p.mu.Unlock()
+	if err != nil {
+		return boundCall{}, err
+	}
+	sctx, cancel := context.WithCancelCause(ctx)
+	unhook := context.AfterFunc(stall, func() { cancel(context.Cause(stall)) })
+	return boundCall{c: c, ctx: sctx, stall: stall, stop: func() { unhook(); cancel(nil) }}, nil
+}
+
+// stallCut returns err, or, when the liveness probe declared the connection
+// stalled before ctx (from bound) ended otherwise, the stall classification
+// (exit 4, ErrSessionStalled) for what. A deadline that ended first keeps
+// its own error (exit 124, design 2.6). A call that was never written stays
+// ErrNotSent.
+func stallCut(ctx, stall context.Context, what string, err error) error {
+	if err == nil {
+		return nil
+	}
+	cause := context.Cause(ctx)
+	if cause == nil {
+		// The stall can end a call before bound's AfterFunc cancels ctx:
+		// probe interrupts a write in progress right after it declares the
+		// stall (InterruptWrites). ctx has not ended, so the stall came
+		// first.
+		cause = context.Cause(stall)
+	}
+	if !errors.Is(cause, webkit.ErrSessionStalled) {
+		return err
+	}
+	if errors.Is(err, webkit.ErrNotSent) {
+		return fmt.Errorf("%s: not sent: %w", what, notSentWrap(&CodedError{Code: CodeBusy, Err: cause}))
+	}
+	return &CodedError{Code: CodeBusy, Err: fmt.Errorf("%s: no reply before the liveness probe declared the page stalled: %w", what, cause)}
 }
 
 // notSentWrap marks err as never sent for callers that check ErrNotSent.
@@ -355,9 +488,18 @@ func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 	if stall {
 		p.state = ConnStalled
 		p.stallErr = fmt.Errorf("%w (%v)", webkit.ErrSessionStalled, err)
+		p.stallFired(p.stallErr) // ends every call that waits on c (bound)
 	}
 	p.mu.Unlock()
 	if stall {
+		// The probe's verdict ends the waits through the stall context; a
+		// socket write already in progress ignores its context, so it is
+		// interrupted too. No call is sent on the stalled connection again
+		// (currentLocked refuses it): a stalled page gets a new connection
+		// (recover, reattach) or none.
+		if iw, ok := c.(writeInterrupter); ok {
+			iw.InterruptWrites()
+		}
 		p.logf("liveness probe failed: %v; the page is stalled", err)
 		if p.onStall != nil {
 			p.onStall() // starts the recovery in the background
@@ -365,6 +507,16 @@ func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 	}
 	return err
 }
+
+// writeInterrupter is a connection whose socket writes in progress can be
+// interrupted (webkit.Session.InterruptWrites, webkit.Client.InterruptWrites).
+type writeInterrupter interface{ InterruptWrites() }
+
+// Both connection kinds that the daemon installs interrupt their writes.
+var (
+	_ writeInterrupter = (*webkit.Session)(nil)
+	_ writeInterrupter = (*webkit.Client)(nil)
+)
 
 // probeCaller is Session.Probe, or the same evaluation for a legacy client.
 func probeCaller(ctx context.Context, c webkit.Caller) error {

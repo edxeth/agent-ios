@@ -39,6 +39,15 @@ type Options struct {
 	// ReconnectGap: after a connection closes, new connections get no
 	// Target.targetCreated for this long (MAP fact 2).
 	ReconnectGap time.Duration
+	// SuspendOnCommit selects the commit model of iOS 16 and WebKitGTK
+	// 2.54: the target that a commit replaced goes into the back/forward
+	// cache with its backend still connected, so its held requests stay
+	// pending there; they are back when the same target id is announced
+	// again (a restore, Provisional), and its Network.disable continues
+	// them. false: WebKit main's model, in which the commit disconnects
+	// the replaced target's backend (as closing a page that is not cached
+	// does), so its holds end with the commit.
+	SuspendOnCommit bool
 }
 
 // Error is a protocol error reply. Data lists the nested errors, as
@@ -122,6 +131,7 @@ type Server struct {
 	dropReply    map[string]int // method -> number of replies to drop
 	delays       map[string]time.Duration
 	runtime      RuntimeHandler
+	intercepts   *intercepts // nil until the first Intercept (intercept.go)
 }
 
 type conn struct {
@@ -366,13 +376,7 @@ func (s *Server) Swap(newID string, commitAfter time.Duration) {
 	resumed := s.createProvisional(newID)
 	<-resumed
 	time.Sleep(commitAfter)
-	s.mu.Lock()
-	old := s.active
-	s.active = newID
-	delete(s.targets, old)
-	s.mu.Unlock()
-	s.EmitOuter("Target.didCommitProvisionalTarget", map[string]string{"oldTargetId": old, "newTargetId": newID})
-	s.EmitOuter("Target.targetDestroyed", map[string]string{"targetId": old})
+	s.Commit(newID)
 }
 
 // AbortProvisional creates a provisional target and destroys it without
@@ -381,19 +385,56 @@ func (s *Server) AbortProvisional(newID string, destroyAfter time.Duration) {
 	resumed := s.createProvisional(newID)
 	<-resumed
 	time.Sleep(destroyAfter)
-	s.mu.Lock()
-	delete(s.targets, newID)
-	s.mu.Unlock()
-	s.EmitOuter("Target.targetDestroyed", map[string]string{"targetId": newID})
+	s.DestroyTarget(newID)
 }
 
 // DestroyActive destroys the active target without a swap (the tab closed).
 func (s *Server) DestroyActive() {
+	s.DestroyTarget(s.ActiveTarget())
+}
+
+// Provisional announces the provisional target id (Target.targetCreated
+// with isProvisional, and isPaused when the client enabled pause on start)
+// and returns a channel that is closed when the target is resumed, at once
+// when it is not paused. The target answers page commands until Commit or
+// DestroyTarget.
+func (s *Server) Provisional(id string) <-chan struct{} { return s.createProvisional(id) }
+
+// Commit commits the provisional target newID as WebKit does:
+// Target.didCommitProvisionalTarget, then Target.targetDestroyed of the old
+// active target. newID keeps its id and its held requests; the old target's
+// held requests are gone with it, or stay pending in its suspended backend
+// with Options.SuspendOnCommit.
+func (s *Server) Commit(newID string) {
 	s.mu.Lock()
 	old := s.active
-	delete(s.targets, old)
+	s.active = newID
+	if s.opts.SuspendOnCommit {
+		delete(s.targets, old)
+	} else {
+		s.dropTargetLocked(old)
+	}
 	s.mu.Unlock()
+	s.EmitOuter("Target.didCommitProvisionalTarget", map[string]string{"oldTargetId": old, "newTargetId": newID})
 	s.EmitOuter("Target.targetDestroyed", map[string]string{"targetId": old})
+}
+
+// DestroyTarget destroys target id without a commit (an abandoned
+// provisional target, or the active target when the tab closed). Its held
+// requests are gone with it.
+func (s *Server) DestroyTarget(id string) {
+	s.mu.Lock()
+	s.dropTargetLocked(id)
+	s.mu.Unlock()
+	s.EmitOuter("Target.targetDestroyed", map[string]string{"targetId": id})
+}
+
+// dropTargetLocked forgets target id and the requests it held.
+func (s *Server) dropTargetLocked(id string) {
+	delete(s.targets, id)
+	if s.intercepts != nil {
+		delete(s.intercepts.held, id)
+	}
 }
 
 // OpenConnections is the number of connections that are open now.
@@ -618,6 +659,7 @@ func (s *Server) handlePage(c *conn, call Call) {
 	}
 	live := s.targets[call.Target]
 	delays := s.delays
+	tracked := s.intercepts != nil
 	s.mu.Unlock()
 	delay := func(fn string) time.Duration {
 		s.mu.Lock()
@@ -644,6 +686,10 @@ func (s *Server) handlePage(c *conn, call Call) {
 			perr = invalid
 		case h != nil:
 			result, perr = h(call)
+		case tracked && interceptStage(call) != "":
+			perr = s.takeHold(call)
+		case tracked && call.Method == "Network.disable":
+			s.continueHolds(call.Target)
 		case call.Method == "Runtime.evaluate":
 			result, fn = s.evaluate(call, rt)
 			if result == nil {

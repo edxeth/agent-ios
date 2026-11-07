@@ -253,7 +253,7 @@ func TestEveryLiveTargetHasTheRemainingOwnersState(t *testing.T) {
 				p.mu.Lock()
 				p.trace = append(p.trace, "release "+owner)
 				p.mu.Unlock()
-				err := releaseOwners(ctx, ps, owner, conn)
+				_, err := releaseOwners(ctx, ps, owner, conn)
 				return func() {
 					forgetDebugger(owner)
 					forgetNetwork(owner)
@@ -523,12 +523,13 @@ func TestEveryLiveTargetHasTheRemainingOwnersState(t *testing.T) {
 		}
 		for _, owner := range owners {
 			p.trace = append(p.trace, "release "+owner)
+			_, err := releaseOwners(ctx, ps, owner, conn)
 			note(func() {
 				forgetDebugger(owner)
 				forgetNetwork(owner)
 				forgetPage(owner)
 				delete(parts, owner)
-			}, releaseOwners(ctx, ps, owner, conn))
+			}, err)
 		}
 		if opErr != nil {
 			return fail("a release failed: %v", opErr)

@@ -422,7 +422,7 @@ func TestEveryHeldRequestIsAnsweredOnce(t *testing.T) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			for id, stage := range c.pending {
-				h := s.intercepted[id]
+				h := s.intercepted[holdKey{"", id}] // holdConn does not know targets
 				if h == nil || h.inflight || h.stage != stage {
 					t.Logf("%s: WebKit holds %s at %q, scheduler has %+v", step, id, stage, h)
 					return false

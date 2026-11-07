@@ -153,7 +153,7 @@ func TestNetworkStateAcquiresNetworkForItsOwner(t *testing.T) {
 				}
 				from = len(p.wire)
 				if end == "release" {
-					if err := releaseOwners(ctx, ps, "s1", c); err != nil {
+					if _, err := releaseOwners(ctx, ps, "s1", c); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -244,7 +244,7 @@ func TestPageOverridesBelongToPage(t *testing.T) {
 						t.Errorf("%s after s2's Page.disable: %s, want s1's %s", id, got, want)
 					}
 				}
-				if err := releaseOwners(ctx, ps, "s1", c); err != nil {
+				if _, err := releaseOwners(ctx, ps, "s1", c); err != nil {
 					t.Fatal(err)
 				}
 				clean := pageState(&wkTarget{})

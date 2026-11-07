@@ -95,7 +95,7 @@ func TestReleasedSharedValueFallsBack(t *testing.T) {
 	ownerCall(t, ps, conn, "s1", "Page.overrideUserAgent", `{"value":"A"}`)
 	ownerCall(t, ps, conn, "s2", "Page.overrideUserAgent", `{"value":"B"}`)
 	from := len(p.wire)
-	if err := releaseOwners(ctx, ps, "s2", conn); err != nil {
+	if _, err := releaseOwners(ctx, ps, "s2", conn); err != nil {
 		t.Fatal(err)
 	}
 	if got := p.wire[from:]; !slices.Equal(got, []string{`page-0 Page.overrideUserAgent{"value":"A"}`}) {
@@ -110,7 +110,7 @@ func TestReleasedSharedValueFallsBack(t *testing.T) {
 		t.Fatalf("a new target got %q, want the effective value A", got)
 	}
 	from = len(p.wire)
-	if err := releaseOwners(ctx, ps, "s1", conn); err != nil {
+	if _, err := releaseOwners(ctx, ps, "s1", conn); err != nil {
 		t.Fatal(err)
 	}
 	if got := sentSince(p, from, "Page.overrideUserAgent"); !slices.Equal(got, []string{"page-0 Page.overrideUserAgent{}", "page-1 Page.overrideUserAgent{}"}) {

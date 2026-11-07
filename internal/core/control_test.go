@@ -185,7 +185,7 @@ func TestReleaseBarrierCompletesPendingItemsBeforeCleanup(t *testing.T) {
 	waitUntil(t, "the pending items", func() bool {
 		h.s.mu.Lock()
 		defer h.s.mu.Unlock()
-		return h.s.debuggerPaused && h.s.intercepted["r1"] != nil
+		return h.s.debuggerPaused && h.s.intercepted[holdKey{"page-1", "r1"}] != nil
 	})
 	queued := make(chan error, 1)
 	go func() {

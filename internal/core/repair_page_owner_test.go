@@ -89,13 +89,13 @@ func TestReleaseKeepsPageWhileAPartNeedsIt(t *testing.T) {
 	ownerCall(t, ps, c, "s1", "Page.setBootstrapScript", `{"source":"globalThis.part = 1;"}`)
 	ownerCall(t, ps, c, "s2", "Page.overrideUserAgent", `{"value":"ua-2"}`)
 	tg := p.live["page-0"]
-	if err := releaseOwners(context.Background(), ps, "s2", c); err != nil {
+	if _, err := releaseOwners(context.Background(), ps, "s2", c); err != nil {
 		t.Fatal(err)
 	}
 	if !tg.page || len(tg.overrides) != 0 || tg.script == "" {
 		t.Fatalf("page-0 after s2's release: %s, script %q; want Page kept for s1's part", pageState(tg), tg.script)
 	}
-	if err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
+	if _, err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
 		t.Fatal(err)
 	}
 	if tg.page || tg.script != "" {
@@ -128,7 +128,7 @@ func TestRestoredTargetGetsTheDesiredState(t *testing.T) {
 	ownerCall(t, ps, c, "s1", "Debugger.setBreakpointByUrl", `{"url":"https://b.example/b.js","lineNumber":1}`)
 	ownerCall(t, ps, c, "s1", "Page.overrideUserAgent", `{"value":"ua-2"}`)
 	ownerCall(t, ps, c, "s1", "Page.setBootstrapScript", `{"source":""}`)
-	if err := releaseOwners(context.Background(), ps, "s2", c); err != nil {
+	if _, err := releaseOwners(context.Background(), ps, "s2", c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +155,7 @@ func TestRestoredTargetGetsTheDesiredState(t *testing.T) {
 	check("page-1 after forward", page1)
 	// The restored target takes later changes as the active target.
 	ownerCall(t, ps, c, "s1", "Page.overrideUserAgent", `{"value":"ua-3"}`)
-	if err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
+	if _, err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
 		t.Fatal(err)
 	}
 	if page1.enabled || page1.page || page1.net || len(page1.bps) != 0 || len(page1.overrides) != 0 {
@@ -235,7 +235,7 @@ func TestFirstPartWhosePageEnableFails(t *testing.T) {
 		t.Fatal("after a Page.enable with an unknown outcome the part no longer needs Page; its release would not disable Page")
 	}
 	p.live["page-0"].page = true // the enable may have taken effect
-	if err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
+	if _, err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
 		t.Fatal(err)
 	}
 	if p.live["page-0"].page || ps.State.Needs("Page") {

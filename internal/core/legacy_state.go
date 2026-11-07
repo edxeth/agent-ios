@@ -40,6 +40,9 @@ func (d *DesiredState) interceptOnLocked() bool {
 func (d *DesiredState) SetInterception(owner Owner, on bool) *bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return nil
+	}
 	d.ver++
 	before := d.interceptOnLocked()
 	if on {
@@ -59,6 +62,9 @@ func (d *DesiredState) SetInterception(owner Owner, on bool) *bool {
 func (d *DesiredState) SetCachingDisabled(owner Owner, disabled bool) *bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return nil
+	}
 	d.ver++
 	before := len(d.caching) > 0
 	if disabled {
@@ -79,6 +85,9 @@ func (d *DesiredState) SetCachingDisabled(owner Owner, disabled bool) *bool {
 func (d *DesiredState) SetEmulatedConditions(owner Owner, params json.RawMessage) json.RawMessage {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return nil
+	}
 	d.ver++
 	before := d.effectiveCondsLocked()
 	var v map[string]json.RawMessage

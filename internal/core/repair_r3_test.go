@@ -191,9 +191,19 @@ func ownedStateOnPage1(t *testing.T, r *rig) *ManagedOp {
 func TestAbandonedProvisionalKeepsActiveCleanup(t *testing.T) {
 	r := breakpointRig(t)
 	mo := ownedStateOnPage1(t, r)
-	r.f.AbortProvisional("page-abort", 200*time.Millisecond)
-	eventually(t, time.Second, "provisional breakpoint replay", func() bool {
+	// The target is destroyed after its setup replayed the breakpoint, not
+	// after a fixed time: a target destroyed earlier gets no replay
+	// (docs/notes/w1b.md, "core-events r2: two swap tests read too early").
+	r.f.Provisional("page-abort")
+	eventually(t, 5*time.Second, "provisional breakpoint replay", func() bool {
 		return len(r.f.ReceivedMethod("Debugger.setBreakpointByUrl")) == 2
+	})
+	r.f.DestroyTarget("page-abort")
+	eventually(t, 5*time.Second, "the abort reaches the client", func() bool {
+		st := mo.Page.PS.State
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return st.syncs["page-abort"] == nil && st.staged["page-abort"] == nil // abandonTarget ran
 	})
 	if err := r.m.Release(ctxFor(t, 5*time.Second), "s1", mo.Page.Key); err != nil {
 		t.Fatal(err)

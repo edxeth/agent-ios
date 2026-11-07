@@ -127,6 +127,9 @@ func (d *DesiredState) setShared(c Sender, owner Owner, key, rule, method string
 	raw, _ := json.Marshal(params) // decoded from JSON, so it encodes
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return
+	}
 	d.ver++
 	d.sharedSeq++
 	if d.shared == nil {
@@ -135,7 +138,7 @@ func (d *DesiredState) setShared(c Sender, owner Owner, key, rule, method string
 	vals := slices.DeleteFunc(d.shared[key], func(v sharedVal) bool { return v.owner == owner })
 	d.shared[key] = append(vals, sharedVal{owner: owner, seq: d.sharedSeq, rule: rule, method: method, params: string(raw), base: base})
 	if cs, ok := c.(*changeSender); ok {
-		cs.enqueueLocked(d.ver, forwardCall(method, json.RawMessage(raw)))
+		cs.enqueueLocked(d.ver, "", false, forwardCall(method, json.RawMessage(raw)))
 	}
 }
 
@@ -194,7 +197,7 @@ func (d *DesiredState) sharedEntriesLocked() []Entry {
 		}
 		m, p := eff.method, json.RawMessage(eff.params)
 		out = append(out, Entry{
-			Key: k, Rank: stateRules[eff.rule].rank, Owner: eff.owner,
+			Key: k, Rank: stateRules[eff.rule].rank, Owner: eff.owner, Domain: ruleDomain(eff.rule),
 			Apply: func(ctx context.Context, s Sender) error {
 				_, err := s.Send(ctx, m, p)
 				return err

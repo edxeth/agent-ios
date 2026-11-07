@@ -351,7 +351,7 @@ func TestEnableWithUnknownOutcomeIsDisabledLater(t *testing.T) {
 			if tc.ownDisable {
 				_, err = legacyCall(ctxFor(t, 3*time.Second), ps, SessionOwner("legacy", "s1"), c, dom+".disable", nil)
 			} else {
-				err = releaseOwners(ctxFor(t, 3*time.Second), ps, "s1", c)
+				_, err = releaseOwners(ctxFor(t, 3*time.Second), ps, "s1", c)
 			}
 			if tc.wantErr == nil && err != nil || tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
 				t.Fatalf("the cleanup returned %v, want %v", err, tc.wantErr)

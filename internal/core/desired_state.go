@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,6 +89,24 @@ type DesiredState struct {
 	partOwner map[string]Owner
 	gapWatch  map[Owner][]*func(NetworkGap) // WatchNetworkReset
 	Boot      *BootstrapParts
+	// Releases (release_lifecycle.go). relGen counts the releases that
+	// removed a session's owners (forgetSession); a setup snapshot is taken
+	// with its value, so an installer can tell whether a release ran after
+	// the snapshot. cur is the change that holds chg (nil between changes).
+	// unknown holds the domains whose page-side state on the live
+	// connection is unknown, because owners were removed from the model
+	// without their page-side cleanup or a cleanup send failed: each
+	// with the mark (markSeq) of the last release that left it so. A
+	// reset completes only the mark it read before it took its snapshot
+	// (resetAgent).
+	relGen  uint64
+	cur     *changeSender
+	unknown map[string]uint64
+	markSeq uint64
+	// holds is the page's scheduler (setupHolds), set once it exists
+	// (useHolds); nil before the first connection is installed, when no
+	// request can be held.
+	holds setupHolds
 }
 
 // NewDesiredState returns an empty model with its bootstrap parts.
@@ -112,6 +131,9 @@ func NewDesiredState() *DesiredState {
 func (d *DesiredState) Acquire(owner Owner, domain string) (first bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return false
+	}
 	if d.domains[domain] == nil {
 		d.domains[domain] = make(map[Owner]bool)
 	}
@@ -153,6 +175,9 @@ type HeaderChange struct {
 func (d *DesiredState) SetHeaders(owner Owner, h map[string]string) HeaderChange {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return HeaderChange{}
+	}
 	d.ver++
 	before := d.effectiveHeadersLocked()
 	if len(h) == 0 {
@@ -211,6 +236,9 @@ func (d *DesiredState) effectiveHeadersLocked() map[string]string {
 func (d *DesiredState) AddInterception(owner Owner, r InterceptRule) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return
+	}
 	d.ver++
 	d.rules[owner] = append(d.rules[owner], r)
 }
@@ -219,6 +247,9 @@ func (d *DesiredState) AddInterception(owner Owner, r InterceptRule) {
 func (d *DesiredState) Put(e Entry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return
+	}
 	d.ver++
 	d.entries[e.Key] = e
 }
@@ -227,11 +258,14 @@ func (d *DesiredState) Put(e Entry) {
 // is a new requirement of Page (Needs): a caller that adds it on a live page
 // sends Page.enable when Needs("Page") was false before, as legacyCall does.
 func (d *DesiredState) SetPart(owner Owner, name string, rank int, source string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return nil
+	}
 	if err := d.Boot.Set(name, rank, source); err != nil {
 		return err
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.ver++
 	d.partOwner[name] = owner
 	return nil
@@ -263,9 +297,39 @@ func (d *DesiredState) RemovePart(name string) (last bool) {
 // entries are never sent. A new connection replaces the old backend, so
 // Apply drops them and its target becomes the active one; a setup of one
 // target (a webkit.TargetCaller) leaves the active target's state alone.
+//
+// A setup of one target runs again when a release removed owners after
+// its snapshot (relGen): that snapshot may have sent the released
+// session's state, and the new setup resets what the target's record
+// shows enabled (resetCalls) before it sends the state that remains. The
+// installer of a new connection makes the same check (applyConn).
+//
+// A setup of one target that is the active target (Session.ReapplySetup,
+// or a provisional target that committed before its snapshot), and every
+// setup that runs again, is an active Network reset (applyResetting).
 func (d *DesiredState) Apply(ctx context.Context, s Sender) error {
 	tc, oneTarget := s.(interface{ TargetID() string })
+	for pass := 0; ; pass++ {
+		var gen uint64
+		var err error
+		if oneTarget && (pass > 0 || d.isActive(tc.TargetID())) {
+			gen, err = d.applyResetting(ctx, s, tc.TargetID())
+		} else {
+			gen, err = d.applyConn(ctx, s)
+		}
+		if err != nil || !oneTarget || d.ReleaseGen() == gen {
+			return err
+		}
+	}
+}
+
+// applyConn is one Apply. It returns the release generation (relGen) of
+// the snapshot it sent: a new connection is installed only while no
+// release removed owners since (Manager.reattach, Manager.recover).
+func (d *DesiredState) applyConn(ctx context.Context, s Sender) (uint64, error) {
+	tc, oneTarget := s.(interface{ TargetID() string })
 	d.mu.Lock()
+	gen := d.relGen
 	var ts *targetSync
 	if oneTarget && tc.TargetID() != d.active {
 		// A provisional target: changes after this snapshot are queued
@@ -283,6 +347,8 @@ func (d *DesiredState) Apply(ctx context.Context, s Sender) error {
 			d.active = a.ActiveTarget()
 		}
 		d.staged, d.stagedVia = nil, nil
+		// The new connection's setup resets every agent it does not know.
+		d.unknown = nil
 	}
 	script := d.Boot.Script()
 	var domains []string
@@ -326,9 +392,9 @@ func (d *DesiredState) Apply(ctx context.Context, s Sender) error {
 	prior, recorded := agentRecord(s, oneTarget)
 	err := d.applySnapshot(ctx, s, prior, recorded, page, script, domains, network, headers, ns, rules, entries)
 	if ts != nil {
-		return d.finishSetup(ctx, tc.TargetID(), ts, err)
+		return gen, d.finishSetup(ctx, tc.TargetID(), ts, err)
 	}
-	return err
+	return gen, err
 }
 
 // agentRecord returns the connection's record of the agents of s's
@@ -469,7 +535,7 @@ func (d *DesiredState) applySnapshot(ctx context.Context, s Sender, prior map[st
 // failure: the record can say AgentMaybeEnabled.
 func resetCalls(prior map[string]webkit.AgentState, recorded bool, needed map[string]bool) (calls []webkit.Call, kept map[string]bool) {
 	kept = map[string]bool{}
-	calls = []webkit.Call{{Method: "DOM.hideHighlight"}, {Method: "DOM.setInspectModeEnabled", Params: map[string]any{"enabled": false}}}
+	calls = slices.Clone(overlayResetCalls)
 	doms := slices.Collect(maps.Keys(prior))
 	if recorded {
 		for dom := range maps.Keys(needed) {
@@ -497,6 +563,18 @@ func resetCalls(prior map[string]webkit.AgentState, recorded bool, needed map[st
 	}
 	return calls, kept
 }
+
+// overlayDomain names the DOM overlay (highlights and inspect mode) in
+// d.unknown. Its entries need no domain (Entry.Domain is ""; DOM has no
+// enable or disable in WebKit), but a cleanup of one that failed or was not
+// sent stays pending under this name (forgetSession), as legacyCall and
+// agentDomain name it too; resetAndApplyDomain resets it with
+// overlayResetCalls.
+const overlayDomain = "DOM"
+
+// overlayResetCalls bring the DOM overlay to WebKit's baseline. Every setup
+// sends them (resetCalls): overlay entries are never replayed.
+var overlayResetCalls = []webkit.Call{{Method: "DOM.hideHighlight"}, {Method: "DOM.setInspectModeEnabled", Params: map[string]any{"enabled": false}}}
 
 // agentResetCalls returns the calls that bring the agent of dom to WebKit's
 // baseline (webkit.SessionOptions.AgentReset, resetCalls): its disable,
@@ -555,6 +633,9 @@ type ReleaseResult struct {
 	// stays owned; the caller must run the Network reinitialization barrier,
 	// which applies the complete remaining header map.
 	NeedsNetworkReset bool
+	// Failed lists the domains, sorted, whose cleanup send failed: their
+	// agents' page-side state is unknown (release_lifecycle.go).
+	Failed []string
 }
 
 // Release removes every entry of owner and sends what that changes: the
@@ -566,8 +647,13 @@ func (d *DesiredState) Release(ctx context.Context, owner Owner, s Sender) (Rele
 	res, disable, err := d.dropOwner(ctx, owner, "", s)
 	errs := []error{err}
 	for _, dom := range disable {
-		errs = append(errs, sendDisable(ctx, s, dom+".disable", nil))
+		if err := sendDisable(ctx, s, dom+".disable", nil); err != nil {
+			errs = append(errs, err)
+			res.Failed = append(res.Failed, dom)
+		}
 	}
+	slices.Sort(res.Failed)
+	res.Failed = slices.Compact(res.Failed)
 	if err := errors.Join(errs...); err != nil {
 		return res, fmt.Errorf("releasing desired state of %s: %w", owner, err)
 	}
@@ -588,11 +674,37 @@ func (d *DesiredState) Release(ctx context.Context, owner Owner, s Sender) (Rele
 // res.NeedsNetworkReset. Without dom, the bootstrap script is re-sent
 // without owner's parts. owner's references to the domains are dropped;
 // the domains left without an owner are returned, sorted, and not
-// disabled here.
+// disabled here. res.Failed lists the domains of the sends that failed.
 func (d *DesiredState) dropOwner(ctx context.Context, owner Owner, dom string, s Sender) (res ReleaseResult, disable []string, err error) {
+	d.mu.Lock()
+	od := d.dropOwnerLocked(owner, dom)
+	d.mu.Unlock()
+	res = od.res
+	res.Failed, err = d.sendDrop(ctx, od, s)
+	return res, od.disable, err
+}
+
+// ownerDrop is what dropOwnerLocked removed and what its removal requires
+// on the wire (sendDrop). touched lists the domains whose page-side state
+// the removed contributions were part of.
+type ownerDrop struct {
+	res                           ReleaseResult
+	disable                       []string
+	touched                       map[string]bool
+	entries                       []Entry
+	shared                        []sharedSend
+	rules                         []InterceptRule
+	settingsBefore, settingsAfter networkSettings
+	parts                         bool
+	headerSend                    map[string]string
+}
+
+// dropOwnerLocked is the model part of dropOwner. The caller holds d.mu.
+func (d *DesiredState) dropOwnerLocked(owner Owner, dom string) (od ownerDrop) {
 	in := func(x string) bool { return dom == "" || x == dom }
 	network := in("Network")
-	d.mu.Lock()
+	od.touched = map[string]bool{}
+	var disable []string
 	d.ver++
 	var entries []Entry
 	for k, e := range d.entries {
@@ -602,10 +714,20 @@ func (d *DesiredState) dropOwner(ctx context.Context, owner Owner, dom string, s
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
+	for _, e := range entries {
+		od.touched[cmp.Or(e.Domain, overlayDomain)] = true
+	}
 	shared := d.takeSharedLocked(owner, func(rule string) bool { return in(ruleDomain(rule)) })
+	for _, x := range shared {
+		od.touched[ruleDomain(x.method)] = true
+	}
 	var settingsBefore, settingsAfter networkSettings
 	var rules []InterceptRule
 	if network {
+		_, conds := d.conds[owner]
+		if d.rules[owner] != nil || d.intercept[owner] || d.caching[owner] || conds || d.headers[owner] != nil {
+			od.touched["Network"] = true
+		}
 		settingsBefore = d.networkSettingsLocked()
 		rules = d.rules[owner]
 		delete(d.rules, owner)
@@ -622,6 +744,7 @@ func (d *DesiredState) dropOwner(ctx context.Context, owner Owner, dom string, s
 				parts = append(parts, name)
 				delete(d.partOwner, name)
 				d.Boot.Remove(name)
+				od.touched["Page"] = true
 			}
 		}
 	}
@@ -631,6 +754,7 @@ func (d *DesiredState) dropOwner(ctx context.Context, owner Owner, dom string, s
 	}
 	for dm, owners := range d.domains {
 		if in(dm) && owners[owner] {
+			od.touched[dm] = true
 			delete(owners, owner)
 			if !d.needsLocked(dm) {
 				disable = append(disable, dm)
@@ -644,38 +768,53 @@ func (d *DesiredState) dropOwner(ctx context.Context, owner Owner, dom string, s
 	var headerSend map[string]string
 	if hadHeaders && len(d.domains["Network"]) > 0 {
 		ch := d.headerChangeLocked(headersBefore)
-		res.NeedsNetworkReset = ch.NeedsNetworkReset
+		od.res.NeedsNetworkReset = ch.NeedsNetworkReset
 		if !ch.NeedsNetworkReset {
 			headerSend = ch.Send
 		}
 	}
-	d.mu.Unlock()
 	sort.Strings(disable)
+	delete(od.touched, "")
+	od.disable, od.entries, od.shared, od.rules = disable, entries, shared, rules
+	od.settingsBefore, od.settingsAfter = settingsBefore, settingsAfter
+	od.parts, od.headerSend = len(parts) > 0, headerSend
+	return od
+}
 
+// sendDrop sends what the removal od requires through s, except the
+// disables of od.disable, and returns the failures with the domains, sorted,
+// whose agent each failed send addressed.
+func (d *DesiredState) sendDrop(ctx context.Context, od ownerDrop, s Sender) (failed []string, err error) {
 	var errs []error
-	note := func(err error) {
+	note := func(dom string, err error) {
 		if err != nil {
 			errs = append(errs, err)
+			if dom != "" {
+				failed = append(failed, dom)
+			}
 		}
 	}
-	for _, e := range entries {
+	for _, e := range od.entries {
 		if e.Release != nil {
-			note(e.Release(ctx, s))
+			note(cmp.Or(e.Domain, overlayDomain), e.Release(ctx, s))
 		}
 	}
-	sendShared(ctx, s, shared, note)
-	for _, r := range rules {
+	for _, x := range od.shared {
+		sendShared(ctx, s, []sharedSend{x}, func(err error) { note(ruleDomain(x.method), err) })
+	}
+	for _, r := range od.rules {
 		_, err := s.Send(ctx, "Network.removeInterception", r)
-		note(err)
+		note("Network", err)
 	}
-	releaseNetworkSettings(ctx, s, settingsBefore, settingsAfter, note)
-	if len(parts) > 0 {
+	releaseNetworkSettings(ctx, s, od.settingsBefore, od.settingsAfter, func(err error) { note("Network", err) })
+	if od.parts {
 		_, err := s.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": d.Boot.Script()})
-		note(err)
+		note("Page", err)
 	}
-	if headerSend != nil {
-		_, err := s.Send(ctx, "Network.setExtraHTTPHeaders", map[string]any{"headers": headerSend})
-		note(err)
+	if od.headerSend != nil {
+		_, err := s.Send(ctx, "Network.setExtraHTTPHeaders", map[string]any{"headers": od.headerSend})
+		note("Network", err)
 	}
-	return res, disable, errors.Join(errs...)
+	slices.Sort(failed)
+	return slices.Compact(failed), errors.Join(errs...)
 }

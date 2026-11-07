@@ -74,6 +74,13 @@ func TestActivationIsReplayedBeforeTheBreakpoints(t *testing.T) {
 	r.m.End(mo.ID)
 	r.f.Swap("page-2", 200*time.Millisecond)
 	waitCommitted(t, mo.Page.PS.State)
+	// WebKit can commit before the setup ends; an operation then waits for
+	// the setup (Scheduler.Begin, ActiveSetup; design 2.7), so the page
+	// state is read when the setup has ended, not at a fixed time
+	// (docs/notes/w1b.md, "core-events r2: two swap tests read too early").
+	if err := mo.Page.PS.Caller.(*pageConn).ActiveSetup(ctxFor(t, 5*time.Second)); err != nil {
+		t.Fatalf("page-2's setup: %v", err)
+	}
 	var order []string
 	for _, rec := range r.f.Received() {
 		if rec.Target != "page-2" || !strings.HasPrefix(rec.Method, "Debugger.") {
@@ -526,7 +533,7 @@ func TestEveryTargetHasTheDesiredState(t *testing.T) {
 		}
 		release := func(owner string) {
 			p.trace = append(p.trace, "release "+owner)
-			if err := releaseOwners(ctx, ps, owner, conn); err != nil && callErr == nil {
+			if _, err := releaseOwners(ctx, ps, owner, conn); err != nil && callErr == nil {
 				callErr = err
 			}
 			forget(owner)

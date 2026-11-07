@@ -1,12 +1,14 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -105,7 +107,9 @@ type pageTarget struct {
 	device   transport.Device
 	page     transport.Page
 	physical bool
-	open     func(ctx context.Context, setup func(context.Context, webkit.TargetCaller) error) (webkit.Caller, error)
+	// open opens a connection whose provisional targets get state (Apply)
+	// and whose context replay runs as a change of state (replayContexts).
+	open func(ctx context.Context, state *DesiredState) (webkit.Caller, error)
 	// refresh lists the page again on its device (nil for a local URL):
 	// the current busy hint, for a preflight after the daemon closed its own
 	// connection (design 2.5 rule 2).
@@ -121,6 +125,22 @@ type lease struct {
 }
 
 // Page is a page the daemon has attached.
+//
+// PS and conn are set once, by the first attach (under attachMu and m.mu),
+// and never replaced, so a release, recovery or operation that found the
+// page through the manager reads them without a lock. A reattach replaces
+// only the connection inside conn (pageConn.swap), and only with a setup
+// that no release outdated (release_lifecycle.go): every release removes
+// its session's owners from the desired state before it ends, without the
+// change lock and also when the connection is not attached
+// (forgetSession), and the removal increases the release generation.
+// reattach and recover check under mu, at the swap, that no release runs
+// and that the generation is still the one their setup snapshot was taken
+// with; otherwise they close the new connection, wait for a running
+// release, and set up again with the current state, until the deadline
+// (exit 124). A takeover's lease is granted in the same critical section.
+// target changes when the page is selected again or preflighted; it is
+// read under mu only (Title, targetNow).
 type Page struct {
 	Key string
 	PS  *PageSession
@@ -177,6 +197,10 @@ type Manager struct {
 	// recoveryHold, when set (tests only), runs in a background recovery
 	// after the old connection is retired and before the preflight.
 	recoveryHold func(ctx context.Context)
+	// lifecycleHook, when set (tests only), is called under pg.mu at each
+	// lease grant, connection install (reattach, recover), and release
+	// begin and end.
+	lifecycleHook func(ev lifecycleEvent)
 
 	// epochs counts the lease grants of every page. Epochs only grow
 	// within one DaemonID (design 3.1): the page runtime refuses an owner
@@ -334,10 +358,12 @@ func (m *Manager) findListed(ctx context.Context, req PageRequest, match func(ke
 				},
 				key: key, title: p.Title, url: p.URL, device: d, page: p,
 				physical: (t.Kind() == transport.KindIWDP && d.ID != "SIMULATOR") || t.Kind() == transport.KindDirect,
-				open: func(ctx context.Context, setup func(context.Context, webkit.TargetCaller) error) (webkit.Caller, error) {
+				open: func(ctx context.Context, state *DesiredState) (webkit.Caller, error) {
 					o := m.o.Session
-					o.Setup = setup
+					o.Setup = func(ctx context.Context, tc webkit.TargetCaller) error { return state.Apply(ctx, tc) }
 					o.AgentReset = agentResetCalls
+					o.ContextReplay = state.replayContexts
+					o.NetworkDisabled = func(s *webkit.Session, target string) { state.networkDisabled(s, target) }
 					return webkit.Dial(ctx, func(ctx context.Context) (transport.MessageConn, error) { return t.Open(ctx, page) }, o)
 				},
 			}, listed, nil
@@ -428,7 +454,7 @@ func (m *Manager) attachedPage(id string) *Page {
 
 func (m *Manager) urlTarget(u string) pageTarget {
 	t := pageTarget{key: "url|" + u, title: redactURL(u), url: u, page: transport.Page{ID: u, Debuggable: true}}
-	t.open = func(ctx context.Context, _ func(context.Context, webkit.TargetCaller) error) (webkit.Caller, error) {
+	t.open = func(ctx context.Context, _ *DesiredState) (webkit.Caller, error) {
 		return m.o.OpenURL(ctx, u)
 	}
 	return t
@@ -534,11 +560,12 @@ func (m *Manager) page(t pageTarget) (*Page, error) {
 }
 
 // openConn opens a connection to t that applies pg's desired state to
-// provisional targets, then sends the complete desired state to it.
-func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *DesiredState, fresh bool) (webkit.Caller, error) {
-	c, err := t.open(ctx, func(ctx context.Context, tc webkit.TargetCaller) error { return state.Apply(ctx, tc) })
+// provisional targets, then sends the complete desired state to it. It
+// returns the release generation of the snapshot it sent (applyConn).
+func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *DesiredState, fresh bool) (webkit.Caller, uint64, error) {
+	c, err := t.open(ctx, state)
 	if err != nil {
-		return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: %w", t.title, err)}
+		return nil, 0, attachError(fmt.Errorf("connecting to page %q: %w", t.title, err))
 	}
 	if tf, ok := c.(interface {
 		SubscribeSync(method string, h webkit.EventHandler) func()
@@ -550,16 +577,28 @@ func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *D
 		if err := probeCaller(ctx, c); err != nil {
 			closeCaller(c)
 			if canceledByOwner(ctx, err) {
-				return nil, fmt.Errorf("connecting to page %q: %w: %w", t.title, errProbeCanceled, err)
+				return nil, 0, fmt.Errorf("connecting to page %q: %w: %w", t.title, errProbeCanceled, err)
 			}
-			return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("tab is not answering; it is probably not the visible Safari tab. Bring it to the front on the device (%w)", err)}
+			return nil, 0, &CodedError{Code: CodeBusy, Err: fmt.Errorf("tab is not answering; it is probably not the visible Safari tab. Bring it to the front on the device (%w)", err)}
 		}
 	}
-	if err := state.Apply(ctx, c); err != nil {
+	gen, err := state.applyConn(ctx, c)
+	if err != nil {
 		closeCaller(c)
-		return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("re-applying the page state: %w", err)}
+		return nil, 0, attachError(fmt.Errorf("re-applying the page state: %w", err))
 	}
-	return c, nil
+	return c, gen, nil
+}
+
+// attachError codes a failed connect or setup of openConn: a timeout (exit
+// 124, decision D9) when the command's deadline ended it, which webkit
+// reports as context.DeadlineExceeded with its cause (a call without a
+// reply, or a write or read that the deadline cut off), else busy (exit 4).
+func attachError(err error) *CodedError {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &CodedError{Code: CodeTimeout, Err: err}
+	}
+	return &CodedError{Code: CodeBusy, Err: err}
 }
 
 func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao AcquireOptions) error {
@@ -589,7 +628,7 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 		if err := state.SetPart(Owner(RuntimePart), RuntimePart, RankRuntime, runtime.Source()); err != nil {
 			return err
 		}
-		c, err := m.openConn(ctx, pg, t, state, true)
+		c, _, err := m.openConn(ctx, pg, t, state, true)
 		if err != nil {
 			return err
 		}
@@ -604,6 +643,7 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 		// counter never moves back while the record lives.
 		rt := runtime.New(pc, pc.Generation)
 		sched := NewScheduler(pc, SchedulerOptions{Generation: pc.Generation, Runtime: rt.RuntimeCaller()})
+		state.useHolds(sched)
 		// m.mu: allPages (the sweeper, Status) reads PS under it.
 		m.mu.Lock()
 		pg.conn = pc
@@ -614,7 +654,25 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 		m.mu.Unlock()
 		return nil
 	}
-	switch st := pg.conn.State(); {
+	st := pg.conn.State()
+	if st != ConnOK && (st != ConnLost || ao.Takeover) {
+		// A reattach below installs a new connection, and a takeover a
+		// new lease. A release that runs may still clean up on the
+		// connection, and when it ends it clears the scheduler lease and
+		// closes the lease channel, which would end a lease granted
+		// meanwhile. So a reattach starts only after that release ended.
+		// A release claimed later finds this connection not attached and
+		// cleans up nothing (releasePage); reattach then leaves the grant
+		// to acquire, which waits for that release too.
+		if err := pg.waitReleased(ctx); err != nil {
+			return err
+		}
+		pg.mu.Lock()
+		recovering = pg.recovering
+		pg.mu.Unlock()
+		st = pg.conn.State()
+	}
+	switch {
 	case st == ConnLost:
 		if !ao.Takeover {
 			return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %w", t.title, ErrLost)}
@@ -641,25 +699,68 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 
 // reattach opens a new connection, re-applies the desired state, swaps it
 // in and grants the lease to the caller's session with a new epoch.
+//
+// No connection is installed and no lease granted while a release of the
+// lease runs, nor after a release that began during the connect: the
+// release ends the old lease when it finishes, and it drops the released
+// session's desired state, which this connection's setup may have applied.
+// The check is the release generation of the setup's snapshot, compared
+// under pg.mu at the swap (release_lifecycle.go). Then the new connection
+// is closed, and after the release the page is connected again with the
+// state that remains, until ctx ends (exit 124).
 func (m *Manager) reattach(ctx context.Context, pg *Page, t pageTarget, ao AcquireOptions, why string) error {
 	pg.retireConn()
-	c, err := m.openConn(ctx, pg, t, pg.PS.State, true)
-	if err != nil {
-		if networkDisableWritten(err) {
-			pg.reportNetworkGap()
+	for {
+		c, gen, err := m.openConn(ctx, pg, t, pg.PS.State, true)
+		if err != nil {
+			if networkDisableWritten(err) {
+				pg.reportNetworkGap()
+			}
+			return err
 		}
-		return err
-	}
-	pg.reportNetworkGap() // the new backend holds none of the held requests
-	pg.conn.swap(c)
-	pg.gapFrom = time.Time{}
-	m.o.Logf("page %s: %s: reattached", t.title, why)
-	if why == "takeover" {
+		// The new backend holds none of the held requests, whether this
+		// connection is installed or closed below.
+		pg.reportNetworkGap()
+		// pg.mu from the check to the grant: a release cannot be claimed
+		// between them (releaseLease claims under pg.mu).
 		pg.mu.Lock()
-		pg.grantLocked(ao, time.Now())
+		if pg.releasing || pg.PS.State.ReleaseGen() != gen {
+			pg.mu.Unlock()
+			closeCaller(c)
+			if err := pg.waitReleased(ctx); err != nil {
+				return err
+			}
+			m.o.Logf("page %s: %s: a release ran during the connect; connecting again", t.title, why)
+			continue
+		}
+		pg.conn.swap(c)
+		pg.gapFrom = time.Time{}
+		m.lifecycle("install", pg, nil)
+		if why == "takeover" {
+			pg.grantLocked(ao, time.Now())
+		}
 		pg.mu.Unlock()
+		m.o.Logf("page %s: %s: reattached", t.title, why)
+		return nil
 	}
-	return nil
+}
+
+// waitReleased waits until no release of pg's lease runs, at most until
+// ctx ends.
+func (pg *Page) waitReleased(ctx context.Context) error {
+	for {
+		pg.mu.Lock()
+		releasing, freed, title := pg.releasing, pg.freed, pg.target.title
+		pg.mu.Unlock()
+		if !releasing {
+			return nil
+		}
+		select {
+		case <-freed:
+		case <-ctx.Done():
+			return &CodedError{Code: CodeTimeout, Err: fmt.Errorf("waiting for the release of the lease of page %q: %w", title, ctx.Err())}
+		}
+	}
 }
 
 // recover is the background recovery of design 2.6 step 3: one reconnect,
@@ -735,7 +836,7 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		fail(err)
 		return
 	}
-	c, err := m.openConn(ctx, pg, t, pg.PS.State, false)
+	c, gen, err := m.openConn(ctx, pg, t, pg.PS.State, false)
 	if err != nil {
 		if networkDisableWritten(err) {
 			pg.reportNetworkGap()
@@ -751,11 +852,16 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		fail(fmt.Errorf("the new connection does not answer either: %w", err))
 		return
 	}
+	// A release that removes owners releases the page's lease, so while l
+	// still holds the page and no release runs, the release generation is
+	// that of the snapshot. The check keeps the install rule of reattach
+	// (release_lifecycle.go) explicit here too.
 	pg.mu.Lock()
-	install := pg.lease == l && !pg.releasing && pg.conn.State() == ConnStalled
+	install := pg.lease == l && !pg.releasing && pg.conn.State() == ConnStalled && pg.PS.State.ReleaseGen() == gen
 	if install {
 		pg.conn.swap(c)
 		pg.gapFrom = time.Time{}
+		m.lifecycle("install", pg, nil)
 	}
 	pg.mu.Unlock()
 	if !install {
@@ -863,6 +969,7 @@ func (pg *Page) grantLocked(ao AcquireOptions, now time.Time) *lease {
 	}
 	l := &lease{session: ao.Session, resOwner: ao.Reservation, epoch: pg.m.epochs.Add(1), since: now, lastUsed: now}
 	pg.lease = l
+	pg.m.lifecycle("grant", pg, l)
 	pg.PS.Sched.SetLease(ao.Session, l.epoch)
 	return l
 }
@@ -889,13 +996,13 @@ func (m *Manager) acquire(ctx context.Context, pg *Page, ao AcquireOptions, op b
 		now := time.Now()
 		pg.mu.Lock()
 		if pg.releasing {
-			freed := pg.freed
+			freed, title := pg.freed, pg.target.title
 			pg.mu.Unlock()
 			select {
 			case <-freed:
 				continue
 			case <-ctx.Done():
-				return 0, time.Time{}, &CodedError{Code: CodeTimeout, Err: fmt.Errorf("waiting for the release of the lease of page %q: %w", pg.target.title, ctx.Err())}
+				return 0, time.Time{}, &CodedError{Code: CodeTimeout, Err: fmt.Errorf("waiting for the release of the lease of page %q: %w", title, ctx.Err())}
 			}
 		}
 		l := pg.lease
@@ -915,7 +1022,7 @@ func (m *Manager) acquire(ctx context.Context, pg *Page, ao AcquireOptions, op b
 			return e, prev, nil
 		}
 		err := pg.leaseErrLocked(l)
-		freed := pg.freed
+		freed, title := pg.freed, pg.target.title
 		pg.mu.Unlock()
 		if ao.WaitLease <= 0 {
 			return 0, time.Time{}, err
@@ -925,7 +1032,7 @@ func (m *Manager) acquire(ctx context.Context, pg *Page, ao AcquireOptions, op b
 		case <-waitEnd:
 			return 0, time.Time{}, err
 		case <-ctx.Done():
-			return 0, time.Time{}, &CodedError{Code: CodeTimeout, Err: fmt.Errorf("waiting for the lease of page %q: %w", pg.target.title, ctx.Err())}
+			return 0, time.Time{}, &CodedError{Code: CodeTimeout, Err: fmt.Errorf("waiting for the lease of page %q: %w", title, ctx.Err())}
 		}
 	}
 }
@@ -1015,7 +1122,7 @@ func (m *Manager) Begin(ctx context.Context, req PageRequest, ao AcquireOptions,
 		pg.running--
 		pg.mu.Unlock()
 	}
-	if idle := time.Since(prev); !prev.IsZero() && idle > m.o.IdleProbe && pg.target.physical {
+	if idle := time.Since(prev); !prev.IsZero() && idle > m.o.IdleProbe && pg.targetNow().physical {
 		// Design 2.6 step 4: after 20 s idle the probe runs before the
 		// command; a page that does not answer gets nothing sent.
 		if perr := pg.conn.probeNow(ctx); perr != nil {
@@ -1025,6 +1132,10 @@ func (m *Manager) Begin(ctx context.Context, req PageRequest, ao AcquireOptions,
 			}
 			return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: page %q did not answer the liveness probe after %s idle, so %s was not sent (%v)", webkit.ErrSessionStalled, pg.Title(), idle.Round(time.Second), name, perr)}
 		}
+	}
+	if err := m.recoverSetup(ctx, pg); err != nil {
+		notRunning()
+		return nil, fmt.Errorf("%s was not sent: %w", name, err)
 	}
 	op, err := pg.PS.Sched.Begin(ctx, OpSpec{Name: name, Class: class, Session: ao.Session, Epoch: epoch})
 	if err != nil {
@@ -1087,8 +1198,9 @@ func (m *Manager) Raw(ctx context.Context, id, method string, params json.RawMes
 	if webkit.HangsThroughTarget(method) && pg.conn.IsTargetRouted() {
 		return nil, notSent{fmt.Errorf("%s: %w", method, webkit.ErrHangsThroughTarget)}
 	}
-	if known, ok := wip.Supported(pg.target.device.OSVersion, method); known && !ok {
-		return nil, notSent{fmt.Errorf("%s is not in the iOS %s command list, so it was not sent (unknown methods can wedge the page)", method, pg.target.device.OSVersion)}
+	osVersion := pg.targetNow().device.OSVersion
+	if known, ok := wip.Supported(osVersion, method); known && !ok {
+		return nil, notSent{fmt.Errorf("%s is not in the iOS %s command list, so it was not sent (unknown methods can wedge the page)", method, osVersion)}
 	}
 	if dl, ok := ctx.Deadline(); ok {
 		ctx = webkit.WithCallBudget(ctx, time.Until(dl))
@@ -1127,6 +1239,13 @@ func legacyCall(ctx context.Context, ps *PageSession, owner Owner, c webkit.Call
 		p = params
 	}
 	dom, verb, _ := strings.Cut(method, ".")
+	if ud := cmp.Or(ruleDomain(method), dom); desiredStateMethod(method) && ps.State.isUnknown(ud) {
+		// A release left this agent's state unknown: reset it first
+		// (release_lifecycle.go).
+		if err := resetAgent(ctx, ps, c, ud); err != nil {
+			return nil, err
+		}
+	}
 	switch {
 	case verb == "enable":
 		if !ps.State.Acquire(owner, dom) {
@@ -1280,6 +1399,7 @@ func (m *Manager) releaseLease(ctx context.Context, pg *Page, l *lease) error {
 		}
 	}
 	pg.releasing = true
+	m.lifecycle("release-begin", pg, l)
 	pg.mu.Unlock()
 	return m.releasePage(ctx, pg, l)
 }
@@ -1300,30 +1420,65 @@ func (m *Manager) releasePage(ctx context.Context, pg *Page, l *lease) error {
 		m.End(id)
 	}
 	var err error
-	if pg.conn.State() == ConnOK {
+	var failed []string // domains whose cleanup send failed
+	live := pg.conn.State() == ConnOK
+	if live {
 		err = pg.PS.Sched.Release(ctx, func(ctx context.Context, c webkit.Caller) error {
 			// The required cleanup first: the best-effort runtime release
 			// gets only what is left of the deadline after it.
-			err := releaseOwners(ctx, pg.PS, l.session, c)
+			var err error
+			failed, err = releaseOwners(ctx, pg.PS, l.session, c)
 			m.releaseRuntime(ctx, pg, l, c)
 			return err
 		})
 	} else {
-		// Design 2.4: no reconnect just to clean up; the cleanup stays
-		// pending and the page may keep page-side overrides until it
-		// navigates. The scheduler lease still ends.
+		// Design 2.4: no reconnect just to clean up; the page-side cleanup
+		// stays pending and the page may keep page-side overrides until it
+		// navigates. A connection that is not attached is never used
+		// again: the next one's setup resets every agent it does not know
+		// (resetCalls). The scheduler lease still ends.
 		_ = pg.PS.Sched.Release(ctx, nil)
-		m.o.Logf("page %s: lease of %q released without cleanup; the connection is %s", pg.target.title, l.session, pg.conn.State())
+		m.o.Logf("page %s: lease of %q released without page-side cleanup (pending); the connection is %s", pg.Title(), l.session, pg.conn.State())
+	}
+	// The session's owners leave the desired state before the lease ends,
+	// whatever happened above (a cleanup that could not take the change
+	// lock before the deadline, a failure, no connection), so no later
+	// setup (takeover, reopen, recovery, a provisional target, the context
+	// replay) applies them again (release_lifecycle.go). A cleanup that
+	// was not sent or failed stays pending until a reset succeeds.
+	if pg.PS.State.forgetSession(l.session, live, failed) {
+		m.o.Logf("page %s: lease of %q released; its page-side cleanup was not sent or failed (%v) and is pending", pg.Title(), l.session, err)
+		m.resetUnknownAgents(pg)
+	}
+	if live {
+		m.recoverSetupLater(pg)
 	}
 	pg.mu.Lock()
 	if pg.lease == l {
 		pg.lease = nil
 	}
 	pg.releasing = false
+	m.lifecycle("release-end", pg, l)
 	close(pg.freed)
 	pg.freed = make(chan struct{})
 	pg.mu.Unlock()
 	return err
+}
+
+// lifecycleEvent is an event of lifecycleHook: kind is "grant",
+// "install", "release-begin" or "release-end"; l is the lease granted or
+// released (nil for an install).
+type lifecycleEvent struct {
+	kind string
+	pg   *Page
+	l    *lease
+}
+
+// lifecycle calls lifecycleHook. The caller holds pg.mu.
+func (m *Manager) lifecycle(kind string, pg *Page, l *lease) {
+	if m.lifecycleHook != nil {
+		m.lifecycleHook(lifecycleEvent{kind: kind, pg: pg, l: l})
+	}
 }
 
 // Budget of the page-side runtime release of a lease (releaseRuntime). It
@@ -1364,20 +1519,26 @@ func (m *Manager) releaseRuntime(ctx context.Context, pg *Page, l *lease, c webk
 	}
 	if budget < runtimeReleaseMin {
 		m.o.Logf("page %s: page-side runtime release of %q (epoch %d) skipped: %v left for it; the next owner resets the page maps",
-			pg.target.title, l.session, l.epoch, max(budget, 0))
+			pg.Title(), l.session, l.epoch, max(budget, 0))
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	if err := pg.PS.Runtime.Release(ctx, c, l.epoch); err != nil {
-		m.o.Logf("page %s: page-side runtime release of %q (epoch %d): %v", pg.target.title, l.session, l.epoch, err)
+		m.o.Logf("page %s: page-side runtime release of %q (epoch %d): %v", pg.Title(), l.session, l.epoch, err)
 	}
 }
 
-func releaseOwners(ctx context.Context, ps *PageSession, session string, c webkit.Caller) (err error) {
+// releaseOwners releases every owner of session in one change through c
+// and returns the first failure with the domains, sorted, whose cleanup
+// send failed (ReleaseResult.Failed; Network for a failed Network reset).
+// The owners leave the model whatever fails; the caller keeps the failed
+// domains' cleanup pending (forgetSession).
+func releaseOwners(ctx context.Context, ps *PageSession, session string, c webkit.Caller) (failed []string, err error) {
+	ctx = asCleanup(ctx) // a forwarded send that fails stays pending too
 	cs, end, err := ps.State.beginChange(ctx, c)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { err = end(err) }()
 	c = cs
@@ -1387,14 +1548,119 @@ func releaseOwners(ctx context.Context, ps *PageSession, session string, c webki
 			continue
 		}
 		res, err := ps.State.Release(ctx, o, c)
+		failed = append(failed, res.Failed...)
 		if err == nil && res.NeedsNetworkReset {
-			err = NetworkReset(ctx, ps.Sched, c, ps.State)
+			if err = NetworkReset(ctx, ps.Sched, c, ps.State); err != nil {
+				failed = append(failed, "Network")
+			}
 		}
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
-	return firstErr
+	slices.Sort(failed)
+	return slices.Compact(failed), firstErr
+}
+
+// resetUnknownAgents resets, in the background, the agents whose state a
+// release left unknown on the live connection (release_lifecycle.go):
+// once the change lock is free, inside a barrier (design 2.10), as one
+// change through the control lane. It is bounded by forwardBudget; a
+// failure is logged, and the agents stay unknown for the next change or
+// setup that uses them.
+func (m *Manager) resetUnknownAgents(pg *Page) {
+	m.goBackground(func(bg context.Context) {
+		ctx, cancel := context.WithTimeout(bg, forwardBudget)
+		defer cancel()
+		if err := resetUnknown(ctx, pg); err != nil {
+			m.o.Logf("page %s: resetting the agents of a release without cleanup: %v", pg.Title(), err)
+		}
+	})
+}
+
+// recoverSetup applies the desired state again to the page's active target
+// when its provisional setup failed (webkit.SetupError, design 2.7): the
+// target lacks part of the state, and the session refuses every gated send
+// to it until a setup succeeds (Session.ReapplySetup). It runs before an
+// operation is queued (Manager.Begin) and after a lease release
+// (recoverSetupLater), inside a barrier (design 2.10: the running
+// operations end first; their sends to the target are refused anyway) and
+// as one change, so no change interleaves with the setup's snapshot. Apply
+// runs it as an active Network reset (applyResetting). One attempt per
+// call: a refusal is returned with what to do, and the next Begin tries
+// again. It returns nil when the active target's setup did not fail.
+func (m *Manager) recoverSetup(ctx context.Context, pg *Page) (err error) {
+	if !setupFailed(ctx, pg.conn) {
+		return nil
+	}
+	reopen, err := pg.PS.Sched.Barrier(ctx)
+	if err != nil {
+		return setupRecoveryError(pg, err)
+	}
+	defer reopen()
+	_, end, err := pg.PS.State.beginChange(ctx, nil)
+	if err != nil {
+		return setupRecoveryError(pg, err)
+	}
+	defer func() { err = end(err) }()
+	if !setupFailed(ctx, pg.conn) {
+		return nil // a recovery that held the change before this one succeeded
+	}
+	if err := pg.conn.ReapplySetup(ctx); err != nil {
+		return setupRecoveryError(pg, err)
+	}
+	m.o.Logf("page %s: the page state was applied again after a failed setup", pg.Title())
+	return nil
+}
+
+// setupFailed reports whether the provisional setup of c's active target
+// failed (webkit.SetupError). A setup that still runs is waited for, at
+// most until ctx ends; then the scheduler's setup gate reports it.
+func setupFailed(ctx context.Context, c *pageConn) bool {
+	return errors.As(c.ActiveSetup(ctx), new(*webkit.SetupError))
+}
+
+// setupRecoveryError is a failed recovery of a failed setup
+// (recoverSetup): a timeout (exit 124) when the deadline ended it.
+func setupRecoveryError(pg *Page, err error) error {
+	err = fmt.Errorf("applying the page state again after a failed setup of page %q: %w; retry the command: the next command and a lease release apply the page state again", pg.Title(), err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &CodedError{Code: CodeTimeout, Err: err}
+	}
+	return err
+}
+
+// recoverSetupLater runs recoverSetup in the background after a lease
+// release, bounded by forwardBudget: the release changed the desired state
+// and must not spend its deadline on a whole setup; the next Begin waits
+// for it (the change lock) and tries again when it failed. A failure is
+// logged.
+func (m *Manager) recoverSetupLater(pg *Page) {
+	m.goBackground(func(bg context.Context) {
+		ctx, cancel := context.WithTimeout(bg, forwardBudget)
+		defer cancel()
+		if err := m.recoverSetup(ctx, pg); err != nil {
+			m.o.Logf("page %s: %v", pg.Title(), err)
+		}
+	})
+}
+
+func resetUnknown(ctx context.Context, pg *Page) (err error) {
+	reopen, err := pg.PS.Sched.Barrier(ctx)
+	if err != nil {
+		return err
+	}
+	defer reopen()
+	cs, end, err := pg.PS.State.beginChange(ctx, controlCaller{pg.conn})
+	if err != nil {
+		return err
+	}
+	defer func() { err = end(err) }()
+	var errs []error
+	for _, dom := range pg.PS.State.unknownDomains() {
+		errs = append(errs, resetAgent(ctx, pg.PS, cs, dom))
+	}
+	return errors.Join(errs...)
 }
 
 // ---- lookup, events, status ----
@@ -1507,7 +1773,13 @@ func (m *Manager) Sweep(now time.Time) {
 		// The expiry is claimed under the same lock that acquire renews
 		// the lease and counts operations under (design 2.5).
 		pg.mu.Lock()
-		l, running, last := pg.lease, pg.running, pg.lastUsed
+		// The target and the lease's reservation owner change under pg.mu
+		// (an attach, acquire): copied here for the reads below.
+		l, running, last, t := pg.lease, pg.running, pg.lastUsed, pg.target
+		var resOwner string
+		if l != nil {
+			resOwner = l.resOwner
+		}
 		expire := l != nil && running == 0 && pg.holders[l.session] == 0 && !pg.releasing && now.Sub(l.lastUsed) >= m.o.LeaseTTL
 		if expire {
 			pg.releasing = true
@@ -1517,13 +1789,13 @@ func (m *Manager) Sweep(now time.Time) {
 		case expire:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := m.releasePage(ctx, pg, l); err != nil {
-				m.o.Logf("page %s: idle lease release: %v", pg.target.title, err)
+				m.o.Logf("page %s: idle lease release: %v", t.title, err)
 			}
 			cancel()
-			m.o.Logf("page %s: lease of %q expired after %s idle", pg.target.title, l.session, m.o.LeaseTTL)
+			m.o.Logf("page %s: lease of %q expired after %s idle", t.title, l.session, m.o.LeaseTTL)
 		case l != nil:
-			if pg.target.physical && pg.conn.State() != ConnLost {
-				renew[l.resOwner] = true
+			if t.physical && pg.conn.State() != ConnLost {
+				renew[resOwner] = true
 			}
 		case running == 0 && now.Sub(last) >= m.o.IdleClose:
 			m.mu.Lock()
@@ -1531,7 +1803,7 @@ func (m *Manager) Sweep(now time.Time) {
 			m.mu.Unlock()
 			pg.PS.Sched.Close()
 			pg.conn.close()
-			m.o.Logf("page %s: closed after %s without a lease", pg.target.title, m.o.IdleClose)
+			m.o.Logf("page %s: closed after %s without a lease", t.title, m.o.IdleClose)
 		}
 	}
 	if m.o.Reservations != nil {
@@ -1603,6 +1875,16 @@ func (pg *Page) Title() string {
 	pg.mu.Lock()
 	defer pg.mu.Unlock()
 	return pg.target.title
+}
+
+// targetNow returns a copy of the page's target. An attach (ensureAttached,
+// Manager.page) and a fresh preflight update the target under pg.mu while
+// releases, operations and the sweeper run, so every read outside pg.mu
+// takes a copy here (or Title).
+func (pg *Page) targetNow() pageTarget {
+	pg.mu.Lock()
+	defer pg.mu.Unlock()
+	return pg.target
 }
 
 // ConnState is the state of the page connection.

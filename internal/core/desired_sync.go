@@ -1,11 +1,13 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -38,6 +40,9 @@ import (
 //   - An item whose target is gone (destroyed, replaced by a commit or by a
 //     new connection) or whose setup failed completes without error: the
 //     target took its state with it, or ReapplySetup sends the whole state.
+//   - A cleanup send (asCleanup) that fails on a target keeps that cleanup
+//     pending for the target (cleanupFailedLocked): its domain becomes
+//     unknown (d.unknown) once the target is the active one.
 //   - Changes run one at a time (d.chg) but wait for their items after
 //     releasing d.chg; setups never wait for a change, because a change can
 //     wait for a setup (the gate of webkit.Session).
@@ -55,12 +60,22 @@ type targetSync struct {
 	idle      chan struct{} // closed when the current sending ends
 	committed bool          // became the active target; dropped by the next change
 	failed    bool          // its setup failed; ReapplySetup sends the full state
+	// unclean holds the domains of the cleanup sends that failed on the
+	// target while it was provisional; they become unknown when it commits
+	// (commitTarget).
+	unclean map[string]bool
 }
 
 // queued is one forwarded send of a change, queued for one target. Its
 // fields after send are guarded by DesiredState.mu.
 type queued struct {
-	send      func(context.Context, Sender) error
+	send func(context.Context, Sender) error
+	// cleanup is the domain of a cleanup send (asCleanup; "" for other
+	// sends): its failure keeps that cleanup pending (cleanupFailedLocked).
+	// mark is the unknown mark of cleanup that the item's success removes
+	// (0 for none; enqueueLocked, swapped).
+	cleanup   string
+	mark      uint64
 	completed bool
 	err       error
 	done      chan struct{} // closed on completion
@@ -108,8 +123,19 @@ type pendingItem struct {
 
 // enqueueLocked queues f for every registered target other than the
 // change's own whose snapshot predates version v, and records the items as
-// the change's. The caller holds d.mu.
-func (c *changeSender) enqueueLocked(v uint64, f func(context.Context, Sender) error) {
+// the change's. cleanup is the domain of a cleanup send ("" for other
+// sends).
+//
+// swapped reports a cleanup send that a commit cut off on the change's
+// target (ErrTargetSwapped): the item for the target that is active now is
+// that target's cleanup, so its domain becomes unknown with a new mark
+// that the item carries until it succeeds (pump). A reset that sent the
+// call (resetAgent) therefore keeps the mark, and the release reports the
+// cleanup pending, while the item is unanswered; a failure marks the
+// domain again (cleanupFailedLocked). No item for the active target means
+// its setup snapshot is newer than the change, or its setup failed and
+// ReapplySetup sends the whole state. The caller holds d.mu.
+func (c *changeSender) enqueueLocked(v uint64, cleanup string, swapped bool, f func(context.Context, Sender) error) {
 	targets := make([]string, 0, len(c.d.syncs))
 	for t := range c.d.syncs {
 		targets = append(targets, t)
@@ -118,7 +144,11 @@ func (c *changeSender) enqueueLocked(v uint64, f func(context.Context, Sender) e
 	for _, t := range targets {
 		ts := c.d.syncs[t]
 		if t != c.target && !ts.failed && ts.snapV < v {
-			q := &queued{send: f, done: make(chan struct{})}
+			q := &queued{send: f, cleanup: cleanup, done: make(chan struct{})}
+			if swapped && cleanup != "" && t == c.d.active {
+				c.d.markUnknownLocked(cleanup)
+				q.mark = c.d.markSeq
+			}
 			ts.queue = append(ts.queue, q)
 			c.pending = append(c.pending, pendingItem{t, ts, q})
 		}
@@ -152,12 +182,18 @@ func (d *DesiredState) pump(ctx context.Context, target string, ts *targetSync, 
 		d.mu.Lock()
 		switch {
 		case err == nil:
+			if q.mark != 0 && d.unknown[q.cleanup] == q.mark {
+				delete(d.unknown, q.cleanup)
+			}
 		case targetGone(err):
 			err = nil
 			dropQueueLocked(ts)
 		default:
 			err = fmt.Errorf("page target %s: %w", target, err)
 			errs = append(errs, err)
+			if q.cleanup != "" {
+				d.cleanupFailedLocked(target, ts, q.cleanup)
+			}
 		}
 		q.completeLocked(err)
 	}
@@ -168,6 +204,46 @@ func (d *DesiredState) pump(ctx context.Context, target string, ts *targetSync, 
 	close(ts.idle)
 	d.mu.Unlock()
 	return errors.Join(errs...)
+}
+
+// cleanupFailedLocked keeps the cleanup of the agent of domain dom pending
+// on target, whose record is ts, after a cleanup send to it failed (a
+// refusal, a stalled connection, the deadline): the target's backend may
+// keep the released state. The obligation stays with the target that
+// holds that state:
+//
+//   - A committed target is the active one: dom becomes unknown at once
+//     with a new mark, and a reset of the active target completes it
+//     (resetAgent, a new connection's setup).
+//   - A provisional target keeps dom in ts.unclean; its commit makes dom
+//     unknown (commitTarget), before any change can address it as the
+//     active target. A reset of the old active target in the meantime does
+//     not complete it.
+//   - A record that is no longer target's keeps nothing: a provisional
+//     target destroyed before commit took its backend and the released
+//     state with it (abandonTarget drops the record), and a target whose
+//     setup runs again is reset by that setup (resetCalls), or by
+//     ReapplySetup when it fails.
+//
+// The caller holds d.mu.
+func (d *DesiredState) cleanupFailedLocked(target string, ts *targetSync, dom string) {
+	switch {
+	case d.syncs[target] != ts:
+	case ts.committed:
+		d.markUnknownLocked(dom)
+	default:
+		if ts.unclean == nil {
+			ts.unclean = map[string]bool{}
+		}
+		ts.unclean[dom] = true
+	}
+}
+
+// agentDomain is the domain whose agent state method changes, as d.unknown
+// names it.
+func agentDomain(method string) string {
+	dom, _, _ := strings.Cut(method, ".")
+	return cmp.Or(ruleDomain(method), dom)
 }
 
 // drain sends target's whole queue unless its setup or another change
@@ -260,6 +336,11 @@ type changeSender struct {
 	d       *DesiredState
 	target  string        // "" when the connection does not name its targets
 	pending []pendingItem // the items it queued, in order; guarded by d.mu
+	// ended reports that the operation the change runs in ended (nil: the
+	// change is no operation's); refused, under d.mu, that the model
+	// refused one of its additions for that reason (refusedLocked).
+	ended   func() bool
+	refused bool
 }
 
 type noForwardKey struct{}
@@ -268,6 +349,15 @@ type noForwardKey struct{}
 // (changeSender.put), together with the record it makes.
 func withoutForward(ctx context.Context) context.Context {
 	return context.WithValue(ctx, noForwardKey{}, true)
+}
+
+type cleanupKey struct{}
+
+// asCleanup marks the sends of a cleanup: a release's (releaseOwners) and
+// the reset of an unknown agent (resetAgent). A forwarded cleanup send
+// that fails keeps the cleanup pending (cleanupFailedLocked).
+func asCleanup(ctx context.Context) context.Context {
+	return context.WithValue(ctx, cleanupKey{}, true)
 }
 
 // needsReply lists calls whose reply the change uses; for them the loss of
@@ -280,12 +370,21 @@ var needsReply = map[string]bool{"Debugger.setBreakpointByUrl": true, "Debugger.
 // or from its setup snapshot (R5-3). A call that needs the reply goes to
 // the committed target instead when it never reached the old one; when it
 // may have reached it, it fails, because its reply is lost.
+//
+// A cleanup send (asCleanup) that a commit cut off this way did not clean
+// the target that is active now, which may hold the released state; its
+// forwarded send to that target is the cleanup (enqueueLocked, swapped).
 func (c *changeSender) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	cleanup := ""
+	if ctx.Value(cleanupKey{}) != nil {
+		cleanup = agentDomain(method)
+	}
 	sctx := ctx
 	if c.target != "" {
 		sctx = webkit.WithTarget(ctx, c.target)
 	}
 	res, err := c.Caller.Send(sctx, method, params)
+	swapped := false
 	if err != nil {
 		if !errors.Is(err, webkit.ErrTargetSwapped) {
 			return res, err
@@ -297,6 +396,7 @@ func (c *changeSender) Send(ctx context.Context, method string, params any) (jso
 			return c.Send(ctx, method, params)
 		}
 		res = json.RawMessage("{}")
+		swapped = true
 	}
 	if forwarded(method) && ctx.Value(noForwardKey{}) == nil {
 		call := forwardCall(method, params)
@@ -307,7 +407,7 @@ func (c *changeSender) Send(ctx context.Context, method string, params any) (jso
 			// whole script, so a repeat is harmless.
 			d.ver++
 		}
-		c.enqueueLocked(d.ver, call)
+		c.enqueueLocked(d.ver, cleanup, swapped, call)
 		d.mu.Unlock()
 	}
 	return res, nil
@@ -338,10 +438,13 @@ func (c *changeSender) put(e Entry, f func(context.Context, Sender) error) {
 	d := c.d
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return
+	}
 	d.ver++
 	d.entries[e.Key] = e
 	if f != nil {
-		c.enqueueLocked(d.ver, f)
+		c.enqueueLocked(d.ver, "", false, f)
 	}
 }
 
@@ -360,6 +463,26 @@ func putState(d *DesiredState, c Sender, e Entry, f func(context.Context, Sender
 		return
 	}
 	d.Put(e)
+}
+
+// replayContexts runs replay, a session's replay of the execution contexts
+// of a document restored from the back/forward cache
+// (webkit.SessionOptions.ContextReplay), which sends Runtime.disable and
+// Runtime.enable to that document's target. It runs as a desired-state
+// change (beginChange), so no owner's Runtime.enable or Runtime.disable
+// runs between its check and its calls, and it calls replay only while an
+// owner needs Runtime (Needs): the replay never enables an unowned agent,
+// and an owned agent is enabled again in the same change. replay changes
+// nothing in the model, so it queues nothing for provisional targets.
+func (d *DesiredState) replayContexts(ctx context.Context, replay func(context.Context) error) error {
+	_, end, err := d.beginChange(ctx, nil) // replay sends through the session itself
+	if err != nil {
+		return err
+	}
+	if !d.Needs("Runtime") {
+		return end(nil)
+	}
+	return end(replay(ctx))
 }
 
 // beginChange starts a desired-state change made through c and returns its
@@ -387,12 +510,33 @@ func (d *DesiredState) beginChange(ctx context.Context, c webkit.Caller) (*chang
 			delete(d.syncs, t)
 		}
 	}
-	d.mu.Unlock()
 	cs := &changeSender{Caller: c, d: d, target: target}
+	if oe, ok := c.(interface{ opEnded() bool }); ok {
+		cs.ended = oe.opEnded
+	}
+	d.cur = cs
+	d.mu.Unlock()
 	end := func(err error) error {
+		d.mu.Lock()
+		d.cur = nil
+		refused := cs.refused
+		d.mu.Unlock()
+		if refused {
+			err = errors.Join(err, errChangeRefused)
+		}
 		<-d.chg
+		// The wait outlives a cancel of ctx (an operation that a release
+		// ended) but not its deadline (design 2.6): a provisional target
+		// that does not answer must not hold the command past it. Items
+		// still queued then are sent later by whoever holds the target's
+		// sending slot (its setup, a later change, drain at the commit).
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forwardBudget)
 		defer cancel()
+		if dl, ok := ctx.Deadline(); ok {
+			var cancelDL context.CancelFunc
+			fctx, cancelDL = context.WithDeadline(fctx, dl)
+			defer cancelDL()
+		}
 		d.mu.Lock()
 		items := cs.pending
 		d.mu.Unlock()

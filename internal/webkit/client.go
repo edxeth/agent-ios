@@ -21,6 +21,7 @@ type EventHandler func(method string, params json.RawMessage)
 // wrapped/unwrapped using Target.sendMessageToTarget routing.
 type Client struct {
 	conn   *websocket.Conn
+	wire   *cutConn // the network connection under conn (InterruptWrites)
 	url    string
 	nextID atomic.Int64
 	// writeSem holds one token while a goroutine writes to conn
@@ -121,14 +122,26 @@ func NewClientWithDialer(ctx context.Context, wsURL string, dialer *websocket.Di
 const maxReadSize = 512 * 1024 * 1024
 
 func (c *Client) connect(ctx context.Context) error {
-	conn, _, err := c.Dialer.DialContext(ctx, c.url, nil)
+	conn, wire, resp, err := dialCuttable(ctx, c.Dialer, c.url)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
-		return fmt.Errorf("connecting to %s: %w", c.url, err)
+		return fmt.Errorf("connecting to %s: %w", c.url, deadlineCaused(ctx, err))
 	}
 	conn.SetReadLimit(maxReadSize)
-	c.conn = conn
+	c.conn, c.wire = conn, wire
 	return nil
 }
+
+// InterruptWrites ends the write in progress at once and then fails every
+// later Send before it writes anything (ErrNotSent). A write that it
+// interrupts may have written part of its message, so its error does not
+// wrap ErrNotSent. Without a write in progress it changes nothing. The
+// daemon calls it when the liveness probe declares the connection stalled;
+// the connection is replaced then and the daemon does not write to it
+// again (core pageConn.probe).
+func (c *Client) InterruptWrites() { interruptInProgress(c.writeSem, c.wire) }
 
 // Close closes the WebSocket connection.
 // Pending Send calls detect closure via the done channel and return an error.
@@ -157,7 +170,7 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 	// Early check: if already closed, fail fast.
 	select {
 	case <-c.done:
-		return nil, fmt.Errorf("connection closed")
+		return nil, notSent(fmt.Errorf("connection closed"))
 	default:
 	}
 
@@ -176,7 +189,7 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		var err error
 		rawParams, err = json.Marshal(params)
 		if err != nil {
-			return nil, fmt.Errorf("marshaling params: %w", err)
+			return nil, notSent(fmt.Errorf("marshaling params: %w", err))
 		}
 	}
 
@@ -193,14 +206,14 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 	c.mu.Unlock()
 
 	if tid != "" && hangsThroughTarget[method] {
-		return nil, fmt.Errorf("%s: %w", method, ErrHangsThroughTarget)
+		return nil, notSent(fmt.Errorf("%s: %w", method, ErrHangsThroughTarget))
 	}
 
 	var wireData []byte
 	if tid != "" {
 		innerData, err := json.Marshal(innerMsg)
 		if err != nil {
-			return nil, fmt.Errorf("marshaling inner message: %w", err)
+			return nil, notSent(fmt.Errorf("marshaling inner message: %w", err))
 		}
 		outerID := c.nextID.Add(1)
 		outer := Message{
@@ -214,13 +227,13 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		outer.Params = outerParams
 		wireData, err = json.Marshal(outer)
 		if err != nil {
-			return nil, fmt.Errorf("marshaling outer message: %w", err)
+			return nil, notSent(fmt.Errorf("marshaling outer message: %w", err))
 		}
 	} else {
 		var err error
 		wireData, err = json.Marshal(innerMsg)
 		if err != nil {
-			return nil, fmt.Errorf("marshaling message: %w", err)
+			return nil, notSent(fmt.Errorf("marshaling message: %w", err))
 		}
 	}
 
@@ -237,27 +250,34 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 
 	// Wait for the socket at most until ctx ends: another command's write may
 	// be stalled. The write deadline keeps a stalled socket from blocking this
-	// write past ctx.
+	// write past ctx. Every failure before WriteMessage wraps ErrNotSent with
+	// its text unchanged; a failed WriteMessage may have written part of the
+	// message, so it does not.
 	select {
 	case c.writeSem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, fmt.Errorf("%s: not sent, another command was still writing after %s: %w", method, time.Since(start).Round(time.Millisecond), ctxErr(ctx))
+		return nil, notSent(fmt.Errorf("%s: not sent, another command was still writing after %s: %w", method, time.Since(start).Round(time.Millisecond), ctxErr(ctx)))
 	case <-c.done:
-		return nil, fmt.Errorf("connection closed")
+		return nil, notSent(fmt.Errorf("connection closed"))
 	}
 	// select picks at random among ready cases, so ctx can have ended while
 	// the token was free; never send a command whose caller has given up.
 	if ctx.Err() != nil {
 		<-c.writeSem
-		return nil, fmt.Errorf("%s: not sent after %s: %w", method, time.Since(start).Round(time.Millisecond), ctxErr(ctx))
+		return nil, notSent(fmt.Errorf("%s: not sent after %s: %w", method, time.Since(start).Round(time.Millisecond), ctxErr(ctx)))
 	}
-	err := c.conn.SetWriteDeadline(deadline)
-	if err == nil {
-		err = c.conn.WriteMessage(websocket.TextMessage, wireData)
+	if c.wire.cut.Load() {
+		<-c.writeSem
+		return nil, notSent(fmt.Errorf("%s: not sent: %w", method, errWritesCut))
 	}
+	if err := c.conn.SetWriteDeadline(deadline); err != nil {
+		<-c.writeSem
+		return nil, notSent(fmt.Errorf("%s: writing message: %w", method, deadlineCaused(ctx, err)))
+	}
+	err := c.conn.WriteMessage(websocket.TextMessage, wireData)
 	<-c.writeSem
 	if err != nil {
-		return nil, fmt.Errorf("%s: writing message: %w", method, err)
+		return nil, fmt.Errorf("%s: writing message: %w", method, deadlineCaused(ctx, err))
 	}
 
 	select {

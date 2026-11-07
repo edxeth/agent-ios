@@ -68,6 +68,10 @@ func (e *SetupError) Error() string {
 
 func (e *SetupError) Unwrap() error { return e.Err }
 
+// errNotSetUp is the setup failure of a target that committed without a
+// targetCreated on this connection (handleCommit).
+var errNotSetUp = errors.New("the target committed without being announced to this connection, so its setup never ran")
+
 // WireLimitError reports a message larger than the transport accepts. It is
 // returned before anything is written.
 type WireLimitError struct {
@@ -117,6 +121,26 @@ type SessionOptions struct {
 	// it writes these calls and then the enable in one round trip
 	// (sendWithReset). nil: <Domain>.disable alone.
 	AgentReset func(domain string) []Call
+	// ContextReplay runs the context replay of a document restored from the
+	// back/forward cache (refreshContexts), which sends Runtime.disable and
+	// Runtime.enable to its target. The owner of the Runtime domain's
+	// state provides it: it calls replay only while an owner needs Runtime,
+	// and serialized with every owner's Runtime.enable and Runtime.disable,
+	// so that the replay never enables an unowned agent nor leaves an owned
+	// one disabled. It returns replay's error, or nil when it skipped it.
+	// nil: the session replays nothing, because it cannot know whether
+	// Runtime is still needed.
+	ContextReplay func(ctx context.Context, replay func(context.Context) error) error
+	// NetworkDisabled is called in the read loop when a target's reply to
+	// Network.disable arrives without error, before its caller gets it.
+	// WebKit's Network.disable continues every request that the target's
+	// backend held (InspectorNetworkAgent::disable,
+	// continuePendingRequests/Responses), and every interception event of
+	// the target that came before the reply was dispatched already, so the
+	// owner of the held requests can record exactly those as continued. A
+	// reply that arrives after its caller stopped waiting is not reported.
+	// s is the session that got the reply. nil: nothing is called.
+	NetworkDisabled func(s *Session, target string)
 	// EventQueue is the capacity of each subscriber's queue. A full queue
 	// drops the event (DroppedEvents counts them); it never blocks the read loop.
 	EventQueue int
@@ -178,6 +202,9 @@ type pendingCall struct {
 	ch     chan reply
 	target string // "" for a call on the outer connection
 	method string
+	// answered is set under Session.mu when the page's reply, or the error
+	// ack of its outer message, was read: no later reply can come (finish).
+	answered bool
 }
 
 type targetState struct {
@@ -186,6 +213,7 @@ type targetState struct {
 	paused      bool // paused on start and not resumed yet
 	resuming    bool // a Target.resume is being written
 	destroyed   bool
+	navSeq      uint64 // main-frame navigations (refreshContexts)
 	cancelSetup context.CancelFunc
 	// setupDone is closed when the provisional setup ends (nil: no setup
 	// ran); setupErr is its result, or that of the last ReapplySetup.
@@ -229,12 +257,13 @@ func NotEnabled(err error) bool {
 }
 
 type subscriber struct {
-	h     EventHandler
+	h     TargetEventHandler
 	queue chan event
 	stop  chan struct{}
 }
 
 type event struct {
+	target string
 	method string
 	params json.RawMessage
 }
@@ -255,6 +284,19 @@ type Session struct {
 	active   string
 	targets  map[string]*targetState
 	closeErr error
+
+	// lateDisable holds the written Network.disable calls whose caller
+	// stopped waiting (a deadline, a cancel) while their reply was still
+	// outstanding: inner id -> outer Target.sendMessageToTarget id. A record
+	// keeps its wrapOf entry, so whichever terminal message comes first
+	// resolves it: the inner reply, success or error (handleFromTarget; a
+	// success still runs NetworkDisabled, because WebKit continued the
+	// target's held requests), or an error ack of the outer message
+	// (handleOuterReply). Resolving removes the record and its wrapOf entry
+	// (dropLateLocked). shutdown removes them all and sets the map to nil,
+	// so a call that ends after the connection closed records nothing.
+	lateDisable map[int64]int64
+
 	// Document generation (design 2.7): a document is (target, main-frame loader).
 	gen           uint64
 	docTarget     string
@@ -268,8 +310,12 @@ type Session struct {
 
 	subMu    sync.RWMutex
 	subs     map[string]map[int]*subscriber
-	syncSubs map[string]map[int]EventHandler
+	syncSubs map[string]map[int]TargetEventHandler
 	nextSub  int
+
+	// contexts is the execution-context inventory per target id
+	// (ExecutionContexts), recorded in the read loop.
+	contexts map[string]map[int]ExecutionContext
 
 	// agents is the AgentState record per target id and domain. It
 	// outlives the target's destruction (see AgentState).
@@ -312,13 +358,15 @@ func NewSession(ctx context.Context, conn transport.MessageConn, o SessionOption
 		opts:          o.withDefaults(),
 		pending:       make(map[int64]*pendingCall),
 		wrapOf:        make(map[int64]int64),
+		lateDisable:   make(map[int64]int64),
 		targets:       make(map[string]*targetState),
 		pendingLoader: make(map[string]string),
 		agents:        make(map[string]map[string]AgentState),
 		ready:         make(chan struct{}),
 		done:          make(chan struct{}),
 		subs:          make(map[string]map[int]*subscriber),
-		syncSubs:      make(map[string]map[int]EventHandler),
+		syncSubs:      make(map[string]map[int]TargetEventHandler),
+		contexts:      make(map[string]map[int]ExecutionContext),
 	}
 	go s.readLoop()
 
@@ -372,12 +420,14 @@ func TargetOf(ctx context.Context) (string, bool) {
 	return id, ok && id != ""
 }
 
-// SendControl sends method to the active target like Send, without the
-// setup check: control-lane messages (design 2.10) and the liveness probe
-// must reach a target whose setup failed, so that held requests, pauses and
-// recovery can complete.
+// SendControl sends method to the active target, or the one WithTarget
+// names, like Send, without the setup check: control-lane messages (design
+// 2.10) and the liveness probe must reach a target whose setup failed, so
+// that held requests, pauses and recovery can complete. A held request is
+// answered on the target that holds it.
 func (s *Session) SendControl(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	return s.sendTo(ctx, "", false, method, params)
+	target, _ := TargetOf(ctx)
+	return s.sendTo(ctx, target, false, method, params)
 }
 
 // IsTargetRouted is always true: a Session has no direct mode.
@@ -421,7 +471,9 @@ func (s *Session) MalformedMessages() int64 { return s.malformed.Load() }
 // Probe checks that the page answers: Runtime.evaluate "1" within
 // DefaultProbeBudget and ctx.
 func (s *Session) Probe(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, DefaultProbeBudget)
+	// The probe asks the active target even when ctx addressed a call to
+	// another one (WithTarget): that target can be gone by now.
+	ctx, cancel := context.WithTimeout(WithTarget(ctx, ""), DefaultProbeBudget)
 	defer cancel()
 	_, err := s.SendControl(ctx, "Runtime.evaluate", map[string]any{"expression": "1", "returnByValue": true})
 	if err != nil {
@@ -596,6 +648,22 @@ func (s *Session) ReapplySetup(ctx context.Context) error {
 	return nil
 }
 
+// InterruptWrites ends the write in progress on the connection at once and
+// then fails every later write before it writes anything (ErrNotSent). A
+// write that it interrupts may have written part of its message, so its
+// error does not wrap ErrNotSent. Without a write in progress it changes
+// nothing, so Close can still resume targets paused on start (design 2.7).
+// Replies and events are still read. The daemon calls it when the liveness
+// probe declares the connection stalled; the connection is replaced then
+// and the daemon does not send on it again (core pageConn.probe). A
+// transport whose writes end with their context (direct) has nothing to
+// interrupt.
+func (s *Session) InterruptWrites() {
+	if iw, ok := s.conn.(interface{ interruptWrites() }); ok {
+		iw.interruptWrites()
+	}
+}
+
 // Close resumes every target still paused on start, then closes the
 // connection. Pending calls fail with ErrSessionClosed.
 func (s *Session) Close() error {
@@ -614,8 +682,17 @@ func (s *Session) OnEvent(method string, h EventHandler) { s.Subscribe(method, h
 // Subscribe registers h for method (AllEvents for every event). Each
 // subscriber has its own bounded queue and goroutine, so a slow handler
 // never delays replies or other subscribers. An event that arrived before a
-// reply can be handled after Send returns.
+// reply can be handled after Send returns. h does not learn the event's
+// source target; SubscribeTarget does.
 func (s *Session) Subscribe(method string, h EventHandler) func() {
+	return s.SubscribeTarget(method, func(_, m string, p json.RawMessage) { h(m, p) })
+}
+
+// SubscribeTarget is Subscribe with the event's source target: the
+// targetId of the Target.dispatchMessageFromTarget that carried a page
+// event (a provisional target's own id before and after its commit), or ""
+// for an event of the connection itself (the Target domain).
+func (s *Session) SubscribeTarget(method string, h TargetEventHandler) func() {
 	select {
 	case <-s.done:
 		return func() {} // a closed session delivers no events
@@ -636,7 +713,7 @@ func (s *Session) Subscribe(method string, h EventHandler) func() {
 		for {
 			select {
 			case ev := <-sub.queue:
-				sub.h(ev.method, ev.params)
+				sub.h(ev.target, ev.method, ev.params)
 			case <-sub.stop:
 				return
 			case <-s.done:
@@ -660,11 +737,17 @@ func (s *Session) Subscribe(method string, h EventHandler) func() {
 // for bookkeeping that later readers of the same event rely on (for
 // example the scheduler's pending control items).
 func (s *Session) SubscribeSync(method string, h EventHandler) func() {
+	return s.SubscribeTargetSync(method, func(_, m string, p json.RawMessage) { h(m, p) })
+}
+
+// SubscribeTargetSync is SubscribeSync with the event's source target
+// (SubscribeTarget).
+func (s *Session) SubscribeTargetSync(method string, h TargetEventHandler) func() {
 	s.subMu.Lock()
 	id := s.nextSub
 	s.nextSub++
 	if s.syncSubs[method] == nil {
-		s.syncSubs[method] = make(map[int]EventHandler)
+		s.syncSubs[method] = make(map[int]TargetEventHandler)
 	}
 	s.syncSubs[method][id] = h
 	s.subMu.Unlock()
@@ -675,18 +758,20 @@ func (s *Session) SubscribeSync(method string, h EventHandler) func() {
 	}
 }
 
-func (s *Session) dispatch(method string, params json.RawMessage) {
+// dispatch delivers an event of target ("" for the connection's own
+// events) to the subscribers of method and of AllEvents.
+func (s *Session) dispatch(target, method string, params json.RawMessage) {
 	s.subMu.RLock()
 	defer s.subMu.RUnlock()
 	for _, key := range [2]string{method, AllEvents} {
 		for _, h := range s.syncSubs[key] {
-			h(method, params)
+			h(target, method, params)
 		}
 	}
 	for _, key := range [2]string{method, AllEvents} {
 		for _, sub := range s.subs[key] {
 			select {
-			case sub.queue <- event{method, params}:
+			case sub.queue <- event{target, method, params}:
 			default:
 				s.dropped.Add(1)
 			}
@@ -717,7 +802,7 @@ func (s *Session) sendTo(ctx context.Context, target string, gate bool, method s
 	if reset {
 		return s.sendWithReset(ctx, callCtx, start, target, method, rawParams)
 	}
-	in, err := s.write(callCtx, target, method, rawParams)
+	in, err := s.write(ctx, callCtx, target, method, rawParams)
 	if err != nil {
 		return nil, err
 	}
@@ -797,9 +882,10 @@ type inflight struct {
 }
 
 // write registers and writes one call to target without waiting for its
-// reply. A write that fails is recorded (noteAgent) and its registration
-// removed.
-func (s *Session) write(callCtx context.Context, target, method string, rawParams json.RawMessage) (*inflight, error) {
+// reply, within callCtx (ctx bounded by the call budget). A write that
+// fails is recorded (noteAgent) and its registration removed; a write that
+// ctx's deadline ended fails as that deadline (deadlineCaused).
+func (s *Session) write(ctx, callCtx context.Context, target, method string, rawParams json.RawMessage) (*inflight, error) {
 	innerID := s.nextID.Add(1)
 	inner, err := json.Marshal(Message{ID: innerID, Method: method, Params: rawParams})
 	if err != nil {
@@ -831,7 +917,7 @@ func (s *Session) write(callCtx context.Context, target, method string, rawParam
 	s.mu.Unlock()
 
 	if err := s.conn.Write(callCtx, wire); err != nil {
-		err = writeErr(method, err)
+		err = writeErr(method, deadlineCaused(ctx, err))
 		s.finish(in, err)
 		return nil, err
 	}
@@ -842,7 +928,14 @@ func (s *Session) write(callCtx context.Context, target, method string, rawParam
 func (s *Session) finish(in *inflight, err error) {
 	s.mu.Lock()
 	delete(s.pending, in.innerID)
-	delete(s.wrapOf, in.outerID)
+	// Only a written call whose reply is still outstanding can get a late
+	// reply; an answered one (a refusal, for example) never does. Its
+	// record keeps the outer correlation (lateDisable).
+	if err != nil && in.method == "Network.disable" && !in.call.answered && !errors.Is(err, ErrNotSent) && s.opts.NetworkDisabled != nil && s.lateDisable != nil {
+		s.lateDisable[in.innerID] = in.outerID
+	} else {
+		delete(s.wrapOf, in.outerID)
+	}
 	s.mu.Unlock()
 	s.noteAgent(in.target, in.method, err)
 }
@@ -889,7 +982,7 @@ func (s *Session) pipeline(ctx, callCtx context.Context, start time.Time, target
 	for i, c := range calls {
 		raw, err := marshalParams(c.Method, c.Params)
 		if err == nil {
-			ins[i], err = s.write(callCtx, target, c.Method, raw)
+			ins[i], err = s.write(ctx, callCtx, target, c.Method, raw)
 		}
 		if err != nil {
 			errs[i] = err
@@ -1084,7 +1177,7 @@ func (s *Session) sendOuter(ctx context.Context, method string, params any) (jso
 		s.mu.Unlock()
 	}()
 	if err := s.conn.Write(callCtx, wire); err != nil {
-		return nil, writeErr(method, err)
+		return nil, writeErr(method, deadlineCaused(ctx, err))
 	}
 	select {
 	case r := <-call.ch:
@@ -1106,6 +1199,10 @@ func (s *Session) shutdown(err error) {
 		if s.closeErr == nil { // handleTargetDestroyed may have published ErrPageClosed
 			s.closeErr = err
 		}
+		for _, outerID := range s.lateDisable {
+			delete(s.wrapOf, outerID)
+		}
+		s.lateDisable = nil // no reply comes after the connection closed
 		for _, t := range s.targets {
 			if t.cancelSetup != nil {
 				t.cancelSetup()
@@ -1164,7 +1261,7 @@ func (s *Session) handle(data []byte) {
 		s.malformed.Add(1)
 		return
 	}
-	s.dispatch(m.Method, m.Params)
+	s.dispatch("", m.Method, m.Params)
 }
 
 func (s *Session) handleOuterReply(id int64, m wireMessage) {
@@ -1173,8 +1270,18 @@ func (s *Session) handleOuterReply(id int64, m wireMessage) {
 		// The ack of Target.sendMessageToTarget is ignored unless it is an
 		// error: then the inner command never reaches the page.
 		call := s.pending[innerID]
+		refused := len(m.Error) > 0 && string(m.Error) != "null"
+		failed := call != nil && refused
+		if failed {
+			call.answered = true // the inner command never reaches the page
+		}
+		if refused {
+			// A late disable's only reply: the inner command never reached
+			// the page, so no inner reply comes.
+			s.dropLateLocked(innerID)
+		}
 		s.mu.Unlock()
-		if call != nil && len(m.Error) > 0 && string(m.Error) != "null" {
+		if failed {
 			deliver(call, reply{err: replyError(m.Error)})
 		}
 		return
@@ -1184,6 +1291,18 @@ func (s *Session) handleOuterReply(id int64, m wireMessage) {
 	if call != nil {
 		deliver(call, decodeReply(m))
 	}
+}
+
+// dropLateLocked resolves the late-disable record of innerID, if any: it
+// removes the record and its outer correlation, and reports whether there
+// was one. The caller holds s.mu.
+func (s *Session) dropLateLocked(innerID int64) bool {
+	outerID, late := s.lateDisable[innerID]
+	if late {
+		delete(s.lateDisable, innerID)
+		delete(s.wrapOf, outerID)
+	}
+	return late
 }
 
 func (s *Session) handleFromTarget(params json.RawMessage) {
@@ -1203,9 +1322,20 @@ func (s *Session) handleFromTarget(params json.RawMessage) {
 	if m.ID != nil {
 		s.mu.Lock()
 		call := s.pending[*m.ID]
-		s.mu.Unlock()
 		if call != nil {
-			deliver(call, decodeReply(m))
+			call.answered = true
+		}
+		late := s.dropLateLocked(*m.ID)
+		s.mu.Unlock()
+		if late && decodeReply(m).err == nil {
+			s.opts.NetworkDisabled(s, p.TargetID)
+		}
+		if call != nil {
+			r := decodeReply(m)
+			if r.err == nil && call.method == "Network.disable" && s.opts.NetworkDisabled != nil {
+				s.opts.NetworkDisabled(s, p.TargetID)
+			}
+			deliver(call, r)
 		}
 		return
 	}
@@ -1220,10 +1350,14 @@ func (s *Session) handleFromTarget(params json.RawMessage) {
 	if !live {
 		return // events of a swapped-out or abandoned target
 	}
-	if m.Method == "Page.frameNavigated" {
+	switch m.Method {
+	case "Page.frameNavigated":
 		s.trackNavigation(p.TargetID, m.Params)
+		s.trackFrameNavigated(p.TargetID, m.Params)
+	case "Page.frameDetached", "Runtime.executionContextCreated", "Runtime.executionContextDestroyed", "Runtime.executionContextsCleared":
+		s.trackContexts(p.TargetID, m.Method, m.Params)
 	}
-	s.dispatch(m.Method, m.Params)
+	s.dispatch(p.TargetID, m.Method, m.Params)
 }
 
 func deliver(call *pendingCall, r reply) {
@@ -1347,6 +1481,12 @@ func (s *Session) handleCommit(params json.RawMessage) {
 	nt := s.targets[p.NewTargetID]
 	if nt == nil {
 		nt = &targetState{id: p.NewTargetID}
+		if s.opts.Setup != nil {
+			// The target was never announced to this connection (it was
+			// created before the connection), so no setup ran on it: it
+			// lacks the desired state until ReapplySetup succeeds.
+			nt.setupErr = errNotSetUp
+		}
 		s.targets[p.NewTargetID] = nt
 	}
 	nt.provisional = false
@@ -1356,6 +1496,7 @@ func (s *Session) handleCommit(params json.RawMessage) {
 			old.cancelSetup()
 		}
 	}
+	delete(s.contexts, p.OldTargetID)
 	s.active = p.NewTargetID
 	for _, call := range s.pending {
 		if call.target == p.OldTargetID {
@@ -1388,6 +1529,7 @@ func (s *Session) handleTargetDestroyed(params json.RawMessage) {
 	wasActive := p.TargetID == s.active
 	t.destroyed = true
 	t.paused = false
+	delete(s.contexts, p.TargetID)
 	if t.cancelSetup != nil {
 		t.cancelSetup()
 	}

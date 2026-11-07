@@ -109,7 +109,7 @@ func TestEveryNewTargetStartsWithoutTheOverlay(t *testing.T) {
 		t.Fatalf("page-0 after a new connection's Apply: highlight %v inspect mode %v; want neither", page0.highlight, page0.inspect)
 	}
 	from = len(p.wire)
-	if err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
+	if _, err := releaseOwners(context.Background(), ps, "s1", c); err != nil {
 		t.Fatal(err)
 	}
 	if got := sentSince(p, from, "DOM."); len(got) != 2 {

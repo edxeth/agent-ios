@@ -62,6 +62,12 @@ func (d *DesiredState) commitTarget(target string) {
 		// Changes queued before the commit still go to it; the next
 		// change drops the record once the queue is empty.
 		ts.committed = true
+		// The cleanup sends that failed on it are pending on the active
+		// target now (cleanupFailedLocked).
+		for dom := range ts.unclean {
+			d.markUnknownLocked(dom)
+		}
+		ts.unclean = nil
 	}
 	d.active = target
 }
@@ -117,6 +123,10 @@ func (d *DesiredState) RemoveInterception(owner Owner, r InterceptRule) (rulesLe
 func (d *DesiredState) AllOwners() []Owner {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	return d.allOwnersLocked()
+}
+
+func (d *DesiredState) allOwnersLocked() []Owner {
 	set := map[Owner]bool{}
 	for _, owners := range d.domains {
 		for o := range owners {
