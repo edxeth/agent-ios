@@ -51,7 +51,7 @@ const thisFunction = "function() { return this; }"
 const stackFunction = "function() { return this && this.stack ? String(this.stack) : \"\"; }"
 
 // EvaluateScript evaluates a JavaScript expression in the page context.
-func EvaluateScript(ctx context.Context, client *webkit.Client, expression string, returnByValue bool) (*EvaluateResult, error) {
+func EvaluateScript(ctx context.Context, client webkit.Caller, expression string, returnByValue bool) (*EvaluateResult, error) {
 	return EvaluateScriptWithOptions(ctx, client, expression, EvalOptions{ReturnByValue: returnByValue})
 }
 
@@ -63,7 +63,7 @@ func EvaluateScript(ctx context.Context, client *webkit.Client, expression strin
 // current WebKit), so AwaitPromise evaluates by reference and then calls
 // Runtime.awaitPromise on a returned Promise. A non-Promise object is then
 // fetched by value when ReturnByValue is set.
-func EvaluateScriptWithOptions(ctx context.Context, client *webkit.Client, expression string, opts EvalOptions) (*EvaluateResult, error) {
+func EvaluateScriptWithOptions(ctx context.Context, client webkit.Caller, expression string, opts EvalOptions) (*EvaluateResult, error) {
 	result, err := client.Send(ctx, "Runtime.evaluate", map[string]interface{}{
 		"expression":            expression,
 		"returnByValue":         opts.ReturnByValue && !opts.AwaitPromise,
@@ -121,7 +121,7 @@ func EvaluateScriptWithOptions(ctx context.Context, client *webkit.Client, expre
 // returns the thrown value itself as the result (with description
 // String(error)) and no exceptionDetails; the Chrome-style exceptionDetails is
 // still honored when present. The stack is read from the thrown object.
-func thrownError(ctx context.Context, client *webkit.Client, r *EvaluateResult) *JSException {
+func thrownError(ctx context.Context, client webkit.Caller, r *EvaluateResult) *JSException {
 	exc := &JSException{Message: exceptionMessage(r)}
 	objectID := r.Result.ObjectID
 	if r.ExceptionDetails != nil && r.ExceptionDetails.Exception != nil && r.ExceptionDetails.Exception.ObjectID != "" {
@@ -173,7 +173,7 @@ func exceptionMessage(r *EvaluateResult) string {
 }
 
 // CallFunctionOn calls a function on a remote object.
-func CallFunctionOn(ctx context.Context, client *webkit.Client, objectID, functionDeclaration string, args []interface{}, returnByValue bool) (*EvaluateResult, error) {
+func CallFunctionOn(ctx context.Context, client webkit.Caller, objectID, functionDeclaration string, args []interface{}, returnByValue bool) (*EvaluateResult, error) {
 	params := map[string]interface{}{
 		"objectId":            objectID,
 		"functionDeclaration": functionDeclaration,
@@ -206,7 +206,7 @@ func CallFunctionOn(ctx context.Context, client *webkit.Client, objectID, functi
 }
 
 // GetProperties retrieves properties of a remote object.
-func GetProperties(ctx context.Context, client *webkit.Client, objectID string, ownProperties bool) ([]webkit.PropertyDescriptor, error) {
+func GetProperties(ctx context.Context, client webkit.Caller, objectID string, ownProperties bool) ([]webkit.PropertyDescriptor, error) {
 	result, err := client.Send(ctx, "Runtime.getProperties", map[string]interface{}{
 		"objectId":      objectID,
 		"ownProperties": ownProperties,

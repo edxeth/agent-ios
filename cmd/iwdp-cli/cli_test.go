@@ -143,6 +143,7 @@ func TestGetWSURLFromEnv(t *testing.T) {
 }
 
 func TestConnectToPageWithWSURL(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", testRuntime(t)) // the test's own daemon
 	mock := testutil.NewMockServer()
 	defer mock.Close()
 
@@ -159,6 +160,7 @@ func TestConnectToPageWithWSURL(t *testing.T) {
 }
 
 func TestConnectToPageWithWSURLAmongArgs(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", testRuntime(t)) // the test's own daemon
 	mock := testutil.NewMockServer()
 	defer mock.Close()
 
@@ -177,6 +179,7 @@ func TestConnectToPageWithWSURLAmongArgs(t *testing.T) {
 }
 
 func TestConnectToPageSendCommand(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", testRuntime(t)) // the test's own daemon
 	mock := testutil.NewMockServer()
 	defer mock.Close()
 
@@ -216,6 +219,7 @@ func TestConnectToPageSendCommand(t *testing.T) {
 }
 
 func TestConnectToPageInvalidURL(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", testRuntime(t)) // the test's own daemon
 	ctx := context.Background()
 	_, err := connectToPage(ctx, []string{"ws://localhost:1/nonexistent"})
 	if err == nil {

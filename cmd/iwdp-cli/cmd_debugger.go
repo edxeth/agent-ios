@@ -21,7 +21,7 @@ func cmdDebuggerEnable(ctx context.Context, args []string) {
 	if err := tools.DebuggerEnable(ctx, client); err != nil {
 		fatal(err)
 	}
-	fmt.Println("Debugger enabled")
+	fmt.Println("Debugger enabled; breakpoints active")
 }
 
 func cmdDebuggerDisable(ctx context.Context, args []string) {

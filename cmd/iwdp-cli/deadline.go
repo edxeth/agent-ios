@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -52,13 +51,45 @@ var followCommands = map[string]bool{"console": true, "network": true}
 type globalOptions struct {
 	timeout    time.Duration
 	timeoutSet bool // set by --timeout or IWDP_TIMEOUT, not the default
+	// Page ownership (design 2.5): the session (IWDP_SESSION), the device
+	// reservation owner (IWDP_DEVICE_RESERVATION), --wait-lease, --takeover
+	// and the transport (IWDP_TRANSPORT).
+	session, reservation, transport string
+	waitLease                       time.Duration
+	takeover                        bool
 }
 
-// parseGlobalOptions removes --timeout <d> and --timeout=<d> from args (at any
-// position) and resolves the timeout: flag, then IWDP_TIMEOUT (envTimeout),
-// then defaultCommandTimeout.
+// valueOptions are the global options that take a value; set stores it.
+var valueOptions = map[string]func(o *globalOptions, v string) error{
+	"--session":     func(o *globalOptions, v string) error { o.session = v; return nil },
+	"--reservation": func(o *globalOptions, v string) error { o.reservation = v; return nil },
+	"--transport": func(o *globalOptions, v string) error {
+		switch v {
+		case "auto", "iwdp", "direct", "webkitgtk":
+			o.transport = v
+			return nil
+		}
+		return fmt.Errorf("--transport %q: want auto, iwdp, direct or webkitgtk", v)
+	},
+	"--wait-lease": func(o *globalOptions, v string) error {
+		d, err := parsePositiveDuration(v)
+		if err != nil {
+			return fmt.Errorf("--wait-lease: %w", err)
+		}
+		o.waitLease = d
+		return nil
+	},
+}
+
+// parseGlobalOptions removes the global options from args (at any position):
+// --timeout <d> (or --timeout=<d>), resolved as flag, then IWDP_TIMEOUT
+// (envTimeout), then defaultCommandTimeout; --session, --reservation,
+// --transport and --wait-lease with a value; and --takeover.
 func parseGlobalOptions(args []string, envTimeout string) ([]string, globalOptions, error) {
-	opts := globalOptions{timeout: defaultCommandTimeout}
+	opts := globalOptions{
+		timeout: defaultCommandTimeout, session: os.Getenv("IWDP_SESSION"),
+		reservation: os.Getenv("IWDP_DEVICE_RESERVATION"), transport: os.Getenv("IWDP_TRANSPORT"),
+	}
 	if envTimeout != "" {
 		d, err := parsePositiveDuration(envTimeout)
 		if err != nil {
@@ -79,8 +110,26 @@ func parseGlobalOptions(args []string, envTimeout string) ([]string, globalOptio
 			i++
 		case strings.HasPrefix(a, "--timeout="):
 			value = strings.TrimPrefix(a, "--timeout=")
+		case a == "--takeover":
+			opts.takeover = true
+			continue
 		default:
-			rest = append(rest, a)
+			name, v, hasValue := strings.Cut(a, "=")
+			set := valueOptions[name]
+			if set == nil {
+				rest = append(rest, a)
+				continue
+			}
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, opts, fmt.Errorf("%s needs a value", name)
+				}
+				i++
+				v = args[i]
+			}
+			if err := set(&opts, v); err != nil {
+				return nil, opts, err
+			}
 			continue
 		}
 		d, err := parsePositiveDuration(value)
@@ -208,7 +257,7 @@ func (r *commandRun) begin(name string, timeout, budget time.Duration, unlimited
 	ctx, cancel := context.Background(), context.CancelFunc(func() {})
 	if !unlimited {
 		ctx, cancel = context.WithTimeout(ctx, budget)
-		armWatchdog(budget+watchdogGrace, os.Stderr, os.Exit)
+		armWatchdog(budget+watchdogGrace, exits)
 	}
 	r.mu.Lock()
 	r.name, r.start, r.timeout, r.ctx = name, time.Now(), timeout, ctx
@@ -219,6 +268,29 @@ func (r *commandRun) begin(name string, timeout, budget time.Duration, unlimited
 	}
 	r.mu.Unlock()
 	return ctx, cancel
+}
+
+// watch records a registry command that runs in this process
+// (IWDP_NO_DAEMON=1) under ctx, the context with the command's deadline,
+// and arms the watchdog of begin at that deadline. Without a deadline it
+// does nothing.
+func (r *commandRun) watch(name string, ctx context.Context) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return
+	}
+	budget := time.Until(deadline)
+	armWatchdog(budget+watchdogGrace, exits)
+	r.mu.Lock()
+	r.name, r.start, r.timeout, r.budget, r.ctx = name, time.Now(), budget, budget, ctx
+	r.mu.Unlock()
+}
+
+// commandName is the running command's name.
+func (r *commandRun) commandName() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.name
 }
 
 // setPage records the page the command talks to, for deadline errors.
@@ -279,14 +351,11 @@ func (r *commandRun) timeoutMessage(cause error) string {
 }
 
 // errWatchdog is the cause reported when the watchdog ends a command.
-var errWatchdog = errors.New("the command did not stop at its deadline, so the watchdog ended it")
+var errWatchdog = errors.New("the command or its cleanup of the page state did not end by its deadline, so the watchdog ended it")
 
-// armWatchdog ends the process with exitTimeout after d, printing the
-// deadline error to w. It backs up the context deadline for waits that do
-// not honor a context.
-func armWatchdog(d time.Duration, w io.Writer, exit func(int)) *time.Timer {
-	return time.AfterFunc(d, func() {
-		fmt.Fprintln(w, current.timeoutMessage(errWatchdog))
-		exit(exitTimeout)
-	})
+// armWatchdog runs p.deadlineExpired after d: the process exits with
+// exitTimeout and the deadline error after the in-process cleanup. It backs
+// up the context deadline for waits that do not honor a context.
+func armWatchdog(d time.Duration, p *processExit) *time.Timer {
+	return time.AfterFunc(d, p.deadlineExpired)
 }

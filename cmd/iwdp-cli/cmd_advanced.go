@@ -351,7 +351,7 @@ func cmdBrowserExtensionsEnable(ctx context.Context, args []string) {
 	}
 	defer func() { _ = client.Close() }()
 
-	if err := client.Enable(ctx, "Browser"); err != nil {
+	if _, err := client.Send(ctx, "Browser.enable", nil); err != nil {
 		fatal(err)
 	}
 	fmt.Println("Browser extensions enabled")
@@ -364,7 +364,7 @@ func cmdBrowserExtensionsDisable(ctx context.Context, args []string) {
 	}
 	defer func() { _ = client.Close() }()
 
-	if err := client.Disable(ctx, "Browser"); err != nil {
+	if _, err := client.Send(ctx, "Browser.disable", nil); err != nil {
 		fatal(err)
 	}
 	fmt.Println("Browser extensions disabled")

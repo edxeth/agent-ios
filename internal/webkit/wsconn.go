@@ -57,11 +57,11 @@ func (w *wsConn) Write(ctx context.Context, msg []byte) error {
 	select {
 	case w.writeSem <- struct{}{}:
 	case <-ctx.Done():
-		return fmt.Errorf("%w, another write was still in progress: %w", transport.ErrNotWritten, ctx.Err())
+		return fmt.Errorf("%w, another write was still in progress: %w", transport.ErrNotWritten, ctxErr(ctx))
 	}
 	defer func() { <-w.writeSem }()
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%w: %w", transport.ErrNotWritten, err)
+	if ctx.Err() != nil {
+		return fmt.Errorf("%w: %w", transport.ErrNotWritten, ctxErr(ctx))
 	}
 	if err := w.conn.SetWriteDeadline(deadline); err != nil {
 		return fmt.Errorf("%w: setting the write deadline: %w", transport.ErrNotWritten, err)

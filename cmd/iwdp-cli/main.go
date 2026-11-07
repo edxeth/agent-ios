@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -168,6 +170,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	globals = opts
 	if len(args) == 0 {
 		printUsage(os.Stderr)
 		os.Exit(1)
@@ -180,14 +183,19 @@ func main() {
 			printUsage(os.Stdout)
 			return
 		}
-		if !printCommandHelp(os.Stdout, cmdArgs[0]) {
-			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmdArgs[0])
+		if !printCommandHelp(os.Stdout, strings.Join(cmdArgs, " ")) {
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", strings.Join(cmdArgs, " "))
 			os.Exit(1)
 		}
 		return
 	}
 
 	run, ok := commands[name]
+	if !ok && isRegistryCommand(args) {
+		// Registry commands parse their own global flags (design 2.11).
+		code := runRegistry(os.Args[1:])
+		exits.finish(func() int { return code })
+	}
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", name)
 		printUsage(os.Stderr)
@@ -206,7 +214,9 @@ func main() {
 	}
 	ctx, cancel := current.begin(name, opts.timeout, budget, unlimited)
 	defer cancel()
+	cleanupOnSignal()
 	run(ctx, cmdArgs)
+	exits.finish(func() int { return 0 })
 }
 
 func getPort(args []string) int {
@@ -235,38 +245,57 @@ func getWSURL(args []string) string {
 	return ""
 }
 
-func connectToPage(ctx context.Context, args []string) (*webkit.Client, error) {
-	wsURL := getWSURL(args)
-	if wsURL != "" {
+// pageClient is a page connection of a legacy command: the daemon-backed
+// caller (design 2.10, legacy bridge).
+type pageClient interface {
+	webkit.Caller
+	Close() error
+}
+
+// controlCommands send only control-lane messages (design 2.10). They
+// lease the page without an operation, so they never wait behind the
+// operation they let finish (an evaluation paused in the debugger, an
+// awaited fetch held by interception).
+var controlCommands = map[string]bool{"resume": true, "intercept-continue": true, "intercept-respond": true}
+
+// connectToPage opens the page in the daemon (started on demand) and
+// begins the command's operation on it: the ws:// URL among args or
+// IWDP_WS_URL, else the first debuggable page of the --transport.
+func connectToPage(ctx context.Context, args []string) (pageClient, error) {
+	pr := daemon.PageReq{Transport: globals.transport}
+	if wsURL := getWSURL(args); wsURL != "" {
 		current.setPage(wsURL)
-		return webkit.NewClient(ctx, wsURL)
+		pr.Page = wsURL
 	}
-
-	if !proxy.IsRunning() {
-		fmt.Fprintf(os.Stderr, "ios_webkit_debug_proxy is not running.\n")
-		fmt.Fprintf(os.Stderr, "Start it with: ios_webkit_debug_proxy --no-frontend\n")
-		fmt.Fprintf(os.Stderr, "Install with:  brew install ios-webkit-debug-proxy\n")
-		os.Exit(1)
-	}
-
-	// Auto-detect: list all devices (port 9221), then list pages on each device port.
-	pages, err := proxy.ListAllPages()
+	c, err := daemon.Connect(ctx, daemonOptions())
 	if err != nil {
 		return nil, err
 	}
-	if len(pages) == 0 {
-		return nil, fmt.Errorf("no Safari tabs found — open a page in Safari on your iOS device")
+	c.Logf = func(f string, a ...any) { fmt.Fprintf(os.Stderr, "warning: "+f+"\n", a...) }
+	open := c.OpenPage
+	if controlCommands[current.commandName()] {
+		open = c.AttachPage
 	}
+	pc, err := open(ctx, daemon.PageOptions{Page: pr, Owner: globals.owner(), Name: current.commandName()})
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if pr.Page == "" {
+		info := pc.Info()
+		fmt.Fprintf(os.Stderr, "Connecting to: %s\n", info.Title)
+		current.setPage(fmt.Sprintf("%q (%s)", info.Title, info.Key))
+	}
+	return pc, nil
+}
 
-	// Find first page with a WebSocket URL
-	for _, p := range pages {
-		if p.WebSocketDebuggerURL != "" {
-			fmt.Fprintf(os.Stderr, "Connecting to: %s (%s)\n", p.Title, p.URL)
-			current.setPage(fmt.Sprintf("%q %s (%s)", p.Title, p.URL, p.WebSocketDebuggerURL))
-			return webkit.NewClient(ctx, p.WebSocketDebuggerURL)
-		}
+// endOperation ends the command's page operation early, so that a long
+// stream does not hold the page for the session's other commands; later
+// calls run one at a time.
+func endOperation(c pageClient) {
+	if pc, ok := c.(*daemon.PageCaller); ok {
+		pc.EndOp()
 	}
-	return nil, fmt.Errorf("no debuggable pages found — pages may already be connected to another debugger")
 }
 
 func cmdDevices(ctx context.Context) {
@@ -640,10 +669,11 @@ func streamSetupContext(ctx context.Context, follow bool) (context.Context, cont
 // waitForStream blocks until the duration ends (unless follow), the user
 // interrupts, the connection closes or ctx ends. It returns the reason, and
 // an error when ctx ended the stream before the duration.
-func waitForStream(ctx context.Context, client *webkit.Client, duration time.Duration, follow bool) (string, error) {
+func waitForStream(ctx context.Context, client pageClient, duration time.Duration, follow bool) (string, error) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
+	streamWaiting.Store(true) // the stream ends on a signal, then the command
 
 	var timeout <-chan time.Time
 	if !follow {
@@ -667,7 +697,7 @@ func waitForStream(ctx context.Context, client *webkit.Client, duration time.Dur
 // free for the next inspector session. The disable call ends at the command
 // deadline, or after streamCleanupAfterDeadline when that has passed. It
 // returns the disable error after printing it as a warning.
-func endStream(ctx context.Context, client *webkit.Client, disableMethod string) error {
+func endStream(ctx context.Context, client pageClient, disableMethod string) error {
 	disableCtx, cancel := context.WithTimeout(ctx, streamDisableTimeout)
 	if ctx.Err() != nil {
 		cancel()
@@ -733,6 +763,7 @@ func cmdConsole(ctx context.Context, args []string) {
 	if _, err := client.Send(setupCtx, "Console.enable", nil); err != nil {
 		fatal(err)
 	}
+	endOperation(client)
 
 	start := time.Now()
 	if follow {
@@ -808,6 +839,7 @@ func cmdNetwork(ctx context.Context, args []string) {
 	if _, err := client.Send(setupCtx, "Network.enable", nil); err != nil {
 		fatal(err)
 	}
+	endOperation(client)
 
 	start := time.Now()
 	if follow {
@@ -829,12 +861,21 @@ func usageError(usage string, err error) {
 }
 
 // fatal reports err and exits. A deadline error exits exitTimeout with the
-// command, page, elapsed time and likely causes.
+// command, page, elapsed time and likely causes; an error with an exit code
+// (page busy or lost 4, no page 5, reservation 6) exits with it. It exits
+// through exits.finish, after the in-process cleanup; a signal or the
+// watchdog decides the exit code instead when either came first.
 func fatal(err error) {
-	if current.deadlineHit(err) {
-		fmt.Fprintln(os.Stderr, current.timeoutMessage(err))
-		os.Exit(exitTimeout)
-	}
-	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	os.Exit(1)
+	exits.finish(func() int {
+		if current.deadlineHit(err) {
+			fmt.Fprintln(os.Stderr, current.timeoutMessage(err))
+			return exitTimeout
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		var ec reg.ExitCoder
+		if errors.As(err, &ec) && ec.ExitCode() > 1 {
+			return ec.ExitCode()
+		}
+		return 1
+	})
 }

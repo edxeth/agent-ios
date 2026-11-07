@@ -3,6 +3,7 @@ package webkit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 // Caller is what every tool, the runtime layer and the daemon use to talk to
@@ -19,6 +20,19 @@ type Caller interface {
 	IsTargetRouted() bool
 	// Done is closed when the connection ends.
 	Done() <-chan struct{}
+}
+
+// ctxErr is the error of an ended ctx with its cause. A context canceled
+// with a cause (context.WithCancelCause; core cancels an operation at its
+// deadline with core.ErrDeadline, a deadline error) reports context.Canceled
+// and the cause, so that callers can tell an expired deadline (exit 124,
+// decision D9) from a cancellation.
+func ctxErr(ctx context.Context) error {
+	err := ctx.Err()
+	if cause := context.Cause(ctx); cause != nil && cause != err {
+		return fmt.Errorf("%w: %w", err, cause)
+	}
+	return err
 }
 
 // AllEvents subscribes a handler to every event of a Session.

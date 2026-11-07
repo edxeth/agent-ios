@@ -9,7 +9,7 @@ import (
 )
 
 // GetDocument returns the root DOM node.
-func GetDocument(ctx context.Context, client *webkit.Client, depth int) (*webkit.Node, error) {
+func GetDocument(ctx context.Context, client webkit.Caller, depth int) (*webkit.Node, error) {
 	params := map[string]interface{}{}
 	if depth > 0 {
 		params["depth"] = depth
@@ -30,7 +30,7 @@ func GetDocument(ctx context.Context, client *webkit.Client, depth int) (*webkit
 }
 
 // QuerySelector finds the first element matching a CSS selector.
-func QuerySelector(ctx context.Context, client *webkit.Client, nodeID int, selector string) (int, error) {
+func QuerySelector(ctx context.Context, client webkit.Caller, nodeID int, selector string) (int, error) {
 	result, err := client.Send(ctx, "DOM.querySelector", map[string]interface{}{
 		"nodeId":   nodeID,
 		"selector": selector,
@@ -52,7 +52,7 @@ func QuerySelector(ctx context.Context, client *webkit.Client, nodeID int, selec
 }
 
 // QuerySelectorAll finds all elements matching a CSS selector.
-func QuerySelectorAll(ctx context.Context, client *webkit.Client, nodeID int, selector string) ([]int, error) {
+func QuerySelectorAll(ctx context.Context, client webkit.Caller, nodeID int, selector string) ([]int, error) {
 	result, err := client.Send(ctx, "DOM.querySelectorAll", map[string]interface{}{
 		"nodeId":   nodeID,
 		"selector": selector,
@@ -71,7 +71,7 @@ func QuerySelectorAll(ctx context.Context, client *webkit.Client, nodeID int, se
 }
 
 // GetOuterHTML returns the outer HTML for a node.
-func GetOuterHTML(ctx context.Context, client *webkit.Client, nodeID int) (string, error) {
+func GetOuterHTML(ctx context.Context, client webkit.Caller, nodeID int) (string, error) {
 	result, err := client.Send(ctx, "DOM.getOuterHTML", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -89,7 +89,7 @@ func GetOuterHTML(ctx context.Context, client *webkit.Client, nodeID int) (strin
 }
 
 // GetAttributes returns attributes of a node as key-value pairs.
-func GetAttributes(ctx context.Context, client *webkit.Client, nodeID int) (map[string]string, error) {
+func GetAttributes(ctx context.Context, client webkit.Caller, nodeID int) (map[string]string, error) {
 	result, err := client.Send(ctx, "DOM.getAttributes", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -121,7 +121,7 @@ type EventListenerInfo struct {
 }
 
 // GetEventListeners returns event listeners registered on a node.
-func GetEventListeners(ctx context.Context, client *webkit.Client, nodeID int) ([]EventListenerInfo, error) {
+func GetEventListeners(ctx context.Context, client webkit.Caller, nodeID int) ([]EventListenerInfo, error) {
 	result, err := client.Send(ctx, "DOM.getEventListenersForNode", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -139,7 +139,7 @@ func GetEventListeners(ctx context.Context, client *webkit.Client, nodeID int) (
 }
 
 // HighlightNode highlights a node in the browser.
-func HighlightNode(ctx context.Context, client *webkit.Client, nodeID int) error {
+func HighlightNode(ctx context.Context, client webkit.Caller, nodeID int) error {
 	_, err := client.Send(ctx, "DOM.highlightNode", map[string]interface{}{
 		"nodeId": nodeID,
 		"highlightConfig": map[string]interface{}{
@@ -154,7 +154,7 @@ func HighlightNode(ctx context.Context, client *webkit.Client, nodeID int) error
 }
 
 // HideHighlight removes the current DOM highlight.
-func HideHighlight(ctx context.Context, client *webkit.Client) error {
+func HideHighlight(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "DOM.hideHighlight", nil)
 	return err
 }

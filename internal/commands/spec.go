@@ -75,7 +75,10 @@ type Command struct {
 	RetrySafe bool // only pure reads may be retried (design 2.6)
 	Timeout   time.Duration
 	Output    OutputKind
-	Run       func(ctx context.Context, env Env, in Input) (Result, error)
+	// Local commands run in the client process (the daemon lifecycle);
+	// every other command runs in the daemon (design 2.10).
+	Local bool
+	Run   func(ctx context.Context, env Env, in Input) (Result, error)
 }
 
 // Env is what a running command can use.
@@ -83,6 +86,14 @@ type Env interface {
 	Page(ctx context.Context) (*core.PageSession, error) // resolves, leases, probes
 	Emit(line string)                                    // streaming output (console --follow)
 	ResolvePath(p string) string                         // relative to the caller's cwd
+}
+
+// RemoteEnv is an Env that runs commands in another process (the daemon,
+// design 2.10). RunCLI and RegisterMCP call RunRemote instead of Run for
+// every command that is not Local.
+type RemoteEnv interface {
+	Env
+	RunRemote(ctx context.Context, c *Command, in Input) (Result, error)
 }
 
 // Globals are the global flags, parsed once for every command.
@@ -94,6 +105,9 @@ type Globals struct {
 	Transport         string        // --transport auto|iwdp|direct|webkitgtk
 	MaxOutput         int           // --max-output, in bytes; 0: no limit
 	ContentBoundaries bool          // --content-boundaries
+	Reservation       string        // --reservation, IWDP_DEVICE_RESERVATION: device reservation owner (design 2.5)
+	WaitLease         time.Duration // --wait-lease: wait this long for another session's lease
+	Takeover          bool          // --takeover: reattach a lost page (needs the reservation)
 }
 
 // Input is a parsed invocation of a command.

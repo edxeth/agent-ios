@@ -10,7 +10,7 @@ import (
 
 // TimelineStart starts timeline recording. If maxCallStackDepth > 0,
 // it is included in the parameters to control stack trace depth.
-func TimelineStart(ctx context.Context, client *webkit.Client, maxCallStackDepth int) error {
+func TimelineStart(ctx context.Context, client webkit.Caller, maxCallStackDepth int) error {
 	var params map[string]interface{}
 	if maxCallStackDepth > 0 {
 		params = map[string]interface{}{
@@ -22,7 +22,7 @@ func TimelineStart(ctx context.Context, client *webkit.Client, maxCallStackDepth
 }
 
 // TimelineStop stops timeline recording.
-func TimelineStop(ctx context.Context, client *webkit.Client) error {
+func TimelineStop(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Timeline.stop", nil)
 	return err
 }
@@ -42,7 +42,7 @@ func NewTimelineCollector() *TimelineCollector {
 // Start enables timeline recording and registers a handler for Timeline.eventRecorded events.
 // If maxCallStackDepth > 0, it is included in the parameters to control stack trace depth.
 // It is idempotent: calling Start multiple times will not register duplicate handlers.
-func (t *TimelineCollector) Start(ctx context.Context, client *webkit.Client, maxCallStackDepth int) error {
+func (t *TimelineCollector) Start(ctx context.Context, client webkit.Caller, maxCallStackDepth int) error {
 	t.mu.Lock()
 	if t.started {
 		t.mu.Unlock()
@@ -77,7 +77,7 @@ func (t *TimelineCollector) Start(ctx context.Context, client *webkit.Client, ma
 }
 
 // Stop stops timeline recording.
-func (t *TimelineCollector) Stop(ctx context.Context, client *webkit.Client) error {
+func (t *TimelineCollector) Stop(ctx context.Context, client webkit.Caller) error {
 	t.mu.Lock()
 	t.started = false
 	t.mu.Unlock()

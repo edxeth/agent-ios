@@ -19,50 +19,50 @@ func storageID(origin string, isLocal bool) webkit.StorageID {
 // --- Local Storage ---
 
 // GetLocalStorage returns all key-value pairs from local storage for the given origin.
-func GetLocalStorage(ctx context.Context, client *webkit.Client, securityOrigin string) ([]webkit.StorageItem, error) {
+func GetLocalStorage(ctx context.Context, client webkit.Caller, securityOrigin string) ([]webkit.StorageItem, error) {
 	return getDOMStorageItems(ctx, client, securityOrigin, true)
 }
 
 // SetLocalStorageItem sets a key-value pair in local storage.
-func SetLocalStorageItem(ctx context.Context, client *webkit.Client, securityOrigin, key, value string) error {
+func SetLocalStorageItem(ctx context.Context, client webkit.Caller, securityOrigin, key, value string) error {
 	return setDOMStorageItem(ctx, client, securityOrigin, true, key, value)
 }
 
 // RemoveLocalStorageItem removes a key from local storage.
-func RemoveLocalStorageItem(ctx context.Context, client *webkit.Client, securityOrigin, key string) error {
+func RemoveLocalStorageItem(ctx context.Context, client webkit.Caller, securityOrigin, key string) error {
 	return removeDOMStorageItem(ctx, client, securityOrigin, true, key)
 }
 
 // ClearLocalStorage clears all local storage for the given origin.
-func ClearLocalStorage(ctx context.Context, client *webkit.Client, securityOrigin string) error {
+func ClearLocalStorage(ctx context.Context, client webkit.Caller, securityOrigin string) error {
 	return clearDOMStorageItems(ctx, client, securityOrigin, true)
 }
 
 // --- Session Storage ---
 
 // GetSessionStorage returns all key-value pairs from session storage for the given origin.
-func GetSessionStorage(ctx context.Context, client *webkit.Client, securityOrigin string) ([]webkit.StorageItem, error) {
+func GetSessionStorage(ctx context.Context, client webkit.Caller, securityOrigin string) ([]webkit.StorageItem, error) {
 	return getDOMStorageItems(ctx, client, securityOrigin, false)
 }
 
 // SetSessionStorageItem sets a key-value pair in session storage.
-func SetSessionStorageItem(ctx context.Context, client *webkit.Client, securityOrigin, key, value string) error {
+func SetSessionStorageItem(ctx context.Context, client webkit.Caller, securityOrigin, key, value string) error {
 	return setDOMStorageItem(ctx, client, securityOrigin, false, key, value)
 }
 
 // RemoveSessionStorageItem removes a key from session storage.
-func RemoveSessionStorageItem(ctx context.Context, client *webkit.Client, securityOrigin, key string) error {
+func RemoveSessionStorageItem(ctx context.Context, client webkit.Caller, securityOrigin, key string) error {
 	return removeDOMStorageItem(ctx, client, securityOrigin, false, key)
 }
 
 // ClearSessionStorage clears all session storage for the given origin.
-func ClearSessionStorage(ctx context.Context, client *webkit.Client, securityOrigin string) error {
+func ClearSessionStorage(ctx context.Context, client webkit.Caller, securityOrigin string) error {
 	return clearDOMStorageItems(ctx, client, securityOrigin, false)
 }
 
 // --- DOMStorage helpers ---
 
-func getDOMStorageItems(ctx context.Context, client *webkit.Client, securityOrigin string, isLocal bool) ([]webkit.StorageItem, error) {
+func getDOMStorageItems(ctx context.Context, client webkit.Caller, securityOrigin string, isLocal bool) ([]webkit.StorageItem, error) {
 	result, err := client.Send(ctx, "DOMStorage.getDOMStorageItems", map[string]interface{}{
 		"storageId": storageID(securityOrigin, isLocal),
 	})
@@ -90,7 +90,7 @@ func getDOMStorageItems(ctx context.Context, client *webkit.Client, securityOrig
 	return items, nil
 }
 
-func setDOMStorageItem(ctx context.Context, client *webkit.Client, securityOrigin string, isLocal bool, key, value string) error {
+func setDOMStorageItem(ctx context.Context, client webkit.Caller, securityOrigin string, isLocal bool, key, value string) error {
 	_, err := client.Send(ctx, "DOMStorage.setDOMStorageItem", map[string]interface{}{
 		"storageId": storageID(securityOrigin, isLocal),
 		"key":       key,
@@ -99,7 +99,7 @@ func setDOMStorageItem(ctx context.Context, client *webkit.Client, securityOrigi
 	return err
 }
 
-func removeDOMStorageItem(ctx context.Context, client *webkit.Client, securityOrigin string, isLocal bool, key string) error {
+func removeDOMStorageItem(ctx context.Context, client webkit.Caller, securityOrigin string, isLocal bool, key string) error {
 	_, err := client.Send(ctx, "DOMStorage.removeDOMStorageItem", map[string]interface{}{
 		"storageId": storageID(securityOrigin, isLocal),
 		"key":       key,
@@ -107,7 +107,7 @@ func removeDOMStorageItem(ctx context.Context, client *webkit.Client, securityOr
 	return err
 }
 
-func clearDOMStorageItems(ctx context.Context, client *webkit.Client, securityOrigin string, isLocal bool) error {
+func clearDOMStorageItems(ctx context.Context, client webkit.Caller, securityOrigin string, isLocal bool) error {
 	_, err := client.Send(ctx, "DOMStorage.clearDOMStorageItems", map[string]interface{}{
 		"storageId": storageID(securityOrigin, isLocal),
 	})
@@ -117,7 +117,7 @@ func clearDOMStorageItems(ctx context.Context, client *webkit.Client, securityOr
 // --- IndexedDB ---
 
 // ListIndexedDatabases returns all IndexedDB databases for the given origin, including their object stores.
-func ListIndexedDatabases(ctx context.Context, client *webkit.Client, securityOrigin string) ([]webkit.DatabaseWithObjectStores, error) {
+func ListIndexedDatabases(ctx context.Context, client webkit.Caller, securityOrigin string) ([]webkit.DatabaseWithObjectStores, error) {
 	result, err := client.Send(ctx, "IndexedDB.requestDatabaseNames", map[string]interface{}{
 		"securityOrigin": securityOrigin,
 	})
@@ -155,7 +155,7 @@ func ListIndexedDatabases(ctx context.Context, client *webkit.Client, securityOr
 }
 
 // GetIndexedDBData retrieves data from an IndexedDB object store.
-func GetIndexedDBData(ctx context.Context, client *webkit.Client, securityOrigin, databaseName, objectStoreName string, skipCount, pageSize int) (json.RawMessage, error) {
+func GetIndexedDBData(ctx context.Context, client webkit.Caller, securityOrigin, databaseName, objectStoreName string, skipCount, pageSize int) (json.RawMessage, error) {
 	result, err := client.Send(ctx, "IndexedDB.requestData", map[string]interface{}{
 		"securityOrigin":  securityOrigin,
 		"databaseName":    databaseName,
@@ -171,7 +171,7 @@ func GetIndexedDBData(ctx context.Context, client *webkit.Client, securityOrigin
 }
 
 // ClearIndexedDBStore clears all data from an IndexedDB object store.
-func ClearIndexedDBStore(ctx context.Context, client *webkit.Client, securityOrigin, databaseName, objectStoreName string) error {
+func ClearIndexedDBStore(ctx context.Context, client webkit.Caller, securityOrigin, databaseName, objectStoreName string) error {
 	_, err := client.Send(ctx, "IndexedDB.clearObjectStore", map[string]interface{}{
 		"securityOrigin":  securityOrigin,
 		"databaseName":    databaseName,

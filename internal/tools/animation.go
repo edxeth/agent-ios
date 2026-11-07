@@ -10,13 +10,13 @@ import (
 )
 
 // AnimationEnable enables the Animation domain.
-func AnimationEnable(ctx context.Context, client *webkit.Client) error {
+func AnimationEnable(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Animation.enable", nil)
 	return err
 }
 
 // AnimationDisable disables the Animation domain.
-func AnimationDisable(ctx context.Context, client *webkit.Client) error {
+func AnimationDisable(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Animation.disable", nil)
 	return err
 }
@@ -57,7 +57,7 @@ func NewAnimationTrackingCollector() *AnimationTrackingCollector {
 }
 
 // Start begins animation tracking, collecting trackingUpdate events.
-func (c *AnimationTrackingCollector) Start(ctx context.Context, client *webkit.Client) error {
+func (c *AnimationTrackingCollector) Start(ctx context.Context, client webkit.Caller) error {
 	c.mu.Lock()
 	if c.started {
 		c.mu.Unlock()
@@ -99,7 +99,7 @@ func (c *AnimationTrackingCollector) Start(ctx context.Context, client *webkit.C
 }
 
 // Stop stops animation tracking and returns the collected events.
-func (c *AnimationTrackingCollector) Stop(ctx context.Context, client *webkit.Client) (*AnimationTrackingResult, error) {
+func (c *AnimationTrackingCollector) Stop(ctx context.Context, client webkit.Caller) (*AnimationTrackingResult, error) {
 	c.mu.Lock()
 	if !c.started {
 		c.mu.Unlock()
@@ -131,7 +131,7 @@ func (c *AnimationTrackingCollector) Stop(ctx context.Context, client *webkit.Cl
 }
 
 // GetAnimationEffect requests the effect target for an animation and returns the raw result.
-func GetAnimationEffect(ctx context.Context, client *webkit.Client, animationID string) (json.RawMessage, error) {
+func GetAnimationEffect(ctx context.Context, client webkit.Caller, animationID string) (json.RawMessage, error) {
 	result, err := client.Send(ctx, "Animation.requestEffectTarget", map[string]interface{}{
 		"animationId": animationID,
 	})
@@ -142,7 +142,7 @@ func GetAnimationEffect(ctx context.Context, client *webkit.Client, animationID 
 }
 
 // ResolveAnimation resolves an animation to a remote object for further inspection.
-func ResolveAnimation(ctx context.Context, client *webkit.Client, animationID string, objectGroup string) (*webkit.RemoteObject, error) {
+func ResolveAnimation(ctx context.Context, client webkit.Caller, animationID string, objectGroup string) (*webkit.RemoteObject, error) {
 	result, err := client.Send(ctx, "Animation.resolveAnimation", map[string]interface{}{
 		"animationId": animationID,
 		"objectGroup": objectGroup,

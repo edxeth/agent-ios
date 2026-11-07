@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -109,6 +111,12 @@ type SessionOptions struct {
 	// (design 2.7). It runs in its own goroutine; its ctx ends when the target
 	// is destroyed or the session closes.
 	Setup func(ctx context.Context, t TargetCaller) error
+	// AgentReset returns the calls that bring the agent of a domain to
+	// WebKit's baseline. Before the first <Domain>.enable that the session
+	// sends to a target whose agent state it does not know (AgentState),
+	// it writes these calls and then the enable in one round trip
+	// (sendWithReset). nil: <Domain>.disable alone.
+	AgentReset func(domain string) []Call
 	// EventQueue is the capacity of each subscriber's queue. A full queue
 	// drops the event (DroppedEvents counts them); it never blocks the read loop.
 	EventQueue int
@@ -133,11 +141,32 @@ func (o SessionOptions) withDefaults() SessionOptions {
 	return o
 }
 
+type callBudgetKey struct{}
+
+// WithCallBudget returns ctx with a per-call budget that replaces
+// SessionOptions.CallTimeout for Session sends made with it. The daemon
+// uses it for legacy raw calls, which W0 bounds only by the command
+// deadline (a heap snapshot can take minutes).
+func WithCallBudget(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, callBudgetKey{}, d)
+}
+
+// HangsThroughTarget reports whether method gets no reply through Target
+// routing (CSS.enable, CSS.getAllStyleSheets, CSS.getStyleSheetText).
+func HangsThroughTarget(method string) bool { return hangsThroughTarget[method] }
+
 // TargetCaller sends commands to one specific target, for example a
 // provisional target during setup.
 type TargetCaller interface {
 	TargetID() string
 	Send(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
+
+// Call is one protocol command of a pipelined batch (SendPipelined,
+// SessionOptions.AgentReset).
+type Call struct {
+	Method string
+	Params any
 }
 
 type reply struct {
@@ -162,6 +191,41 @@ type targetState struct {
 	// ran); setupErr is its result, or that of the last ReapplySetup.
 	setupDone chan struct{}
 	setupErr  error
+}
+
+// AgentState is what a Session knows about the agent of one domain on a
+// target's backend, from the replies to the <Domain>.enable and
+// <Domain>.disable calls it sent to that target (design 2.4 and 2.7). A
+// target that a commit replaced keeps its record: when a back or forward
+// navigation restores a page from the back/forward cache, WebKit announces
+// its old target id again, and its backend kept every agent and its state,
+// because the commit away never disconnected it (WebKitGTK 2.54 and iOS
+// 16.x; docs/notes/w1b.md, "Back and forward across sites").
+type AgentState uint8
+
+const (
+	// AgentEnabled: an enable succeeded, or WebKit refused it as already
+	// enabled, and no disable was sent after it.
+	AgentEnabled AgentState = iota + 1
+	// AgentMaybeEnabled: an enable or a disable was written and its reply
+	// was lost (call timeout, cancellation, target swap), so the agent can
+	// be enabled.
+	AgentMaybeEnabled
+	// AgentDisabled: a disable succeeded, or WebKit refused it because the
+	// agent was not enabled (NotEnabled), and no enable was sent after it.
+	AgentDisabled
+)
+
+// NotEnabled reports a refusal because the domain's agent is not enabled
+// ("not enabled", "must be enabled", "already disabled"): the agent is in
+// the state that a disable wants.
+func NotEnabled(err error) bool {
+	var pe *ErrorData
+	if !errors.As(err, &pe) {
+		return false
+	}
+	m := strings.ToLower(pe.Message)
+	return strings.Contains(m, "not enabled") || strings.Contains(m, "must be enabled") || strings.Contains(m, "already disabled")
 }
 
 type subscriber struct {
@@ -207,8 +271,13 @@ type Session struct {
 	syncSubs map[string]map[int]EventHandler
 	nextSub  int
 
+	// agents is the AgentState record per target id and domain. It
+	// outlives the target's destruction (see AgentState).
+	agents map[string]map[string]AgentState
+
 	dropped   atomic.Int64
 	malformed atomic.Int64
+	workers   atomic.Int64 // running subscriber goroutines
 }
 
 // Dial opens a connection with open and starts a Session on it. A connection
@@ -245,6 +314,7 @@ func NewSession(ctx context.Context, conn transport.MessageConn, o SessionOption
 		wrapOf:        make(map[int64]int64),
 		targets:       make(map[string]*targetState),
 		pendingLoader: make(map[string]string),
+		agents:        make(map[string]map[string]AgentState),
 		ready:         make(chan struct{}),
 		done:          make(chan struct{}),
 		subs:          make(map[string]map[int]*subscriber),
@@ -264,7 +334,7 @@ func NewSession(ctx context.Context, conn transport.MessageConn, o SessionOption
 		return nil, fmt.Errorf("connection closed after %s before a target was announced: %w", time.Since(start).Round(time.Millisecond), ErrNoTarget)
 	case <-ctx.Done():
 		s.shutdown(ctx.Err())
-		return nil, fmt.Errorf("waiting for the page target: %w", ctx.Err())
+		return nil, fmt.Errorf("waiting for the page target: %w", ctxErr(ctx))
 	}
 	if s.opts.PauseOnStart {
 		if _, err := s.sendOuter(ctx, "Target.setPauseOnStart", map[string]bool{"pauseOnStart": true}); err != nil {
@@ -282,7 +352,24 @@ func NewSession(ctx context.Context, conn transport.MessageConn, o SessionOption
 // *SetupError when the setup failed. The target is chosen and its setup
 // checked in one step, so a swap cannot commit between them.
 func (s *Session) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	return s.sendTo(ctx, "", true, method, params)
+	target, _ := TargetOf(ctx)
+	return s.sendTo(ctx, target, true, method, params)
+}
+
+type targetKey struct{}
+
+// WithTarget makes Session.Send address the target id instead of the active
+// target at send time, with the same setup gate. A target that a commit
+// replaced fails the call with ErrTargetSwapped (with ErrNotSent when it was
+// gone before the write). Other callers ignore it.
+func WithTarget(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, targetKey{}, id)
+}
+
+// TargetOf returns the target that WithTarget set on ctx.
+func TargetOf(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(targetKey{}).(string)
+	return id, ok && id != ""
 }
 
 // SendControl sends method to the active target like Send, without the
@@ -393,6 +480,64 @@ func (s *Session) ResumeTarget(ctx context.Context, id string) error {
 	return err
 }
 
+// AgentStates returns what the session knows about the agents of target's
+// backend, from the enables and disables it sent to target (AgentState).
+// The session knows nothing about a domain without an entry: an empty
+// record does not mean a fresh backend (needsResetLocked).
+func (s *Session) AgentStates(target string) map[string]AgentState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return maps.Clone(s.agents[target])
+}
+
+// needsResetLocked reports whether method is an enable whose agent on
+// target the session must reset first: it never sent that agent a call
+// with a known outcome (no record entry), or the last outcome was lost
+// (AgentMaybeEnabled). A connection cannot tell a fresh backend from one
+// that kept its agents: a page restored from the back/forward cache after
+// the connection that enabled them closed, or a target that existed
+// before the connection, arrive like any new target (docs/notes/w1b.md,
+// "unknown backends"). An empty record never means a fresh backend.
+func (s *Session) needsResetLocked(target, method string) bool {
+	dom, verb, _ := strings.Cut(method, ".")
+	if verb != "enable" {
+		return false
+	}
+	st, ok := s.agents[target][dom]
+	return !ok || st == AgentMaybeEnabled
+}
+
+// noteAgent updates target's AgentState record after a call of method was
+// written to it, or its write failed, and ended with err.
+func (s *Session) noteAgent(target, method string, err error) {
+	dom, verb, _ := strings.Cut(method, ".")
+	if verb != "enable" && verb != "disable" {
+		return
+	}
+	var pe *ErrorData
+	refused := errors.As(err, &pe)
+	already := refused && verb == "enable" && strings.Contains(strings.ToLower(pe.Message), "already enabled")
+	off := verb == "disable" && (err == nil || NotEnabled(err))
+	if errors.Is(err, ErrNotSent) || refused && !already && !off {
+		return // the backend did not change
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec := s.agents[target]
+	if rec == nil {
+		rec = make(map[string]AgentState)
+		s.agents[target] = rec
+	}
+	switch {
+	case verb == "enable" && (err == nil || already):
+		rec[dom] = AgentEnabled
+	case off:
+		rec[dom] = AgentDisabled
+	case verb == "disable" || rec[dom] != AgentEnabled:
+		rec[dom] = AgentMaybeEnabled
+	}
+}
+
 // ActiveSetup waits until the provisional setup of the active target has
 // ended, at most until ctx ends, and returns its failure as a *SetupError.
 // It returns nil when the setup succeeded or the active target had none
@@ -412,7 +557,7 @@ func (s *Session) ActiveSetup(ctx context.Context) error {
 		select {
 		case <-done:
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for the setup of page target %s: %w", t.id, ctx.Err())
+			return fmt.Errorf("waiting for the setup of page target %s: %w", t.id, ctxErr(ctx))
 		}
 	}
 	s.mu.Lock()
@@ -485,7 +630,9 @@ func (s *Session) Subscribe(method string, h EventHandler) func() {
 	}
 	s.subs[method][id] = sub
 	s.subMu.Unlock()
+	s.workers.Add(1)
 	go func() {
+		defer s.workers.Add(-1)
 		for {
 			select {
 			case ev := <-sub.queue:
@@ -549,68 +696,115 @@ func (s *Session) dispatch(method string, params json.RawMessage) {
 
 // sendTo sends method to target ("" = the active target at send time).
 // With gate, the target must have a finished, successful setup (Send).
+// The first <Domain>.enable to a target whose agent state the session does
+// not know goes out after that agent's reset, in one round trip
+// (sendWithReset).
 func (s *Session) sendTo(ctx context.Context, target string, gate bool, method string, params any) (json.RawMessage, error) {
 	if hangsThroughTarget[method] {
 		return nil, notSent(fmt.Errorf("%s: %w", method, ErrHangsThroughTarget))
 	}
-	callCtx, cancel := context.WithTimeout(ctx, s.opts.CallTimeout)
+	callCtx, cancel := s.callContext(ctx)
 	defer cancel()
 	start := time.Now()
-
-	var rawParams json.RawMessage
-	if params != nil {
-		var err error
-		if rawParams, err = json.Marshal(params); err != nil {
-			return nil, fmt.Errorf("%s: marshaling params: %w", method, err)
-		}
-	}
-	innerID := s.nextID.Add(1)
-	inner, err := json.Marshal(Message{ID: innerID, Method: method, Params: rawParams})
+	rawParams, err := marshalParams(method, params)
 	if err != nil {
-		return nil, fmt.Errorf("%s: marshaling message: %w", method, err)
+		return nil, err
 	}
+	target, reset, err := s.resolve(ctx, callCtx, target, gate, method)
+	if err != nil {
+		return nil, err
+	}
+	if reset {
+		return s.sendWithReset(ctx, callCtx, start, target, method, rawParams)
+	}
+	in, err := s.write(callCtx, target, method, rawParams)
+	if err != nil {
+		return nil, err
+	}
+	return s.await(ctx, callCtx, start, in)
+}
 
+// callContext bounds one call, or one pipelined batch, by the call budget.
+func (s *Session) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	budget := s.opts.CallTimeout
+	if d, ok := ctx.Value(callBudgetKey{}).(time.Duration); ok && d > 0 {
+		budget = d
+	}
+	return context.WithTimeout(ctx, budget)
+}
+
+func marshalParams(method string, params any) (json.RawMessage, error) {
+	if params == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("%s: marshaling params: %w", method, err)
+	}
+	return raw, nil
+}
+
+// resolve picks the target of a call ("" = the active target), waits for
+// its running setup with gate, and reports whether method is an enable
+// whose agent must be reset first (needsResetLocked).
+func (s *Session) resolve(ctx, callCtx context.Context, target string, gate bool, method string) (dest string, reset bool, err error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	for {
 		if s.closeErr != nil {
-			err := s.closeErr
-			s.mu.Unlock()
-			return nil, notSent(fmt.Errorf("%s: %w", method, err))
+			return "", false, notSent(fmt.Errorf("%s: %w", method, s.closeErr))
 		}
-		dest := target
+		dest = target
 		if dest == "" {
 			dest = s.active
 		}
 		t := s.targets[dest]
 		if err := targetErr(t); err != nil {
-			s.mu.Unlock()
-			return nil, notSent(fmt.Errorf("%s to %s: %w", method, dest, err))
+			return "", false, notSent(fmt.Errorf("%s to %s: %w", method, dest, err))
 		}
 		if gate {
 			running, err := setupState(t)
 			if err != nil {
-				s.mu.Unlock()
-				return nil, notSent(fmt.Errorf("%s to %s: %w", method, dest, err))
+				return "", false, notSent(fmt.Errorf("%s to %s: %w", method, dest, err))
 			}
 			if running {
 				done := t.setupDone
 				s.mu.Unlock()
+				var werr error
 				select {
 				case <-done:
 				case <-callCtx.Done():
-					return nil, notSent(fmt.Errorf("%s: waiting for the setup of page target %s: %w", method, dest, callCtx.Err()))
+					werr = notSent(fmt.Errorf("%s: waiting for the setup of page target %s: %w", method, dest, callCtx.Err()))
 				case <-s.done:
-					return nil, notSent(fmt.Errorf("%s: %w", method, s.Err()))
+					werr = notSent(fmt.Errorf("%s: %w", method, s.Err()))
 				}
 				s.mu.Lock()
+				if werr != nil {
+					return "", false, werr
+				}
 				continue // the active target may have changed meanwhile
 			}
 		}
-		target = dest
-		break
+		return dest, s.needsResetLocked(dest, method), nil
 	}
-	s.mu.Unlock()
+}
 
+// inflight is a call written to a target whose reply is awaited.
+type inflight struct {
+	call             *pendingCall
+	innerID, outerID int64
+	target, method   string
+}
+
+// write registers and writes one call to target without waiting for its
+// reply. A write that fails is recorded (noteAgent) and its registration
+// removed.
+func (s *Session) write(callCtx context.Context, target, method string, rawParams json.RawMessage) (*inflight, error) {
+	innerID := s.nextID.Add(1)
+	inner, err := json.Marshal(Message{ID: innerID, Method: method, Params: rawParams})
+	if err != nil {
+		return nil, fmt.Errorf("%s: marshaling message: %w", method, err)
+	}
 	outerID := s.nextID.Add(1)
 	outerParams, err := json.Marshal(map[string]string{"targetId": target, "message": string(inner)})
 	if err != nil {
@@ -624,7 +818,7 @@ func (s *Session) sendTo(ctx context.Context, target string, gate bool, method s
 		return nil, notSent(&WireLimitError{What: method, Size: len(wire), Limit: lim})
 	}
 
-	call := &pendingCall{ch: make(chan reply, 1), target: target, method: method}
+	in := &inflight{call: &pendingCall{ch: make(chan reply, 1), target: target, method: method}, innerID: innerID, outerID: outerID, target: target, method: method}
 	s.mu.Lock()
 	// Re-check under the lock: the target may have been destroyed or
 	// swapped while the message was built. Nothing is written to it then.
@@ -632,20 +826,30 @@ func (s *Session) sendTo(ctx context.Context, target string, gate bool, method s
 		s.mu.Unlock()
 		return nil, notSent(fmt.Errorf("%s to %s: %w", method, target, err))
 	}
-	s.pending[innerID] = call
+	s.pending[innerID] = in.call
 	s.wrapOf[outerID] = innerID
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.pending, innerID)
-		delete(s.wrapOf, outerID)
-		s.mu.Unlock()
-	}()
 
 	if err := s.conn.Write(callCtx, wire); err != nil {
-		return nil, writeErr(method, err)
+		err = writeErr(method, err)
+		s.finish(in, err)
+		return nil, err
 	}
+	return in, nil
+}
 
+// finish removes a call's registration and records its outcome.
+func (s *Session) finish(in *inflight, err error) {
+	s.mu.Lock()
+	delete(s.pending, in.innerID)
+	delete(s.wrapOf, in.outerID)
+	s.mu.Unlock()
+	s.noteAgent(in.target, in.method, err)
+}
+
+// await waits for the reply of a written call, at most until callCtx ends.
+func (s *Session) await(ctx, callCtx context.Context, start time.Time, in *inflight) (_ json.RawMessage, err error) {
+	defer func() { s.finish(in, err) }()
 	var nudge <-chan time.Time
 	if s.opts.Nudge {
 		t := time.NewTimer(s.opts.NudgeAfter)
@@ -654,24 +858,149 @@ func (s *Session) sendTo(ctx context.Context, target string, gate bool, method s
 	}
 	for {
 		select {
-		case r := <-call.ch:
+		case r := <-in.call.ch:
 			if r.err != nil {
-				return nil, fmt.Errorf("%s: %w", method, r.err)
+				return nil, fmt.Errorf("%s: %w", in.method, r.err)
 			}
 			return r.result, nil
 		case <-nudge:
 			nudge = nil
-			s.sendNudge(callCtx, target)
+			s.sendNudge(callCtx, in.target)
 		case <-callCtx.Done():
 			elapsed := time.Since(start).Round(time.Millisecond)
 			if ctx.Err() == nil {
-				return nil, fmt.Errorf("%s: no reply after %s: %w", method, elapsed, ErrCallTimeout)
+				return nil, fmt.Errorf("%s: no reply after %s: %w", in.method, elapsed, ErrCallTimeout)
 			}
-			return nil, fmt.Errorf("%s: no response after %s: %w", method, elapsed, ctx.Err())
+			return nil, fmt.Errorf("%s: no response after %s: %w", in.method, elapsed, ctxErr(ctx))
 		case <-s.done:
-			return nil, fmt.Errorf("%s: %w", method, s.Err())
+			return nil, fmt.Errorf("%s: %w", in.method, s.Err())
 		}
 	}
+}
+
+// pipeline writes calls to target in order without waiting between them,
+// then collects every reply (one round trip; WebKit runs a target's
+// commands in the order they arrive). A write that fails ends the batch:
+// the later calls are not written and fail with ErrNotSent.
+func (s *Session) pipeline(ctx, callCtx context.Context, start time.Time, target string, calls []Call) ([]json.RawMessage, []error) {
+	res := make([]json.RawMessage, len(calls))
+	errs := make([]error, len(calls))
+	ins := make([]*inflight, len(calls))
+	for i, c := range calls {
+		raw, err := marshalParams(c.Method, c.Params)
+		if err == nil {
+			ins[i], err = s.write(callCtx, target, c.Method, raw)
+		}
+		if err != nil {
+			errs[i] = err
+			for j := i + 1; j < len(calls); j++ {
+				errs[j] = notSent(fmt.Errorf("%s: not written after the failure of %s: %w", calls[j].Method, c.Method, err))
+			}
+			break
+		}
+	}
+	for i, in := range ins {
+		if in != nil {
+			res[i], errs[i] = s.await(ctx, callCtx, start, in)
+		}
+	}
+	return res, errs
+}
+
+// SendPipelined sends calls to the active target, or the one WithTarget
+// names, like Send, but writes them in order without waiting between them
+// and then collects the replies, so the batch costs one round trip. It
+// returns each call's error; a write that fails ends the batch (pipeline).
+// It sends no agent reset (sendWithReset): a caller that puts an enable in
+// the batch resets that agent in the batch first, as core's Apply does.
+func (s *Session) SendPipelined(ctx context.Context, calls []Call) []error {
+	target, _ := TargetOf(ctx)
+	return s.sendPipelined(ctx, target, true, calls)
+}
+
+func (s *Session) sendPipelined(ctx context.Context, target string, gate bool, calls []Call) []error {
+	if len(calls) == 0 {
+		return nil
+	}
+	callCtx, cancel := s.callContext(ctx)
+	defer cancel()
+	start := time.Now()
+	errs := make([]error, len(calls))
+	for _, c := range calls {
+		if hangsThroughTarget[c.Method] {
+			for j := range errs {
+				errs[j] = notSent(fmt.Errorf("%s: batch with %s: %w", calls[j].Method, c.Method, ErrHangsThroughTarget))
+			}
+			return errs
+		}
+	}
+	dest, _, err := s.resolve(ctx, callCtx, target, gate, calls[0].Method)
+	if err != nil {
+		for i := range errs {
+			errs[i] = err
+		}
+		return errs
+	}
+	_, errs = s.pipeline(ctx, callCtx, start, dest, calls)
+	return errs
+}
+
+// sendWithReset sends the enable method to target after the reset of its
+// agent (SessionOptions.AgentReset), pipelined: the reset calls and the
+// enable are written in order and their replies collected together. A
+// reset call refused because the agent is not enabled is no failure
+// (NotEnabled). Any other failure of a reset call fails the enable; it is
+// reported without its protocol error type, because the reset changed the
+// backend whatever the enable's own outcome. A reset call that ended
+// without WebKit's answer (ErrCallTimeout, the caller's context, a closed
+// session) keeps that error in the chain, because callers read it: hang
+// detection probes after ErrCallTimeout, and an owner's cancellation is no
+// stall. ErrNotSent is kept only when nothing of the batch was written.
+func (s *Session) sendWithReset(ctx, callCtx context.Context, start time.Time, target, method string, rawParams json.RawMessage) (json.RawMessage, error) {
+	dom, _, _ := strings.Cut(method, ".")
+	calls := s.agentReset(dom)
+	enable := Call{Method: method}
+	if rawParams != nil {
+		enable.Params = rawParams // a nil RawMessage would be sent as null
+	}
+	calls = append(calls[:len(calls):len(calls)], enable)
+	res, errs := s.pipeline(ctx, callCtx, start, target, calls)
+	last := len(calls) - 1
+	var failed []string
+	var cause error // the first failure without WebKit's answer
+	for _, err := range errs[:last] {
+		if err != nil && !NotEnabled(err) {
+			var pe *ErrorData
+			if cause == nil && !errors.As(err, &pe) && !errors.Is(err, ErrNotSent) {
+				cause = err
+				continue
+			}
+			failed = append(failed, err.Error())
+		}
+	}
+	switch {
+	case cause != nil:
+		others := ""
+		if len(failed) > 0 {
+			others = "; " + strings.Join(failed, "; ")
+		}
+		return nil, fmt.Errorf("%s: resetting the %s agent, whose state this session did not know, failed: %w%s (the enable: %v)", method, dom, cause, others, errs[last])
+	case len(failed) == 0:
+		return res[last], errs[last]
+	case errors.Is(errs[0], ErrNotSent):
+		// Nothing of the batch reached the page.
+		return nil, fmt.Errorf("%s: resetting the %s agent first: %w", method, dom, errs[0])
+	default:
+		return nil, fmt.Errorf("%s: resetting the %s agent, whose state this session did not know, failed: %s (the enable: %v)", method, dom, strings.Join(failed, "; "), errs[last])
+	}
+}
+
+// agentReset returns the reset calls of dom's agent.
+func (s *Session) agentReset(dom string) []Call {
+	if s.opts.AgentReset != nil {
+		return s.opts.AgentReset(dom)
+	}
+	return []Call{{Method: dom + ".disable"}}
 }
 
 // writeErr reports a failed write of method; a write that the connection
@@ -774,7 +1103,9 @@ func (s *Session) sendOuter(ctx context.Context, method string, params any) (jso
 func (s *Session) shutdown(err error) {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
-		s.closeErr = err
+		if s.closeErr == nil { // handleTargetDestroyed may have published ErrPageClosed
+			s.closeErr = err
+		}
 		for _, t := range s.targets {
 			if t.cancelSetup != nil {
 				t.cancelSetup()
@@ -790,7 +1121,9 @@ func (s *Session) readLoop() {
 	for {
 		data, err := s.conn.Read(context.Background())
 		if err != nil {
-			s.shutdown(fmt.Errorf("%w: %v", ErrSessionClosed, err))
+			// Both errors stay in the chain: a transport that reports
+			// ErrPageClosed (the direct transport) keeps that identity.
+			s.shutdown(fmt.Errorf("%w: %w", ErrSessionClosed, err))
 			return
 		}
 		s.handle(data)
@@ -1076,6 +1409,12 @@ func (s *Session) handleTargetDestroyed(params json.RawMessage) {
 		s.mu.Unlock()
 		return
 	}
+	// Publish the close in the same critical section that failed the
+	// pending calls: a Send that runs after a caller saw ErrPageClosed must
+	// not find the destroyed target and report ErrTargetSwapped.
+	if s.closeErr == nil {
+		s.closeErr = ErrPageClosed
+	}
 	s.mu.Unlock()
 	s.shutdown(ErrPageClosed)
 }
@@ -1114,6 +1453,16 @@ type targetCaller struct {
 }
 
 func (t targetCaller) TargetID() string { return t.id }
+
+// AgentStates returns what the session knows about the agents of the
+// target's backend (Session.AgentStates).
+func (t targetCaller) AgentStates() map[string]AgentState { return t.s.AgentStates(t.id) }
+
+// SendPipelined sends calls to the target in one round trip
+// (Session.SendPipelined), without the setup check.
+func (t targetCaller) SendPipelined(ctx context.Context, calls []Call) []error {
+	return t.s.sendPipelined(ctx, t.id, false, calls)
+}
 
 func (t targetCaller) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	return t.s.sendTo(ctx, t.id, false, method, params)

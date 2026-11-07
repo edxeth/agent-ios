@@ -5,7 +5,9 @@
 // Target.sendMessageToTarget and answers through
 // Target.dispatchMessageFromTarget. Tests script stalls, withheld and held
 // replies, provisional swaps, connection failures and page runtime calls,
-// and read back every message in order.
+// and read back every message in order. Like WebKit's backend dispatcher,
+// it refuses a Network interception command whose parameters are missing or
+// of the wrong type.
 package fakewebkit
 
 import (
@@ -39,10 +41,12 @@ type Options struct {
 	ReconnectGap time.Duration
 }
 
-// Error is a protocol error reply.
+// Error is a protocol error reply. Data lists the nested errors, as
+// WebKit's BackendDispatcher sends them.
 type Error struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int     `json:"code"`
+	Message string  `json:"message"`
+	Data    []Error `json:"data,omitempty"`
 }
 
 // Call is one page command received by the fake.
@@ -109,6 +113,7 @@ type Server struct {
 	handlers     map[string]Handler
 	stalled      map[string]bool
 	stallAll     bool
+	stalledConns map[int]bool // StallConnection
 	withheld     map[string]bool
 	waiting      []held // withheld replies, sent on the next client message
 	holds        map[string]hold
@@ -185,7 +190,9 @@ func (s *Server) Close() {
 	s.srv.Close()
 }
 
-// Handle sets the handler of a page method.
+// Handle sets the handler of a page method. The Network interception
+// commands reach their handler only with valid parameters (see checkParams);
+// otherwise they get WebKit's parameter error.
 func (s *Server) Handle(method string, h Handler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -209,6 +216,17 @@ func (s *Server) Stall(method string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stalled[method] = true
+}
+
+// StallConnection makes connection id (1 for the first) accept every page
+// command and answer none; other connections are unaffected.
+func (s *Server) StallConnection(id int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stalledConns == nil {
+		s.stalledConns = map[int]bool{}
+	}
+	s.stalledConns[id] = true
 }
 
 // StallAll accepts every page command and answers none (a hidden tab, MAP fact 12).
@@ -376,6 +394,13 @@ func (s *Server) DestroyActive() {
 	delete(s.targets, old)
 	s.mu.Unlock()
 	s.EmitOuter("Target.targetDestroyed", map[string]string{"targetId": old})
+}
+
+// OpenConnections is the number of connections that are open now.
+func (s *Server) OpenConnections() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
 }
 
 // CloseConnections closes every open connection from the server side.
@@ -577,7 +602,7 @@ var RuntimeCallPattern = regexp.MustCompile(`(?s)window\.__iwdp\.call\("([A-Za-z
 
 func (s *Server) handlePage(c *conn, call Call) {
 	s.mu.Lock()
-	if s.stallAll || s.stalled[call.Method] {
+	if s.stallAll || s.stalled[call.Method] || s.stalledConns[c.id] {
 		s.mu.Unlock()
 		return
 	}
@@ -614,7 +639,9 @@ func (s *Server) handlePage(c *conn, call Call) {
 	default:
 		var result any
 		var perr *Error
-		switch {
+		switch invalid := checkParams(call.Method, call.Params); {
+		case invalid != nil:
+			perr = invalid
 		case h != nil:
 			result, perr = h(call)
 		case call.Method == "Runtime.evaluate":

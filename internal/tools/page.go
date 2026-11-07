@@ -14,13 +14,13 @@ import (
 )
 
 // Navigate navigates the page to the given URL.
-func Navigate(ctx context.Context, client *webkit.Client, url string) error {
+func Navigate(ctx context.Context, client webkit.Caller, url string) error {
 	_, err := client.Send(ctx, "Page.navigate", map[string]string{"url": url})
 	return err
 }
 
 // Reload reloads the current page.
-func Reload(ctx context.Context, client *webkit.Client, ignoreCache bool) error {
+func Reload(ctx context.Context, client webkit.Caller, ignoreCache bool) error {
 	_, err := client.Send(ctx, "Page.reload", map[string]interface{}{
 		"ignoreCache": ignoreCache,
 	})
@@ -38,7 +38,7 @@ type ScreenshotOptions struct {
 
 // CaptureScreenshot captures the viewport (default), the full document, or one
 // element as a base64-encoded PNG data URL.
-func CaptureScreenshot(ctx context.Context, client *webkit.Client, opts ScreenshotOptions) (string, error) {
+func CaptureScreenshot(ctx context.Context, client webkit.Caller, opts ScreenshotOptions) (string, error) {
 	switch {
 	case opts.FullPage && opts.Selector != "":
 		return "", errors.New("choose either a full-page or an element screenshot, not both")
@@ -61,7 +61,7 @@ func CaptureScreenshot(ctx context.Context, client *webkit.Client, opts Screensh
 
 // viewportScreenshot captures the visible viewport with Page.snapshotRect in
 // Viewport coordinates.
-func viewportScreenshot(ctx context.Context, client *webkit.Client) (string, error) {
+func viewportScreenshot(ctx context.Context, client webkit.Caller) (string, error) {
 	dims, err := evaluateDimensions(ctx, client, `JSON.stringify({width: window.innerWidth, height: window.innerHeight})`)
 	if err != nil {
 		return "", fmt.Errorf("getting viewport size: %w", err)
@@ -75,7 +75,7 @@ type pageDimensions struct {
 }
 
 // evaluateDimensions runs an expression that returns JSON.stringify({width, height}).
-func evaluateDimensions(ctx context.Context, client *webkit.Client, expression string) (pageDimensions, error) {
+func evaluateDimensions(ctx context.Context, client webkit.Caller, expression string) (pageDimensions, error) {
 	var dims pageDimensions
 	dimResult, err := client.Send(ctx, "Runtime.evaluate", map[string]interface{}{
 		"expression":    expression,
@@ -111,7 +111,7 @@ func evaluateDimensions(ctx context.Context, client *webkit.Client, expression s
 
 // snapshotRect captures a rectangle starting at 0,0 in the given WebKit
 // coordinate system ("Viewport" or "Page").
-func snapshotRect(ctx context.Context, client *webkit.Client, dims pageDimensions, coordinateSystem string) (string, error) {
+func snapshotRect(ctx context.Context, client webkit.Caller, dims pageDimensions, coordinateSystem string) (string, error) {
 	result, err := client.Send(ctx, "Page.snapshotRect", map[string]interface{}{
 		"x":                0,
 		"y":                0,
@@ -133,7 +133,7 @@ func snapshotRect(ctx context.Context, client *webkit.Client, dims pageDimension
 }
 
 // TakeScreenshot captures the full scrollable document as a base64-encoded PNG.
-func TakeScreenshot(ctx context.Context, client *webkit.Client) (string, error) {
+func TakeScreenshot(ctx context.Context, client webkit.Caller) (string, error) {
 	// Page.snapshotRect requires explicit width/height.
 	dims, err := evaluateDimensions(ctx, client, `JSON.stringify({
 			width: Math.max(
@@ -154,7 +154,7 @@ func TakeScreenshot(ctx context.Context, client *webkit.Client) (string, error) 
 }
 
 // SnapshotNode captures a specific DOM node as a base64-encoded PNG.
-func SnapshotNode(ctx context.Context, client *webkit.Client, nodeID int) (string, error) {
+func SnapshotNode(ctx context.Context, client webkit.Caller, nodeID int) (string, error) {
 	result, err := client.Send(ctx, "Page.snapshotNode", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -172,7 +172,7 @@ func SnapshotNode(ctx context.Context, client *webkit.Client, nodeID int) (strin
 }
 
 // GetCookies returns all cookies for the current page, including httpOnly and secure.
-func GetCookies(ctx context.Context, client *webkit.Client) ([]webkit.Cookie, error) {
+func GetCookies(ctx context.Context, client webkit.Caller) ([]webkit.Cookie, error) {
 	result, err := client.Send(ctx, "Page.getCookies", nil)
 	if err != nil {
 		return nil, err
@@ -246,7 +246,7 @@ type setCookieParam struct {
 // cookie with Session set or Expires 0 is sent as a session cookie, without
 // an expiry. Expires is in milliseconds since the Unix epoch, as in WebKit's
 // Page.Cookie.
-func SetCookie(ctx context.Context, client *webkit.Client, cookie webkit.Cookie) error {
+func SetCookie(ctx context.Context, client webkit.Caller, cookie webkit.Cookie) error {
 	cookie, err := normalizeCookie(cookie)
 	if err != nil {
 		return err
@@ -274,7 +274,7 @@ const cookieExpiryPrecisionMs = 1000
 // with other attributes than requested, including the session status and,
 // for a persistent cookie, the expiry to the second. Errors never contain
 // cookie values.
-func SetCookieVerified(ctx context.Context, client *webkit.Client, cookie webkit.Cookie) (*webkit.Cookie, error) {
+func SetCookieVerified(ctx context.Context, client webkit.Caller, cookie webkit.Cookie) (*webkit.Cookie, error) {
 	cookie, err := normalizeCookie(cookie)
 	if err != nil {
 		return nil, err
@@ -364,7 +364,7 @@ func RedactCookies(cookies []webkit.Cookie) []webkit.Cookie {
 }
 
 // DeleteCookie deletes a cookie by name and URL.
-func DeleteCookie(ctx context.Context, client *webkit.Client, name, url string) error {
+func DeleteCookie(ctx context.Context, client webkit.Caller, name, url string) error {
 	_, err := client.Send(ctx, "Page.deleteCookie", map[string]string{
 		"cookieName": name,
 		"url":        url,

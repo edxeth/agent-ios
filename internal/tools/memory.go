@@ -49,7 +49,7 @@ func NewMemoryTrackingCollector() *MemoryTrackingCollector {
 }
 
 // Start begins memory tracking, collecting trackingUpdate events.
-func (c *MemoryTrackingCollector) Start(ctx context.Context, client *webkit.Client) error {
+func (c *MemoryTrackingCollector) Start(ctx context.Context, client webkit.Caller) error {
 	c.mu.Lock()
 	if c.started {
 		c.mu.Unlock()
@@ -93,7 +93,7 @@ func (c *MemoryTrackingCollector) Start(ctx context.Context, client *webkit.Clie
 }
 
 // Stop stops memory tracking and returns the collected events.
-func (c *MemoryTrackingCollector) Stop(ctx context.Context, client *webkit.Client) (*MemoryTrackingResult, error) {
+func (c *MemoryTrackingCollector) Stop(ctx context.Context, client webkit.Caller) (*MemoryTrackingResult, error) {
 	c.mu.Lock()
 	if !c.started {
 		c.mu.Unlock()
@@ -129,7 +129,7 @@ func (c *MemoryTrackingCollector) Stop(ctx context.Context, client *webkit.Clien
 // HeapSnapshot takes a heap snapshot and saves it to a temp file.
 // Heap snapshots can be 50-200+ MB on heavy pages, so we stream directly
 // to disk instead of holding the entire snapshot in memory.
-func HeapSnapshot(ctx context.Context, client *webkit.Client) (string, error) {
+func HeapSnapshot(ctx context.Context, client webkit.Caller) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, HeapSnapshotTimeout)
 	defer cancel()
 
@@ -224,7 +224,7 @@ func (c *HeapTrackingCollector) PipelineHealthy() bool {
 // Start begins heap tracking, collecting garbageCollected events.
 // It waits up to HeapTrackingReadyTimeout for the trackingStart event to
 // confirm the event pipeline is healthy.
-func (c *HeapTrackingCollector) Start(ctx context.Context, client *webkit.Client) error {
+func (c *HeapTrackingCollector) Start(ctx context.Context, client webkit.Caller) error {
 	c.mu.Lock()
 	if c.started {
 		c.mu.Unlock()
@@ -297,7 +297,7 @@ func (c *HeapTrackingCollector) Start(ctx context.Context, client *webkit.Client
 // Stop stops heap tracking and returns collected GC events.
 // Errors from Heap.stopTracking are swallowed because the massive snapshot
 // events from trackingComplete may have already crashed the connection.
-func (c *HeapTrackingCollector) Stop(ctx context.Context, client *webkit.Client) (*HeapTrackingResult, error) {
+func (c *HeapTrackingCollector) Stop(ctx context.Context, client webkit.Caller) (*HeapTrackingResult, error) {
 	c.mu.Lock()
 	if !c.started {
 		c.mu.Unlock()
@@ -324,7 +324,7 @@ func (c *HeapTrackingCollector) Stop(ctx context.Context, client *webkit.Client)
 }
 
 // HeapGC triggers garbage collection.
-func HeapGC(ctx context.Context, client *webkit.Client) error {
+func HeapGC(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Heap.gc", nil)
 	return err
 }

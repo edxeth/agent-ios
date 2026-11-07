@@ -8,21 +8,31 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
-// DebuggerEnable enables the debugger for the page.
-func DebuggerEnable(ctx context.Context, client *webkit.Client) error {
-	_, err := client.Send(ctx, "Debugger.enable", nil)
-	return err
+// DebuggerEnable enables the debugger for the page and switches its
+// breakpoints on, as Web Inspector does. A WebKit backend starts with
+// breakpoints inactive and Debugger.enable does not activate them
+// (JavaScriptCore Debugger.cpp m_breakpointsActivated(false),
+// InspectorDebuggerAgent::enable), so without the activation a breakpoint
+// never pauses.
+func DebuggerEnable(ctx context.Context, client webkit.Caller) error {
+	if _, err := client.Send(ctx, "Debugger.enable", nil); err != nil {
+		return err
+	}
+	if _, err := client.Send(ctx, "Debugger.setBreakpointsActive", map[string]bool{"active": true}); err != nil {
+		return fmt.Errorf("switching breakpoints on: %w", err)
+	}
+	return nil
 }
 
 // DebuggerDisable disables the debugger for the page.
-func DebuggerDisable(ctx context.Context, client *webkit.Client) error {
+func DebuggerDisable(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Debugger.disable", nil)
 	return err
 }
 
 // SetBreakpointByURL sets a breakpoint at a given URL, line, and optional column/condition.
 // If columnNumber is non-nil, it is included in the request (even if 0).
-func SetBreakpointByURL(ctx context.Context, client *webkit.Client, url string, lineNumber int, columnNumber *int, condition string) (webkit.BreakpointID, []webkit.Location, error) {
+func SetBreakpointByURL(ctx context.Context, client webkit.Caller, url string, lineNumber int, columnNumber *int, condition string) (webkit.BreakpointID, []webkit.Location, error) {
 	params := map[string]interface{}{
 		"url":        url,
 		"lineNumber": lineNumber,
@@ -52,7 +62,7 @@ func SetBreakpointByURL(ctx context.Context, client *webkit.Client, url string, 
 }
 
 // RemoveBreakpoint removes a previously set breakpoint.
-func RemoveBreakpoint(ctx context.Context, client *webkit.Client, breakpointID webkit.BreakpointID) error {
+func RemoveBreakpoint(ctx context.Context, client webkit.Caller, breakpointID webkit.BreakpointID) error {
 	_, err := client.Send(ctx, "Debugger.removeBreakpoint", map[string]interface{}{
 		"breakpointId": breakpointID,
 	})
@@ -60,37 +70,37 @@ func RemoveBreakpoint(ctx context.Context, client *webkit.Client, breakpointID w
 }
 
 // Pause pauses JavaScript execution.
-func Pause(ctx context.Context, client *webkit.Client) error {
+func Pause(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Debugger.pause", nil)
 	return err
 }
 
 // Resume resumes JavaScript execution.
-func Resume(ctx context.Context, client *webkit.Client) error {
+func Resume(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Debugger.resume", nil)
 	return err
 }
 
 // StepOver steps over the next statement.
-func StepOver(ctx context.Context, client *webkit.Client) error {
+func StepOver(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Debugger.stepOver", nil)
 	return err
 }
 
 // StepInto steps into the next function call.
-func StepInto(ctx context.Context, client *webkit.Client) error {
+func StepInto(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Debugger.stepInto", nil)
 	return err
 }
 
 // StepOut steps out of the current function.
-func StepOut(ctx context.Context, client *webkit.Client) error {
+func StepOut(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Debugger.stepOut", nil)
 	return err
 }
 
 // GetScriptSource returns the source code of a script.
-func GetScriptSource(ctx context.Context, client *webkit.Client, scriptID string) (string, error) {
+func GetScriptSource(ctx context.Context, client webkit.Caller, scriptID string) (string, error) {
 	result, err := client.Send(ctx, "Debugger.getScriptSource", map[string]interface{}{
 		"scriptId": scriptID,
 	})
@@ -108,7 +118,7 @@ func GetScriptSource(ctx context.Context, client *webkit.Client, scriptID string
 }
 
 // SearchInContent searches for a query string in a script's source.
-func SearchInContent(ctx context.Context, client *webkit.Client, scriptID, query string, caseSensitive, isRegex bool) (json.RawMessage, error) {
+func SearchInContent(ctx context.Context, client webkit.Caller, scriptID, query string, caseSensitive, isRegex bool) (json.RawMessage, error) {
 	result, err := client.Send(ctx, "Debugger.searchInContent", map[string]interface{}{
 		"scriptId":      scriptID,
 		"query":         query,
@@ -122,7 +132,7 @@ func SearchInContent(ctx context.Context, client *webkit.Client, scriptID, query
 }
 
 // EvaluateOnCallFrame evaluates an expression on a given call frame.
-func EvaluateOnCallFrame(ctx context.Context, client *webkit.Client, callFrameID, expression string, returnByValue bool) (*EvaluateResult, error) {
+func EvaluateOnCallFrame(ctx context.Context, client webkit.Caller, callFrameID, expression string, returnByValue bool) (*EvaluateResult, error) {
 	result, err := client.Send(ctx, "Debugger.evaluateOnCallFrame", map[string]interface{}{
 		"callFrameId":     callFrameID,
 		"expression":      expression,
@@ -154,7 +164,7 @@ func EvaluateOnCallFrame(ctx context.Context, client *webkit.Client, callFrameID
 
 // SetPauseOnExceptions configures when the debugger should pause on exceptions.
 // Valid state values: "none", "uncaught", "all".
-func SetPauseOnExceptions(ctx context.Context, client *webkit.Client, state string) error {
+func SetPauseOnExceptions(ctx context.Context, client webkit.Caller, state string) error {
 	_, err := client.Send(ctx, "Debugger.setPauseOnExceptions", map[string]interface{}{
 		"state": state,
 	})
@@ -162,7 +172,7 @@ func SetPauseOnExceptions(ctx context.Context, client *webkit.Client, state stri
 }
 
 // SetDOMBreakpoint sets a breakpoint on a DOM node.
-func SetDOMBreakpoint(ctx context.Context, client *webkit.Client, nodeID int, breakpointType string) error {
+func SetDOMBreakpoint(ctx context.Context, client webkit.Caller, nodeID int, breakpointType string) error {
 	_, err := client.Send(ctx, "DOMDebugger.setDOMBreakpoint", map[string]interface{}{
 		"nodeId": nodeID,
 		"type":   breakpointType,
@@ -171,7 +181,7 @@ func SetDOMBreakpoint(ctx context.Context, client *webkit.Client, nodeID int, br
 }
 
 // RemoveDOMBreakpoint removes a breakpoint from a DOM node.
-func RemoveDOMBreakpoint(ctx context.Context, client *webkit.Client, nodeID int, breakpointType string) error {
+func RemoveDOMBreakpoint(ctx context.Context, client webkit.Caller, nodeID int, breakpointType string) error {
 	_, err := client.Send(ctx, "DOMDebugger.removeDOMBreakpoint", map[string]interface{}{
 		"nodeId": nodeID,
 		"type":   breakpointType,
@@ -181,7 +191,7 @@ func RemoveDOMBreakpoint(ctx context.Context, client *webkit.Client, nodeID int,
 
 // SetEventBreakpoint sets a breakpoint on a named event.
 // breakpointType must be one of: "animation-frame", "interval", "listener", "timeout".
-func SetEventBreakpoint(ctx context.Context, client *webkit.Client, breakpointType, eventName string) error {
+func SetEventBreakpoint(ctx context.Context, client webkit.Caller, breakpointType, eventName string) error {
 	_, err := client.Send(ctx, "DOMDebugger.setEventBreakpoint", map[string]interface{}{
 		"breakpointType": breakpointType,
 		"eventName":      eventName,
@@ -191,7 +201,7 @@ func SetEventBreakpoint(ctx context.Context, client *webkit.Client, breakpointTy
 
 // RemoveEventBreakpoint removes a breakpoint from a named event.
 // breakpointType must be one of: "animation-frame", "interval", "listener", "timeout".
-func RemoveEventBreakpoint(ctx context.Context, client *webkit.Client, breakpointType, eventName string) error {
+func RemoveEventBreakpoint(ctx context.Context, client webkit.Caller, breakpointType, eventName string) error {
 	_, err := client.Send(ctx, "DOMDebugger.removeEventBreakpoint", map[string]interface{}{
 		"breakpointType": breakpointType,
 		"eventName":      eventName,
@@ -200,7 +210,7 @@ func RemoveEventBreakpoint(ctx context.Context, client *webkit.Client, breakpoin
 }
 
 // SetURLBreakpoint sets a breakpoint on network requests matching a URL.
-func SetURLBreakpoint(ctx context.Context, client *webkit.Client, url string, isRegex bool) error {
+func SetURLBreakpoint(ctx context.Context, client webkit.Caller, url string, isRegex bool) error {
 	_, err := client.Send(ctx, "DOMDebugger.setURLBreakpoint", map[string]interface{}{
 		"url":     url,
 		"isRegex": isRegex,
@@ -209,7 +219,7 @@ func SetURLBreakpoint(ctx context.Context, client *webkit.Client, url string, is
 }
 
 // RemoveURLBreakpoint removes a URL breakpoint.
-func RemoveURLBreakpoint(ctx context.Context, client *webkit.Client, url string) error {
+func RemoveURLBreakpoint(ctx context.Context, client webkit.Caller, url string) error {
 	_, err := client.Send(ctx, "DOMDebugger.removeURLBreakpoint", map[string]interface{}{
 		"url": url,
 	})

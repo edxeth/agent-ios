@@ -32,7 +32,10 @@ func (e *ErrorData) Error() string {
 type DeviceEntry struct {
 	DeviceID   string `json:"deviceId"`
 	DeviceName string `json:"deviceName"`
-	URL        string `json:"url"`
+	// DeviceOSVersion is the iOS version, for example "16.7.10"; "" when
+	// iwdp does not list it.
+	DeviceOSVersion string `json:"deviceOSVersion,omitempty"`
+	URL             string `json:"url"`
 }
 
 // PageEntry represents a page/tab from iwdp's /json endpoint on a device port.

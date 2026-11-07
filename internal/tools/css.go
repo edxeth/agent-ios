@@ -9,7 +9,7 @@ import (
 )
 
 // GetMatchedStyles returns the matched CSS rules for a node.
-func GetMatchedStyles(ctx context.Context, client *webkit.Client, nodeID int) (json.RawMessage, error) {
+func GetMatchedStyles(ctx context.Context, client webkit.Caller, nodeID int) (json.RawMessage, error) {
 	result, err := client.Send(ctx, "CSS.getMatchedStylesForNode", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -20,7 +20,7 @@ func GetMatchedStyles(ctx context.Context, client *webkit.Client, nodeID int) (j
 }
 
 // GetComputedStyle returns the computed style properties for a node.
-func GetComputedStyle(ctx context.Context, client *webkit.Client, nodeID int) ([]webkit.CSSProperty, error) {
+func GetComputedStyle(ctx context.Context, client webkit.Caller, nodeID int) ([]webkit.CSSProperty, error) {
 	result, err := client.Send(ctx, "CSS.getComputedStyleForNode", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -38,7 +38,7 @@ func GetComputedStyle(ctx context.Context, client *webkit.Client, nodeID int) ([
 }
 
 // GetInlineStyles returns the inline style for a node.
-func GetInlineStyles(ctx context.Context, client *webkit.Client, nodeID int) (*webkit.CSSStyle, error) {
+func GetInlineStyles(ctx context.Context, client webkit.Caller, nodeID int) (*webkit.CSSStyle, error) {
 	result, err := client.Send(ctx, "CSS.getInlineStylesForNode", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -56,7 +56,7 @@ func GetInlineStyles(ctx context.Context, client *webkit.Client, nodeID int) (*w
 }
 
 // SetStyleText edits a style's text content.
-func SetStyleText(ctx context.Context, client *webkit.Client, styleID json.RawMessage, text string) (*webkit.CSSStyle, error) {
+func SetStyleText(ctx context.Context, client webkit.Caller, styleID json.RawMessage, text string) (*webkit.CSSStyle, error) {
 	result, err := client.Send(ctx, "CSS.setStyleText", map[string]interface{}{
 		"styleId": styleID,
 		"text":    text,
@@ -81,7 +81,7 @@ var errCSSNotSupported = fmt.Errorf("CSS.enable/CSS.getAllStyleSheets/CSS.getSty
 // GetAllStylesheets returns all stylesheets known to the page.
 // Note: this requires CSS.enable which does not work through iwdp Target routing.
 // When connected via iwdp, returns an error immediately to avoid hanging the connection.
-func GetAllStylesheets(ctx context.Context, client *webkit.Client) ([]webkit.CSSStyleSheet, error) {
+func GetAllStylesheets(ctx context.Context, client webkit.Caller) ([]webkit.CSSStyleSheet, error) {
 	if client.IsTargetRouted() {
 		return nil, errCSSNotSupported
 	}
@@ -103,7 +103,7 @@ func GetAllStylesheets(ctx context.Context, client *webkit.Client) ([]webkit.CSS
 // GetStylesheetText returns the text content of a stylesheet.
 // Note: this requires CSS.enable which does not work through iwdp Target routing.
 // When connected via iwdp, returns an error immediately to avoid hanging the connection.
-func GetStylesheetText(ctx context.Context, client *webkit.Client, styleSheetID string) (string, error) {
+func GetStylesheetText(ctx context.Context, client webkit.Caller, styleSheetID string) (string, error) {
 	if client.IsTargetRouted() {
 		return "", errCSSNotSupported
 	}
@@ -125,7 +125,7 @@ func GetStylesheetText(ctx context.Context, client *webkit.Client, styleSheetID 
 }
 
 // ForcePseudoState forces the given CSS pseudo-classes on a node.
-func ForcePseudoState(ctx context.Context, client *webkit.Client, nodeID int, pseudoClasses []string) error {
+func ForcePseudoState(ctx context.Context, client webkit.Caller, nodeID int, pseudoClasses []string) error {
 	_, err := client.Send(ctx, "CSS.forcePseudoState", map[string]interface{}{
 		"nodeId":              nodeID,
 		"forcedPseudoClasses": pseudoClasses,

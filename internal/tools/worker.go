@@ -9,19 +9,19 @@ import (
 )
 
 // WorkerEnable enables the Worker domain.
-func WorkerEnable(ctx context.Context, client *webkit.Client) error {
+func WorkerEnable(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Worker.enable", nil)
 	return err
 }
 
 // WorkerDisable disables the Worker domain.
-func WorkerDisable(ctx context.Context, client *webkit.Client) error {
+func WorkerDisable(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Worker.disable", nil)
 	return err
 }
 
 // SendToWorker sends a message to a specific worker.
-func SendToWorker(ctx context.Context, client *webkit.Client, workerID, message string) error {
+func SendToWorker(ctx context.Context, client webkit.Caller, workerID, message string) error {
 	_, err := client.Send(ctx, "Worker.sendMessageToWorker", map[string]interface{}{
 		"workerId": workerID,
 		"message":  message,
@@ -32,7 +32,7 @@ func SendToWorker(ctx context.Context, client *webkit.Client, workerID, message 
 // GetServiceWorkerInfo retrieves service worker registrations for the current page
 // via the navigator.serviceWorker JS API (works on page connections without the
 // ServiceWorker inspector domain).
-func GetServiceWorkerInfo(ctx context.Context, client *webkit.Client) (json.RawMessage, error) {
+func GetServiceWorkerInfo(ctx context.Context, client webkit.Caller) (json.RawMessage, error) {
 	const script = `(async () => {
 		if (!navigator.serviceWorker) return {supported: false};
 		const regs = await navigator.serviceWorker.getRegistrations();

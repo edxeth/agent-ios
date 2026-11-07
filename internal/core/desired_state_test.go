@@ -141,8 +141,10 @@ func TestDesiredStateReleaseUndoesOwnerEntries(t *testing.T) {
 	must(t, d.SetPart("dialogs", "dialog", RankDialog, "d()"))
 	must(t, d.SetPart("session", "runtime", RankRuntime, "r()"))
 	undone := false
-	d.Put(Entry{Key: "ua", Owner: "route", Apply: func(context.Context, Sender) error { return nil },
-		Release: func(context.Context, Sender) error { undone = true; return nil }})
+	d.Put(Entry{
+		Key: "ua", Owner: "route", Apply: func(context.Context, Sender) error { return nil },
+		Release: func(context.Context, Sender) error { undone = true; return nil },
+	})
 	r := &recorder{}
 	if _, err := d.Release(context.Background(), "route", r); err != nil {
 		t.Fatal(err)
@@ -195,12 +197,21 @@ func TestDesiredStateReachesProvisionalTargetBeforeCommit(t *testing.T) {
 		if r.In && r.Target == "page-2" && commit == 0 {
 			prov = append(prov, r.Method)
 		}
-		if r.Method == "Page.setBootstrapScript" && (!strings.Contains(string(r.Params), "__rt") || !strings.Contains(string(r.Params), "__dlg")) {
+		if r.Method == "Page.setBootstrapScript" && string(r.Params) != `{"source":""}` && (!strings.Contains(string(r.Params), "__rt") || !strings.Contains(string(r.Params), "__dlg")) {
 			t.Fatalf("bootstrap script lacks a part: %s", r.Params)
 		}
 	}
-	want := []string{"Page.enable", "Page.setBootstrapScript", "Console.enable", "Network.enable",
-		"Network.setExtraHTTPHeaders", "Network.setInterceptionEnabled", "Network.addInterception"}
+	// The connection knows none of the new target's agents: the setup
+	// first resets the DOM overlay, the needed Console agent and the
+	// Debugger, Network and Page agents (the empty bootstrap script is
+	// Page's reset), in the same pipelined batch as the enables.
+	want := []string{
+		"DOM.hideHighlight", "DOM.setInspectModeEnabled", "Console.disable",
+		"Debugger.setPauseOnExceptions", "Debugger.setPauseOnDebuggerStatements", "Debugger.disable",
+		"Network.disable", "Page.disable", "Page.setBootstrapScript",
+		"Page.enable", "Page.setBootstrapScript", "Console.enable", "Network.enable",
+		"Network.setExtraHTTPHeaders", "Network.setInterceptionEnabled", "Network.addInterception",
+	}
 	if !reflect.DeepEqual(prov, want) {
 		t.Fatalf("provisional target received before commit %v, want %v", prov, want)
 	}

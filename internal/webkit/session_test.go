@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -520,21 +519,21 @@ func TestSessionCloseStopsSubscriberWorkers(t *testing.T) {
 	f := fakewebkit.New(fakewebkit.Options{})
 	defer f.Close()
 	s := newFakeSession(t, f, SessionOptions{})
-	before := runtime.NumGoroutine()
+	// The oracle counts this session's own subscriber workers, not every
+	// goroutine of the process, so other tests cannot disturb it.
 	const n = 50
 	for i := 0; i < n; i++ {
 		s.OnEvent("Test.event", func(string, json.RawMessage) {})
 	}
-	if g := runtime.NumGoroutine(); g < before+n {
-		t.Fatalf("goroutines = %d after %d subscriptions, want at least %d", g, n, before+n)
+	if w := s.workers.Load(); w != n {
+		t.Fatalf("subscriber workers = %d after %d subscriptions, want %d", w, n, n)
 	}
 	_ = s.Close()
-	waitFor(t, func() bool { return runtime.NumGoroutine() < before })
-	after := runtime.NumGoroutine()
+	waitFor(t, func() bool { return s.workers.Load() == 0 })
 	unsub := s.Subscribe("Test.event", func(string, json.RawMessage) {})
 	defer unsub()
 	time.Sleep(20 * time.Millisecond)
-	if g := runtime.NumGoroutine(); g > after {
-		t.Fatalf("goroutines = %d after a subscription on a closed session, want at most %d", g, after)
+	if w := s.workers.Load(); w != 0 {
+		t.Fatalf("subscriber workers = %d after a subscription on a closed session, want 0", w)
 	}
 }

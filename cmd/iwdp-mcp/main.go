@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -16,7 +15,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -25,7 +24,7 @@ import (
 // session holds the active WebKit client and collectors.
 type session struct {
 	mu                         sync.Mutex
-	client                     *webkit.Client
+	client                     pageClient
 	networkMonitor             *tools.NetworkMonitor
 	consoleCollector           *tools.ConsoleCollector
 	timelineCollector          *tools.TimelineCollector
@@ -39,9 +38,12 @@ type session struct {
 
 var sess session
 
-func getClient(ctx context.Context) (*webkit.Client, error) {
+func getClient(ctx context.Context) (pageClient, error) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	if err := dropEndedSelectionLocked(); err != nil {
+		return nil, err
+	}
 	if sess.client != nil {
 		return sess.client, nil
 	}
@@ -65,6 +67,9 @@ func lookupInterceptStage(requestID string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "daemon" {
+		os.Exit(runDaemonCommand(os.Args[1:]))
+	}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "iwdp-mcp",
 		Version: "0.5.4",
@@ -72,7 +77,15 @@ func main() {
 
 	registerTools(server)
 
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	err := server.Run(context.Background(), &mcp.StdioTransport{})
+	// With IWDP_NO_DAEMON=1 the core runs in this process: release its
+	// leases with cleanup before exiting (design 2.4).
+	ctx, cancel := context.WithTimeout(context.Background(), daemon.ShutdownBudget)
+	if cerr := daemon.CloseInProcess(ctx); cerr != nil {
+		log.Printf("warning: cleanup of the page state: %v", cerr)
+	}
+	cancel()
+	if err != nil {
 		log.Fatal(err)
 	}
 }
@@ -80,24 +93,6 @@ func main() {
 // legacyToolNames lists the legacy tools that registerTools registered, in
 // order; the registration manifest (commands.Manifest) checks it.
 var legacyToolNames []string
-
-// errNoRegistryPage is what registry tools get from Env.Page: this server
-// has no daemon-backed page session for them yet.
-var errNoRegistryPage = errors.New("this iwdp-mcp build has no page session for registry tools yet; use the legacy page tools (select_page first)")
-
-// registryEnv is the commands.Env of registry tools in this server.
-// Commands that need no page run normally.
-type registryEnv struct{}
-
-func (registryEnv) Page(context.Context) (*core.PageSession, error) { return nil, errNoRegistryPage }
-
-// Emit writes streaming output to the server log (stderr): an MCP tool
-// call returns one result, and stdout carries the protocol.
-func (registryEnv) Emit(line string) { log.Print(line) }
-
-// ResolvePath returns p unchanged: an MCP client has no working directory
-// of its own here, so a relative path resolves against the server's.
-func (registryEnv) ResolvePath(p string) string { return p }
 
 // registerRegistryTools registers every registry tool of the selected
 // profile (design 2.10). addTool skips the legacy tools whose names they
@@ -111,7 +106,7 @@ func registerRegistryTools(s *mcp.Server) {
 func addTool[In, Out any](s *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
 	// A registry command that reuses this tool name replaces the legacy
 	// handler (design 2.10, deduplicated registration manifest).
-	if commands.ProvidesMCPTool(commands.SelectedProfile(os.Getenv), t.Name) {
+	if commands.ProvidesMCPTool(commands.SelectedProfile(os.Getenv), t.Name) || !legacyToolSelected(t.Name) {
 		return
 	}
 	legacyToolNames = append(legacyToolNames, t.Name)
@@ -125,7 +120,11 @@ func addTool[In, Out any](s *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, O
 	} else {
 		copy.InputSchema = codexCompatibleInputSchema(copy.Name, copy.InputSchema)
 	}
-	mcp.AddTool(s, &copy, h)
+	mcp.AddTool(s, &copy, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		ctx, end := toolScope(ctx)
+		defer end()
+		return h(ctx, req, in)
+	})
 }
 
 // codexCompatibleInputSchema makes every object schema carry "properties"
@@ -644,9 +643,9 @@ func registerTools(server *mcp.Server) {
 			return nil, SelectPageOutput{}, fmt.Errorf("WebSocket URL must point to localhost, 127.0.0.1, or ::1; got %q", host)
 		}
 
-		// Create the new client first (outside lock) to avoid holding the
-		// lock during a potentially slow network operation.
-		newClient, err := webkit.NewClient(ctx, input.WebSocketURL)
+		// Attach first (outside lock) to avoid holding the lock during a
+		// potentially slow network operation.
+		newClient, err := attachPage(ctx, input.WebSocketURL)
 		if err != nil {
 			return nil, SelectPageOutput{}, err
 		}
@@ -1480,7 +1479,7 @@ func registerTools(server *mcp.Server) {
 
 	// --- Debugger ---
 	addTool(server, &mcp.Tool{
-		Name: "debugger_enable", Description: "Enable JavaScript debugger",
+		Name: "debugger_enable", Description: "Enable JavaScript debugger and switch breakpoints on (WebKit starts with breakpoints inactive; without this they never pause)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, any, error) {
 		c, err := getClient(ctx)
 		if err != nil {
@@ -2206,7 +2205,8 @@ func registerTools(server *mcp.Server) {
 		if err != nil {
 			return nil, OKOutput{}, err
 		}
-		return nil, ok(), c.Enable(ctx, "Browser")
+		_, err = c.Send(ctx, "Browser.enable", nil)
+		return nil, ok(), err
 	})
 
 	addTool(server, &mcp.Tool{
@@ -2216,7 +2216,8 @@ func registerTools(server *mcp.Server) {
 		if err != nil {
 			return nil, OKOutput{}, err
 		}
-		return nil, ok(), c.Disable(ctx, "Browser")
+		_, err = c.Send(ctx, "Browser.disable", nil)
+		return nil, ok(), err
 	})
 
 	// --- Element Interaction ---

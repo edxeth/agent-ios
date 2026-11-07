@@ -23,15 +23,19 @@ func fixtures() []*Command {
 		return Result{Text: "ran " + strings.Join(in.Args, ","), Data: map[string]any{"args": in.Args, "flags": in.Flags}}, nil
 	}
 	return []*Command{
-		{Name: "fixture click", Aliases: []string{"fixture tap"}, MCPName: "fixture_click", Profile: ProfileCore,
+		{
+			Name: "fixture click", Aliases: []string{"fixture tap"}, MCPName: "fixture_click", Profile: ProfileCore,
 			Summary: "Click an element.", Page: LeasedPage, Mutates: true,
 			Args:  []Arg{{Name: "target", Help: "ref or selector", Required: true}},
 			Flags: []Flag{{Name: "button", Type: FlagEnum, Enum: []string{"left", "right"}, Default: "left", Help: "mouse button"}, {Name: "force", Type: FlagBool, Help: "skip checks"}},
-			Run:   run},
-		{Name: "fixture type", MCPName: "fixture_type", Profile: ProfileDevtools, Summary: "Type text.", Mutates: true,
+			Run:   run,
+		},
+		{
+			Name: "fixture type", MCPName: "fixture_type", Profile: ProfileDevtools, Summary: "Type text.", Mutates: true,
 			Args:  []Arg{{Name: "target", Help: "ref or selector", Required: true}, {Name: "text", Help: "text to type", Variadic: true}},
 			Flags: []Flag{{Name: "delay", Short: "d", Type: FlagDuration, Help: "pause between characters"}, {Name: "count", Type: FlagInt, Help: "repeat count"}},
-			Run:   run},
+			Run:   run,
+		},
 		{Name: "fixture", Summary: "No MCP tool.", Run: run},
 	}
 }
@@ -232,14 +236,24 @@ func TestMCPSchemasAreCodexCompatible(t *testing.T) {
 	}
 }
 
-func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
-	// Production commands (other files of this package) are in the
-	// manifest too; the fixtures add exactly their own entries.
-	production, err := Manifest(ProfileCore, nil)
-	if err != nil {
-		t.Fatal(err)
+// onlyFixtures hides the production commands for tests that count the
+// registered MCP tools exactly; they are registered again at cleanup.
+func onlyFixtures(t *testing.T) {
+	t.Helper()
+	prod := All()
+	for _, c := range prod {
+		Unregister(c)
 	}
+	t.Cleanup(func() {
+		for _, c := range prod {
+			Register(c)
+		}
+	})
 	withFixtures(t)
+}
+
+func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
+	onlyFixtures(t)
 	m, err := Manifest(ProfileCore, []string{"fixture_click", "eval_js", "list_pages"})
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +265,7 @@ func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
 		}
 		names[e.Name] = e.Cmd
 	}
-	if names["fixture_click"] == nil || names["eval_js"] != nil || len(names) != len(production)+3 {
+	if names["fixture_click"] == nil || names["eval_js"] != nil || len(names) != 3 {
 		t.Fatalf("manifest = %+v; want the registry tool to replace the legacy one", m)
 	}
 	if _, ok := names["fixture_type"]; ok {
@@ -269,11 +283,7 @@ func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
 }
 
 func TestRegisterMCPRunsCommands(t *testing.T) {
-	production, err := Manifest(ProfileAll, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	withFixtures(t)
+	onlyFixtures(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	RegisterMCP(server, ProfileAll, func(context.Context, Globals) (Env, error) { return fakeEnv{}, nil })
 	st, ct := mcp.NewInMemoryTransports()
@@ -290,8 +300,8 @@ func TestRegisterMCPRunsCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != len(production)+2 {
-		t.Fatalf("tools = %d, want the %d production tools and the 2 fixture MCP tools", len(tools.Tools), len(production))
+	if len(tools.Tools) != 2 {
+		t.Fatalf("tools = %d, want the 2 fixture MCP tools", len(tools.Tools))
 	}
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "fixture_type", Arguments: map[string]any{"target": "@e1", "text": []any{"a", "b"}, "delay": "10ms", "count": 2}})
 	if err != nil || res.IsError {
@@ -313,7 +323,8 @@ func TestRegisterMCPRunsCommands(t *testing.T) {
 // deadline with exit code 3.
 func TestRunCLIAppliesCommandDeadline(t *testing.T) {
 	waitCmd := func(name string, timeout time.Duration) *Command {
-		return &Command{Name: name, Summary: "Wait until the deadline.", Timeout: timeout,
+		return &Command{
+			Name: name, Summary: "Wait until the deadline.", Timeout: timeout,
 			Run: func(ctx context.Context, env Env, in Input) (Result, error) {
 				select {
 				case <-ctx.Done():
@@ -321,7 +332,8 @@ func TestRunCLIAppliesCommandDeadline(t *testing.T) {
 				case <-time.After(3 * time.Second):
 					return Result{}, errors.New("no deadline reached the command")
 				}
-			}}
+			},
+		}
 	}
 	var seen time.Duration // time left on the command's context when Run started; -1: no deadline
 	probe := &Command{Name: "fixture deadline", Summary: "Report the deadline.", Run: func(ctx context.Context, env Env, in Input) (Result, error) {
@@ -355,7 +367,7 @@ func TestRunCLIAppliesCommandDeadline(t *testing.T) {
 			start := time.Now()
 			code, _, stderr, _ := runCLI(tc.args...)
 			if el := time.Since(start); code != ExitTimeout || el > time.Second {
-				t.Fatalf("exit %d after %s (%s); want exit 3 at the deadline", code, el, stderr)
+				t.Fatalf("exit %d after %s (%s); want exit 124 at the deadline", code, el, stderr)
 			}
 		})
 	}

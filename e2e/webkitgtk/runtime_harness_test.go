@@ -49,11 +49,17 @@ func fixtureDir() string {
 }
 
 func TestMain(m *testing.M) {
+	cleanup, err := setupCLISuite()
+	if err != nil {
+		log.Printf("webkitgtk suite: %v", err)
+		os.Exit(1)
+	}
 	code, err := runSuite(m)
 	if err != nil {
 		log.Printf("webkitgtk suite: %v", err)
 		code = 1
 	}
+	cleanup()
 	os.Exit(code)
 }
 

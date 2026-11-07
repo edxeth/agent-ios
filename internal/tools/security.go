@@ -8,7 +8,7 @@ import (
 )
 
 // GetCertificateInfo retrieves the serialized certificate for a given network request.
-func GetCertificateInfo(ctx context.Context, client *webkit.Client, requestID string) (json.RawMessage, error) {
+func GetCertificateInfo(ctx context.Context, client webkit.Caller, requestID string) (json.RawMessage, error) {
 	result, err := client.Send(ctx, "Network.getSerializedCertificate", map[string]interface{}{
 		"requestId": requestID,
 	})

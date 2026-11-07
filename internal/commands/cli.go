@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,10 +18,10 @@ const (
 	ExitOK          = 0
 	ExitError       = 1
 	ExitUsage       = 2
-	ExitTimeout     = 3
-	ExitBusy        = 4 // page busy or lost
-	ExitNoPage      = 5 // no device or page
-	ExitReservation = 6 // device reservation missing
+	ExitTimeout     = 124 // like timeout(1); decision D9
+	ExitBusy        = 4   // page busy or lost
+	ExitNoPage      = 5   // no device or page
+	ExitReservation = 6   // device reservation missing
 )
 
 // DefaultTimeout is the command deadline when neither --timeout,
@@ -105,6 +106,12 @@ var globalSpecs = []globalSpec{
 		return nil
 	}},
 	{"--content-boundaries", false, func(g *Globals, _ string) error { g.ContentBoundaries = true; return nil }},
+	{"--reservation", true, func(g *Globals, v string) error { g.Reservation = v; return nil }},
+	{"--wait-lease", true, func(g *Globals, v string) (err error) {
+		g.WaitLease, err = parseTimeout("--wait-lease", v)
+		return err
+	}},
+	{"--takeover", false, func(g *Globals, _ string) error { g.Takeover = true; return nil }},
 }
 
 func globalFlag(name string) *globalSpec {
@@ -135,6 +142,7 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 	if v := env("IWDP_TRANSPORT"); v != "" {
 		g.Transport = v
 	}
+	g.Reservation = env("IWDP_DEVICE_RESERVATION")
 	if v := env("IWDP_TIMEOUT"); v != "" {
 		d, err := parseTimeout("IWDP_TIMEOUT", v)
 		if err != nil {
@@ -342,7 +350,7 @@ func Help(c *Command) string {
 			fmt.Fprintf(&b, "  %-22s %s\n", n, h)
 		}
 	}
-	b.WriteString("\nGlobal flags: --session, --page, --timeout, --json, --transport, --max-output, --content-boundaries\n")
+	b.WriteString("\nGlobal flags: --session, --page, --timeout, --json, --transport, --max-output, --content-boundaries,\n  --reservation, --wait-lease, --takeover\n")
 	return b.String()
 }
 
@@ -381,7 +389,7 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return ExitCodeOf(err)
 	}
-	res, err := inv.Cmd.Run(ctx, env, inv.Input)
+	res, err := run(ctx, env, inv.Cmd, inv.Input)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err)
 		return ExitCodeOf(err)
@@ -391,6 +399,35 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv
 		return ExitError
 	}
 	return ExitOK
+}
+
+// run runs c in env: through RunRemote when env is a RemoteEnv and c is
+// not Local, else in this process.
+func run(ctx context.Context, env Env, c *Command, in Input) (Result, error) {
+	if re, ok := env.(RemoteEnv); ok && !c.Local {
+		return re.RunRemote(ctx, c, in)
+	}
+	return c.Run(ctx, env, in)
+}
+
+// Argv renders a parsed command back into arguments that Parse accepts
+// (global flags excluded): the command words, each flag as --name=value in
+// name order, then "--" and the positional arguments. The daemon parses it
+// with the same spec (design 2.2, /v1/run).
+func Argv(c *Command, in Input) []string {
+	out := strings.Fields(c.Name)
+	names := make([]string, 0, len(in.Flags))
+	for n := range in.Flags {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		out = append(out, fmt.Sprintf("--%s=%v", n, in.Flags[n]))
+	}
+	if len(in.Args) > 0 {
+		out = append(append(out, "--"), in.Args...)
+	}
+	return out
 }
 
 func writeResult(w io.Writer, res Result, g Globals) error {

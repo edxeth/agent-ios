@@ -67,6 +67,13 @@ func (b *BootstrapParts) Remove(name string) bool {
 	return ok
 }
 
+// Empty reports whether there are no parts.
+func (b *BootstrapParts) Empty() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.parts) == 0
+}
+
 // Names returns the part names in script order.
 func (b *BootstrapParts) Names() []string {
 	b.mu.Lock()

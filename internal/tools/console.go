@@ -24,7 +24,7 @@ func NewConsoleCollector() *ConsoleCollector {
 
 // Start enables the Console domain and registers a handler for Console.messageAdded events.
 // It is idempotent: calling Start multiple times will not register duplicate handlers.
-func (c *ConsoleCollector) Start(ctx context.Context, client *webkit.Client) error {
+func (c *ConsoleCollector) Start(ctx context.Context, client webkit.Caller) error {
 	c.mu.Lock()
 	if c.started {
 		c.mu.Unlock()
@@ -53,7 +53,7 @@ func (c *ConsoleCollector) Start(ctx context.Context, client *webkit.Client) err
 }
 
 // Stop disables the Console domain.
-func (c *ConsoleCollector) Stop(ctx context.Context, client *webkit.Client) error {
+func (c *ConsoleCollector) Stop(ctx context.Context, client webkit.Caller) error {
 	c.mu.Lock()
 	c.started = false
 	c.mu.Unlock()
@@ -78,13 +78,13 @@ func (c *ConsoleCollector) Clear() {
 }
 
 // ClearConsoleMessages sends a command to clear the console in the inspected page.
-func ClearConsoleMessages(ctx context.Context, client *webkit.Client) error {
+func ClearConsoleMessages(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Console.clearMessages", nil)
 	return err
 }
 
 // SetLogLevel sets the logging channel level for a given source.
-func SetLogLevel(ctx context.Context, client *webkit.Client, source string, level string) error {
+func SetLogLevel(ctx context.Context, client webkit.Caller, source string, level string) error {
 	_, err := client.Send(ctx, "Console.setLoggingChannelLevel", map[string]string{
 		"source": source,
 		"level":  level,

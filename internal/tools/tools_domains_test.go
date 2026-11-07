@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -29,6 +30,11 @@ func TestDebuggerEnable(t *testing.T) {
 	ctx := context.Background()
 	if err := tools.DebuggerEnable(ctx, client); err != nil {
 		t.Fatalf("DebuggerEnable returned error: %v", err)
+	}
+	// User decision (W1b round 5): enable switches breakpoints on, as Web
+	// Inspector does, because a WebKit backend starts with them inactive.
+	if got, want := mock.ReceivedMethods(), []string{"Debugger.enable", "Debugger.setBreakpointsActive"}; !slices.Equal(got, want) {
+		t.Fatalf("DebuggerEnable sent %q, want %q", got, want)
 	}
 }
 

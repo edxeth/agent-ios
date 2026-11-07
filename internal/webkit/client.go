@@ -109,7 +109,7 @@ func NewClientWithDialer(ctx context.Context, wsURL string, dialer *websocket.Di
 		// No Target event — use direct mode (e.g., mock servers in tests)
 	case <-ctx.Done():
 		_ = c.Close()
-		return nil, ctx.Err()
+		return nil, ctxErr(ctx)
 	}
 
 	return c, nil
@@ -241,15 +241,15 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 	select {
 	case c.writeSem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, fmt.Errorf("%s: not sent, another command was still writing after %s: %w", method, time.Since(start).Round(time.Millisecond), ctx.Err())
+		return nil, fmt.Errorf("%s: not sent, another command was still writing after %s: %w", method, time.Since(start).Round(time.Millisecond), ctxErr(ctx))
 	case <-c.done:
 		return nil, fmt.Errorf("connection closed")
 	}
 	// select picks at random among ready cases, so ctx can have ended while
 	// the token was free; never send a command whose caller has given up.
-	if err := ctx.Err(); err != nil {
+	if ctx.Err() != nil {
 		<-c.writeSem
-		return nil, fmt.Errorf("%s: not sent after %s: %w", method, time.Since(start).Round(time.Millisecond), err)
+		return nil, fmt.Errorf("%s: not sent after %s: %w", method, time.Since(start).Round(time.Millisecond), ctxErr(ctx))
 	}
 	err := c.conn.SetWriteDeadline(deadline)
 	if err == nil {
@@ -262,7 +262,7 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("%s: no response after %s: %w", method, time.Since(start).Round(time.Millisecond), ctx.Err())
+		return nil, fmt.Errorf("%s: no response after %s: %w", method, time.Since(start).Round(time.Millisecond), ctxErr(ctx))
 	case <-c.done:
 		return nil, fmt.Errorf("connection closed")
 	case resp := <-ch:

@@ -36,7 +36,7 @@ func NewCPUProfilerCollector() *CPUProfilerCollector {
 }
 
 // Start begins CPU profiling, collecting trackingUpdate events.
-func (c *CPUProfilerCollector) Start(ctx context.Context, client *webkit.Client) error {
+func (c *CPUProfilerCollector) Start(ctx context.Context, client webkit.Caller) error {
 	c.mu.Lock()
 	if c.started {
 		c.mu.Unlock()
@@ -80,7 +80,7 @@ func (c *CPUProfilerCollector) Start(ctx context.Context, client *webkit.Client)
 }
 
 // Stop stops CPU profiling and returns the collected events.
-func (c *CPUProfilerCollector) Stop(ctx context.Context, client *webkit.Client) (*CPUProfileResult, error) {
+func (c *CPUProfilerCollector) Stop(ctx context.Context, client webkit.Caller) (*CPUProfileResult, error) {
 	c.mu.Lock()
 	if !c.started {
 		c.mu.Unlock()
@@ -141,7 +141,7 @@ func NewScriptProfilerCollector() *ScriptProfilerCollector {
 }
 
 // Start begins script profiling with sample collection.
-func (c *ScriptProfilerCollector) Start(ctx context.Context, client *webkit.Client) error {
+func (c *ScriptProfilerCollector) Start(ctx context.Context, client webkit.Caller) error {
 	c.mu.Lock()
 	if c.started {
 		c.mu.Unlock()
@@ -197,7 +197,7 @@ func (c *ScriptProfilerCollector) Start(ctx context.Context, client *webkit.Clie
 }
 
 // Stop stops script profiling and returns the collected events and samples.
-func (c *ScriptProfilerCollector) Stop(ctx context.Context, client *webkit.Client) (*ScriptProfileResult, error) {
+func (c *ScriptProfilerCollector) Stop(ctx context.Context, client webkit.Caller) (*ScriptProfileResult, error) {
 	c.mu.Lock()
 	if !c.started {
 		c.mu.Unlock()

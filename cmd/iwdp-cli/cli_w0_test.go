@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"image"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -29,7 +31,9 @@ func TestMain(m *testing.M) {
 		main()
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	stopTestDaemons() // daemon_harness_test.go
+	os.Exit(code)
 }
 
 type cliResult struct {
@@ -70,6 +74,10 @@ func cliCommand(t *testing.T, dir string, env []string, args ...string) *exec.Cm
 		}
 	}
 	cmd.Env = append(cmd.Env, runMainEnv+"=1")
+	if !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "XDG_RUNTIME_DIR=") }) {
+		// The test's own daemon, never the suite's (testRuntime).
+		cmd.Env = append(cmd.Env, "XDG_RUNTIME_DIR="+testRuntime(t))
+	}
 	cmd.Env = append(cmd.Env, env...)
 	return cmd
 }
@@ -335,11 +343,15 @@ func TestWatchdogEndsCommand(t *testing.T) {
 	var out bytes.Buffer
 	var mu sync.Mutex
 	codes := make(chan int, 1)
-	armWatchdog(10*time.Millisecond, writerFunc(func(p []byte) (int, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		return out.Write(p)
-	}), func(code int) { codes <- code })
+	armWatchdog(10*time.Millisecond, &processExit{
+		cleanup: func(context.Context) error { return nil }, budget: time.Second, grace: time.Second,
+		stderr: writerFunc(func(p []byte) (int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return out.Write(p)
+		}),
+		exit: func(code int) { codes <- code },
+	})
 	select {
 	case code := <-codes:
 		if code != exitTimeout {
@@ -449,6 +461,7 @@ func TestStreamDeadlineExitsWithTimeout(t *testing.T) {
 				time.Sleep(500 * time.Millisecond)
 				return map[string]interface{}{}, nil
 			})
+			startTestDaemon(t) // the 200ms allowance is for the page, not the daemon's start
 			res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, tc.command, "--timeout", "200ms", "-d", "1s")
 			if res.code != exitTimeout {
 				t.Fatalf("exit %d, want %d; stderr %q", res.code, exitTimeout, res.stderr)
@@ -494,8 +507,18 @@ func TestFollowOutlivesSetupTimeoutUntilSignal(t *testing.T) {
 			mock := testutil.NewMockServer()
 			defer mock.Close()
 			const setupTimeout = 300 * time.Millisecond
+			// The setup timeout bounds connect and enable; a cold daemon
+			// start under -race on a loaded host took most of it (R6-5).
+			startTestDaemon(t)
 			p := startCLI(t, []string{"IWDP_WS_URL=" + mock.URL}, tc.command, "--follow", "--timeout", setupTimeout.String())
-			eventually(t, 5*time.Second, tc.domain+".enable", func() bool { return contains(mock.ReceivedMethods(), tc.domain+".enable") })
+			eventually(t, 5*time.Second, tc.domain+".enable", func() bool {
+				select {
+				case <-p.done:
+					t.Fatalf("iwdp-cli exited %d before %s.enable; stderr %q", p.code, tc.domain, p.stderr.String())
+				default:
+				}
+				return contains(mock.ReceivedMethods(), tc.domain+".enable")
+			})
 
 			time.Sleep(2 * setupTimeout) // well past the setup timeout
 			if err := mock.SendEvent(tc.event, tc.params); err != nil {

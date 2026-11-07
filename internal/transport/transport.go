@@ -40,6 +40,32 @@ type Page struct {
 	Title, URL string
 	AppID      string // for example "com.apple.mobilesafari"
 	Debuggable bool
+	// Ownership is the non-disruptive hint whether another inspector holds
+	// the page (design 2.5). It is a hint, not a lock.
+	Ownership Ownership
+}
+
+// Ownership is what a listing says about other inspector clients of a page.
+type Ownership int
+
+const (
+	// OwnershipUnknown: the listing has no hint (iwdp with -F, direct,
+	// WebKitGTK). A physical device then needs a reservation (design 2.5).
+	OwnershipUnknown Ownership = iota
+	// OwnershipFree: the listing shows that no client holds the page.
+	OwnershipFree
+	// OwnershipBusy: the listing shows that another client holds the page.
+	OwnershipBusy
+)
+
+func (o Ownership) String() string {
+	switch o {
+	case OwnershipFree:
+		return "free"
+	case OwnershipBusy:
+		return "busy"
+	}
+	return "unknown"
 }
 
 // Transport lists devices and pages and opens page connections.

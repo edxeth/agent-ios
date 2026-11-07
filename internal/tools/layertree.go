@@ -8,7 +8,7 @@ import (
 )
 
 // GetLayerTree returns the layer tree for a given DOM node.
-func GetLayerTree(ctx context.Context, client *webkit.Client, nodeID int) (json.RawMessage, error) {
+func GetLayerTree(ctx context.Context, client webkit.Caller, nodeID int) (json.RawMessage, error) {
 	result, err := client.Send(ctx, "LayerTree.layersForNode", map[string]interface{}{
 		"nodeId": nodeID,
 	})
@@ -19,7 +19,7 @@ func GetLayerTree(ctx context.Context, client *webkit.Client, nodeID int) (json.
 }
 
 // GetCompositingReasons returns the compositing reasons for a given layer.
-func GetCompositingReasons(ctx context.Context, client *webkit.Client, layerID string) (json.RawMessage, error) {
+func GetCompositingReasons(ctx context.Context, client webkit.Caller, layerID string) (json.RawMessage, error) {
 	result, err := client.Send(ctx, "LayerTree.reasonsForCompositingLayer", map[string]interface{}{
 		"layerId": layerID,
 	})

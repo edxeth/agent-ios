@@ -9,7 +9,7 @@ import (
 )
 
 // Click clicks the first element matching the given CSS selector.
-func Click(ctx context.Context, client *webkit.Client, selector string) error {
+func Click(ctx context.Context, client webkit.Caller, selector string) error {
 	safeSelector, err := json.Marshal(selector)
 	if err != nil {
 		return fmt.Errorf("encoding selector: %w", err)
@@ -27,7 +27,7 @@ func Click(ctx context.Context, client *webkit.Client, selector string) error {
 
 // Fill sets the value of an input element matching the given CSS selector
 // and dispatches input and change events.
-func Fill(ctx context.Context, client *webkit.Client, selector, value string) error {
+func Fill(ctx context.Context, client webkit.Caller, selector, value string) error {
 	safeSelector, err := json.Marshal(selector)
 	if err != nil {
 		return fmt.Errorf("encoding selector: %w", err)
@@ -58,7 +58,7 @@ func Fill(ctx context.Context, client *webkit.Client, selector, value string) er
 
 // TypeText dispatches keyboard events for each character on the currently
 // focused element (document.activeElement).
-func TypeText(ctx context.Context, client *webkit.Client, text string) error {
+func TypeText(ctx context.Context, client webkit.Caller, text string) error {
 	safeText, err := json.Marshal(text)
 	if err != nil {
 		return fmt.Errorf("encoding text: %w", err)

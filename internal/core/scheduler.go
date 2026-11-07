@@ -38,14 +38,23 @@ func (c Class) String() string {
 	return fmt.Sprintf("Class(%d)", int(c))
 }
 
+// deadlineError is ErrDeadline.
+type deadlineError struct{}
+
+func (deadlineError) Error() string { return "the operation deadline passed" }
+func (deadlineError) Unwrap() error { return context.DeadlineExceeded }
+
 // Errors of the scheduler.
 var (
-	ErrStaleEpoch     = errors.New("the lease epoch of the operation is no longer current; the page lease changed")
-	ErrLeaseEnded     = errors.New("the page lease ended")
-	ErrOpEnded        = errors.New("the operation has ended")
-	ErrDeadline       = errors.New("the operation deadline passed")
-	ErrNoDeadline     = errors.New("an operation needs a deadline")
-	ErrControlRefused = errors.New("control message refused")
+	ErrStaleEpoch = errors.New("the lease epoch of the operation is no longer current; the page lease changed")
+	ErrLeaseEnded = errors.New("the page lease ended")
+	ErrOpEnded    = errors.New("the operation has ended")
+	// ErrDeadline is a deadline error: errors.Is(err, context.DeadlineExceeded)
+	// holds for it, so an operation that its own deadline ended fails as a
+	// deadline wherever it surfaces (decision D9: exit 124).
+	ErrDeadline       error = deadlineError{}
+	ErrNoDeadline           = errors.New("an operation needs a deadline")
+	ErrControlRefused       = errors.New("control message refused")
 	// ErrAttemptClosed: RunSteps stopped waiting for the attempt (its reply
 	// was lost or the operation stopped), so no send of it is admitted.
 	ErrAttemptClosed = errors.New("the attempt is closed; the daemon no longer waits for its reply")
@@ -112,22 +121,28 @@ type Scheduler struct {
 	holder   string // logical session that holds the lease
 	epoch    uint64
 	released bool // the lease ended; operations of every epoch stop
-	closed   bool // a barrier closed admission
+	barriers int  // open barriers; admission is closed while any is open
 	queue    []*Op
 	running  map[*Op]bool
-	changed  chan struct{} // closed and replaced when running shrinks
+	changed  chan struct{} // closed and replaced when running shrinks or a completion ends
 	nextOp   int
 	clocks   map[uint64]*ClockMap // by document generation
 
 	// Pending control items (design 2.10). Each is completed at most once:
-	// an item stays pending while its completion is being written, and a
-	// completion that was never written (webkit.ErrNotSent) leaves it open.
+	// an item stays pending while its completion is being written. A held
+	// request closes when a completion succeeded or WebKit's reply shows
+	// that it no longer holds the request (requestGone); after any other
+	// failure it is open again for a later completion or a barrier.
 	intercepted    map[string]*heldRequest
 	holdSeq        uint64 // counts interception events
 	debuggerPaused bool
 	pauseSeq       uint64 // counts Debugger.paused events
 	resumedSeq     uint64 // the pause that a Debugger.resume completed or is completing
 	resuming       bool   // a Debugger.resume is being written
+	// resetReqs are held requests that a Network reinitialization barrier
+	// continued (design 2.4); a later completion for one fails with
+	// ErrRequestReset until the id is held again.
+	resetReqs map[string]bool
 
 	sem   chan struct{}
 	unsub []func()
@@ -179,22 +194,25 @@ func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
 	}); ok {
 		sub = ss.SubscribeSync
 	}
-	addRequest := func(_ string, p json.RawMessage) {
-		var v struct {
-			RequestID string `json:"requestId"`
-		}
-		if json.Unmarshal(p, &v) == nil && v.RequestID != "" {
-			s.mu.Lock()
-			s.holdSeq++
-			h := s.intercepted[v.RequestID]
-			if h == nil {
-				h = &heldRequest{}
-				s.intercepted[v.RequestID] = h
+	addRequest := func(stage string) webkit.EventHandler {
+		return func(_ string, p json.RawMessage) {
+			var v struct {
+				RequestID string `json:"requestId"`
 			}
-			// A new hold of the same id (the response stage) is open
-			// even while a completion of the earlier hold is in flight.
-			h.seq, h.inflight = s.holdSeq, false
-			s.mu.Unlock()
+			if json.Unmarshal(p, &v) == nil && v.RequestID != "" {
+				s.mu.Lock()
+				s.holdSeq++
+				h := s.intercepted[v.RequestID]
+				if h == nil {
+					h = &heldRequest{}
+					s.intercepted[v.RequestID] = h
+				}
+				// A new hold of the same id (the response stage) is open
+				// even while a completion of the earlier hold is in flight.
+				h.seq, h.stage, h.inflight = s.holdSeq, stage, false
+				delete(s.resetReqs, v.RequestID)
+				s.mu.Unlock()
+			}
 		}
 	}
 	setPaused := func(paused bool) webkit.EventHandler {
@@ -208,8 +226,8 @@ func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
 		}
 	}
 	s.unsub = append(s.unsub,
-		sub("Network.requestIntercepted", addRequest),
-		sub("Network.responseIntercepted", addRequest),
+		sub("Network.requestIntercepted", addRequest(stageRequest)),
+		sub("Network.responseIntercepted", addRequest(stageResponse)),
 		sub("Debugger.paused", setPaused(true)),
 		sub("Debugger.resumed", setPaused(false)),
 	)
@@ -444,7 +462,7 @@ func (s *Scheduler) removeLocked(op *Op) bool {
 
 // pumpLocked admits queued operations in FIFO order.
 func (s *Scheduler) pumpLocked() {
-	if s.closed {
+	if s.barriers > 0 {
 		return
 	}
 	writer := false
@@ -641,13 +659,46 @@ const (
 	ControlTargetResume
 )
 
-// interceptCompletions are the WIP methods that complete a held request.
-var interceptCompletions = map[string]bool{
-	"Network.interceptContinue":            true,
-	"Network.interceptWithRequest":         true,
-	"Network.interceptWithResponse":        true,
-	"Network.interceptRequestWithResponse": true,
-	"Network.interceptRequestWithError":    true,
+// Interception stages: the WIP NetworkStage values. A hold opened by
+// Network.requestIntercepted is at the request stage, one opened by
+// Network.responseIntercepted at the response stage.
+const (
+	stageRequest  = "request"
+	stageResponse = "response"
+)
+
+// interceptCompletions are the WIP methods that complete a held request,
+// each with the stage of the holds it completes: WebKit's
+// InspectorNetworkAgent takes the hold from its pending requests or its
+// pending responses and answers "Missing pending intercept ..." for a hold
+// at the other stage. Network.interceptContinue completes either stage; its
+// required stage parameter (Network.json) names which ("" here).
+var interceptCompletions = map[string]string{
+	"Network.interceptContinue":            "",
+	"Network.interceptWithRequest":         stageRequest,
+	"Network.interceptWithResponse":        stageResponse,
+	"Network.interceptRequestWithResponse": stageRequest,
+	"Network.interceptRequestWithError":    stageRequest,
+}
+
+// isInterceptCompletion reports whether method completes a held request.
+func isInterceptCompletion(method string) bool {
+	_, ok := interceptCompletions[method]
+	return ok
+}
+
+// ControlKindOf reports whether method is a control-lane message (design
+// 2.10) and its kind. Every other method is an ordinary operation.
+func ControlKindOf(method string) (ControlKind, bool) {
+	switch {
+	case isInterceptCompletion(method):
+		return ControlCompleteRequest, true
+	case method == "Debugger.resume":
+		return ControlDebuggerResume, true
+	case method == "Target.resume":
+		return ControlTargetResume, true
+	}
+	return 0, false
 }
 
 // ControlMsg is a control-lane message.
@@ -659,7 +710,9 @@ type ControlMsg struct {
 	RequestID string // ControlCompleteRequest
 	TargetID  string // ControlTargetResume
 	Method    string // ControlCompleteRequest: one of the five completion methods
-	Params    map[string]any
+	// Params are the method's parameters besides requestId. For
+	// Network.interceptContinue a missing stage is the stage of the hold.
+	Params map[string]any
 }
 
 // Control sends a control-lane message without waiting behind ordinary
@@ -682,9 +735,36 @@ func (s *Scheduler) Control(ctx context.Context, m ControlMsg) (json.RawMessage,
 	return s.control(ctx, m)
 }
 
+// interceptGoneErrors are the errors of WebKit's InspectorNetworkAgent for
+// the five completion methods (webkitgtk-2.54.2 InspectorNetworkAgent.cpp
+// :1180-1353; the same texts in iOS 16 and WebKit main). Each method takes
+// the hold from m_pendingInterceptRequests or m_pendingInterceptResponses
+// first, so every one of these errors means that WebKit no longer holds the
+// request: it had no such hold ("Missing pending ..."), or it took the hold
+// and then refused the completion (a decode error, or a loader that had
+// already finished). Errors of the generated dispatcher (InvalidParams
+// -32602 and the like) come before the agent runs and leave the hold.
+var interceptGoneErrors = map[string]bool{
+	"Missing pending intercept request for given requestId":      true,
+	"Missing pending intercept response for given requestId":     true,
+	"Unable to intercept request, it has already been processed": true,
+	"Unable to fulfill request, it has already been processed":   true,
+	"Unable to abort request, it has already been processed":     true,
+	"Unable to decode given postData":                            true,
+	"Unable to decode given content":                             true,
+}
+
+// requestGone reports whether err is WebKit's reply to a completion that
+// proves that WebKit no longer holds the request.
+func requestGone(err error) bool {
+	var pe *webkit.ErrorData
+	return errors.As(err, &pe) && interceptGoneErrors[pe.Message]
+}
+
 // heldRequest is a request held by interception (design 2.10).
 type heldRequest struct {
 	seq      uint64 // interception event that opened this hold
+	stage    string // stageRequest or stageResponse: the event that opened this hold
 	inflight bool   // a completion is being written
 }
 
@@ -692,14 +772,31 @@ type heldRequest struct {
 func (s *Scheduler) control(ctx context.Context, m ControlMsg) (json.RawMessage, error) {
 	switch m.Kind {
 	case ControlCompleteRequest:
-		if !interceptCompletions[m.Method] {
+		if !isInterceptCompletion(m.Method) {
 			return nil, fmt.Errorf("%w: %q does not complete a held request", ErrControlRefused, m.Method)
 		}
 		s.mu.Lock()
 		h := s.intercepted[m.RequestID]
+		if h == nil && s.resetReqs[m.RequestID] {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("%w: intercepted request %q: %w", ErrControlRefused, m.RequestID, ErrRequestReset)
+		}
 		if h == nil || h.inflight {
 			s.mu.Unlock()
 			return nil, fmt.Errorf("%w: no open intercepted request %q", ErrControlRefused, m.RequestID)
+		}
+		// WebKit refuses a completion for the other stage and keeps the
+		// request held, so such a completion is never sent.
+		stage := interceptCompletions[m.Method]
+		if m.Method == "Network.interceptContinue" {
+			stage = h.stage
+			if v, ok := m.Params["stage"]; ok {
+				stage = fmt.Sprint(v) // a value that is not a NetworkStage string never matches
+			}
+		}
+		if stage != h.stage {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("%w: %s completes a hold at the %q stage; intercepted request %q is held at the %q stage", ErrControlRefused, m.Method, stage, m.RequestID, h.stage)
 		}
 		h.inflight = true
 		seq := h.seq
@@ -709,15 +806,27 @@ func (s *Scheduler) control(ctx context.Context, m ControlMsg) (json.RawMessage,
 			params[k] = v
 		}
 		params["requestId"] = m.RequestID
+		if m.Method == "Network.interceptContinue" {
+			params["stage"] = stage // required by WIP (Network.json)
+		}
 		res, err := s.controlSend(ctx, DefaultControlBudget, m.Method, params)
 		s.mu.Lock()
 		if h.seq == seq { // no newer hold of this id arrived meanwhile
-			if errors.Is(err, webkit.ErrNotSent) {
-				h.inflight = false // never written: still open
-			} else if s.intercepted[m.RequestID] == h {
-				delete(s.intercepted, m.RequestID) // completed, or the outcome is unknown
+			if err == nil || requestGone(err) {
+				if s.intercepted[m.RequestID] == h {
+					delete(s.intercepted, m.RequestID)
+				}
+			} else {
+				// Not sent, refused by WebKit's dispatcher before the
+				// agent took the hold, or the outcome is unknown: the
+				// request may still be paused. A later completion or a
+				// barrier's continue answers it; if WebKit already took
+				// it, that completion gets "Missing pending intercept ...".
+				h.inflight = false
 			}
 		}
+		close(s.changed) // a barrier may wait for this completion
+		s.changed = make(chan struct{})
 		s.mu.Unlock()
 		return res, err
 	case ControlDebuggerResume:
@@ -768,6 +877,13 @@ func (s *Scheduler) control(ctx context.Context, m ControlMsg) (json.RawMessage,
 		return nil, nil
 	}
 	return nil, fmt.Errorf("%w: unknown kind %d", ErrControlRefused, m.Kind)
+}
+
+// pauseOpen reports whether a debugger pause is an open pending item.
+func (s *Scheduler) pauseOpen() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pauseOpenLocked()
 }
 
 // pauseOpenLocked reports whether the current debugger pause is an open
@@ -826,18 +942,24 @@ func (s *Scheduler) pendingRequestsLocked() []string {
 
 // Release is the release barrier (design 2.10): it closes admission,
 // cancels the running operations, completes every pending control item
-// through the control lane (continues held requests, resumes the debugger
-// and targets paused on start), waits until the running operations have
-// released the page, runs cleanup on the control lane, and ends the lease.
+// through the control lane (continues held requests at the stage of each
+// hold, resumes the debugger and targets paused on start), waits until the
+// running operations have released the page, runs cleanup on the control
+// lane, and ends the lease.
 // Queued operations fail with ErrLeaseEnded.
 func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Context, c webkit.Caller) error) error {
 	s.mu.Lock()
-	s.closed = true
+	s.barriers++
 	var running []*Op
 	for op := range s.running {
 		running = append(running, op)
 	}
-	requests := s.pendingRequestsLocked()
+	// Holds with a completion in flight too: that completion can fail and
+	// leave the request paused.
+	requests := make([]string, 0, len(s.intercepted))
+	for id := range s.intercepted {
+		requests = append(requests, id)
+	}
 	paused := s.pauseOpenLocked()
 	s.mu.Unlock()
 
@@ -853,8 +975,7 @@ func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Contex
 		}
 	}
 	for _, id := range requests {
-		_, err := s.control(ctx, ControlMsg{Kind: ControlCompleteRequest, RequestID: id, Method: "Network.interceptContinue"})
-		note(err)
+		note(s.answerHold(ctx, id))
 	}
 	if paused {
 		_, err := s.control(ctx, ControlMsg{Kind: ControlDebuggerResume})
@@ -885,10 +1006,91 @@ func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Contex
 	s.mu.Lock()
 	s.released = true
 	s.holder = ""
-	s.closed = false
+	s.barriers--
 	s.pumpLocked() // fails the queued operations with ErrLeaseEnded
 	s.mu.Unlock()
 	return firstErr
+}
+
+// maxBarrierContinues bounds the continues that a barrier sends for one
+// held request whose continue fails without closing it (not sent, or no
+// reply). A repeated continue is safe: WebKit takes a hold once and answers
+// "Missing pending intercept ..." afterwards (requestGone).
+const maxBarrierContinues = 3
+
+// answerHold is a barrier's answer to the held request id: it waits until
+// no completion of id is in flight, then continues the hold unmodified at
+// its stage, and repeats until the scheduler holds no request id. A hold
+// that a completion's failure left open, and a newer hold of the same id
+// (the response stage after a request-stage continue), get the continue
+// too. It returns the last error after maxBarrierContinues failed
+// continues of one hold, or when ctx ends while it waits.
+func (s *Scheduler) answerHold(ctx context.Context, id string) error {
+	failed := 0
+	var seq uint64
+	for {
+		s.mu.Lock()
+		h := s.intercepted[id]
+		for h != nil && h.inflight {
+			changed := s.changed
+			s.mu.Unlock()
+			select {
+			case <-changed:
+			case <-ctx.Done():
+				return fmt.Errorf("waiting for the completion of intercepted request %q: %w", id, ctx.Err())
+			}
+			s.mu.Lock()
+			h = s.intercepted[id]
+		}
+		if h == nil {
+			s.mu.Unlock()
+			return nil
+		}
+		if h.seq != seq {
+			seq, failed = h.seq, 0 // another hold of the id: its own budget
+		}
+		s.mu.Unlock()
+		_, err := s.control(ctx, ControlMsg{Kind: ControlCompleteRequest, RequestID: id, Method: "Network.interceptContinue"})
+		if err == nil || requestGone(err) || errors.Is(err, ErrControlRefused) {
+			continue // answered, or another sender started a completion: look again
+		}
+		if failed++; failed >= maxBarrierContinues {
+			return fmt.Errorf("continuing intercepted request %q: %w", id, err)
+		}
+	}
+}
+
+// Barrier closes admission and waits, at most until ctx ends, until no
+// operation runs (design 2.10: background recovery waits for the running
+// operation). Queued operations stay queued. reopen opens admission again;
+// it is also called when the wait fails.
+func (s *Scheduler) Barrier(ctx context.Context) (reopen func(), err error) {
+	s.mu.Lock()
+	s.barriers++
+	s.mu.Unlock()
+	var once sync.Once
+	reopen = func() {
+		once.Do(func() {
+			s.mu.Lock()
+			s.barriers--
+			s.pumpLocked()
+			s.mu.Unlock()
+		})
+	}
+	for {
+		s.mu.Lock()
+		n, changed := len(s.running), s.changed
+		s.mu.Unlock()
+		if n == 0 {
+			return reopen, nil
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			reopen()
+			return nil, fmt.Errorf("barrier: waiting for %d running operations: %w", n, ctx.Err())
+		}
+	}
 }
 
 // clockMap returns the clock mapping of document generation g.

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
 )
 
 // commandHelp documents one command. synopsis follows "iwdp-cli ".
@@ -122,7 +124,7 @@ when it is missing or stored with other attributes. The value is never printed.`
 		{"set-log-level", "set-log-level <source> <level> [ws-url]", "Set logging level", ""},
 	}},
 	{"Debugger", []commandHelp{
-		{"debugger-enable", "debugger-enable [ws-url]", "Enable debugger", ""},
+		{"debugger-enable", "debugger-enable [ws-url]", "Enable debugger and switch breakpoints on", "WebKit starts with breakpoints inactive; this command also sends\nDebugger.setBreakpointsActive(true), as Web Inspector does, so breakpoints pause."},
 		{"debugger-disable", "debugger-disable [ws-url]", "Disable debugger", ""},
 		{"set-breakpoint", "set-breakpoint <url> <line> [col] [opts]", "Set breakpoint by URL", ""},
 		{"remove-breakpoint", "remove-breakpoint <id> [ws-url]", "Remove breakpoint", ""},
@@ -195,7 +197,17 @@ const globalOptionsHelp = `Global options (any position):
   --timeout <d>   Deadline for the whole command: a Go duration (10s, 2m) or whole
                   seconds. Default 30s, or IWDP_TIMEOUT. On expiry the command exits
                   124 and names the page, the elapsed time and the likely causes.
-  -h, --help      Show help and exit 0. Never connects to a page or writes files.`
+  -h, --help      Show help and exit 0. Never connects to a page or writes files.
+  --session <s>   Session that holds the page lease (IWDP_SESSION; default "default").
+  --reservation <owner>  Device reservation owner (IWDP_DEVICE_RESERVATION; default
+                  the session). Pages of a physical device need one: 'device reserve'.
+  --wait-lease <d>  Wait this long for another session's lease (inside the deadline).
+  --takeover      Reattach a page whose connection someone else took (needs the
+                  reservation and the device owner's approval).
+  --transport <t> auto (default), iwdp, direct or webkitgtk.
+Commands run in the iwdp daemon, started on demand ('iwdp-cli daemon --help').
+Exit codes: 0 ok, 1 error, 2 usage, 4 page busy or lost, 5 no device or page,
+6 device reservation missing, 124 deadline.`
 
 const footerHelp = `Port assignment:
   ios_webkit_debug_proxy listens on port 9221 for device listing.
@@ -235,6 +247,10 @@ func printUsage(w io.Writer) {
 			fmt.Fprintf(w, "  %-*s %s\n", synopsisWidth, c.synopsis, c.summary)
 		}
 	}
+	_, _ = fmt.Fprintf(w, "\nDaemon, session, lease and device commands:\n")
+	for _, c := range reg.All() {
+		_, _ = fmt.Fprintf(w, "  %-*s %s\n", synopsisWidth, c.Name, c.Summary)
+	}
 	fmt.Fprintf(w, "\n%s\n\n%s\n", globalOptionsHelp, footerHelp)
 }
 
@@ -243,6 +259,10 @@ func printUsage(w io.Writer) {
 func printCommandHelp(w io.Writer, name string) bool {
 	c, ok := findCommandHelp(name)
 	if !ok {
+		if rc, n := reg.Lookup(strings.Fields(name)); rc != nil && n == len(strings.Fields(name)) {
+			_, _ = fmt.Fprint(w, reg.Help(rc))
+			return true
+		}
 		return false
 	}
 	fmt.Fprintf(w, "Usage: iwdp-cli %s\n\n%s.\n", c.synopsis, c.summary)

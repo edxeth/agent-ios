@@ -9,7 +9,7 @@ import (
 
 // RunAudit sets up the audit environment, runs the specified test, tears down,
 // and returns the run result.
-func RunAudit(ctx context.Context, client *webkit.Client, testStr string) (json.RawMessage, error) {
+func RunAudit(ctx context.Context, client webkit.Caller, testStr string) (json.RawMessage, error) {
 	_, err := client.Send(ctx, "Audit.setup", nil)
 	if err != nil {
 		return nil, err

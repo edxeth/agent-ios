@@ -64,7 +64,7 @@ func NewNetworkMonitor() *NetworkMonitor {
 
 // Start enables network monitoring and registers event handlers on the client.
 // It is idempotent: calling Start multiple times will not register duplicate handlers.
-func (m *NetworkMonitor) Start(ctx context.Context, client *webkit.Client) error {
+func (m *NetworkMonitor) Start(ctx context.Context, client webkit.Caller) error {
 	m.mu.Lock()
 	if m.started {
 		m.mu.Unlock()
@@ -149,7 +149,7 @@ func (m *NetworkMonitor) Start(ctx context.Context, client *webkit.Client) error
 }
 
 // Stop disables network monitoring.
-func (m *NetworkMonitor) Stop(ctx context.Context, client *webkit.Client) error {
+func (m *NetworkMonitor) Stop(ctx context.Context, client webkit.Caller) error {
 	m.mu.Lock()
 	m.started = false
 	m.mu.Unlock()
@@ -170,7 +170,7 @@ func (m *NetworkMonitor) GetRequests() []CapturedRequest {
 }
 
 // GetResponseBody retrieves the body of a network response by request ID.
-func GetResponseBody(ctx context.Context, client *webkit.Client, requestID string) (string, bool, error) {
+func GetResponseBody(ctx context.Context, client webkit.Caller, requestID string) (string, bool, error) {
 	result, err := client.Send(ctx, "Network.getResponseBody", map[string]string{
 		"requestId": requestID,
 	})
@@ -189,7 +189,7 @@ func GetResponseBody(ctx context.Context, client *webkit.Client, requestID strin
 }
 
 // SetExtraHeaders sets extra HTTP headers to be sent with every request.
-func SetExtraHeaders(ctx context.Context, client *webkit.Client, headers map[string]string) error {
+func SetExtraHeaders(ctx context.Context, client webkit.Caller, headers map[string]string) error {
 	_, err := client.Send(ctx, "Network.setExtraHTTPHeaders", map[string]interface{}{
 		"headers": headers,
 	})
@@ -221,7 +221,7 @@ func NewInterceptionCollector() *InterceptionCollector {
 // urlPattern is a URL pattern to intercept (empty string = all requests).
 // stage is "request" or "response" (empty defaults to "request").
 // isRegex controls whether urlPattern is treated as a regex.
-func (ic *InterceptionCollector) Start(ctx context.Context, client *webkit.Client, urlPattern, stage string, isRegex bool) error {
+func (ic *InterceptionCollector) Start(ctx context.Context, client webkit.Caller, urlPattern, stage string, isRegex bool) error {
 	ic.mu.Lock()
 	if ic.started {
 		ic.mu.Unlock()
@@ -306,7 +306,7 @@ func (ic *InterceptionCollector) Start(ctx context.Context, client *webkit.Clien
 }
 
 // Stop disables request interception and removes all interception rules.
-func (ic *InterceptionCollector) Stop(ctx context.Context, client *webkit.Client) error {
+func (ic *InterceptionCollector) Stop(ctx context.Context, client webkit.Caller) error {
 	ic.mu.Lock()
 	ic.started = false
 	ic.pending = make(map[string]*InterceptedRequest)
@@ -342,7 +342,7 @@ func (ic *InterceptionCollector) RemovePending(requestID string) {
 
 // SetRequestInterception enables or disables request interception directly.
 // Prefer using InterceptionCollector for the full interception workflow.
-func SetRequestInterception(ctx context.Context, client *webkit.Client, enabled bool) error {
+func SetRequestInterception(ctx context.Context, client webkit.Caller, enabled bool) error {
 	_, err := client.Send(ctx, "Network.setInterceptionEnabled", map[string]interface{}{
 		"enabled": enabled,
 	})
@@ -350,7 +350,7 @@ func SetRequestInterception(ctx context.Context, client *webkit.Client, enabled 
 }
 
 // InterceptContinue continues an intercepted request without modification.
-func InterceptContinue(ctx context.Context, client *webkit.Client, requestID, stage string) error {
+func InterceptContinue(ctx context.Context, client webkit.Caller, requestID, stage string) error {
 	if stage == "" {
 		stage = "request"
 	}
@@ -364,7 +364,7 @@ func InterceptContinue(ctx context.Context, client *webkit.Client, requestID, st
 // InterceptWithResponse provides a custom response for an intercepted request.
 // For request-stage interceptions, uses Network.interceptRequestWithResponse (synthetic response).
 // For response-stage interceptions, uses Network.interceptWithResponse (modify received response).
-func InterceptWithResponse(ctx context.Context, client *webkit.Client, requestID string, stage string, statusCode int, headers map[string]string, content string, base64Encoded bool) error {
+func InterceptWithResponse(ctx context.Context, client webkit.Caller, requestID string, stage string, statusCode int, headers map[string]string, content string, base64Encoded bool) error {
 	if stage == "" {
 		stage = "request"
 	}
@@ -399,7 +399,7 @@ func InterceptWithResponse(ctx context.Context, client *webkit.Client, requestID
 }
 
 // SetEmulatedConditions configures network emulation with a bandwidth constraint.
-func SetEmulatedConditions(ctx context.Context, client *webkit.Client, bytesPerSecondLimit int) error {
+func SetEmulatedConditions(ctx context.Context, client webkit.Caller, bytesPerSecondLimit int) error {
 	_, err := client.Send(ctx, "Network.setEmulatedConditions", map[string]interface{}{
 		"bytesPerSecondLimit": bytesPerSecondLimit,
 	})
@@ -407,7 +407,7 @@ func SetEmulatedConditions(ctx context.Context, client *webkit.Client, bytesPerS
 }
 
 // SetResourceCachingDisabled enables or disables the resource cache.
-func SetResourceCachingDisabled(ctx context.Context, client *webkit.Client, disabled bool) error {
+func SetResourceCachingDisabled(ctx context.Context, client webkit.Caller, disabled bool) error {
 	_, err := client.Send(ctx, "Network.setResourceCachingDisabled", map[string]interface{}{
 		"disabled": disabled,
 	})

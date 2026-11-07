@@ -197,7 +197,7 @@ func RegisterMCP(s *mcp.Server, profile string, newEnv func(ctx context.Context,
 				if err != nil {
 					return toolError(err), nil
 				}
-				res, err := cmd.Run(ctx, env, in)
+				res, err := run(ctx, env, cmd, in)
 				if err != nil {
 					return toolError(err), nil
 				}
