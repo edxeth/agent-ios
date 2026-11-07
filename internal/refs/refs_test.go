@@ -221,13 +221,32 @@ func TestRefIDsNeverRepeatProperty(t *testing.T) {
 // diff snapshot (4.2) compares the last two snapshots of the session.
 func TestSnapshotHistoryKeepsLastTwo(t *testing.T) {
 	tb := NewTable()
-	if _, _, n := tb.Snapshots(); n != 0 {
+	if _, _, n := tb.Snapshots("s1"); n != 0 {
 		t.Fatalf("history of a new table has %d entries", n)
 	}
-	tb.RecordSnapshot("a")
-	tb.RecordSnapshot("b")
-	tb.RecordSnapshot("c")
-	if prev, cur, n := tb.Snapshots(); prev != "b" || cur != "c" || n != 2 {
+	tb.RecordSnapshot("s1", "a")
+	tb.RecordSnapshot("s1", "b")
+	tb.RecordSnapshot("s1", "c")
+	if prev, cur, n := tb.Snapshots("s1"); prev != "b" || cur != "c" || n != 2 {
 		t.Fatalf("Snapshots = %q, %q, %d", prev, cur, n)
+	}
+}
+
+// The daemon keeps one table per page for every lease owner in turn;
+// "diff snapshot" compares the last two snapshots of this session (4.2),
+// so each session sees only its own history.
+func TestSnapshotHistoryIsPerSession(t *testing.T) {
+	tb := NewTable()
+	tb.RecordSnapshot("a", "a1")
+	tb.RecordSnapshot("a", "a2")
+	if prev, cur, n := tb.Snapshots("b"); n != 0 || prev != "" || cur != "" {
+		t.Fatalf("Snapshots(b) after two snapshots of a = %q, %q, %d; want none", prev, cur, n)
+	}
+	tb.RecordSnapshot("b", "b1")
+	if prev, cur, n := tb.Snapshots("b"); prev != "" || cur != "b1" || n != 1 {
+		t.Fatalf("Snapshots(b) = %q, %q, %d; want only b1", prev, cur, n)
+	}
+	if prev, cur, n := tb.Snapshots("a"); prev != "a1" || cur != "a2" || n != 2 {
+		t.Fatalf("Snapshots(a) after b's snapshot = %q, %q, %d; want a1, a2", prev, cur, n)
 	}
 }

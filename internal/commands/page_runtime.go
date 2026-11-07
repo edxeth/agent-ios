@@ -16,8 +16,9 @@ import (
 // read) use of a page session: the agent runtime and the session's ref
 // table (design docs/design/agentic-parity.md, sections 3.1 and 3.3).
 type pageRuntime struct {
-	rt   *runtime.Runtime
-	refs *refs.Table
+	rt      *runtime.Runtime
+	refs    *refs.Table
+	session string // whose snapshot history this command adds to (historySession)
 }
 
 // errNoRuntime: the daemon handed out a page session without the W3a parts.
@@ -26,7 +27,11 @@ var errNoRuntime = errors.New("this page session has no agent runtime; the daemo
 // openRuntime returns the runtime of the command's page. With a scheduler,
 // the runtime's owner is the lease holder and epoch (design 3.1 owner
 // epoch), so the page resets its ref maps for a new holder; the page's
-// reset reports reach the session's ref table.
+// reset reports reach the session's ref table. In the daemon the command
+// runs inside an operation, and its runtime calls go through the
+// operation's fenced caller (design 2.5, 2.10): they count against the
+// per-page limit of protocol calls in flight, and none is sent after the
+// operation ended or its lease epoch changed.
 func openRuntime(ctx context.Context, env Env) (*pageRuntime, error) {
 	ps, err := env.Page(ctx)
 	if err != nil {
@@ -38,7 +43,25 @@ func openRuntime(ctx context.Context, env Env) (*pageRuntime, error) {
 	setOwnerFromLease(ps)
 	t := ps.Refs
 	ps.Runtime.OnReset(func(i runtime.ResetInfo) { t.NoteReset(i.Reason, i.MaxRef) })
-	return &pageRuntime{rt: ps.Runtime, refs: t}, nil
+	rt := ps.Runtime
+	if oe, ok := env.(interface{ Op() *core.Op }); ok && oe.Op() != nil {
+		rt = rt.Via(oe.Op().Caller())
+	}
+	return &pageRuntime{rt: rt, refs: t, session: historySession(ps)}, nil
+}
+
+// historySession is the logical session whose snapshot history a command
+// of ps reads and adds to: the lease holder, which runs the command. The
+// ref table belongs to the page and serves every lease owner in turn, but
+// "diff snapshot" compares the last two snapshots of this session, so the
+// table keeps the history per session. Without a scheduler (a page
+// session made outside the daemon) it is "".
+func historySession(ps *core.PageSession) string {
+	if ps.Sched == nil {
+		return ""
+	}
+	holder, _ := ps.Sched.Lease()
+	return holder
 }
 
 func setOwnerFromLease(ps *core.PageSession) {
@@ -49,7 +72,11 @@ func setOwnerFromLease(ps *core.PageSession) {
 	if holder == "" {
 		return
 	}
-	ps.Runtime.SetOwner(runtime.Owner{Daemon: runtime.DaemonID, Session: holder, Epoch: epoch})
+	daemon := ps.DaemonID
+	if daemon == "" {
+		daemon = runtime.DaemonID
+	}
+	ps.Runtime.SetOwner(runtime.Owner{Daemon: daemon, Session: holder, Epoch: epoch})
 }
 
 // targetSpec is a target as the page resolver takes it (45-locate.js

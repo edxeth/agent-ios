@@ -11,8 +11,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/refs"
+	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 	"github.com/nnemirovsky/iwdp-mcp/internal/wip"
@@ -60,8 +63,9 @@ type ManagerOptions struct {
 	// (a local endpoint or the legacy mock); nil: webkit.NewClient.
 	OpenURL func(ctx context.Context, wsURL string) (webkit.Caller, error)
 	Logf    func(format string, args ...any)
-	// DaemonID identifies the daemon process (stable for its life). It is
-	// the runtime.DaemonID of page runtimes (W3a hook).
+	// DaemonID identifies the daemon process (stable for its life). Page
+	// runtimes carry it as their owner's daemon (PageSession.DaemonID);
+	// "" leaves runtime.DaemonID.
 	DaemonID string
 }
 
@@ -135,8 +139,7 @@ type Page struct {
 	mu         sync.Mutex
 	target     pageTarget
 	lease      *lease
-	releasing  bool // a release of lease runs; acquisition waits for it
-	epoch      uint64
+	releasing  bool           // a release of lease runs; acquisition waits for it
 	freed      chan struct{}  // closed and replaced when a lease ends or is replaced
 	running    int            // managed operations in progress
 	holders    map[string]int // open event streams per session (HoldLease)
@@ -174,6 +177,13 @@ type Manager struct {
 	// recoveryHold, when set (tests only), runs in a background recovery
 	// after the old connection is retired and before the preflight.
 	recoveryHold func(ctx context.Context)
+
+	// epochs counts the lease grants of every page. Epochs only grow
+	// within one DaemonID (design 3.1): the page runtime refuses an owner
+	// of this daemon with an older epoch than its latest owner's
+	// (stale_owner), and the page keeps that owner when the daemon closes
+	// an idle page record. A per-record counter would start again at 1.
+	epochs atomic.Uint64
 }
 
 // NewManager returns a manager and starts its sweeper (idle TTL, idle
@@ -564,6 +574,21 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 			return err
 		}
 		state := NewDesiredState()
+		// The agent runtime is a page part, not a session's (design 3.1
+		// install path 2): new documents and provisional targets get it
+		// before page scripts run, and a release keeps it. A bootstrap
+		// part is a requirement of Page (DesiredState.Needs), so Page
+		// stays enabled while the part exists, as the bootstrap script
+		// needs (design 3.1), and Page events give the document
+		// generations: a legacy Page.disable and the release of the last
+		// Page owner send nothing. The part is set before the first
+		// connection opens, so every setup snapshot has it, also that of
+		// a provisional target created while the connection opens; no
+		// target exists yet that a change (beginChange) would have to
+		// reach.
+		if err := state.SetPart(Owner(RuntimePart), RuntimePart, RankRuntime, runtime.Source()); err != nil {
+			return err
+		}
 		c, err := m.openConn(ctx, pg, t, state, true)
 		if err != nil {
 			return err
@@ -571,11 +596,21 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 		pc := newPageConn(c, func() { m.goBackground(func(ctx context.Context) { m.recover(ctx, pg) }) }, m.goBackground,
 			func(f string, a ...any) { m.o.Logf("page %s: "+f, append([]any{t.title}, a...)...) })
 		pc.Subscribe(messageDroppedEvent, func(string, json.RawMessage) { pc.markDropped() })
-		sched := NewScheduler(pc, SchedulerOptions{Generation: pc.Generation})
+		// One runtime and one ref table per page record (design 3.3): the
+		// page keeps one set of ref maps per document, held by one lease
+		// owner at a time, and the table mirrors them. Both live on pc, so
+		// they survive reconnects; an owner change resets the page maps,
+		// and the page's reset report clears the table (NoteReset), whose
+		// counter never moves back while the record lives.
+		rt := runtime.New(pc, pc.Generation)
+		sched := NewScheduler(pc, SchedulerOptions{Generation: pc.Generation, Runtime: rt.RuntimeCaller()})
 		// m.mu: allPages (the sweeper, Status) reads PS under it.
 		m.mu.Lock()
 		pg.conn = pc
-		pg.PS = &PageSession{Caller: pc, Device: t.device, Page: t.page, Sched: sched, State: state, Boot: state.Boot}
+		pg.PS = &PageSession{
+			Caller: pc, Device: t.device, Page: t.page, Runtime: rt, Refs: refs.NewTable(), DaemonID: m.o.DaemonID,
+			Sched: sched, State: state, Boot: state.Boot,
+		}
 		m.mu.Unlock()
 		return nil
 	}
@@ -826,8 +861,7 @@ func (pg *Page) grantLocked(ao AcquireOptions, now time.Time) *lease {
 		close(pg.freed)
 		pg.freed = make(chan struct{})
 	}
-	pg.epoch++
-	l := &lease{session: ao.Session, resOwner: ao.Reservation, epoch: pg.epoch, since: now, lastUsed: now}
+	l := &lease{session: ao.Session, resOwner: ao.Reservation, epoch: pg.m.epochs.Add(1), since: now, lastUsed: now}
 	pg.lease = l
 	pg.PS.Sched.SetLease(ao.Session, l.epoch)
 	return l
@@ -1268,7 +1302,11 @@ func (m *Manager) releasePage(ctx context.Context, pg *Page, l *lease) error {
 	var err error
 	if pg.conn.State() == ConnOK {
 		err = pg.PS.Sched.Release(ctx, func(ctx context.Context, c webkit.Caller) error {
-			return releaseOwners(ctx, pg.PS, l.session, c)
+			// The required cleanup first: the best-effort runtime release
+			// gets only what is left of the deadline after it.
+			err := releaseOwners(ctx, pg.PS, l.session, c)
+			m.releaseRuntime(ctx, pg, l, c)
+			return err
 		})
 	} else {
 		// Design 2.4: no reconnect just to clean up; the cleanup stays
@@ -1286,6 +1324,54 @@ func (m *Manager) releasePage(ctx context.Context, pg *Page, l *lease) error {
 	pg.freed = make(chan struct{})
 	pg.mu.Unlock()
 	return err
+}
+
+// Budget of the page-side runtime release of a lease (releaseRuntime). It
+// is best effort and runs after the required desired-state cleanup, so a
+// page that does not answer it must not cost the release its deadline.
+const (
+	// runtimeReleaseBudget is the longest wait for the page's answer.
+	runtimeReleaseBudget = time.Second
+	// runtimeReleaseReserve is the part of the remaining deadline that the
+	// runtime release never uses: the release still ends the lease, and
+	// its reply must reach the client before the client's own deadline.
+	// The client sends its remaining time as timeoutMs, so the daemon's
+	// deadline is later than the client's by the request's transit time.
+	// Transit and reply take well under a millisecond on the local socket;
+	// 50 ms keeps that true on a loaded host (the race detector, a busy
+	// CI machine) and is small against the 1 s budget.
+	runtimeReleaseReserve = 50 * time.Millisecond
+	// runtimeReleaseMin is the shortest wait worth a send: a runtime call
+	// through the daemon takes milliseconds even on a local page (warm
+	// eval p50 13.8 ms through the CLI, docs/notes/w3a-wiring.md). With
+	// less time left the page could not answer anyway, so the release is
+	// skipped and logged.
+	runtimeReleaseMin = 10 * time.Millisecond
+)
+
+// releaseRuntime runs the page-side release of l's epoch on the release
+// barrier's control caller c (design 2.4, row "Page-side runtime state"):
+// the page drops the owner's ref maps and restores its hooks. It waits at
+// most runtimeReleaseBudget, and at most the time left before ctx's
+// deadline minus runtimeReleaseReserve; when that is below
+// runtimeReleaseMin it sends nothing. A skip or a failure is logged and
+// does not fail the release: the next owner's first runtime call resets
+// the page maps anyway (design 3.1 owner epoch).
+func (m *Manager) releaseRuntime(ctx context.Context, pg *Page, l *lease, c webkit.Caller) {
+	budget := runtimeReleaseBudget
+	if dl, ok := ctx.Deadline(); ok {
+		budget = min(budget, time.Until(dl)-runtimeReleaseReserve)
+	}
+	if budget < runtimeReleaseMin {
+		m.o.Logf("page %s: page-side runtime release of %q (epoch %d) skipped: %v left for it; the next owner resets the page maps",
+			pg.target.title, l.session, l.epoch, max(budget, 0))
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if err := pg.PS.Runtime.Release(ctx, c, l.epoch); err != nil {
+		m.o.Logf("page %s: page-side runtime release of %q (epoch %d): %v", pg.target.title, l.session, l.epoch, err)
+	}
 }
 
 func releaseOwners(ctx context.Context, ps *PageSession, session string, c webkit.Caller) (err error) {

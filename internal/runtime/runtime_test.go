@@ -240,3 +240,84 @@ func TestCallAsyncAwaitsPromise(t *testing.T) {
 		t.Fatalf("CallAsync = %d, %v", v, err)
 	}
 }
+
+// Design 2.4 (row "Page-side runtime state"): the daemon releases a lease
+// with __iwdp.release(epoch). The call carries no owner, so it never makes
+// the page reset for a new owner; a document without the runtime has
+// nothing to release, so it is not installed; an error envelope is
+// returned to the caller.
+func TestReleaseCallsThePageWithoutOwnerOrInstall(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	reply := any(map[string]any{"ok": true, "value": true})
+	var args []string
+	f.SetRuntime(func(_ fakewebkit.Call, fn string, a json.RawMessage) any {
+		args = append(args, fn+" "+string(a))
+		return reply
+	})
+	s := session(t, f)
+	r := New(s, nil)
+	r.SetOwner(Owner{Daemon: "d", Session: "s1", Epoch: 4})
+	if err := r.Release(context.Background(), s, 4); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if len(args) != 1 || args[0] != `release {"epoch":4}` {
+		t.Fatalf("page calls = %q, want one release with epoch 4", args)
+	}
+	evals := f.ReceivedMethod("Runtime.evaluate")
+	if strings.Contains(string(evals[0].Params), "__iwdp.own(") {
+		t.Fatalf("the release call carries an owner: %s", evals[0].Params)
+	}
+
+	reply = map[string]any{"ok": false, "error": map[string]string{"code": "internal", "message": "boom"}}
+	var re *Error
+	if err := r.Release(context.Background(), s, 4); !errors.As(err, &re) || re.Code != "internal" {
+		t.Fatalf("Release with an error envelope = %v, want the page error", err)
+	}
+
+	reply = MissingSentinel
+	if err := r.Release(context.Background(), s, 4); err != nil {
+		t.Fatalf("Release on a page without the runtime = %v, want nil", err)
+	}
+	for _, e := range f.ReceivedMethod("Runtime.evaluate") {
+		if strings.Contains(string(e.Params), "iwdp-mcp agent runtime bundle") {
+			t.Fatal("Release installed the runtime")
+		}
+	}
+}
+
+// Via (design 2.5, 2.10): a runtime bound to another caller sends through
+// that caller and shares the owner and its confirmation with the page
+// runtime.
+func TestViaSendsThroughItsCallerAndSharesTheOwner(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	f.SetRuntime(func(fakewebkit.Call, string, json.RawMessage) any { return map[string]any{"ok": true, "value": true} })
+	s := session(t, f)
+	r := New(s, nil)
+	cc := &countingCaller{Caller: s}
+	v := r.Via(cc)
+	r.SetOwner(Owner{Daemon: "d", Session: "s1", Epoch: 2})
+	if r.OwnerConfirmed() {
+		t.Fatal("owner confirmed before any call")
+	}
+	if err := v.Call(context.Background(), "ping", nil, nil); err != nil {
+		t.Fatalf("Call through Via: %v", err)
+	}
+	if cc.n != 1 {
+		t.Fatalf("the bound caller sent %d messages, want 1", cc.n)
+	}
+	if !r.OwnerConfirmed() {
+		t.Fatal("a call through Via did not confirm the owner of the page runtime")
+	}
+}
+
+type countingCaller struct {
+	webkit.Caller
+	n int
+}
+
+func (c *countingCaller) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	c.n++
+	return c.Caller.Send(ctx, method, params)
+}

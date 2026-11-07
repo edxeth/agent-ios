@@ -69,7 +69,7 @@ func runSnapshot(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	text := runtime.Render(v.Tree, opts)
-	p.refs.RecordSnapshot(text)
+	p.refs.RecordSnapshot(p.session, text)
 	refMap := make(map[string]refInfo, len(a.Refs))
 	for _, r := range a.Refs {
 		refMap[r.Ref] = refInfo{Role: r.Role, Name: r.Name}

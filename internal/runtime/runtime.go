@@ -147,9 +147,13 @@ type ResetInfo struct {
 
 // Runtime calls runtime functions in one page.
 type Runtime struct {
-	c   webkit.Caller
-	gen func() uint64
+	c           webkit.Caller
+	gen         func() uint64
+	*ownerState // shared with the runtimes that Via returns
+}
 
+// ownerState is what the page knows of its owner, as seen from the calls.
+type ownerState struct {
 	mu    sync.Mutex
 	owner *Owner
 	// confirmed is the owner of the last call that the page answered
@@ -159,7 +163,42 @@ type Runtime struct {
 }
 
 // New returns a Runtime on c. gen returns the document generation (it may be nil).
-func New(c webkit.Caller, gen func() uint64) *Runtime { return &Runtime{c: c, gen: gen} }
+func New(c webkit.Caller, gen func() uint64) *Runtime {
+	return &Runtime{c: c, gen: gen, ownerState: &ownerState{}}
+}
+
+// Via returns a Runtime that sends its calls through c and shares the
+// owner, the owner confirmation and the reset reports of r. The daemon
+// gives each command the page runtime through its operation's fenced
+// caller (core.Op.Caller), so its calls count against the per-page limit
+// and are not sent after the operation or its lease epoch ended (design
+// 2.5, 2.10).
+func (r *Runtime) Via(c webkit.Caller) *Runtime {
+	return &Runtime{c: c, gen: r.gen, ownerState: r.ownerState}
+}
+
+// Release runs the page-side release of a lease epoch through c (runtime
+// function release, design 2.4): the page drops its ref maps and restores
+// its hooks only when its current owner has this epoch, so the state of a
+// later owner stays. The call carries no owner, so it never makes the page
+// reset for a new owner. A document without this runtime version has
+// nothing to release, so Release does not install the runtime.
+func (r *Runtime) Release(ctx context.Context, c webkit.Caller, epoch uint64) error {
+	expr, err := Expression("release", map[string]uint64{"epoch": epoch})
+	if err != nil {
+		return err
+	}
+	v, err := r.eval(ctx, c, "release", expr, false)
+	if err != nil {
+		return err
+	}
+	var s string
+	if json.Unmarshal(v, &s) == nil && s == MissingSentinel {
+		return nil
+	}
+	_, err = r.decodeEnvelope("release", v, nil)
+	return err
+}
 
 // SetOwner sets the owner that every later call hands to the page. The
 // daemon sets it when it grants the lease.

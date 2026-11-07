@@ -20,6 +20,11 @@ const (
 	RankInit    = 50 // user init scripts (W4)
 )
 
+// RuntimePart is the name and owner of the agent runtime's bootstrap part
+// (design 3.1 install path 2). It belongs to the page, not to a session,
+// so a release keeps it.
+const RuntimePart = "runtime"
+
 // BootstrapParts joins named parts into the one script that
 // Page.setBootstrapScript allows per session. Each part is wrapped in
 // try/catch, so a part that throws does not stop the parts after it. A part

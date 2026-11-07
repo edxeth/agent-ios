@@ -31,7 +31,7 @@ func runDiffSnapshot(ctx context.Context, env Env, _ Input) (Result, error) {
 	if ps == nil || ps.Refs == nil {
 		return Result{}, errNoRuntime
 	}
-	before, after, n := ps.Refs.Snapshots()
+	before, after, n := ps.Refs.Snapshots(historySession(ps))
 	if n < 2 {
 		return Result{}, fmt.Errorf("diff snapshot needs two snapshots of this session, it has %d; run snapshot, change the page, run snapshot again", n)
 	}

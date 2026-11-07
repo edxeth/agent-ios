@@ -20,4 +20,9 @@ type PageSession struct {
 	Sched   *Scheduler       // operations of every entry point (2.10)
 	State   *DesiredState    // owned entries (2.4); sent to new and provisional targets, reduced on release
 	Boot    *BootstrapParts  // named parts joined into one Page.setBootstrapScript (State.Boot)
+
+	// DaemonID is the daemon of the runtime's owner (runtime.Owner.Daemon):
+	// ManagerOptions.DaemonID, the domain in which lease epochs only grow.
+	// "" means runtime.DaemonID (a page session made outside a manager).
+	DaemonID string
 }
