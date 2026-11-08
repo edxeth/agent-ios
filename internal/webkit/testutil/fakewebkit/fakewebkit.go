@@ -131,6 +131,7 @@ type Server struct {
 	malformed    map[string]string
 	dropReply    map[string]int // method -> number of replies to drop
 	delays       map[string]time.Duration
+	beforeRecord map[string]func(params json.RawMessage)
 	runtime      RuntimeHandler
 	intercepts   *intercepts             // nil until the first Intercept (intercept.go)
 	profiling    map[string]*profilerRun // tracking runs by target (scriptprofiler.go)
@@ -293,6 +294,20 @@ func (s *Server) DelayReplies(method string, d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.delays[method] = d
+}
+
+// BeforeRecord sets f to run on the connection's goroutine after a client
+// message with the outer method was read in full and before the fake
+// records and handles it, so a test can delay the fake's bookkeeping of a
+// message that it already received. f gets the message's params; nil
+// removes it.
+func (s *Server) BeforeRecord(method string, f func(params json.RawMessage)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.beforeRecord == nil {
+		s.beforeRecord = make(map[string]func(json.RawMessage))
+	}
+	s.beforeRecord[method] = f
 }
 
 // SetRuntime installs the handler of runtime calls (see RuntimeCallPattern).
@@ -601,6 +616,12 @@ func (s *Server) handleMessage(c *conn, data []byte) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		s.record(true, "<malformed>", nil, "", c.id)
 		return
+	}
+	s.mu.Lock()
+	before := s.beforeRecord[m.Method]
+	s.mu.Unlock()
+	if before != nil {
+		before(m.Params)
 	}
 	switch m.Method {
 	case "Target.sendMessageToTarget":

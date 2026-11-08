@@ -52,8 +52,6 @@ func frameContextsAcrossReconnect(t *testing.T, frameMain bool) {
 	}
 	before := len(e.tap.records())
 	e.tap.closeConns()
-	// The WebKitGTK reconnect gap (webkitGTKReconnectGap).
-	time.Sleep(webkitGTKReconnectGap)
 	out, code, msg, err := e.runAs(daemon.Owner{Session: agentA, Takeover: true}, "get", "text", "h1")
 	if err != nil || code != 0 {
 		t.Fatalf("get text h1 --takeover: exit %d, %q, %v", code, msg, err)

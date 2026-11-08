@@ -174,16 +174,10 @@ func TestDialogLostAcknowledgmentOnWebKitGTK(t *testing.T) {
 	if _, code, msg := e.run(agentA, "click", "#confirm"); code == 0 || !strings.Contains(msg, "ownership is unknown") {
 		t.Fatalf("click on the lost page without --takeover: exit %d, %q; want the lost-page error", code, msg)
 	}
-	// WebKitGTK reconnect gap (design section 9, R2): a page connection
-	// opened within about a second of a close sometimes gets no
-	// Target.targetCreated, and the daemon's two dial attempts (12 s target
-	// wait, then one more) fail too. Without this pause the takeover failed
-	// in 2 of 10 runs; with it in 0 of 10, and the takeover then takes
-	// about 100 ms (/home/devkit/.pi/artifacts/worker/w3b-evidence/
-	// w3b-r1-merge/dialog-lostack-repeat-after-wait.log and
-	// probe-dialog-takeover-pause.log). The reconnect itself is W1's
-	// (recorded in docs/notes/w3b.md); this test checks the dialog answers.
-	time.Sleep(webkitGTKReconnectGap)
+	// The takeover reconnects right after the close. On WebKitGTK such a
+	// connection sometimes gets no Target.targetCreated (design section 9,
+	// R2); webkit.Dial then closes it and retries after a gap, so the test
+	// does not wait before it.
 	out, code, msg, err := e.runAs(daemon.Owner{Session: agentA, Takeover: true}, "click", "#confirm")
 	if err != nil || code != 0 {
 		t.Fatalf("click --takeover: exit %d, %q, %v", code, msg, err)
@@ -286,7 +280,7 @@ func TestDialogWithdrawalOnReload(t *testing.T) {
 func TestEarlyInstallWithPauseOnStart(t *testing.T) {
 	// The start page has no early confirm: before the override exists a
 	// native confirm would block the page.
-	e := newNavEnv(t, "nav.html", true)
+	e := newNavEnv(t, "nav.html", daemon.PauseOnStart)
 	e.must(agentA, "dialog", "default", "accept")
 	// A user init script as a bootstrap part (the W4 command adds these
 	// through the same core API).
@@ -329,7 +323,3 @@ func droppedOf(recs []tapRecord) (replies, markers int) {
 	}
 	return replies, markers
 }
-
-// webkitGTKReconnectGap is how long a test waits after it closed a page
-// connection before the daemon reconnects (design section 9, R2).
-const webkitGTKReconnectGap = 3 * time.Second

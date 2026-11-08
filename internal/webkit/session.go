@@ -96,11 +96,28 @@ const (
 	setupBudget = 10 * time.Second
 	// closeResumeBudget bounds the Target.resume calls that Close sends.
 	closeResumeBudget = 500 * time.Millisecond
+	// closeResumePoll is how often Close checks for a Target.resume that
+	// another goroutine is still writing.
+	closeResumePoll = 2 * time.Millisecond
+	// dialRetryGap separates two connection attempts of Dial.
+	dialRetryGap = 500 * time.Millisecond
+	// pauseOnStartWait bounds the wait for the reply to
+	// Target.setPauseOnStart at connect (enablePauseOnStart). WebKit's
+	// target agent answers it at once, without the page: it only stores
+	// the setting (InspectorTargetAgent::setPauseOnStart in the WebKitGTK
+	// 2.54 and iOS 16.7 source), so the reply takes one round trip: a few
+	// milliseconds on WebKitGTK (the whole connect took 2 to 4 ms in the
+	// W1c-3 probe); through iwdp over USB it is expected to stay well below
+	// 1 s (not measured on a device). 1 s also limits what an endpoint that
+	// never answers adds to every connect (the call budget would add 10 s).
+	pauseOnStartWait = time.Second
 )
 
 // SessionOptions configures a Session. Zero fields take the defaults above.
 type SessionOptions struct {
-	TargetWait  time.Duration // wait for Target.targetCreated
+	// TargetWait is the wait for Target.targetCreated: NewSession waits at
+	// most this long; Dial spreads it over its attempts (see Dial).
+	TargetWait  time.Duration
 	CallTimeout time.Duration // budget of one protocol call
 	// Nudge sends one Runtime.evaluate "0" when a call has no reply after
 	// NudgeAfter (iOS 26 holds replies until the next message, MAP fact 7).
@@ -108,7 +125,9 @@ type SessionOptions struct {
 	NudgeAfter time.Duration
 	// PauseOnStart sends Target.setPauseOnStart(true) at connect; each paused
 	// target is resumed after its Setup or after ResumeAfter, whichever comes
-	// first, and on Close.
+	// first, and on Close. It is best effort: a refusal or no reply within
+	// pauseOnStartWait leaves it off on that connection (PausesOnStart) and
+	// is reported through Logf.
 	PauseOnStart bool
 	ResumeAfter  time.Duration
 	// Setup sends the desired state to a new provisional target before commit
@@ -141,6 +160,8 @@ type SessionOptions struct {
 	// reply that arrives after its caller stopped waiting is not reported.
 	// s is the session that got the reply. nil: nothing is called.
 	NetworkDisabled func(s *Session, target string)
+	// Logf reports a degraded connection (pause on start off). nil: no log.
+	Logf func(format string, args ...any)
 	// EventQueue is the capacity of each subscriber's queue. A full queue
 	// drops the event (DroppedEvents counts them); it never blocks the read loop.
 	EventQueue int
@@ -323,22 +344,51 @@ type Session struct {
 	// outlives the target's destruction (see AgentState).
 	agents map[string]map[string]AgentState
 
+	// pausesOnStart: WebKit accepted Target.setPauseOnStart (PausesOnStart).
+	pausesOnStart atomic.Bool
+
 	dropped   atomic.Int64
 	malformed atomic.Int64
 	workers   atomic.Int64 // running subscriber goroutines
 }
 
-// Dial opens a connection with open and starts a Session on it. A connection
-// that closes or stays silent without announcing a target is a failed
-// attempt; one more attempt is made if ctx has time left (design 2.6).
+// Dial opens a connection with open and starts a Session on it (design
+// 2.6). A connection that closes or stays silent without announcing a
+// target is a failed attempt: NewSession closes it, and Dial waits
+// dialRetryGap before it opens the next one. Each attempt waits for the
+// target at most min(TargetWait, DefaultTargetWait); a longer TargetWait
+// (12 s right after a close, design 2.6) is spread over more attempts
+// instead of one long wait. Dial makes at least two attempts and at most
+// max(2, ceil(TargetWait / DefaultTargetWait)), never past ctx.
+//
+// The gap is for WebKitGTK 2.54, measured with the daemon's takeover
+// about 100 ms after a page connection closed: in about 3 of 10 runs the
+// new connection got no Target.targetCreated and stayed silent for as long
+// as it was held (12 s), and a connection opened at once after closing it
+// was closed by WebKitGTK before a target was announced; after a 500 ms gap
+// the next attempt got its target within a few milliseconds (docs/notes/w3b.md,
+// "A reconnect right after a close").
 func Dial(ctx context.Context, open func(context.Context) (transport.MessageConn, error), o SessionOptions) (*Session, error) {
+	o = o.withDefaults()
+	attemptOpts := o
+	attemptOpts.TargetWait = min(o.TargetWait, DefaultTargetWait)
+	attempts := max(2, int((o.TargetWait+DefaultTargetWait-1)/DefaultTargetWait))
 	var firstErr error
-	for attempt := 1; attempt <= 2; attempt++ {
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			gap := time.NewTimer(dialRetryGap)
+			select {
+			case <-gap.C:
+			case <-ctx.Done():
+				gap.Stop()
+				return nil, fmt.Errorf("waiting to retry the connection after %d attempts (%v): %w", attempt-1, firstErr, ctxErr(ctx))
+			}
+		}
 		conn, err := open(ctx)
 		if err != nil {
 			return nil, err
 		}
-		s, err := NewSession(ctx, conn, o)
+		s, err := NewSession(ctx, conn, attemptOpts)
 		if err == nil {
 			return s, nil
 		}
@@ -349,7 +399,7 @@ func Dial(ctx context.Context, open func(context.Context) (transport.MessageConn
 			firstErr = err
 		}
 	}
-	return nil, fmt.Errorf("2 connection attempts: %w", firstErr)
+	return nil, fmt.Errorf("%d connection attempts: %w", attempts, firstErr)
 }
 
 // NewSession starts a Session on conn and waits for Target.targetCreated, at
@@ -387,13 +437,55 @@ func NewSession(ctx context.Context, conn transport.MessageConn, o SessionOption
 		return nil, fmt.Errorf("waiting for the page target: %w", ctxErr(ctx))
 	}
 	if s.opts.PauseOnStart {
-		if _, err := s.sendOuter(ctx, "Target.setPauseOnStart", map[string]bool{"pauseOnStart": true}); err != nil {
+		if err := s.enablePauseOnStart(ctx); err != nil {
 			s.shutdown(err)
 			return nil, fmt.Errorf("enabling pause on start: %w", err)
 		}
 	}
 	return s, nil
 }
+
+// enablePauseOnStart sends Target.setPauseOnStart(true) and waits at most
+// pauseOnStartWait for the reply. Pause on start is best effort (design
+// 2.7: without it, "runs before page scripts" is partial): a refusal of
+// any kind, or no reply in time, leaves it off on this connection, which
+// stays usable; Logf names the reason. It returns an error only when the
+// connection ended or ctx ended, and then the connect fails.
+//
+// A late reply finds no pending call and is dropped (handleOuterReply).
+// Whether a target is paused is read from each Target.targetCreated
+// (isPaused), never from this setting, so a target that WebKit pauses after
+// a late reply is still resumed after its setup.
+func (s *Session) enablePauseOnStart(ctx context.Context) error {
+	wctx, cancel := context.WithTimeout(ctx, pauseOnStartWait)
+	defer cancel()
+	_, err := s.sendOuter(wctx, "Target.setPauseOnStart", map[string]bool{"pauseOnStart": true})
+	if err == nil {
+		s.pausesOnStart.Store(true)
+		return nil
+	}
+	if s.Err() != nil {
+		return err // the connection ended
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("%w: %w", err, ctxErr(ctx))
+	}
+	reason := fmt.Sprintf("the endpoint refused it (%v)", err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		reason = fmt.Sprintf("Target.setPauseOnStart got no reply within %s", min(pauseOnStartWait, s.opts.CallTimeout))
+	}
+	if s.opts.Logf != nil {
+		s.opts.Logf("page connection: pause on start is off: %s; a new document's first scripts can run before the bootstrap script (agent runtime, dialog override, init scripts), so early install is partial", reason)
+	}
+	return nil
+}
+
+// PausesOnStart reports whether WebKit accepted Target.setPauseOnStart on
+// this connection (SessionOptions.PauseOnStart). false: it was not asked
+// for, or it was refused or not answered in time, and provisional targets
+// are not expected to be paused; one that is announced paused is still
+// resumed after its setup.
+func (s *Session) PausesOnStart() bool { return s.pausesOnStart.Load() }
 
 // Send sends an ordinary command to the active target and waits for its
 // reply, at most CallTimeout and never past ctx. It never sends to a target
@@ -495,6 +587,19 @@ func (s *Session) PausedTargets() []string {
 		}
 	}
 	return out
+}
+
+// resumeInFlight reports whether a Target.resume is being written
+// (ResumeTarget), for example by the resume after a setup that just ended.
+func (s *Session) resumeInFlight() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.targets {
+		if t.resuming {
+			return true
+		}
+	}
+	return false
 }
 
 // pausedLocked reports whether t waits for a Target.resume that nobody is
@@ -666,14 +771,19 @@ func (s *Session) InterruptWrites() {
 	}
 }
 
-// Close resumes every target still paused on start, then closes the
-// connection. Pending calls fail with ErrSessionClosed. A session that a
-// failed write ended (retireOn) writes nothing more: its resumes are
-// refused before they write, so Close does not wait on the socket.
+// Close resumes every target still paused on start, waits for the resumes
+// that are being written (a setup that just ended), all within
+// closeResumeBudget, then closes the connection. Pending calls fail with
+// ErrSessionClosed. A session that a failed write ended (retireOn) writes
+// nothing more: its resumes are refused before they write, so Close does
+// not wait on the socket.
 func (s *Session) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), closeResumeBudget)
 	for _, id := range s.PausedTargets() {
 		_ = s.ResumeTarget(ctx, id)
+	}
+	for s.resumeInFlight() && ctx.Err() == nil {
+		time.Sleep(closeResumePoll)
 	}
 	cancel()
 	s.shutdown(ErrSessionClosed)
@@ -688,6 +798,24 @@ func (s *Session) OnEvent(method string, h EventHandler) { s.Subscribe(method, h
 // never delays replies or other subscribers. An event that arrived before a
 // reply can be handled after Send returns. h does not learn the event's
 // source target; SubscribeTarget does.
+//
+// Dispatch order, a contract that callers rely on (the scheduler records
+// an intercepted request in a read-loop handler of its method, and the
+// interceptor of internal/devtools reads it in a read-loop handler of
+// AllEvents). For each event, in the read loop:
+//  1. The session updates its own record of the event first: targets and
+//     the active target (Target.targetCreated, didCommitProvisionalTarget,
+//     targetDestroyed), the document generation (Page.frameNavigated) and
+//     the execution contexts (ExecutionContexts). A handler of the event
+//     already sees the new ActiveTarget, Generation and contexts.
+//  2. Every read-loop handler (SubscribeSync, SubscribeTargetSync) of the
+//     event's own method runs, then every read-loop handler of AllEvents.
+//     The order among handlers of the same key is not defined.
+//  3. Only after all of them returned, the event goes into the queue of
+//     each queued subscriber (Subscribe, SubscribeTarget) of the method,
+//     then of AllEvents; each queued subscriber handles its events in
+//     arrival order, on its own goroutine, so a queued handler always runs
+//     after every read-loop handler of the same event.
 func (s *Session) Subscribe(method string, h EventHandler) func() {
 	return s.SubscribeTarget(method, func(_, m string, p json.RawMessage) { h(m, p) })
 }
@@ -737,9 +865,11 @@ func (s *Session) SubscribeTarget(method string, h TargetEventHandler) func() {
 }
 
 // SubscribeSync registers h to run inside the read loop, before the event
-// reaches queued subscribers. h must not block and must not call Send; it is
-// for bookkeeping that later readers of the same event rely on (for
-// example the scheduler's pending control items).
+// reaches queued subscribers; read-loop handlers of an event's own method
+// run before those of AllEvents (see Subscribe, "Dispatch order"). h must
+// not block and must not call Send; it is for bookkeeping that later
+// readers of the same event rely on (for example the scheduler's pending
+// control items).
 func (s *Session) SubscribeSync(method string, h EventHandler) func() {
 	return s.SubscribeTargetSync(method, func(_, m string, p json.RawMessage) { h(m, p) })
 }
@@ -763,7 +893,10 @@ func (s *Session) SubscribeTargetSync(method string, h TargetEventHandler) func(
 }
 
 // dispatch delivers an event of target ("" for the connection's own
-// events) to the subscribers of method and of AllEvents.
+// events) to the subscribers of method and of AllEvents, in the order that
+// Subscribe documents ("Dispatch order"): read-loop handlers of method,
+// then of AllEvents, then the queues of method, then of AllEvents. Its
+// callers update the session's record of the event before they call it.
 func (s *Session) dispatch(target, method string, params json.RawMessage) {
 	s.subMu.RLock()
 	defer s.subMu.RUnlock()
@@ -1252,6 +1385,14 @@ func (s *Session) shutdown(err error) {
 			if t.cancelSetup != nil {
 				t.cancelSetup()
 			}
+			// The close below ends this frontend. WebKit resumes the
+			// targets that are paused on start when their last frontend
+			// disconnects (InspectorTargetAgent::disconnectFromTargets,
+			// WebKitGTK 2.54 and iOS 16.7 source), and this connection
+			// can no longer write a resume, so none stays paused in this
+			// record: PausedTargets (Close, the release barrier) asks for
+			// nothing that cannot be sent.
+			t.paused = false
 		}
 		s.mu.Unlock()
 		close(s.done)

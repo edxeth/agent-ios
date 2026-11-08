@@ -36,6 +36,21 @@ const (
 	dirEnv = "IWDP_DAEMON_DIR"
 	// streamDrain bounds the wait for open streams at shutdown.
 	streamDrain = time.Second
+	// PauseOnStart is the daemon's pause-on-start setting for every page
+	// session (webkit.SessionOptions.PauseOnStart, design 2.7 item 3). The
+	// design turns it on while a session has early-install parts; the
+	// agent runtime is a bootstrap part of every daemon page before its
+	// first connection opens, so it is always on (decision C01). Each new
+	// provisional target then waits paused until its desired-state setup
+	// ended, at most webkit.DefaultResumeAfter, so that the dialog override,
+	// init scripts and interception exist before its first script runs.
+	// WebKit drops the setting when a frontend disconnects; the session
+	// sends it again on every connection, reconnects included. It is best
+	// effort: an endpoint that refuses it or does not answer within a
+	// second keeps the connection without it, and the daemon log says so
+	// (webkit.SessionOptions.PauseOnStart). Tests that
+	// build their own core use this value to run with the daemon's setting.
+	PauseOnStart = true
 )
 
 // RunOptions configure Run.
@@ -54,7 +69,7 @@ type RunOptions struct {
 	// daemon reports how to start it.
 	StartIWDP func(context.Context) error
 	// Manager carries timing options (tests); Run sets Transport,
-	// Reservations, DaemonID and Logf.
+	// Reservations, DaemonID, Logf, Session.PauseOnStart and Session.Logf.
 	Manager core.ManagerOptions
 	Log     io.Writer // daemon log; nil = stderr
 	// CDPPort starts the CDP endpoint on 127.0.0.1:CDPPort at daemon start
@@ -199,6 +214,7 @@ func newCore(o RunOptions, logf func(string, ...any)) (*core.Manager, *Server, *
 	res := &core.Reservations{Dir: ReservationsDir(o.Dir)}
 	mo := o.Manager
 	mo.Transport, mo.Reservations, mo.Logf, mo.DaemonID = tr.get, res, logf, newDaemonID()
+	mo.Session.PauseOnStart, mo.Session.Logf = PauseOnStart, logf
 	m := core.NewManager(mo)
 	srv := NewServer(m, res, o.Version, logf)
 	srv.cdp = cdp.New(cdp.Options{Manager: m, Reservations: res, Version: o.Version, Logf: logf, Enter: srv.enter, Port: o.CDPPort})
