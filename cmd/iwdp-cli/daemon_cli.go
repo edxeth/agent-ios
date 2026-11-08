@@ -72,6 +72,11 @@ type processExit struct {
 	// canceled"), so the command can fail or end while the cleanup runs;
 	// its exit is then still 130.
 	interrupted atomic.Bool
+	// cancelRun, when set, cancels the context of the running registry
+	// command with commands.ErrInterrupted after a signal, so that
+	// commands.RunCLI prints no error for the call that the signal ended.
+	// It is set before the signal handler starts (runRegistry).
+	cancelRun context.CancelCauseFunc
 	// timedOut is set by the watchdog: the command or its cleanup ran past
 	// the command's deadline plus watchdogGrace.
 	timedOut atomic.Bool
@@ -146,6 +151,9 @@ func (p *processExit) deadlineExpired() {
 // signalled ends the process for SIGINT or SIGTERM: the cleanup, then 130.
 func (p *processExit) signalled() {
 	p.interrupted.Store(true) // before the cleanup ends any call
+	if p.cancelRun != nil {
+		p.cancelRun(reg.ErrInterrupted)
+	}
 	p.finish(func() int { return exitInterrupted })
 }
 
@@ -192,7 +200,10 @@ func isRegistryCommand(args []string) bool {
 // runRegistry runs a registry command: Local commands (the daemon
 // lifecycle) here, every other one in the daemon through /v1/run.
 func runRegistry(argv []string) int {
-	return reg.RunCLI(context.Background(), argv, os.Stdout, os.Stderr, func(ctx context.Context, inv *reg.Invocation) (reg.Env, error) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	exits.cancelRun = cancel
+	return reg.RunCLI(ctx, argv, os.Stdout, os.Stderr, func(ctx context.Context, inv *reg.Invocation) (reg.Env, error) {
 		if inv.Cmd.Local {
 			return cliHost{}, nil
 		}

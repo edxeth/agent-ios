@@ -302,8 +302,9 @@ func connectToPage(ctx context.Context, args []string) (pageClient, error) {
 		return nil, err
 	}
 	if pr.Page == "" {
+		// The page is named only in error messages, never on every
+		// command: page titles must not land in agent transcripts and logs.
 		info := pc.Info()
-		fmt.Fprintf(os.Stderr, "Connecting to: %s\n", info.Title)
 		current.setPage(fmt.Sprintf("%q (%s)", info.Title, info.Key))
 	}
 	return pc, nil

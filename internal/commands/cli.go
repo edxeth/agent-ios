@@ -396,6 +396,12 @@ func Usage() string {
 	return b.String()
 }
 
+// ErrInterrupted is the cause with which the caller of RunCLI cancels ctx
+// when a signal (SIGINT or SIGTERM) ends the command. The caller exits 130
+// for the signal; RunCLI prints no error for a command that the signal
+// ended.
+var ErrInterrupted = errors.New("interrupted by a signal")
+
 // RunCLI parses args and runs the command. Help and usage errors are
 // handled before newEnv is called, so they never connect to anything. The
 // command deadline (commandTimeout; an earlier deadline of ctx stays) is
@@ -416,20 +422,28 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv
 	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout(inv.Cmd, inv.Input.Global))
 	defer cancel()
+	// A signal's cancellation ends the command without an error line.
+	interrupted := func() bool { return errors.Is(context.Cause(ctx), ErrInterrupted) }
 	if inv.Cmd.ClientStep != nil {
 		if err := inv.Cmd.ClientStep(ctx, &inv.Input, os.Stdin); err != nil {
-			_, _ = fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err) // nothing to do when stderr fails
+			if !interrupted() {
+				_, _ = fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err) // nothing to do when stderr fails
+			}
 			return ExitCodeOf(err)
 		}
 	}
 	env, err := newEnv(ctx, inv)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		if !interrupted() {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err) // nothing to do when stderr fails
+		}
 		return ExitCodeOf(err)
 	}
 	res, err := run(ctx, env, inv.Cmd, inv.Input)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err)
+		if !interrupted() {
+			_, _ = fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err) // nothing to do when stderr fails
+		}
 		return ExitCodeOf(err)
 	}
 	if err := writeResult(stdout, res, inv.Input.Global); err != nil {
@@ -491,12 +505,22 @@ func Argv(c *Command, in Input) []string {
 	return out
 }
 
+// writeResult prints the result: its JSON with --json, else its text,
+// truncated to --max-output. With --content-boundaries the output is marked
+// as page content (output.go); the markers go around the truncated text.
 func writeResult(w io.Writer, res Result, g Globals) error {
 	out := res.Text
+	var mark boundary
+	if g.ContentBoundaries {
+		mark = newBoundary(res.Data)
+	}
 	if g.JSON {
 		v := res.Data
 		if v == nil {
 			v = map[string]string{"text": res.Text}
+		}
+		if g.ContentBoundaries {
+			v = mark.markJSON(v)
 		}
 		data, err := json.Marshal(v)
 		if err != nil {
@@ -507,6 +531,9 @@ func writeResult(w io.Writer, res Result, g Globals) error {
 	// Truncation applies to text only; cutting JSON would make it unparsable.
 	if !g.JSON && g.MaxOutput > 0 && len(out) > g.MaxOutput {
 		out = fmt.Sprintf("%s\n[output truncated: %d of %d bytes shown]", out[:g.MaxOutput], g.MaxOutput, len(out))
+	}
+	if g.ContentBoundaries && !g.JSON && out != "" {
+		out = mark.wrapText(out)
 	}
 	if out != "" && !strings.HasSuffix(out, "\n") {
 		out += "\n"

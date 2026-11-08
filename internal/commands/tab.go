@@ -150,18 +150,19 @@ func runTab(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	req := tabRequest(in, key)
 	probed := false
+	var state core.ConnState // after a failed probe
 	err = m.Do(ctx, req, acquireFor(in), "tab select", core.ClassRead, false, func(ctx context.Context, mo *core.ManagedOp) error {
 		pctx, cancel := context.WithTimeout(ctx, tabProbeBudget)
 		defer cancel()
 		probed = true
 		_, err := mo.Op.Caller().Send(pctx, "Runtime.evaluate", map[string]any{"expression": "1", "returnByValue": true})
+		if err != nil {
+			state = mo.Page.ConnState()
+		}
 		return err
 	})
 	if err != nil {
-		if probed || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, webkit.ErrSessionStalled) {
-			return Result{}, &core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf("tab %s is not the visible Safari tab; bring it to the front on the device (%w)", id, err)}
-		}
-		return Result{}, err
+		return Result{}, tabSelectError(id, probed, state, err)
 	}
 	m.SelectPage(in.Global.Session, req)
 	lines := []string{fmt.Sprintf("tab %s is now the current page of session %q", id, in.Global.Session)}
@@ -176,6 +177,58 @@ func runTab(ctx context.Context, env Env, in Input) (Result, error) {
 		}
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"tab": id, "key": key}}, nil
+}
+
+// tabSelectError is the error of "tab <id>" when its page operation failed
+// with err. probed is whether the probe ran; state is the page's
+// connection state read right after the probe failed (meaningful only when
+// probed). The causes are checked from the most specific to the most
+// general, because one failure can carry several identities: a closed
+// direct-transport page reports ErrPageClosed inside ErrSessionClosed, and a
+// write timeout reports ErrWriteTimeout inside ErrSessionClosed.
+//
+//  1. The daemon ended or refused the operation: core.ErrOpEnded in any form
+//     (refused before admission as "not sent", or a call in flight
+//     canceled), the lease ended or changed (core.ErrLeaseEnded,
+//     core.ErrStaleEpoch), another cancellation that is no deadline
+//     (context.Canceled), or state ConnClosed (the daemon closed the
+//     connection itself, which only its shutdown does while an operation
+//     runs): run the command again.
+//  2. ErrPageClosed: the tab closed (iwdp: its target was destroyed; direct:
+//     its application or the device connection ended); see 'tab list'.
+//  3. ErrWriteTimeout: the page did not take data, which the daemon
+//     recovers from by itself, so it is the hidden-tab advice of 5.
+//  4. ErrLost, ErrSessionClosed (a peer end: a read error or ErrWriteBroken)
+//     or state ConnLost: another inspector took the page or the device
+//     ended the connection; only --takeover reattaches it.
+//  5. Any other probe failure (its deadline, ErrSessionStalled, a reply
+//     error): the tab does not answer, as a hidden Safari tab does.
+//
+// Exit 4 in every case. An error before the probe keeps its own text,
+// except a deadline or a stall, which get the advice of 5.
+func tabSelectError(id string, probed bool, state core.ConnState, err error) error {
+	busy := func(format string) error {
+		return &core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf(format, id, err)}
+	}
+	const hidden = "tab %s is not the visible Safari tab; bring it to the front on the device (%w)"
+	if !probed {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, webkit.ErrSessionStalled) {
+			return busy(hidden)
+		}
+		return err
+	}
+	switch {
+	case state == core.ConnClosed || errors.Is(err, core.ErrOpEnded) || errors.Is(err, core.ErrLeaseEnded) || errors.Is(err, core.ErrStaleEpoch) ||
+		(errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)):
+		return busy("tab %s was not selected: the daemon ended the probe (it is shutting down, the page's lease ended or changed, or the operation was canceled); run the command again (%w)")
+	case errors.Is(err, webkit.ErrPageClosed):
+		return busy("tab %s closed during the probe (or its device connection ended), so it was not selected; run 'tab list' for the open tabs (%w)")
+	case errors.Is(err, webkit.ErrWriteTimeout):
+		return busy(hidden)
+	case state == core.ConnLost || errors.Is(err, core.ErrLost) || errors.Is(err, webkit.ErrSessionClosed):
+		return busy("tab %s lost its page connection during the probe (another inspector took the page, or the device ended the connection), so it was not selected; run the command again with --takeover once the device owner agrees (%w)")
+	}
+	return busy(hidden)
 }
 
 func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {

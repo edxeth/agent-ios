@@ -8,7 +8,9 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
-// GetDocument returns the root DOM node.
+// GetDocument returns the root DOM node. A reply without a root (a page
+// that is still loading, or a reply that lost its body) is an error, so a
+// caller never gets a nil root.
 func GetDocument(ctx context.Context, client webkit.Caller, depth int) (*webkit.Node, error) {
 	params := map[string]interface{}{}
 	if depth > 0 {
@@ -25,6 +27,9 @@ func GetDocument(ctx context.Context, client webkit.Caller, depth int) (*webkit.
 	}
 	if err := json.Unmarshal(result, &resp); err != nil {
 		return nil, fmt.Errorf("decoding document: %w", err)
+	}
+	if resp.Root == nil {
+		return nil, fmt.Errorf("DOM.getDocument returned no document root (reply %s); the page may still be loading: wait for it to load, then try again", result)
 	}
 	return resp.Root, nil
 }
