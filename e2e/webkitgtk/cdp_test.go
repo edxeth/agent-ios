@@ -5,53 +5,14 @@ package webkitgtk
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
 )
-
-// cdpBrowser is runtimeBrowser on its own broadway display range (250 to
-// 299, by process id), so this test never shares a display with the other
-// suites of this package or of a parallel run.
-func cdpBrowser(t *testing.T, page string) string {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &http.Server{Handler: http.FileServer(http.Dir(fixtureDir()))}
-	go func() { _ = srv.Serve(l) }()
-	t.Cleanup(func() { _ = srv.Close() })
-	shim, err := buildDPIShim(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	display := fmt.Sprintf(":%d", 250+os.Getpid()%50)
-	startProcess(t, nil, "broadwayd", display)
-	time.Sleep(500 * time.Millisecond)
-	addr := freeAddr(t)
-	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr, "LD_PRELOAD=" + shim},
-		miniBrowser, "http://"+l.Addr().String()+"/"+page)
-	tr := webkitgtk.New(addr)
-	for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		pages, err := tr.Pages(ctx, "webkitgtk-"+addr)
-		cancel()
-		if err == nil && len(pages) > 0 && pages[0].Title != "" {
-			return addr
-		}
-	}
-	t.Fatalf("MiniBrowser did not list the page %s at %s within 15 s", page, addr)
-	return ""
-}
 
 func gtkEpoch(t *testing.T, session string) uint64 {
 	t.Helper()
@@ -101,7 +62,7 @@ func gtkLastAttach(t *testing.T, c *cdptest.Client) (sessionID, kind string) {
 // unchanged and the snapshot's ref still works in a later CLI process;
 // after close the URL gets 404.
 func TestCDPClientEvaluatesThroughGetCDPURL(t *testing.T) {
-	addr := cdpBrowser(t, "forms.html")
+	addr := runtimeBrowser(t, "forms.html")
 	if r := cli(t, "daemon", "start", "--transport", "webkitgtk", "--addr", addr); r.code != 0 {
 		t.Fatalf("daemon start: exit %d, stderr %q", r.code, r.stderr)
 	}

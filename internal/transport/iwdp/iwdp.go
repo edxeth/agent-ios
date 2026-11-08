@@ -17,8 +17,8 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
-// DefaultListingAddr is iwdp's device list.
-var DefaultListingAddr = fmt.Sprintf("127.0.0.1:%d", proxy.DefaultListingPort)
+// DefaultListingAddr is iwdp's device list (proxy.ListingAddr).
+var DefaultListingAddr = proxy.ListingAddr()
 
 // Options configure a Transport.
 type Options struct {

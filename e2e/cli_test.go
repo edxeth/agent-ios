@@ -25,7 +25,7 @@ func buildCLI(t *testing.T) string {
 		}
 		trackTempDir(dir)
 		bin := filepath.Join(dir, "iwdp-cli")
-		cmd := exec.Command("go", "build", "-o", bin, "../cmd/iwdp-cli")
+		cmd := exec.Command("go", "build", "-ldflags", listingLDFlags(deadCLIListing().Addr()), "-o", bin, "../cmd/iwdp-cli")
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			cliBinaryErr = err
@@ -149,16 +149,21 @@ func TestCLI_DevicesWithoutIWDP(t *testing.T) {
 	bin := buildCLI(t)
 
 	// Devices command without iwdp running should give a helpful error.
+	// The binary reads the dead listing of these tests (deadCLIListing),
+	// never the user's iwdp.
+	listing := deadCLIListing()
+	before := listing.hits.Load()
 	cmd := exec.Command(bin, "devices")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		// If iwdp happens to be running, that's fine too.
-		t.Log("devices succeeded (iwdp may be running)")
-		return
+		t.Fatalf("devices succeeded without iwdp: %s", out)
 	}
 	output := string(out)
 	if !strings.Contains(output, "ios_webkit_debug_proxy") {
 		t.Errorf("devices error should mention ios_webkit_debug_proxy, got: %s", output)
+	}
+	if listing.hits.Load() == before {
+		t.Errorf("devices did not check the private listing %s", listing.Addr())
 	}
 }
 

@@ -66,6 +66,12 @@ func TestMain(m *testing.M) {
 	testRuntimeDir = dir
 	_ = os.Setenv("XDG_RUNTIME_DIR", dir)
 	_ = os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	// No two tests share a daemon (W1c T02): the binary's default socket
+	// directory is a regular file, so a test that reaches the daemon
+	// without privateDaemonDir fails with daemon.ErrUnsafeDir.
+	if err := os.WriteFile(daemon.SocketDir(), []byte(sharedDaemonDirNote), 0o600); err != nil {
+		panic(err)
+	}
 	for _, k := range []string{"IWDP_SESSION", "IWDP_DEVICE_RESERVATION", "IWDP_TRANSPORT", "IWDP_DAEMON_DIR"} {
 		_ = os.Unsetenv(k)
 	}
@@ -74,8 +80,8 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("IWDP_MCP_TOOLS", "all")
 	daemonSpawnEnv = []string{mcpRunMainEnv + "=1", "IWDP_DAEMON_IDLE=" + testDaemonIdle}
 	daemonStartIWDP = nil
-	// list_devices, list_pages, iwdp_status and restart_iwdp run
-	// ios_webkit_debug_proxy and pkill by name; the tests find fakes first.
+	// list_devices, list_pages and iwdp_status start ios_webkit_debug_proxy
+	// by name; the tests find fakes first and never restart iwdp.
 	fakeIWDPBin = filepath.Join(dir, "bin")
 	if err := os.Mkdir(fakeIWDPBin, 0o700); err != nil {
 		panic(err)
@@ -116,8 +122,14 @@ func stopDaemonIn(dir string) {
 	}
 }
 
+// sharedDaemonDirNote is the content of the file that blocks the shared
+// daemon directory.
+const sharedDaemonDirNote = "no shared test daemon: call privateDaemonDir(t) in a test that reaches the daemon\n"
+
 // privateDaemonDir gives the test its own daemon directory, stopped at
-// cleanup, and returns the socket directory.
+// cleanup, and returns the socket directory. Every test that reaches the
+// daemon (select_page, a registry tool without a direct page, a daemon
+// command) calls it first: TestMain blocks the shared directory.
 func privateDaemonDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp(testRuntimeDir, "d")

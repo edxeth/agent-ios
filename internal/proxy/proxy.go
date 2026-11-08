@@ -38,6 +38,16 @@ const (
 // ::1, turning probes into multi-second hangs instead of fast dials.
 const listingHost = "127.0.0.1"
 
+// listingAddr is iwdp's listing address, listingHost:DefaultListingPort.
+// It is a variable only so that the e2e tests can link their binaries
+// with a private fake listing (-ldflags -X, e2e/listing_w1c6_test.go);
+// no flag or environment variable sets it.
+var listingAddr = "127.0.0.1:9221"
+
+// ListingAddr is iwdp's default listing address (host:port), which
+// IsRunning, Start, EnsureRunning, ListDevices and the iwdp transport use.
+func ListingAddr() string { return listingAddr }
+
 // ProbeBudget bounds one check whether iwdp's listing answers (CheckListing,
 // IsRunning and the daemon's check). iwdp is a single-threaded event loop;
 // under heavy WebKit inspector traffic or a loaded host its /json can stall
@@ -144,7 +154,7 @@ func NewStarter(addr string) *Starter {
 
 // std is the Starter of iwdp's default listing address, used by IsRunning,
 // Start and EnsureRunning.
-var std = NewStarter(fmt.Sprintf("%s:%d", listingHost, DefaultListingPort))
+var std = NewStarter(listingAddr)
 
 // IsRunning checks if ios_webkit_debug_proxy answers on the listing port
 // (9221) within ProbeBudget. This is the canonical way to detect a running
@@ -320,7 +330,7 @@ func Restart(ctx context.Context) error {
 // Each device entry contains a URL like "localhost:9224" indicating
 // which port to query for that device's pages.
 func ListDevices() ([]webkit.DeviceEntry, error) {
-	return listDevicesFromURL(fmt.Sprintf("http://%s:%d/json", listingHost, DefaultListingPort))
+	return listDevicesFromURL("http://" + listingAddr + "/json")
 }
 
 func listDevicesFromURL(u string) ([]webkit.DeviceEntry, error) {

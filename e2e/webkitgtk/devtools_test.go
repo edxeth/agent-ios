@@ -179,31 +179,21 @@ func devtoolsBrowser(t *testing.T, url string) *cutProxy {
 	if _, err := os.Stat(miniBrowser); err != nil {
 		t.Fatalf("WebKitGTK MiniBrowser not found at %s: %v", miniBrowser, err)
 	}
-	display := fmt.Sprintf(":%d", 200+time.Now().Nanosecond()%50)
-	// broadwayd's HTTP port defaults to 8080 plus the display number, which
-	// another program can hold (8317, display 237, on the W4 test host);
-	// broadwayd then exits and MiniBrowser never lists the page. A free
-	// port avoids that.
-	_, port, err := net.SplitHostPort(freeAddr(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	startProcess(t, nil, "broadwayd", "--port", port, display)
-	time.Sleep(500 * time.Millisecond)
+	display := broadway(t)
 	addr := freeAddr(t)
 	// A private XDG_CONFIG_HOME: the user's GTK settings (a dark theme
 	// preference) would change prefers-color-scheme.
 	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr, "XDG_CONFIG_HOME=" + t.TempDir()}, miniBrowser, url)
 	tr := webkitgtk.New(addr)
 	listed := false
-	for end := time.Now().Add(15 * time.Second); time.Now().Before(end) && !listed; time.Sleep(200 * time.Millisecond) {
+	for end := time.Now().Add(browserStart); time.Now().Before(end) && !listed; time.Sleep(200 * time.Millisecond) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		pages, err := tr.Pages(ctx, "webkitgtk-"+addr)
 		cancel()
 		listed = err == nil && len(pages) > 0 && pages[0].Title != ""
 	}
 	if !listed {
-		t.Fatalf("MiniBrowser did not list the page %s at %s within 15 s", url, addr)
+		t.Fatalf("MiniBrowser did not list the page %s at %s within %v", url, addr, browserStart)
 	}
 	p := newCutProxy(t, addr)
 	if r := cli(t, "daemon", "start", "--transport", "webkitgtk", "--addr", p.addr()); r.code != 0 {

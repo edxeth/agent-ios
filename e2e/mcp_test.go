@@ -4,13 +4,17 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
 var (
@@ -29,7 +33,8 @@ func buildMCP(t *testing.T) string {
 		}
 		trackTempDir(dir)
 		bin := filepath.Join(dir, "iwdp-mcp")
-		cmd := exec.Command("go", "build", "-o", bin, "../cmd/iwdp-mcp")
+		listing, _ := fakeMCPListing()
+		cmd := exec.Command("go", "build", "-ldflags", listingLDFlags(listing.Addr()), "-o", bin, "../cmd/iwdp-mcp")
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			mcpBinaryErr = err
@@ -327,17 +332,21 @@ func TestMCP_CallToolWithoutSession(t *testing.T) {
 
 	isError, _ := result["isError"].(bool)
 	content, _ := result["content"].([]interface{})
-
+	var text string
 	if len(content) > 0 {
-		first, ok := content[0].(map[string]interface{})
-		if ok {
-			text, _ := first["text"].(string)
-			if strings.Contains(text, "select_page") || strings.Contains(text, "no page") {
-				t.Logf("got expected error: %s", text)
-			} else if !isError {
-				t.Errorf("expected error about no page selected, got: %s", text)
-			}
+		if first, ok := content[0].(map[string]interface{}); ok {
+			text, _ = first["text"].(string)
 		}
+	}
+	if !isError {
+		t.Fatalf("navigate without a selected page succeeded: %s", text)
+	}
+	// The daemon looks for the default page in the binary's private
+	// listing (fakeMCPListing), never in the user's iwdp. That listing has
+	// one physical device, and the daemon refuses a page connection on it
+	// without a device reservation (design 2.5).
+	if !strings.Contains(text, "no device reservation") {
+		t.Errorf("navigate without a selected page: %q, want the reservation error of the private listing's device", text)
 	}
 }
 
@@ -346,6 +355,8 @@ func TestMCP_ListDevicesTool(t *testing.T) {
 	p.initialize(t)
 
 	// list_devices does HTTP to iwdp directly — doesn't require a session.
+	// The binary reads the fake iwdp listing of these tests (fakeMCPListing).
+	_, device := fakeMCPListing()
 	p.send(t, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -365,9 +376,33 @@ func TestMCP_ListDevicesTool(t *testing.T) {
 		t.Errorf("id = %v, want 2", resp["id"])
 	}
 
-	// Response should have result (even if the tool returns an error, MCP wraps it).
-	if resp["result"] == nil && resp["error"] == nil {
-		t.Error("expected either result or error in response")
+	var out struct {
+		Devices []webkit.DeviceEntry `json:"devices"`
+	}
+	toolResult(t, resp, &out)
+	want := webkit.DeviceEntry{DeviceID: e2eDeviceID, DeviceName: e2eDeviceName, DeviceOSVersion: e2eDeviceOS, URL: device.Addr()}
+	if len(out.Devices) != 1 || out.Devices[0] != want {
+		t.Fatalf("list_devices devices = %+v, want the fake listing's [%+v]", out.Devices, want)
+	}
+}
+
+// toolResult decodes the structured content of a successful tools/call
+// response into out.
+func toolResult(t *testing.T, resp map[string]interface{}, out any) {
+	t.Helper()
+	result, ok := resp["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected a result, got %v", resp)
+	}
+	if isError, _ := result["isError"].(bool); isError {
+		t.Fatalf("tool returned an error: %v", result["content"])
+	}
+	data, err := json.Marshal(result["structuredContent"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		t.Fatalf("structuredContent %s: %v", data, err)
 	}
 }
 
@@ -375,14 +410,24 @@ func TestMCP_ListPagesTool(t *testing.T) {
 	p := startMCP(t)
 	p.initialize(t)
 
-	// list_pages does HTTP to a device port directly — doesn't require a session.
+	// list_pages does HTTP to a device port directly — doesn't require a
+	// session. The port is the fake device's (fakeMCPListing), not 9224.
+	_, device := fakeMCPListing()
+	_, port, err := net.SplitHostPort(device.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	devicePort, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p.send(t, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      3,
 		"method":  "tools/call",
 		"params": map[string]interface{}{
 			"name":      "list_pages",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]interface{}{"port": devicePort},
 		},
 	})
 
@@ -391,8 +436,14 @@ func TestMCP_ListPagesTool(t *testing.T) {
 	if resp["jsonrpc"] != "2.0" {
 		t.Errorf("jsonrpc = %v, want 2.0", resp["jsonrpc"])
 	}
-	// Should get a valid response regardless of whether iwdp is running.
-	if resp["result"] == nil && resp["error"] == nil {
-		t.Error("expected either result or error")
+	if resp["id"] != float64(3) {
+		t.Errorf("id = %v, want 3", resp["id"])
+	}
+	var out struct {
+		Pages []webkit.PageEntry `json:"pages"`
+	}
+	toolResult(t, resp, &out)
+	if len(out.Pages) != 1 || out.Pages[0].Title != e2ePageTitle || out.Pages[0].URL != e2ePageURL || out.Pages[0].WebSocketDebuggerURL != e2ePageWSURL {
+		t.Fatalf("list_pages pages = %+v, want the fake device's page %q", out.Pages, e2ePageTitle)
 	}
 }
