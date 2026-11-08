@@ -7,7 +7,8 @@
 // replies, provisional swaps, connection failures and page runtime calls,
 // and read back every message in order. Like WebKit's backend dispatcher,
 // it refuses a Network interception command whose parameters are missing or
-// of the wrong type.
+// of the wrong type, and it runs each target's ScriptProfiler as WebKit does
+// (scriptprofiler.go).
 package fakewebkit
 
 import (
@@ -131,7 +132,9 @@ type Server struct {
 	dropReply    map[string]int // method -> number of replies to drop
 	delays       map[string]time.Duration
 	runtime      RuntimeHandler
-	intercepts   *intercepts // nil until the first Intercept (intercept.go)
+	intercepts   *intercepts             // nil until the first Intercept (intercept.go)
+	profiling    map[string]*profilerRun // tracking runs by target (scriptprofiler.go)
+	profClock    float64                 // the profiler's timestamps, in seconds
 }
 
 type conn struct {
@@ -429,9 +432,11 @@ func (s *Server) DestroyTarget(id string) {
 	s.EmitOuter("Target.targetDestroyed", map[string]string{"targetId": id})
 }
 
-// dropTargetLocked forgets target id and the requests it held.
+// dropTargetLocked forgets target id, the requests it held and its
+// ScriptProfiler run.
 func (s *Server) dropTargetLocked(id string) {
 	delete(s.targets, id)
+	delete(s.profiling, id)
 	if s.intercepts != nil {
 		delete(s.intercepts.held, id)
 	}
@@ -516,6 +521,9 @@ func (s *Server) serve(ws *websocket.Conn) {
 				s.conns = append(s.conns[:i], s.conns[i+1:]...)
 				break
 			}
+		}
+		if len(s.conns) == 0 {
+			s.profiling = nil // the last frontend went: WebKit ends every run
 		}
 		s.mu.Unlock()
 	}()
@@ -686,6 +694,8 @@ func (s *Server) handlePage(c *conn, call Call) {
 			perr = invalid
 		case h != nil:
 			result, perr = h(call)
+		case call.Method == "ScriptProfiler.startTracking" || call.Method == "ScriptProfiler.stopTracking":
+			s.scriptProfiler(call)
 		case tracked && interceptStage(call) != "":
 			perr = s.takeHold(call)
 		case tracked && call.Method == "Network.disable":

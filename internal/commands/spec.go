@@ -78,7 +78,26 @@ type Command struct {
 	// Local commands run in the client process (the daemon lifecycle);
 	// every other command runs in the daemon (design 2.10).
 	Local bool
-	Run   func(ctx context.Context, env Env, in Input) (Result, error)
+	// MCPAliases maps a legacy MCP parameter name to the argument or flag
+	// it stands for (design 4.1: existing MCP tools keep their parameters;
+	// for example click's "selector" is its target). An MCP call gives at
+	// most one of the two; an argument with an alias is not required in
+	// the MCP schema, and the call is checked after the alias is applied.
+	MCPAliases map[string]string
+	// MCPSchema gives a parameter (an argument, a flag or an MCPAliases
+	// name) the JSON schema of the legacy MCP tool, when that tool took
+	// another JSON type than the string of the command line (design 4.1),
+	// for example an object of headers or a number of seconds. The
+	// generated description stays. A value that is not a string reaches
+	// the command as text: an object or an array as its JSON, a number in
+	// decimal notation (mcpText).
+	MCPSchema map[string]map[string]any
+	// NotOnCommandLine commands run only for MCP or when another command
+	// forwards them (RunRemote); RunCLI refuses them with this text
+	// before any connection, because their flags (a password) would be
+	// in the process's argv.
+	NotOnCommandLine string
+	Run              func(ctx context.Context, env Env, in Input) (Result, error)
 }
 
 // Env is what a running command can use.

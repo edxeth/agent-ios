@@ -611,6 +611,9 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	g.Timeout = durMs(req.TimeoutMs, DefaultCommandTimeout)
 	ctx, cancel := context.WithTimeout(r.Context(), durMs(req.TimeoutMs, DefaultCommandTimeout))
 	defer cancel()
+	// Registry commands start the lease hooks (the network capture of the
+	// lease, design 4.2); legacy operations (/v1/op) do not.
+	ctx = core.WithLeaseHooks(ctx)
 	st := newStream(w)
 	env := &runEnv{s: s, req: req, st: st}
 	var res commands.Result

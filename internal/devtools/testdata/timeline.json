@@ -1,0 +1,13 @@
+{
+  "$comment": "Hand-written Timeline.eventRecorded records in WebKit's shape (type, data, children, plus the backend's startTime and endTime in seconds), recordingStarted at 10.0. The expected trace is in convert_test.go.",
+  "start": 10.0,
+  "records": [
+    {"type": "EventDispatch", "data": {"type": "click"}, "startTime": 10.5, "endTime": 10.75, "children": [
+      {"type": "FunctionCall", "data": {"scriptName": "https://a.test/app.js", "scriptLine": 3}, "startTime": 10.5, "endTime": 10.7, "children": [
+        {"type": "TimerInstall", "data": {"timerId": 1, "timeout": 0, "singleShot": true}, "startTime": 10.6}
+      ]}
+    ]},
+    {"type": "TimerFire", "data": {"timerId": 1}, "startTime": 11.0, "endTime": 11.002},
+    {"type": "TimeStamp", "data": {"message": "mark"}, "startTime": 11.5}
+  ]
+}

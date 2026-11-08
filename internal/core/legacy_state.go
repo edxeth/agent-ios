@@ -618,7 +618,13 @@ func desiredStateMethod(method string) bool {
 	}
 	_, clear := stateClears[method]
 	_, rule := stateRules[method]
-	return verb == "enable" || verb == "disable" || clear || rule
+	return verb == "enable" || verb == "disable" || clear || rule || scriptProfilerMethod(method)
+}
+
+// scriptProfilerMethod reports a legacy call that starts or stops the
+// page's ScriptProfiler run (scriptprofiler.go).
+func scriptProfilerMethod(method string) bool {
+	return method == "ScriptProfiler.startTracking" || method == "ScriptProfiler.stopTracking"
 }
 
 // breakpointEntry is the owned entry of a JavaScript breakpoint that the

@@ -316,6 +316,22 @@ func resetAgent(ctx context.Context, ps *PageSession, c Sender, dom string) erro
 	return nil
 }
 
+// ResetUnknownAgent services the pending cleanup of dom on the change's
+// caller c: when a release left the agent's page-side state unknown (its
+// cleanup was not sent or failed), it resets the agent first (resetAgent).
+// It runs inside a change (DesiredState.Change) of an operation. Code
+// outside core that starts state of an agent that a release can leave
+// behind, for example a ScriptProfiler run or a Timeline recording, which
+// survive a same-target navigation, calls it in its change before the
+// start, so that the reset comes before the new state and never after it
+// (core's background reset waits for the change lock, Manager.resetUnknownAgents).
+func ResetUnknownAgent(ctx context.Context, ps *PageSession, c Sender, dom string) error {
+	if !ps.State.isUnknown(dom) {
+		return nil
+	}
+	return resetAgent(ctx, ps, c, dom)
+}
+
 // resetAndApplyDomain sends the reset of dom and, while dom is needed, its
 // enable and the parts of the desired state that belong to it: for Page
 // the bootstrap script, and every generic or shared entry of dom.

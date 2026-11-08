@@ -582,8 +582,14 @@ var overlayResetCalls = []webkit.Call{{Method: "DOM.hideHighlight"}, {Method: "D
 // pause-on-exceptions and debugger-statement settings, which survive
 // Debugger.disable in JSC::Debugger; for Page, then an empty bootstrap
 // script, which Page.disable keeps (Apply sends the desired script after
-// Page.enable).
+// Page.enable). ScriptProfiler has no enable or disable; its only state is
+// a tracking run, which survives a same-target navigation and which
+// ScriptProfiler.stopTracking ends (a no-op while it does not track;
+// InspectorScriptProfilerAgent, W4 rebase review finding F2).
 func agentResetCalls(dom string) []webkit.Call {
+	if dom == "ScriptProfiler" {
+		return []webkit.Call{{Method: "ScriptProfiler.stopTracking"}}
+	}
 	var calls []webkit.Call
 	if dom == "Debugger" {
 		for _, rule := range []string{"Debugger.setPauseOnExceptions", "Debugger.setPauseOnDebuggerStatements"} {

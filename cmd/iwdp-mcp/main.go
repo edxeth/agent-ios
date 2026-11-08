@@ -70,6 +70,10 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
 		os.Exit(runDaemonCommand(os.Args[1:]))
 	}
+	if err := selectProfile(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "iwdp-mcp: %v\n", err)
+		os.Exit(2)
+	}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "iwdp-mcp",
 		Version: "0.5.4",
@@ -98,7 +102,7 @@ var legacyToolNames []string
 // profile (design 2.10). addTool skips the legacy tools whose names they
 // reuse, so both sources come from the same profile selection.
 func registerRegistryTools(s *mcp.Server) {
-	commands.RegisterMCP(s, commands.SelectedProfile(os.Getenv), func(context.Context, commands.Globals) (commands.Env, error) {
+	commands.RegisterMCP(s, mcpProfile(), func(context.Context, commands.Globals) (commands.Env, error) {
 		return registryEnv{}, nil
 	})
 }
@@ -106,7 +110,7 @@ func registerRegistryTools(s *mcp.Server) {
 func addTool[In, Out any](s *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
 	// A registry command that reuses this tool name replaces the legacy
 	// handler (design 2.10, deduplicated registration manifest).
-	if commands.ProvidesMCPTool(commands.SelectedProfile(os.Getenv), t.Name) || !legacyToolSelected(t.Name) {
+	if commands.ProvidesMCPTool(mcpProfile(), t.Name) || !legacyToolSelected(t.Name) {
 		return
 	}
 	legacyToolNames = append(legacyToolNames, t.Name)

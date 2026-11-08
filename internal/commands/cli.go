@@ -150,8 +150,34 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 		}
 		g.Timeout = d
 	}
-	help := false
-	var rest []string
+	rest, help, err := splitGlobals(args, &g)
+	if err != nil {
+		return nil, err
+	}
+	words := commandWords(rest)
+	c, n := Lookup(words)
+	if c == nil {
+		if len(words) == 0 {
+			return &Invocation{Help: help}, nil
+		}
+		return nil, &UsageError{fmt.Sprintf("unknown command %q", strings.Join(words, " "))}
+	}
+	inv := &Invocation{Cmd: c, Help: help, Input: Input{Global: g, Flags: map[string]any{}}}
+	if help {
+		return inv, nil
+	}
+	if err := parseCommand(c, rest[n:], &inv.Input); err != nil {
+		return nil, &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
+	}
+	return inv, nil
+}
+
+// splitGlobals takes the global flags and --help (-h) out of args, up to
+// "--", and returns the other arguments in their order. It sets the flags
+// on g; with g nil it checks no value, so it only finds the command words
+// (CommandWords). On an error, rest holds the arguments before the bad
+// flag.
+func splitGlobals(args []string, g *Globals) (rest []string, help bool, err error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
@@ -170,15 +196,23 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 		}
 		if gs.value && !hasVal {
 			if i+1 >= len(args) {
-				return nil, &UsageError{fmt.Sprintf("%s needs a value", name)}
+				return rest, help, &UsageError{fmt.Sprintf("%s needs a value", name)}
 			}
 			i++
 			val = args[i]
 		}
-		if err := gs.set(&g, val); err != nil {
-			return nil, &UsageError{err.Error()}
+		if g == nil {
+			continue
+		}
+		if err := gs.set(g, val); err != nil {
+			return rest, help, &UsageError{err.Error()}
 		}
 	}
+	return rest, help, nil
+}
+
+// commandWords are the leading arguments of rest that are not flags.
+func commandWords(rest []string) []string {
 	var words []string
 	for _, a := range rest {
 		if strings.HasPrefix(a, "-") {
@@ -186,21 +220,19 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 		}
 		words = append(words, a)
 	}
-	c, n := Lookup(words)
-	if c == nil {
-		if len(words) == 0 {
-			return &Invocation{Help: help}, nil
-		}
-		return nil, &UsageError{fmt.Sprintf("unknown command %q", strings.Join(words, " "))}
-	}
-	inv := &Invocation{Cmd: c, Help: help, Input: Input{Global: g, Flags: map[string]any{}}}
-	if help {
-		return inv, nil
-	}
-	if err := parseCommand(c, rest[n:], &inv.Input); err != nil {
-		return nil, &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
-	}
-	return inv, nil
+	return words
+}
+
+// CommandWords returns the command words of a command line as Parse finds
+// them: the global flags (design 2.11: anywhere before "--") and --help are
+// skipped, also between the words, and the words end at the first other
+// flag. A global flag without its value ends the line.
+func CommandWords(args []string) []string {
+	// With g nil the only error is a value flag at the end of the line
+	// without its value; Parse reports it, and the words before it are
+	// still the command's.
+	rest, _, _ := splitGlobals(args, nil)
+	return commandWords(rest)
 }
 
 func findFlag(c *Command, name string) *Flag {
@@ -381,6 +413,10 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv
 			fmt.Fprint(stdout, Usage())
 		}
 		return ExitOK
+	}
+	if inv.Cmd.NotOnCommandLine != "" {
+		_, _ = fmt.Fprintf(stderr, "Error: %s: %s\n", inv.Cmd.Name, inv.Cmd.NotOnCommandLine) // nothing to do when stderr fails
+		return ExitUsage
 	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout(inv.Cmd, inv.Input.Global))
 	defer cancel()

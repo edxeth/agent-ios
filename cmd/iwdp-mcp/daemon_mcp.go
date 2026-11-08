@@ -140,6 +140,9 @@ func (e registryEnv) RunRemote(ctx context.Context, c *commands.Command, in comm
 	if !slices.Contains(daemonCommands, c) {
 		return c.Run(ctx, e.mcpHost, in) // unknown to the daemon: runs here
 	}
+	if pc := directPage(); pc != nil {
+		return c.Run(ctx, directPageEnv{mcpHost: e.mcpHost, caller: pc}, in)
+	}
 	dc, err := daemon.Connect(ctx, mcpDaemonOptions())
 	if err != nil {
 		return commands.Result{}, err
@@ -164,6 +167,35 @@ func (e registryEnv) RunRemote(ctx context.Context, c *commands.Command, in comm
 		out.Data = res.Data
 	}
 	return out, nil
+}
+
+// directPage returns the selected page when it is a direct connection
+// instead of a daemon page. select_page always attaches through the
+// daemon; only the unit tests select a mock page directly (connectMCP).
+// A registry tool that takes over a legacy tool (set_cookie) then runs in
+// this process on that connection, as the legacy handler did.
+func directPage() webkit.Caller {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.client == nil {
+		return nil
+	}
+	if _, ok := sess.client.(*daemon.PageCaller); ok {
+		return nil
+	}
+	return sess.client
+}
+
+// directPageEnv is the Env of a registry command on a directly connected
+// page (directPage): the page session has only the caller, with no
+// scheduler, desired state or runtime.
+type directPageEnv struct {
+	mcpHost
+	caller webkit.Caller
+}
+
+func (e directPageEnv) Page(context.Context) (*core.PageSession, error) {
+	return &core.PageSession{Caller: e.caller}, nil
 }
 
 // selectedPage is the page request of the selected page, or the

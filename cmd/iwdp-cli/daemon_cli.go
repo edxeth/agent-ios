@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -186,14 +185,7 @@ const exitInterrupted = 130
 // isRegistryCommand reports whether the command words of args name a
 // registry command (design 2.11).
 func isRegistryCommand(args []string) bool {
-	var words []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			break
-		}
-		words = append(words, a)
-	}
-	c, _ := reg.Lookup(words)
+	c, _ := reg.Lookup(reg.CommandWords(args))
 	return c != nil
 }
 
@@ -230,6 +222,16 @@ func (cliHost) ResolvePath(p string) string   { return p }
 func (cliHost) ClientOptions() daemon.Options { return daemonOptions() }
 func (cliHost) RunOptions() daemon.RunOptions {
 	return daemon.RunOptions{Version: daemon.BuildVersion(), StartIWDP: daemonStartIWDP}
+}
+
+// RunRemote lets a Local command run another command in the daemon: "set
+// credentials" reads the password from stdin here and forwards it.
+func (cliHost) RunRemote(ctx context.Context, c *reg.Command, in reg.Input) (reg.Result, error) {
+	dc, err := daemon.Connect(ctx, daemonOptions())
+	if err != nil {
+		return reg.Result{}, err
+	}
+	return (&remoteEnv{c: dc}).RunRemote(ctx, c, in)
 }
 
 // remoteEnv runs registry commands in the daemon (commands.RemoteEnv).

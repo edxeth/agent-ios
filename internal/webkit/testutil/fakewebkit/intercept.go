@@ -33,6 +33,18 @@ type intercepts struct {
 // "response") and emits Network.requestIntercepted or
 // Network.responseIntercepted from target.
 func (s *Server) Intercept(target, requestID, stage string) {
+	s.InterceptEvent(target, requestID, stage, nil)
+}
+
+// InterceptEvent is Intercept with more fields of the event: the request
+// of Network.requestIntercepted or the response of
+// Network.responseIntercepted (WIP Network.json), which a handler of the
+// event matches against its rules.
+func (s *Server) InterceptEvent(target, requestID, stage string, fields map[string]any) {
+	params := map[string]any{"requestId": requestID}
+	for k, v := range fields {
+		params[k] = v
+	}
 	s.mu.Lock()
 	if s.intercepts == nil {
 		s.intercepts = &intercepts{held: map[string]map[string]string{}}
@@ -46,7 +58,7 @@ func (s *Server) Intercept(target, requestID, stage string) {
 	if stage == "response" {
 		event = "Network.responseIntercepted"
 	}
-	s.EmitFrom(target, event, map[string]any{"requestId": requestID})
+	s.EmitFrom(target, event, params)
 }
 
 // HeldRequests returns the ids of the requests that target holds, sorted.

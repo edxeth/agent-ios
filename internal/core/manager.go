@@ -1110,6 +1110,7 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 	if err != nil {
 		return nil, 0, time.Time{}, err
 	}
+	m.leaseStarted(ctx, pg, ao.Session, epoch)
 	return pg, epoch, prev, nil
 }
 
@@ -1247,24 +1248,34 @@ func (e notSent) Unwrap() []error { return []error{e.error, webkit.ErrNotSent} }
 
 // legacyCall maps a legacy call onto the desired state (design 2.4, 2.10).
 // A call that changes it runs as one change, which provisional targets
-// receive too (beginChange).
+// receive too (DesiredState.Change); its result includes the failures of
+// the change's sends to those targets (review finding R6-1).
 func legacyCall(ctx context.Context, ps *PageSession, owner Owner, c webkit.Caller, method string, params json.RawMessage) (res json.RawMessage, err error) {
-	if desiredStateMethod(method) {
-		// berr, not err: the deferred end must update the named result
-		// (review finding R6-1).
-		cs, end, berr := ps.State.beginChange(ctx, c)
-		if berr != nil {
-			return nil, berr
-		}
-		defer func() { err = end(err) }()
-		c = cs
+	if !desiredStateMethod(method) {
+		return legacyCallOn(ctx, ps, owner, c, method, params)
 	}
+	err = ps.State.Change(ctx, c, func(c webkit.Caller) error {
+		var cerr error
+		res, cerr = legacyCallOn(ctx, ps, owner, c, method, params)
+		return cerr
+	})
+	return res, err
+}
+
+// legacyCallOn runs a legacy call on c, which is the change's caller when
+// the call changes the desired state.
+func legacyCallOn(ctx context.Context, ps *PageSession, owner Owner, c webkit.Caller, method string, params json.RawMessage) (json.RawMessage, error) {
 	empty := json.RawMessage("{}")
 	var p any
 	if len(params) > 0 && string(params) != "null" {
 		p = params
 	}
 	dom, verb, _ := strings.Cut(method, ".")
+	if scriptProfilerMethod(method) {
+		// The page's ScriptProfiler lifecycle (scriptprofiler.go): it runs
+		// a pending stop itself, after its admission check.
+		return legacyScriptProfiler(ctx, ps, owner, c, method, params)
+	}
 	if ud := cmp.Or(ruleDomain(method), dom); desiredStateMethod(method) && ps.State.isUnknown(ud) {
 		// A release left this agent's state unknown: reset it first
 		// (release_lifecycle.go).

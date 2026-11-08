@@ -48,6 +48,30 @@ type managedPage struct {
 // page through a Manager on the WebKitGTK transport.
 func attachManaged(t *testing.T, url string) *managedPage {
 	t.Helper()
+	m, req := managedBrowser(t, url)
+	// The operation lives as long as Begin's context.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancel)
+	mo, err := m.Begin(ctx, req, core.AcquireOptions{Session: "contexts"}, "contexts", core.ClassExclusive)
+	if err != nil {
+		t.Fatalf("attaching the page: %v", err)
+	}
+	t.Cleanup(func() { m.End(mo.ID) })
+	pc, ok := mo.Page.PS.Caller.(interface {
+		ActiveTarget() string
+		ExecutionContexts(target string) []webkit.ExecutionContext
+	})
+	if !ok {
+		t.Fatalf("the page connection %T has no context inventory", mo.Page.PS.Caller)
+	}
+	return &managedPage{m: m, mo: mo, pc: pc}
+}
+
+// managedBrowser starts broadwayd and MiniBrowser on url and returns a
+// Manager on the WebKitGTK transport and the request of its page. The
+// Manager closes at test cleanup.
+func managedBrowser(t *testing.T, url string) (*core.Manager, core.PageRequest) {
+	t.Helper()
 	display := broadway(t)
 	addr := freeAddr(t)
 	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr}, miniBrowser, url)
@@ -73,22 +97,7 @@ func attachManaged(t *testing.T, url string) *managedPage {
 		defer cancel()
 		_ = m.Close(ctx)
 	})
-	// The operation lives as long as Begin's context.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	t.Cleanup(cancel)
-	mo, err := m.Begin(ctx, core.PageRequest{Transport: "webkitgtk", Addr: addr}, core.AcquireOptions{Session: "contexts"}, "contexts", core.ClassExclusive)
-	if err != nil {
-		t.Fatalf("attaching the page: %v", err)
-	}
-	t.Cleanup(func() { m.End(mo.ID) })
-	pc, ok := mo.Page.PS.Caller.(interface {
-		ActiveTarget() string
-		ExecutionContexts(target string) []webkit.ExecutionContext
-	})
-	if !ok {
-		t.Fatalf("the page connection %T has no context inventory", mo.Page.PS.Caller)
-	}
-	return &managedPage{m: m, mo: mo, pc: pc}
+	return m, core.PageRequest{Transport: "webkitgtk", Addr: addr}
 }
 
 // raw sends one legacy call inside the page's operation.

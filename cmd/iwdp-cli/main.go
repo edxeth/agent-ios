@@ -191,6 +191,22 @@ func main() {
 	}
 
 	run, ok := commands[name]
+	if ok {
+		// A first word that names a legacy command and registry commands
+		// (console, network, cookies) goes to the registry when the
+		// registry owns the line: a registry command longer than that word
+		// (for example "network requests"), or the registry command of
+		// that word alone when the registry parses the whole line. Every
+		// other line stays with the legacy command, so its forms and flags
+		// work as before (design 7.3 test 13). The words skip the
+		// registry's global flags, which may stand between them (design
+		// 2.11: "network --json requests" is "network requests").
+		if c, n := reg.Lookup(reg.CommandWords(args)); c != nil {
+			if _, err := reg.Parse(os.Args[1:], os.Getenv); n > 1 || err == nil {
+				ok = false
+			}
+		}
+	}
 	if !ok && isRegistryCommand(args) {
 		// Registry commands parse their own global flags (design 2.11).
 		code := runRegistry(os.Args[1:])

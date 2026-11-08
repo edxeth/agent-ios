@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,7 +15,7 @@ func TestRegistrationManifestHasNoDuplicateToolName(t *testing.T) {
 	if len(legacyToolNames) < 100 {
 		t.Fatalf("recorded %d legacy tools, want the full legacy set", len(legacyToolNames))
 	}
-	m, err := commands.Manifest(commands.SelectedProfile(os.Getenv), legacyToolNames)
+	m, err := commands.Manifest(mcpProfile(), legacyToolNames)
 	if err != nil {
 		t.Fatal(err)
 	}

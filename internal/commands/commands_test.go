@@ -277,8 +277,50 @@ func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
 	if _, err := Manifest(ProfileCore, []string{"a", "a"}); err == nil {
 		t.Fatal("a duplicate legacy name was accepted")
 	}
-	if SelectedProfile(func(string) string { return "" }) != ProfileCore || SelectedProfile(func(string) string { return "all" }) != ProfileAll {
-		t.Fatal("SelectedProfile does not follow IWDP_MCP_TOOLS (D2)")
+}
+
+// Design 4.1 and D2: IWDP_MCP_TOOLS (or iwdp-mcp --tools) takes "all" or
+// any comma-separated subset of core, devtools and legacy; an unknown
+// value fails with an error that names it.
+func TestSelectedProfile(t *testing.T) {
+	cases := []struct {
+		env, want, bad string // bad: text the error must contain
+	}{
+		{env: "", want: ProfileCore},
+		{env: "core", want: "core"},
+		{env: "all", want: ProfileAll},
+		{env: "devtools", want: "devtools"},
+		{env: "legacy,core", want: "core,legacy"},
+		{env: "core,devtools,legacy", want: "core,devtools,legacy"},
+		{env: " devtools , core ", want: "core,devtools"},
+		{env: "core,all", want: ProfileAll},
+		{env: "core,dev", bad: `unknown profile "dev"`},
+		{env: "everything", bad: `"everything"`},
+		{env: "core,", bad: `unknown profile ""`},
+	}
+	for _, c := range cases {
+		got, err := SelectedProfile(func(k string) string {
+			if k != "IWDP_MCP_TOOLS" {
+				t.Fatalf("SelectedProfile read %s", k)
+			}
+			return c.env
+		})
+		switch {
+		case c.bad != "" && (err == nil || !strings.Contains(err.Error(), c.bad)):
+			t.Errorf("IWDP_MCP_TOOLS=%q: %q, %v; want an error naming %s", c.env, got, err, c.bad)
+		case c.bad == "" && (err != nil || got != c.want):
+			t.Errorf("IWDP_MCP_TOOLS=%q: %q, %v; want %q", c.env, got, err, c.want)
+		}
+	}
+	core := &Command{MCPName: "a", Profile: ProfileCore}
+	dev := &Command{MCPName: "b", Profile: ProfileDevtools}
+	for _, c := range []struct {
+		profile   string
+		core, dev bool
+	}{{"core", true, false}, {"devtools", false, true}, {"core,devtools", true, true}, {"core,legacy", true, false}, {ProfileAll, true, true}} {
+		if InProfile(core, c.profile) != c.core || InProfile(dev, c.profile) != c.dev {
+			t.Errorf("profile %q: core tool %v, devtools tool %v; want %v, %v", c.profile, InProfile(core, c.profile), InProfile(dev, c.profile), c.core, c.dev)
+		}
 	}
 }
 

@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MCP profiles (decision D2): "core" is the default; "all" selects every
-// registry tool.
+// MCP profiles (decision D2, design 4.1): "core" is the default;
+// IWDP_MCP_TOOLS (or iwdp-mcp --tools) selects any comma-separated subset
+// of core, devtools and legacy, or "all" for every tool.
 const (
 	ProfileCore     = "core"
 	ProfileDevtools = "devtools"
@@ -19,18 +23,52 @@ const (
 	ProfileAll      = "all"
 )
 
-// SelectedProfile returns the MCP profile chosen by IWDP_MCP_TOOLS:
-// "all" selects every tool; anything else selects the default "core" (D2).
-func SelectedProfile(getenv func(string) string) string {
-	if getenv("IWDP_MCP_TOOLS") == ProfileAll {
-		return ProfileAll
+// profileOrder is the canonical order of the named profiles.
+var profileOrder = []string{ProfileCore, ProfileDevtools, ProfileLegacy}
+
+// SelectedProfile returns the MCP profile chosen by IWDP_MCP_TOOLS (design
+// 4.1, D2): unset or empty selects "core"; "all" (also inside a list)
+// selects every tool; otherwise a comma-separated subset of core, devtools
+// and legacy, returned in the order "core,devtools,legacy". An unknown or
+// empty name is an error that names the value.
+func SelectedProfile(getenv func(string) string) (string, error) {
+	v := getenv("IWDP_MCP_TOOLS")
+	if strings.TrimSpace(v) == "" {
+		return ProfileCore, nil
 	}
-	return ProfileCore
+	chosen := map[string]bool{}
+	for _, name := range strings.Split(v, ",") {
+		name = strings.TrimSpace(name)
+		switch {
+		case name == ProfileAll:
+			chosen[ProfileAll] = true
+		case slices.Contains(profileOrder, name):
+			chosen[name] = true
+		default:
+			return "", fmt.Errorf("IWDP_MCP_TOOLS (or --tools) %q: unknown profile %q; want all, or a comma-separated list of %s", v, name, strings.Join(profileOrder, ", "))
+		}
+	}
+	if chosen[ProfileAll] {
+		return ProfileAll, nil
+	}
+	var out []string
+	for _, name := range profileOrder {
+		if chosen[name] {
+			out = append(out, name)
+		}
+	}
+	return strings.Join(out, ","), nil
+}
+
+// ProfileIncludes reports whether the selected profile (SelectedProfile)
+// includes the named profile.
+func ProfileIncludes(profile, name string) bool {
+	return profile == ProfileAll || slices.Contains(strings.Split(profile, ","), name)
 }
 
 // InProfile reports whether c is an MCP tool of the selected profile.
 func InProfile(c *Command, profile string) bool {
-	return c.MCPName != "" && (profile == ProfileAll || c.Profile == profile)
+	return c.MCPName != "" && ProfileIncludes(profile, c.Profile)
 }
 
 // InputSchema returns the MCP input schema of c: one property per argument
@@ -38,13 +76,17 @@ func InProfile(c *Command, profile string) bool {
 func InputSchema(c *Command) map[string]any {
 	props := map[string]any{}
 	var required []string
+	aliased := map[string]bool{}
+	for _, to := range c.MCPAliases {
+		aliased[to] = true
+	}
 	for _, a := range c.Args {
 		if a.Variadic {
 			props[a.Name] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": a.Help}
 		} else {
 			props[a.Name] = map[string]any{"type": "string", "description": a.Help}
 		}
-		if a.Required {
+		if a.Required && !aliased[a.Name] {
 			required = append(required, a.Name)
 		}
 	}
@@ -69,6 +111,25 @@ func InputSchema(c *Command) map[string]any {
 			p["type"] = "string"
 		}
 		props[f.Name] = p
+	}
+	for from, to := range c.MCPAliases {
+		p := map[string]any{"description": "legacy name of " + to + "; give one of the two"}
+		for k, v := range props[to].(map[string]any) {
+			if k != "description" {
+				p[k] = v
+			}
+		}
+		props[from] = p
+	}
+	for name, legacy := range c.MCPSchema {
+		p, ok := props[name].(map[string]any)
+		if !ok {
+			panic(fmt.Sprintf("command %q: MCPSchema names %q, which is no argument, flag or MCP alias", c.Name, name))
+		}
+		desc := p["description"]
+		clear(p)
+		maps.Copy(p, legacy)
+		p["description"] = desc
 	}
 	s := map[string]any{"type": "object", "properties": props, "additionalProperties": false}
 	if len(required) > 0 {
@@ -202,16 +263,42 @@ func RegisterMCP(s *mcp.Server, profile string, newEnv func(ctx context.Context,
 					return toolError(err), nil
 				}
 				text := res.Text
+				var structured any
 				if res.Data != nil {
 					data, err := json.Marshal(res.Data)
 					if err != nil {
 						return toolError(err), nil
 					}
 					text = string(data)
+					// MCP structured content must be a JSON object; a tool
+					// that takes over a legacy tool keeps the legacy
+					// structured output this way (set_cookie's {ok, cookie}).
+					if len(data) > 0 && data[0] == '{' {
+						structured = json.RawMessage(data)
+					}
 				}
-				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}, StructuredContent: structured}, nil
 			})
 	}
+}
+
+// mcpText is the command-line text of an MCP argument value: a string as
+// it is, a number in decimal notation without exponent (1893456000.5, not
+// 1.8934560005e+09), an object or an array as its JSON, and true or false.
+func mcpText(v any) (string, error) {
+	switch x := v.(type) {
+	case string:
+		return x, nil
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64), nil
+	case map[string]any, []any:
+		data, err := json.Marshal(x)
+		if err != nil {
+			return "", fmt.Errorf("encoding %T as JSON: %w", x, err)
+		}
+		return string(data), nil
+	}
+	return fmt.Sprint(v), nil
 }
 
 func toolError(err error) *mcp.CallToolResult {
@@ -226,6 +313,17 @@ func mcpInput(c *Command, raw json.RawMessage) (Input, error) {
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return in, fmt.Errorf("%s: arguments are not an object: %w", c.MCPName, err)
 		}
+	}
+	for from, to := range c.MCPAliases {
+		v, ok := args[from]
+		if !ok {
+			continue
+		}
+		if _, both := args[to]; both {
+			return in, fmt.Errorf("%s: give %q or its legacy name %q, not both", c.MCPName, to, from)
+		}
+		delete(args, from)
+		args[to] = v
 	}
 	for _, a := range c.Args {
 		v, ok := args[a.Name]
@@ -242,22 +340,30 @@ func mcpInput(c *Command, raw json.RawMessage) (Input, error) {
 				return in, fmt.Errorf("%s: argument %q must be an array of strings", c.MCPName, a.Name)
 			}
 			for _, x := range list {
-				in.Args = append(in.Args, fmt.Sprint(x))
+				s, err := mcpText(x)
+				if err != nil {
+					return in, fmt.Errorf("%s: argument %q: %w", c.MCPName, a.Name, err)
+				}
+				in.Args = append(in.Args, s)
 			}
 			continue
 		}
-		in.Args = append(in.Args, fmt.Sprint(v))
+		s, err := mcpText(v)
+		if err != nil {
+			return in, fmt.Errorf("%s: argument %q: %w", c.MCPName, a.Name, err)
+		}
+		in.Args = append(in.Args, s)
 	}
 	for _, f := range c.Flags {
 		v, ok := args[f.Name]
 		delete(args, f.Name)
 		s := f.Default
 		if ok {
-			switch x := v.(type) {
-			case float64:
+			var err error
+			if x, isNumber := v.(float64); isNumber && f.Type == FlagInt {
 				s = fmt.Sprint(int64(x))
-			default:
-				s = fmt.Sprint(x)
+			} else if s, err = mcpText(v); err != nil {
+				return in, fmt.Errorf("%s: flag %q: %w", c.MCPName, f.Name, err)
 			}
 		}
 		if s == "" {
