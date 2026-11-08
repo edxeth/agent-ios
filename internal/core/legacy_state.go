@@ -349,6 +349,13 @@ func missing(name string) func(map[string]any) bool {
 	return func(p map[string]any) bool { _, ok := p[name]; return !ok }
 }
 
+// missingOrEmpty is the clear of Page.overrideUserAgent: WebKit applies
+// the user-agent override only when it is not empty (InspectorPageAgent),
+// so an empty value is no override, as internal/devtools treats it.
+func missingOrEmpty(name string) func(map[string]any) bool {
+	return func(p map[string]any) bool { v, ok := p[name]; return !ok || v == "" }
+}
+
 func isFalse(name string) func(map[string]any) bool {
 	return func(p map[string]any) bool { b, _ := p[name].(bool); return !b }
 }
@@ -390,7 +397,7 @@ var stateRules = map[string]stateRule{
 	"DOMDebugger.setDOMBreakpoint":   {key: keyBy("nodeId", "type"), scoped: true, reset: resetWith("DOMDebugger.removeDOMBreakpoint", []string{"nodeId", "type"}, nil)},
 	"DOMDebugger.setEventBreakpoint": {key: keyBy("breakpointType", "eventName"), replay: true, reset: resetWith("DOMDebugger.removeEventBreakpoint", []string{"breakpointType", "eventName"}, nil)},
 	"DOMDebugger.setURLBreakpoint":   {key: keyBy("url"), replay: true, reset: resetWith("DOMDebugger.removeURLBreakpoint", []string{"url", "isRegex"}, nil)},
-	"Page.overrideUserAgent":         {key: keyBy(), replay: true, clear: missing("value"), reset: resetWith("Page.overrideUserAgent", nil, nil)},
+	"Page.overrideUserAgent":         {key: keyBy(), replay: true, clear: missingOrEmpty("value"), reset: resetWith("Page.overrideUserAgent", nil, nil)},
 	"Page.overrideSetting":           {key: keyBy("setting"), replay: true, clear: missing("value"), reset: resetWith("Page.overrideSetting", []string{"setting"}, nil)},
 	"Page.overrideUserPreference":    {key: keyBy("name"), replay: true, clear: missing("value"), reset: resetWith("Page.overrideUserPreference", []string{"name"}, nil)},
 	"Page.setEmulatedMedia": {

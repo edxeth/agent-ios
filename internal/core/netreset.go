@@ -45,18 +45,14 @@ func (s *Scheduler) resetHolds(ctx context.Context, match func(holdKey) bool) ([
 	var firstErr error
 	var done []string
 	for _, k := range keys {
-		if err := s.answerHold(ctx, k); err != nil {
+		// answerHold records k as reset in the critical section that
+		// closes the hold, so no completion sees it closed but not reset.
+		if err := s.answerHold(ctx, k, true); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		s.mu.Lock()
-		if s.resetReqs == nil {
-			s.resetReqs = map[holdKey]bool{}
-		}
-		s.resetReqs[k] = true
-		s.mu.Unlock()
 		done = append(done, k.id)
 	}
 	return done, firstErr

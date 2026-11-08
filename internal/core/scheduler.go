@@ -142,16 +142,21 @@ type Scheduler struct {
 	// on that target, before and after its commit (the committed target
 	// keeps its id). A destroyed target's holds are dropped: WebKit
 	// destroyed them with the target.
-	intercepted    map[holdKey]*heldRequest
-	holdSeq        uint64 // counts interception events
-	debuggerPaused bool
-	pauseSeq       uint64 // counts Debugger.paused events
-	resumedSeq     uint64 // the pause that a Debugger.resume completed or is completing
-	resuming       bool   // a Debugger.resume is being written
+	intercepted map[holdKey]*heldRequest
+	holdSeq     uint64 // counts interception events
+	// Debugger pauses are kept per target for the same reason: WebKit
+	// pauses the JavaScript of the backend that sent Debugger.paused, and
+	// only a Debugger.resume sent to that backend resumes it. A destroyed
+	// target's pause is dropped like its holds.
+	pauses   map[string]*debuggerPause
+	pauseSeq uint64 // counts Debugger.paused events
 	// resetReqs are held requests that a Network reinitialization barrier
 	// continued (design 2.4); a later completion for one fails with
 	// ErrRequestReset until the id is held again on that target.
 	resetReqs map[holdKey]bool
+	// holdClosed, when set (tests only), is called with the key of a hold
+	// that a completion closed, after the critical section that closed it.
+	holdClosed func(holdKey)
 
 	sem   chan struct{}
 	unsub []func()
@@ -193,6 +198,7 @@ func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
 		changed:     make(chan struct{}),
 		clocks:      make(map[clockKey]*ClockMap),
 		intercepted: make(map[holdKey]*heldRequest),
+		pauses:      make(map[string]*debuggerPause),
 		sem:         make(chan struct{}, o.MaxInFlight),
 	}
 	sub := func(method string, h webkit.TargetEventHandler) func() { return subscribeItems(c, method, h) }
@@ -218,10 +224,10 @@ func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
 			}
 		}
 	}
-	// dropTarget forgets the holds of a target that WebKit destroyed: an
-	// abandoned provisional target, the target that a commit replaced (its
-	// frontend is disconnected, which continues its pending intercepts),
-	// or a closed page.
+	// dropTarget forgets the holds and the pause of a target that WebKit
+	// destroyed: an abandoned provisional target, the target that a commit
+	// replaced (its frontend is disconnected, which continues its pending
+	// intercepts), or a closed page.
 	dropTarget := func(field string) webkit.TargetEventHandler {
 		return func(_, _ string, p json.RawMessage) {
 			var v map[string]string
@@ -231,13 +237,21 @@ func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
 		}
 	}
 	setPaused := func(paused bool) webkit.TargetEventHandler {
-		return func(string, string, json.RawMessage) {
+		return func(target, _ string, _ json.RawMessage) {
 			s.mu.Lock()
-			s.debuggerPaused = paused
+			defer s.mu.Unlock()
+			p := s.pauses[target]
+			if p == nil {
+				p = &debuggerPause{}
+				s.pauses[target] = p
+			}
+			p.paused = paused
 			if paused {
 				s.pauseSeq++
+				p.seq = s.pauseSeq
+				close(s.changed) // a release barrier drains the new pause
+				s.changed = make(chan struct{})
 			}
-			s.mu.Unlock()
 		}
 	}
 	s.unsub = append(s.unsub,
@@ -269,7 +283,7 @@ func subscribeItems(c webkit.Caller, method string, h webkit.TargetEventHandler)
 	return webkit.SubscribeTarget(c, method, h)
 }
 
-// dropHolds forgets every hold of target.
+// dropHolds forgets every hold of target, and its pause.
 func (s *Scheduler) dropHolds(target string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,6 +292,7 @@ func (s *Scheduler) dropHolds(target string) {
 			delete(s.intercepted, k)
 		}
 	}
+	delete(s.pauses, target)
 	close(s.changed) // a barrier may wait for one of them
 	s.changed = make(chan struct{})
 }
@@ -793,10 +808,13 @@ type ControlMsg struct {
 	Epoch     uint64 // lease epoch the sender acts under
 	OpID      string // ControlCancel
 	RequestID string // ControlCompleteRequest
-	// TargetID is the target paused on start (ControlTargetResume), or the
+	// TargetID is the target paused on start (ControlTargetResume), the
 	// target that holds the request (ControlCompleteRequest): the source
-	// target of its interception event (webkit.TargetEventHandler). ""
-	// names the page's active target.
+	// target of its interception event (webkit.TargetEventHandler), or the
+	// paused target (ControlDebuggerResume): the source target of its
+	// Debugger.paused event. "" names the page's active target; for
+	// ControlDebuggerResume it names the active target when that target is
+	// paused and otherwise the most recently paused target (pauseTarget).
 	TargetID string
 	Method   string // ControlCompleteRequest: one of the five completion methods
 	// Params are the method's parameters besides requestId. For
@@ -864,27 +882,9 @@ type heldRequest struct {
 func (s *Scheduler) control(ctx context.Context, m ControlMsg) (json.RawMessage, error) {
 	switch m.Kind {
 	case ControlCompleteRequest:
-		return s.completeHold(ctx, holdKey{s.holdTarget(m.TargetID), m.RequestID}, m)
+		return s.completeHold(ctx, holdKey{s.holdTarget(m.TargetID), m.RequestID}, m, false)
 	case ControlDebuggerResume:
-		s.mu.Lock()
-		if !s.pauseOpenLocked() {
-			s.mu.Unlock()
-			return nil, fmt.Errorf("%w: the debugger is not paused", ErrControlRefused)
-		}
-		seq := s.pauseSeq
-		s.resuming = true
-		s.mu.Unlock()
-		res, err := s.controlSend(ctx, DefaultControlBudget, "Debugger.resume", nil)
-		s.mu.Lock()
-		s.resuming = false
-		if !errors.Is(err, webkit.ErrNotSent) {
-			s.resumedSeq = seq // completed, or the outcome is unknown: never resume this pause again
-			if err == nil && s.pauseSeq == seq {
-				s.debuggerPaused = false
-			}
-		}
-		s.mu.Unlock()
-		return res, err
+		return s.resumePause(ctx, s.pauseTarget(m.TargetID))
 	case ControlTargetResume:
 		pt, ok := s.c.(interface {
 			ResumeTarget(context.Context, string) error
@@ -917,7 +917,10 @@ func (s *Scheduler) control(ctx context.Context, m ControlMsg) (json.RawMessage,
 
 // completeHold validates and sends m, a completion of the held request
 // key; key names the target exactly (the barriers pass their own keys).
-func (s *Scheduler) completeHold(ctx context.Context, key holdKey, m ControlMsg) (json.RawMessage, error) {
+// With reset (the Network reinitialization barrier), a completion that
+// closes the hold records it as reset in the same critical section, so a
+// later completion fails with ErrRequestReset at once.
+func (s *Scheduler) completeHold(ctx context.Context, key holdKey, m ControlMsg, reset bool) (json.RawMessage, error) {
 	if !isInterceptCompletion(m.Method) {
 		return nil, fmt.Errorf("%w: %q does not complete a held request", ErrControlRefused, m.Method)
 	}
@@ -958,11 +961,16 @@ func (s *Scheduler) completeHold(ctx context.Context, key holdKey, m ControlMsg)
 	// The completion goes to the target that holds the request, which
 	// is not the active target while a provisional target loads.
 	res, err := s.controlSend(webkit.WithTarget(ctx, key.target), DefaultControlBudget, m.Method, params)
+	closed := false
 	s.mu.Lock()
 	if h.seq == seq { // no newer hold of this id arrived meanwhile
 		if err == nil || requestGone(err) {
 			if s.intercepted[key] == h {
 				delete(s.intercepted, key)
+				closed = true
+			}
+			if reset {
+				s.markResetLocked(key)
 			}
 		} else {
 			// Not sent, refused by WebKit's dispatcher before the
@@ -976,20 +984,221 @@ func (s *Scheduler) completeHold(ctx context.Context, key holdKey, m ControlMsg)
 	close(s.changed) // a barrier may wait for this completion
 	s.changed = make(chan struct{})
 	s.mu.Unlock()
+	if closed && s.holdClosed != nil {
+		s.holdClosed(key)
+	}
 	return res, err
 }
 
-// pauseOpen reports whether a debugger pause is an open pending item.
+// debuggerPause is the Debugger pause of one target (design 2.10).
+type debuggerPause struct {
+	paused     bool
+	seq        uint64 // the Debugger.paused event of the current pause
+	resumedSeq uint64 // the pause that a Debugger.resume completed or is completing
+	resuming   bool   // a Debugger.resume is being written
+}
+
+// open reports whether p is an open pending item: paused, not resumed
+// yet, and no resume being written.
+func (p *debuggerPause) open() bool {
+	return p != nil && p.paused && !p.resuming && p.resumedSeq != p.seq
+}
+
+// pauseTarget is the target whose pause a Debugger.resume for target
+// answers: target itself, or for "" the active target when its pause is
+// open and otherwise the target of the most recent open pause. Callers of
+// the legacy tools cannot name a target, and the events they get do not
+// name their source, so "" must also reach a pause that a provisional
+// target reported.
+func (s *Scheduler) pauseTarget(target string) string {
+	if target != "" {
+		return target
+	}
+	active := s.holdTarget("") // outside s.mu: it asks the connection
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pauses[active].open() {
+		return active
+	}
+	var last *debuggerPause
+	for t, p := range s.pauses {
+		if p.open() && (last == nil || p.seq > last.seq) {
+			target, last = t, p
+		}
+	}
+	if last == nil {
+		return active
+	}
+	return target
+}
+
+// resumePause sends Debugger.resume to target, the key of its pause, when
+// that pause is an open pending item, and completes the pause at most once.
+func (s *Scheduler) resumePause(ctx context.Context, target string) (json.RawMessage, error) {
+	s.mu.Lock()
+	p := s.pauses[target]
+	if !p.open() {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("%w: the debugger is not paused on page target %q", ErrControlRefused, target)
+	}
+	seq := p.seq
+	p.resuming = true
+	s.mu.Unlock()
+	// The resume goes to the target that paused, which is not the active
+	// target while a provisional target loads.
+	res, err := s.controlSend(webkit.WithTarget(ctx, target), DefaultControlBudget, "Debugger.resume", nil)
+	s.mu.Lock()
+	p.resuming = false
+	if !errors.Is(err, webkit.ErrNotSent) {
+		p.resumedSeq = seq // completed, or the outcome is unknown: never resume this pause again
+		if err == nil && p.seq == seq {
+			p.paused = false
+		}
+	}
+	close(s.changed) // a release barrier may wait for this resume
+	s.changed = make(chan struct{})
+	s.mu.Unlock()
+	return res, err
+}
+
+// pauseGen names one pause of a target: its Debugger.paused event.
+type pauseGen struct {
+	target string
+	seq    uint64
+}
+
+// errResumeUnknown: a Debugger.resume of the pause has an unknown outcome
+// (no reply, or an error reply), so the pause is never resumed again.
+var errResumeUnknown = errors.New("the outcome of its Debugger.resume is unknown")
+
+// pauseDrain is the release barrier's answer to the Debugger pauses
+// (design 2.10). It resumes every open pause on its own target and waits
+// for the resumes in flight, until no pause is open or being resumed:
+// pauses open at the start, pauses that a client resume in flight leaves
+// open (not sent), and pauses that arrive meanwhile (a newer pause that
+// WebKit reports before the reply to the resume of the older one). A
+// resume is sent again only when it was not sent (webkit.ErrNotSent), at
+// most maxBarrierContinues times per pause; a resume with an unknown
+// outcome is never repeated, because a repeated one could resume a later
+// pause that nobody has seen. The release's context bounds the drain.
+type pauseDrain struct {
+	s      *Scheduler
+	unsent map[pauseGen]int  // resumes of a pause that were not sent
+	gaveUp map[pauseGen]bool // pauses whose resume was not sent maxBarrierContinues times
+	err    error             // the first failure of the barrier's own resumes
+}
+
+func newPauseDrain(s *Scheduler) *pauseDrain {
+	return &pauseDrain{s: s, unsent: map[pauseGen]int{}, gaveUp: map[pauseGen]bool{}}
+}
+
+// nextLocked returns an open pause that the drain has not given up, and
+// whether a resume is in flight. The caller holds s.mu.
+func (d *pauseDrain) nextLocked() (gen pauseGen, ok, inflight bool) {
+	for t, p := range d.s.pauses {
+		switch {
+		case p.resuming:
+			inflight = true
+		case p.open() && !d.gaveUp[pauseGen{t, p.seq}]:
+			gen, ok = pauseGen{t, p.seq}, true
+		}
+	}
+	return gen, ok, inflight
+}
+
+// run drains the pauses (pauseDrain). It returns nil when no target is
+// paused at the end, and otherwise an error that names every target that
+// is still paused, with the first failure, the end of ctx, or
+// errResumeUnknown as its cause.
+func (d *pauseDrain) run(ctx context.Context) error {
+	s := d.s
+	for {
+		s.mu.Lock()
+		gen, ok, inflight := d.nextLocked()
+		if !ok && inflight {
+			changed := s.changed
+			s.mu.Unlock()
+			select {
+			case <-changed:
+				continue
+			case <-ctx.Done():
+				return d.remaining(ctx.Err())
+			}
+		}
+		s.mu.Unlock()
+		if !ok {
+			return d.remaining(nil)
+		}
+		_, err := s.resumePause(ctx, gen.target)
+		switch {
+		case err == nil, errors.Is(err, ErrControlRefused):
+			// Answered, or another sender answered or is answering it:
+			// look again.
+		case errors.Is(err, webkit.ErrNotSent):
+			if d.unsent[gen]++; d.unsent[gen] >= maxBarrierContinues || ctx.Err() != nil {
+				d.gaveUp[gen] = true
+				if d.err == nil {
+					d.err = err
+				}
+			}
+		default:
+			if d.err == nil {
+				d.err = err
+			}
+		}
+	}
+}
+
+// remaining returns nil when no target is paused, and otherwise an error
+// naming every paused target, with the drain's first failure and cause
+// (the end of the release's context) as its causes, or errResumeUnknown
+// when there is neither.
+func (d *pauseDrain) remaining(cause error) error {
+	d.s.mu.Lock()
+	var targets []string
+	for t, p := range d.s.pauses {
+		if p.paused {
+			targets = append(targets, t)
+		}
+	}
+	d.s.mu.Unlock()
+	if len(targets) == 0 {
+		return nil
+	}
+	slices.Sort(targets)
+	causes := errors.Join(d.err, cause)
+	if causes == nil {
+		causes = errResumeUnknown
+	}
+	return fmt.Errorf("release: the debugger is still paused on page targets %q: %w", targets, causes)
+}
+
+// markResetLocked records the hold k as continued by a Network reset
+// (resetReqs). The caller holds s.mu.
+func (s *Scheduler) markResetLocked(k holdKey) {
+	if s.resetReqs == nil {
+		s.resetReqs = map[holdKey]bool{}
+	}
+	s.resetReqs[k] = true
+}
+
+// pauseOpen reports whether a debugger pause of any target is an open
+// pending item.
 func (s *Scheduler) pauseOpen() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.pauseOpenLocked()
+	return len(s.openPausesLocked()) > 0
 }
 
-// pauseOpenLocked reports whether the current debugger pause is an open
-// pending item: paused, not resumed yet, and no resume being written.
-func (s *Scheduler) pauseOpenLocked() bool {
-	return s.debuggerPaused && !s.resuming && s.resumedSeq != s.pauseSeq
+// openPausesLocked returns the targets whose pause is an open pending item.
+func (s *Scheduler) openPausesLocked() []string {
+	var out []string
+	for t, p := range s.pauses {
+		if p.open() {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // controlCaller sends on the control lane of the page connection. A
@@ -1059,10 +1268,17 @@ func (s *Scheduler) PendingHolds() []HeldRequest {
 // Release is the release barrier (design 2.10): it closes admission,
 // cancels the running operations, completes every pending control item
 // through the control lane (continues held requests at the stage of each
-// hold, resumes the debugger and targets paused on start), waits until the
-// running operations have released the page, runs cleanup on the control
-// lane, and ends the lease.
+// hold, resumes the debugger of each paused target and targets paused on
+// start), waits until the running operations have released the page, runs
+// cleanup on the control lane, and ends the lease.
 // Queued operations fail with ErrLeaseEnded.
+//
+// Debugger pauses are drained over the whole release window (pauseDrain):
+// a pause that arrives while the release waits for running operations or
+// while its cleanup runs is resumed too, and the lease ends in the critical
+// section that finds no pause to resume and no resume in flight. A failed
+// release returns every failure joined, with the targets that are still
+// paused named.
 func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Context, c webkit.Caller) error) error {
 	s.mu.Lock()
 	s.barriers++
@@ -1076,27 +1292,29 @@ func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Contex
 	for k := range s.intercepted {
 		requests = append(requests, k)
 	}
-	paused := s.pauseOpenLocked()
 	s.mu.Unlock()
 
 	for _, op := range running {
 		op.Cancel(fmt.Errorf("%w: released", ErrLeaseEnded))
 	}
-	var firstErr error
+	var errs []error
 	// A refusal means that another sender completed the item after the
 	// snapshot above; the item no longer needs the barrier.
 	note := func(err error) {
-		if err != nil && firstErr == nil && !errors.Is(err, ErrControlRefused) {
-			firstErr = err
+		if err != nil && !errors.Is(err, ErrControlRefused) {
+			errs = append(errs, err)
 		}
 	}
+	pauses := newPauseDrain(s)
+	// failed joins the failures with the paused targets (pauseDrain.remaining;
+	// cause is the end of ctx while a resume was in flight, or nil).
+	failed := func(cause error) error {
+		return errors.Join(append(errs, pauses.remaining(cause))...)
+	}
 	for _, k := range requests {
-		note(s.answerHold(ctx, k))
+		note(s.answerHold(ctx, k, false))
 	}
-	if paused {
-		_, err := s.control(ctx, ControlMsg{Kind: ControlDebuggerResume})
-		note(err)
-	}
+	_ = pauses.run(ctx) // failed reports what stays paused
 	if pt, ok := s.c.(interface{ PausedTargets() []string }); ok {
 		for _, id := range pt.PausedTargets() {
 			_, err := s.control(ctx, ControlMsg{Kind: ControlTargetResume, TargetID: id})
@@ -1104,29 +1322,58 @@ func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Contex
 		}
 	}
 	for {
+		// The pause state, the running operations and the channel to wait
+		// on are read in one critical section, so a pause or the end of an
+		// operation after the check closes the channel captured here.
 		s.mu.Lock()
 		n, changed := len(s.running), s.changed
+		_, ok, inflight := pauses.nextLocked()
 		s.mu.Unlock()
+		if (ok || inflight) && ctx.Err() == nil {
+			// A pause that arrived meanwhile (a running evaluation that
+			// hit a breakpoint) is resumed, so the operation can end.
+			_ = pauses.run(ctx)
+			continue
+		}
+		if afterPausePending != nil {
+			afterPausePending()
+		}
 		if n == 0 {
 			break
 		}
 		select {
 		case <-changed:
 		case <-ctx.Done():
-			return fmt.Errorf("release: waiting for running operations: %w", ctx.Err())
+			note(fmt.Errorf("release: waiting for running operations: %w", ctx.Err()))
+			return failed(nil)
 		}
 	}
 	if cleanup != nil {
 		note(cleanup(ctx, controlCaller{s.c}))
 	}
-	s.mu.Lock()
-	s.released = true
-	s.holder = ""
-	s.barriers--
-	s.pumpLocked() // fails the queued operations with ErrLeaseEnded
-	s.mu.Unlock()
-	return firstErr
+	// A pause that arrived during the cleanup is drained before the lease
+	// ends; the lease ends in the critical section that finds nothing left
+	// to resume or to wait for (or when ctx ended).
+	for {
+		s.mu.Lock()
+		_, ok, inflight := pauses.nextLocked()
+		if (!ok && !inflight) || ctx.Err() != nil {
+			s.released = true
+			s.holder = ""
+			s.barriers--
+			s.pumpLocked() // fails the queued operations with ErrLeaseEnded
+			s.mu.Unlock()
+			break
+		}
+		s.mu.Unlock()
+		_ = pauses.run(ctx)
+	}
+	return failed(ctx.Err())
 }
+
+// afterPausePending, when set (tests only), is called by Release after it
+// found no pause to drain and before it waits for the running operations.
+var afterPausePending func()
 
 // maxBarrierContinues bounds the continues that a barrier sends for one
 // held request whose continue fails without closing it (not sent, or no
@@ -1140,10 +1387,12 @@ const maxBarrierContinues = 3
 // request k.id. A hold that a completion's failure left open, and a newer
 // hold of the same id (the response stage after a request-stage
 // continue), get the continue too; a hold that its target's destruction
-// dropped needs none. It returns the last error after
-// maxBarrierContinues failed continues of one hold, or when ctx ends while
-// it waits.
-func (s *Scheduler) answerHold(ctx context.Context, k holdKey) error {
+// dropped needs none. With reset (the Network reinitialization barrier) the
+// hold is recorded as reset in the critical section that finds it closed,
+// and in the one in which its continue closes it (completeHold). It
+// returns the last error after maxBarrierContinues failed continues of one
+// hold, or when ctx ends while it waits.
+func (s *Scheduler) answerHold(ctx context.Context, k holdKey, reset bool) error {
 	failed := 0
 	var seq uint64
 	for {
@@ -1161,6 +1410,9 @@ func (s *Scheduler) answerHold(ctx context.Context, k holdKey) error {
 			h = s.intercepted[k]
 		}
 		if h == nil {
+			if reset {
+				s.markResetLocked(k)
+			}
 			s.mu.Unlock()
 			return nil
 		}
@@ -1168,7 +1420,7 @@ func (s *Scheduler) answerHold(ctx context.Context, k holdKey) error {
 			seq, failed = h.seq, 0 // another hold of the id: its own budget
 		}
 		s.mu.Unlock()
-		_, err := s.completeHold(ctx, k, ControlMsg{Kind: ControlCompleteRequest, TargetID: k.target, RequestID: k.id, Method: "Network.interceptContinue"})
+		_, err := s.completeHold(ctx, k, ControlMsg{Kind: ControlCompleteRequest, TargetID: k.target, RequestID: k.id, Method: "Network.interceptContinue"}, reset)
 		if err == nil || requestGone(err) || errors.Is(err, ErrControlRefused) {
 			continue // answered, or another sender started a completion: look again
 		}

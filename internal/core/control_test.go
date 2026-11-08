@@ -118,7 +118,7 @@ func TestControlLaneResumesPausedDebugger(t *testing.T) {
 	waitUntil(t, "the pause", func() bool {
 		h.s.mu.Lock()
 		defer h.s.mu.Unlock()
-		return h.s.debuggerPaused
+		return len(h.s.openPausesLocked()) > 0
 	})
 	if _, err := h.s.Control(ctx, ControlMsg{Kind: ControlDebuggerResume, Session: testSession, Epoch: 1}); err != nil {
 		t.Fatalf("resume: %v", err)
@@ -185,7 +185,7 @@ func TestReleaseBarrierCompletesPendingItemsBeforeCleanup(t *testing.T) {
 	waitUntil(t, "the pending items", func() bool {
 		h.s.mu.Lock()
 		defer h.s.mu.Unlock()
-		return h.s.debuggerPaused && h.s.intercepted[holdKey{"page-1", "r1"}] != nil
+		return len(h.s.openPausesLocked()) > 0 && h.s.intercepted[holdKey{"page-1", "r1"}] != nil
 	})
 	queued := make(chan error, 1)
 	go func() {
@@ -249,7 +249,7 @@ func TestUnsentControlMessageKeepsPendingItem(t *testing.T) {
 	waitUntil(t, "the pause", func() bool {
 		h.s.mu.Lock()
 		defer h.s.mu.Unlock()
-		return h.s.debuggerPaused
+		return len(h.s.openPausesLocked()) > 0
 	})
 	if _, err := h.s.Control(canceledCtx(), resume); err == nil {
 		t.Fatal("resume with a canceled context succeeded")
