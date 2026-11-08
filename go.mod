@@ -9,6 +9,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.4.0
 	golang.org/x/net v0.55.0
+	golang.org/x/sys v0.45.0
 	howett.net/plist v1.0.1
 )
 
@@ -26,7 +27,6 @@ require (
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.2 // indirect

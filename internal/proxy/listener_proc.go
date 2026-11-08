@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -16,6 +17,10 @@ import (
 // socketTables are the kernel's TCP socket tables. A kernel without IPv6
 // has no tcp6 table, and then no IPv6 listener exists.
 var socketTables = struct{ tcp, tcp6 string }{"/proc/net/tcp", "/proc/net/tcp6"}
+
+// procFS is where procListenerPIDs and procIdentity read the processes;
+// tests point it elsewhere to inject failures.
+var procFS = "/proc"
 
 // procGroupListens (Linux) reports who receives a connection to the
 // endpoint ep (classify): a process of the process group pgid, another
@@ -27,37 +32,9 @@ func procGroupListens(ctx context.Context, pgid int, ep netip.AddrPort) (listene
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	type entry struct {
-		addr netip.Addr
-		link string // "socket:[inode]", as fd links name sockets
-	}
-	var found []entry
-	for _, table := range []string{socketTables.tcp, socketTables.tcp6} {
-		b, err := os.ReadFile(table)
-		if table == socketTables.tcp6 && errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return 0, fmt.Errorf("reading the socket table: %w", err)
-		}
-		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-		for _, line := range lines[1:] { // the first line names the columns
-			// sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode ...
-			f := strings.Fields(line)
-			if len(f) < 10 {
-				return 0, fmt.Errorf("%s has a short line %q", table, line)
-			}
-			hexAddr, hexPort, ok := strings.Cut(f[1], ":")
-			p, err := strconv.ParseUint(hexPort, 16, 16)
-			addr, addrOK := procAddr(hexAddr)
-			if !ok || err != nil || !addrOK {
-				return 0, fmt.Errorf("%s has the local address %q", table, f[1])
-			}
-			const tcpListen = "0A" // TCP_LISTEN in the st column
-			if uint16(p) == ep.Port() && f[3] == tcpListen {
-				found = append(found, entry{addr, "socket:[" + f[9] + "]"})
-			}
-		}
+	found, err := procListenSockets(ep.Port())
+	if err != nil {
+		return 0, err
 	}
 	if len(found) == 0 {
 		return listenerNone, nil
@@ -71,6 +48,85 @@ func procGroupListens(ctx context.Context, pgid int, ep netip.AddrPort) (listene
 		socks[i] = sock{addr: e.addr, own: links[e.link]}
 	}
 	return classify(socks, ep.Addr()), nil
+}
+
+// procSock is a listening TCP socket of the kernel's socket tables.
+type procSock struct {
+	addr netip.Addr
+	link string // "socket:[inode]", as fd links name sockets
+}
+
+// procListenSockets returns the listening TCP sockets on port from the
+// kernel's socket tables (socketTables).
+func procListenSockets(port uint16) ([]procSock, error) {
+	var found []procSock
+	for _, table := range []string{socketTables.tcp, socketTables.tcp6} {
+		b, err := os.ReadFile(table)
+		if table == socketTables.tcp6 && errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading the socket table: %w", err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+		for _, line := range lines[1:] { // the first line names the columns
+			// sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode ...
+			f := strings.Fields(line)
+			if len(f) < 10 {
+				return nil, fmt.Errorf("%s has a short line %q", table, line)
+			}
+			hexAddr, hexPort, ok := strings.Cut(f[1], ":")
+			p, err := strconv.ParseUint(hexPort, 16, 16)
+			addr, addrOK := procAddr(hexAddr)
+			if !ok || err != nil || !addrOK {
+				return nil, fmt.Errorf("%s has the local address %q", table, f[1])
+			}
+			const tcpListen = "0A" // TCP_LISTEN in the st column
+			if uint16(p) == port && f[3] == tcpListen {
+				found = append(found, procSock{addr, "socket:[" + f[9] + "]"})
+			}
+		}
+	}
+	return found, nil
+}
+
+// procListenerPIDs (Linux) returns the pids of the processes that hold a
+// listening TCP socket on port, sorted: the sockets come from the socket
+// tables, their holders from the socket links in /proc/<pid>/fd. A process
+// whose fds this user cannot read (another user's) is not listed.
+func procListenerPIDs(port uint16) ([]int, error) {
+	found, err := procListenSockets(port)
+	if err != nil || len(found) == 0 {
+		return nil, err
+	}
+	links := map[string]bool{}
+	for _, s := range found {
+		links[s.link] = true
+	}
+	entries, err := os.ReadDir(procFS)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", procFS, err)
+	}
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue // not a process
+		}
+		fdDir := filepath.Join(procFS, e.Name(), "fd")
+		fds, err := os.ReadDir(fdDir)
+		if err != nil {
+			continue // exited since ReadDir, or another user's process
+		}
+		for _, fd := range fds {
+			if link, err := os.Readlink(filepath.Join(fdDir, fd.Name())); err == nil && links[link] {
+				pids = append(pids, pid)
+				break
+			}
+		}
+	}
+	slices.Sort(pids)
+	return pids, nil
 }
 
 // procAddr decodes a local address of a socket table: 8 or 32 hex digits,

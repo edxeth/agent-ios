@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -104,7 +105,7 @@ func CheckListing(ctx context.Context, addr string) error {
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return fmt.Errorf("%s refuses connections but cannot be bound (%v): another process holds the port without listening, or the address is not local; no second iwdp is started", addr, bindErr)
 	}
-	return fmt.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json within %s (%v): it is busy or stuck. A process owns the port, so no second iwdp is started; wait and try again, or restart it with the restart_iwdp tool or 'iwdp-cli restart-iwdp'",
+	return fmt.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json within %s (%v): it is busy or stuck. A process owns the port, so no second iwdp is started; wait and try again. The restart_iwdp tool and 'iwdp-cli restart-iwdp' restart it only when iwdp-mcp started it; they refuse another program's iwdp",
 		addr, time.Since(begin).Round(time.Millisecond), err)
 }
 
@@ -134,22 +135,29 @@ func getListing(ctx context.Context, addr string) error {
 // starts iwdp while a process owns that address, starts one process at a
 // time (also across processes, lockStart), accepts only a listener of the
 // process it started as ready, stops a started process that does not
-// become ready, and backs off for StartBackoff after a failed start.
+// become ready, and backs off for StartBackoff after a failed start. It
+// records each iwdp it started (saveRecord), and Restart stops only a
+// recorded iwdp.
 type Starter struct {
 	addr      string        // listing address, host:port
 	readyWait time.Duration // startReadyWait; shorter in tests
 	// listens tells who receives a connection to an endpoint
 	// (groupListens; tests choose an implementation or a failure).
 	listens func(ctx context.Context, pgid int, ep netip.AddrPort) (listener, error)
+	// identify reads a process's identity (readIdentity) and kill sends a
+	// signal (syscall.Kill); tests inject failures.
+	identify func(pid int) (identity, error)
+	kill     func(pid int, sig syscall.Signal) error
 
 	mu       sync.Mutex // held for a whole start: one start at a time
 	failErr  error      // the last failed start
 	failedAt time.Time  // when it failed
+	own      *record    // the iwdp this Starter started last, until Restart stops it
 }
 
 // NewStarter returns a Starter for the listing address addr (host:port).
 func NewStarter(addr string) *Starter {
-	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens}
+	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens, identify: readIdentity, kill: syscall.Kill}
 }
 
 // std is the Starter of iwdp's default listing address, used by IsRunning,
@@ -175,7 +183,9 @@ func Start(ctx context.Context) error { return std.Start(ctx) }
 // another process takes the port, or ctx ends first, Start stops its
 // process group and waits for it to exit before it returns the error. A
 // failed start (not a cancelled one, nor one that lost the port to another
-// process) is returned again, without an attempt, for StartBackoff.
+// process) is returned again, without an attempt, for StartBackoff. A
+// started iwdp that answers is recorded for Restart (saveRecord); when
+// the record cannot be written, Start stops it and fails.
 func (s *Starter) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -184,7 +194,18 @@ func (s *Starter) Start(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
-	err = CheckListing(ctx, s.addr)
+	return s.startLocked(ctx, false)
+}
+
+// startLocked is Start with s.mu and the start lock held. With fresh (a
+// restart that stopped the recorded iwdp), an iwdp that answers is not
+// accepted as running: it is not the stopped iwdp's successor, so
+// startLocked fails.
+func (s *Starter) startLocked(ctx context.Context, fresh bool) error {
+	err := CheckListing(ctx, s.addr)
+	if fresh && err == nil {
+		return fmt.Errorf("restarting ios_webkit_debug_proxy: the recorded iwdp was stopped, but another process serves %s now, so no new ios_webkit_debug_proxy was started", s.addr)
+	}
 	if !errors.Is(err, ErrNotListening) {
 		return err // nil (running) or a process owns the port
 	}
@@ -202,10 +223,13 @@ func (s *Starter) Start(ctx context.Context) error {
 	return err
 }
 
-// launch runs one ios_webkit_debug_proxy and waits for its listing.
+// launch runs one ios_webkit_debug_proxy, waits for its listing and
+// records it.
 func (s *Starter) launch(ctx context.Context) error {
 	cmd := exec.Command("ios_webkit_debug_proxy", "-F", "-c", BuildConfig(DeviceUDIDs()))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	token := newToken()
+	cmd.Env = append(os.Environ(), tokenEnv+"="+token)
 	// Device discovery can take a while; ownership is checked again right
 	// before the spawn. The readiness check covers the rest of the window.
 	if err := portFree(ctx, s.addr); err != nil {
@@ -243,9 +267,14 @@ func (s *Starter) launch(ctx context.Context) error {
 				stopGroup(cmd.Process.Pid, exited)
 				return err
 			}
-			if ok {
-				return nil
+			if !ok {
+				continue
 			}
+			if err := s.saveRecord(cmd.Process.Pid, token); err != nil {
+				stopGroup(cmd.Process.Pid, exited)
+				return err
+			}
+			return nil
 		}
 	}
 }
@@ -304,25 +333,34 @@ func stopGroup(pgid int, exited <-chan struct{}) {
 	}
 }
 
+// Status reports on iwdp at the default listing address and starts it
+// when asked (Starter.Status); the iwdp_status tool uses it.
+func Status(ctx context.Context, autoStart bool) (started bool, err error) {
+	return std.Status(ctx, autoStart)
+}
+
+// Status checks once whether iwdp answers on the listing address
+// (CheckListing) and returns false and nil when it does. When nothing owns
+// the address, it returns the ErrNotListening error, or with autoStart it
+// starts iwdp (Start) and returns true. Otherwise it returns the check's
+// error and starts nothing. The one check serves both steps, so an owner
+// that does not answer costs one ProbeBudget; Start's own check of the
+// free address is a bind.
+func (s *Starter) Status(ctx context.Context, autoStart bool) (started bool, err error) {
+	err = CheckListing(ctx, s.addr)
+	if !autoStart || !errors.Is(err, ErrNotListening) {
+		return false, err
+	}
+	if err := s.Start(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // EnsureRunning checks if iwdp is running and starts it if not.
 // If iwdp crashed (e.g., after a large heap snapshot), this will restart it.
 // Start checks the listing first, so a running iwdp is left alone.
 func EnsureRunning(ctx context.Context) error {
-	return Start(ctx)
-}
-
-// Restart kills any existing iwdp process and starts a fresh one.
-// Use this when iwdp is in a bad state (e.g., after a WebSocket crash).
-func Restart(ctx context.Context) error {
-	// Best-effort kill — use exact binary name to avoid matching unrelated processes
-	_ = exec.Command("pkill", "-x", "ios_webkit_debug_proxy").Run()
-	// Wait for the process to fully exit and release the port
-	for i := 0; i < 10; i++ {
-		time.Sleep(300 * time.Millisecond)
-		if !IsRunning() {
-			break
-		}
-	}
 	return Start(ctx)
 }
 

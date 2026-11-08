@@ -165,23 +165,44 @@ func groupListens(ctx context.Context, pgid int, ep netip.AddrPort) (listener, e
 	return 0, fmt.Errorf("cannot tell which process listens on %s on %s", ep, runtime.GOOS)
 }
 
+// listenerPIDs returns the pids of the processes that listen on the TCP
+// port, on any address, sorted, for a message that names a port's owner.
+// Linux reads /proc (procListenerPIDs); darwin asks lsof under ctx
+// (lsofListenerPIDs). A process whose sockets this user cannot see is
+// missing from the list.
+func listenerPIDs(ctx context.Context, port uint16) ([]int, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return procListenerPIDs(port)
+	case "darwin":
+		return lsofListenerPIDs(ctx, port)
+	}
+	return nil, fmt.Errorf("cannot tell which process listens on port %d on %s", port, runtime.GOOS)
+}
+
 // startLockPoll is the interval of the attempts to take the start lock.
 const startLockPoll = 50 * time.Millisecond
+
+// runtimeName is the name of this user's file of kind for the listing
+// address addr, iwdp-mcp-<kind>-<uid>-<address>.<ext>: it carries the user
+// id, so in a shared directory one user's file never blocks another user.
+func runtimeName(kind, addr, ext string) string {
+	name := strings.NewReplacer(":", "_", "/", "_", "[", "", "]", "", "%", "_").Replace(addr)
+	return fmt.Sprintf("iwdp-mcp-%s-%d-%s.%s", kind, os.Getuid(), name, ext)
+}
 
 // lockStart takes the host-wide start lock of the listing address addr, so
 // that cooperating processes (the daemon, the legacy MCP server, the CLI)
 // start iwdp one at a time. The lock is a flock on a file in
-// XDG_RUNTIME_DIR, else the temporary directory (shared /tmp on Linux), so
-// its name carries the user id: one user's file never blocks another
-// user. The file is opened with O_NOFOLLOW and close-on-exec, so the
-// started iwdp never holds it.
+// XDG_RUNTIME_DIR, else the temporary directory (shared /tmp on Linux). The
+// file is opened with O_NOFOLLOW and close-on-exec, so the started iwdp
+// never holds it.
 func lockStart(ctx context.Context, addr string) (unlock func(), err error) {
 	dir := os.Getenv("XDG_RUNTIME_DIR")
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	name := strings.NewReplacer(":", "_", "/", "_", "[", "", "]", "", "%", "_").Replace(addr)
-	path := filepath.Join(dir, fmt.Sprintf("iwdp-mcp-start-%d-%s.lock", os.Getuid(), name))
+	path := filepath.Join(dir, runtimeName("start", addr, "lock"))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening the iwdp start lock: %w", err)

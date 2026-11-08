@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -37,6 +38,14 @@ type session struct {
 }
 
 var sess session
+
+// iwdpStatus and restartIWDP do the work of the iwdp_status and
+// restart_iwdp tools; tests replace them, so they never reach the iwdp on
+// the host's listing port.
+var (
+	iwdpStatus  = proxy.Status
+	restartIWDP = proxy.Restart
+)
 
 func getClient(ctx context.Context) (pageClient, error) {
 	sess.mu.Lock()
@@ -572,24 +581,30 @@ func registerTools(server *mcp.Server) {
 	addTool(server, &mcp.Tool{
 		Name: "iwdp_status", Description: "Check if ios-webkit-debug-proxy is running and optionally start it. Call this first before any other tool to ensure iwdp is available.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input IWDPStatusInput) (*mcp.CallToolResult, any, error) {
-		running := proxy.IsRunning()
-		if running {
-			return nil, map[string]any{"running": true, "message": "ios-webkit-debug-proxy is running on port 9221"}, nil
-		}
 		// Default auto_start to true when not explicitly set
 		autoStart := input.AutoStart == nil || *input.AutoStart
-		if !autoStart {
+		// One listing check decides both steps (L06).
+		started, err := iwdpStatus(ctx, autoStart)
+		switch {
+		case err == nil && started:
+			return nil, map[string]any{"running": true, "started": true, "message": "ios-webkit-debug-proxy was not running — started it automatically"}, nil
+		case err == nil:
+			return nil, map[string]any{"running": true, "message": "ios-webkit-debug-proxy is running on port 9221"}, nil
+		case errors.Is(err, proxy.ErrNotListening):
 			return nil, map[string]any{"running": false, "message": "ios-webkit-debug-proxy is not running. Start it with: ios_webkit_debug_proxy --no-frontend"}, nil
-		}
-		if err := proxy.Start(ctx); err != nil {
+		case autoStart:
 			return nil, map[string]any{"running": false, "message": fmt.Sprintf("failed to start iwdp: %v", err)}, nil
 		}
-		return nil, map[string]any{"running": true, "started": true, "message": "ios-webkit-debug-proxy was not running — started it automatically"}, nil
+		return nil, map[string]any{"running": false, "message": fmt.Sprintf("ios-webkit-debug-proxy does not answer: %v", err)}, nil
 	})
 
 	addTool(server, &mcp.Tool{
-		Name: "restart_iwdp", Description: "Restart ios-webkit-debug-proxy. Use this to recover after a crash (e.g., after a large heap snapshot kills the connection).",
+		Name: "restart_iwdp", Description: "Restart ios-webkit-debug-proxy, only when iwdp-mcp started it: it stops that recorded process (never another iwdp, never by name) and starts a new one. It refuses when the iwdp on port 9221 belongs to the user, another agent or another program, and names the owner pid and the manual restart command; do not stop that iwdp yourself. When no iwdp runs, it starts one. Use this to recover after a crash (e.g., after a large heap snapshot kills the connection).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, any, error) {
+		// A refused restart changes nothing: the client keeps its page.
+		if err := restartIWDP(ctx); err != nil {
+			return nil, map[string]any{"restarted": false, "message": fmt.Sprintf("failed to restart iwdp: %v", err)}, nil
+		}
 		// Also disconnect any active WebSocket client since the old connection is dead
 		sess.mu.Lock()
 		if sess.client != nil {
@@ -597,9 +612,6 @@ func registerTools(server *mcp.Server) {
 			sess.client = nil
 		}
 		sess.mu.Unlock()
-		if err := proxy.Restart(ctx); err != nil {
-			return nil, map[string]any{"restarted": false, "message": fmt.Sprintf("failed to restart iwdp: %v", err)}, nil
-		}
 		return nil, map[string]any{"restarted": true, "message": "ios-webkit-debug-proxy restarted. Use list_devices and select_page to reconnect."}, nil
 	})
 

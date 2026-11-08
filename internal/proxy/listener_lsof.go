@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,33 +33,73 @@ const (
 // runs under ctx and at most lsofTimeout; it is killed and reaped when
 // either ends, and the error then wraps the context's error.
 func lsofGroupListens(ctx context.Context, pgid int, ep netip.AddrPort) (listener, error) {
-	bin, err := exec.LookPath("lsof")
+	// -F pgtn: the process id, process group, address family and local
+	// address.
+	out, err := lsofListening(ctx, ep.Port(), "-F", "pgtn")
 	if err != nil {
-		bin = lsofPath
-	}
-	ctx, cancel := context.WithTimeout(ctx, lsofTimeout)
-	defer cancel()
-	// -w: no warnings; -n -P: numeric addresses and ports; -F pgtn: the
-	// process id, process group, address family and local address.
-	cmd := exec.CommandContext(ctx, bin, "-w", "-n", "-P", "-iTCP:"+strconv.Itoa(int(ep.Port())), "-sTCP:LISTEN", "-F", "pgtn")
-	cmd.WaitDelay = lsofWaitDelay
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if ctx.Err() != nil {
-		return 0, fmt.Errorf("lsof for the listener on port %d: %w", ep.Port(), ctx.Err())
-	}
-	// lsof exits 1 without a message when no file matches.
-	var exit *exec.ExitError
-	noMatch := errors.As(err, &exit) && exit.ExitCode() == 1 && stderr.Len() == 0
-	if err != nil && !noMatch {
-		return 0, fmt.Errorf("lsof for the listener on port %d: %v %s", ep.Port(), err, bytes.TrimSpace(stderr.Bytes()))
+		return 0, err
 	}
 	socks, err := lsofSockets(out, pgid)
 	if err != nil {
 		return 0, fmt.Errorf("lsof for the listener on port %d: %w", ep.Port(), err)
 	}
 	return classify(socks, ep.Addr()), nil
+}
+
+// lsofListenerPIDs (darwin) returns the pids of the processes that listen
+// on the TCP port, sorted; lsof (-t: pids only) runs as in
+// lsofGroupListens.
+func lsofListenerPIDs(ctx context.Context, port uint16) ([]int, error) {
+	out, err := lsofListening(ctx, port, "-t")
+	if err != nil {
+		return nil, err
+	}
+	return lsofPIDs(out)
+}
+
+// lsofPIDs parses lsof -t output, one pid per line, into sorted pids.
+func lsofPIDs(out []byte) ([]int, error) {
+	var pids []int
+	for _, f := range strings.Fields(string(out)) {
+		pid, err := strconv.Atoi(f)
+		if err != nil {
+			return nil, fmt.Errorf("lsof -t printed %q, not a pid", f)
+		}
+		pids = append(pids, pid)
+	}
+	slices.Sort(pids)
+	return pids, nil
+}
+
+// lsofListening runs lsof for the TCP sockets in LISTEN state on port with
+// the output options format, under ctx and at most lsofTimeout, and
+// returns its output; no matching socket is an empty output. lsof is
+// killed and reaped when either ends, and the error then wraps the
+// context's error.
+func lsofListening(ctx context.Context, port uint16, format ...string) ([]byte, error) {
+	bin, err := exec.LookPath("lsof")
+	if err != nil {
+		bin = lsofPath
+	}
+	ctx, cancel := context.WithTimeout(ctx, lsofTimeout)
+	defer cancel()
+	// -w: no warnings; -n -P: numeric addresses and ports.
+	args := append([]string{"-w", "-n", "-P", "-iTCP:" + strconv.Itoa(int(port)), "-sTCP:LISTEN"}, format...)
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = lsofWaitDelay
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("lsof for the listener on port %d: %w", port, ctx.Err())
+	}
+	// lsof exits 1 without a message when no file matches.
+	var exit *exec.ExitError
+	noMatch := errors.As(err, &exit) && exit.ExitCode() == 1 && stderr.Len() == 0
+	if err != nil && !noMatch {
+		return nil, fmt.Errorf("lsof for the listener on port %d: %v %s", port, err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	return out, nil
 }
 
 // lsofSockets parses lsof -F pgtn output: per process a p and a g line,
