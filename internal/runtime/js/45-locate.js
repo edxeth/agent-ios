@@ -332,4 +332,5 @@
   _.resolve = resolve;
   _.all = all;
   _.locate = locate;
+  _.els = allElements;
 })(window.__iwdpBuilding);

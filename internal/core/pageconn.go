@@ -49,6 +49,7 @@ type pageConn struct {
 	probing  bool
 	expected map[webkit.Caller]bool // connections the daemon closes itself
 	next     *handoff               // the new connection being set up (prepare)
+	opening  *handoff               // the handoff whose held read-loop events swap is delivering (replyRead)
 	done     chan struct{}          // closed when the page is lost or closed
 	dropped  time.Time              // last transport messageDropped event
 	// heldDrops counts the events that prepared connections dropped at
@@ -65,8 +66,11 @@ type pageConn struct {
 type connSub struct {
 	method string
 	h      webkit.TargetEventHandler
-	sync   bool
-	unsub  func()
+	// ordered, when set, replaces h: a read-loop subscription that also
+	// gets the event's position (subscribeOrdered).
+	ordered OrderedHandler
+	sync    bool
+	unsub   func()
 	// pending removes the subscription on the new connection that is being
 	// set up (prepare), nil when none is.
 	pending func()
@@ -214,8 +218,9 @@ func (p *pageConn) installed(c webkit.Caller) bool {
 // When c was prepared (prepare), the subscriptions keep their
 // subscriptions on c, and the events c delivered before the swap reach
 // them now, in the order c delivered them: first to the subscriptions that
-// run in the read loop, in the caller (their handlers do not block), then
-// to each queued subscription on its own goroutine (handoff.openQueued).
+// run in the read loop, in the caller (their handlers do not block), with
+// the reply handlers held in between (replyRead), then to each queued
+// subscription on its own goroutine (handoff.openQueued).
 // It installs nothing and returns an error when a read-loop subscription
 // lost a held event of c (handoff.install); the caller closes c then.
 func (p *pageConn) swap(c webkit.Caller) error {
@@ -253,9 +258,15 @@ func (p *pageConn) swap(c webkit.Caller) error {
 			s.unsub = subscribeOn(c, s)
 		}
 	}
+	p.opening = h
 	p.mu.Unlock()
 	if h != nil {
 		h.openReadLoop()
+		p.mu.Lock()
+		if p.opening == h {
+			p.opening = nil
+		}
+		p.mu.Unlock()
 	}
 	watched := p.watch(c)
 	if h != nil {
@@ -279,7 +290,7 @@ func (p *pageConn) prepare(c webkit.Caller) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.discardLocked()
-	h := &handoff{c: c, drops: &p.heldDrops}
+	h := &handoff{c: c, drops: &p.heldDrops, replies: &connSub{method: "reply", sync: true}}
 	p.next = h
 	for _, s := range p.subs {
 		s.pending = h.subscribe(s)
@@ -350,23 +361,48 @@ type handoff struct {
 	installing chan struct{} // set by install, closed when openReadLoop ends
 	overflow   error         // a read-loop subscription lost an event
 	dropped    bool
+	// replies is the read-loop subscription under which the reply
+	// handlers of calls on c (WithReplyPosition) are held, in read order
+	// with c's read-loop events and within the same limit (deliverReply).
+	replies *connSub
 }
 
 type heldEvent struct {
 	s              *connSub
+	pos            EventPosition // for an ordered subscription: where c delivered it
 	target, method string
 	params         json.RawMessage
+	reply          func() // a held reply handler (deliverReply); nil for an event
 }
 
-// subscribe subscribes s on the prepared connection through h.
+// subscribe subscribes s on the prepared connection through h. An ordered
+// subscription's event keeps the position at which c delivered it, also
+// when it is held until the swap.
 func (h *handoff) subscribe(s *connSub) func() {
 	return subscribeOn(h.c, &connSub{method: s.method, sync: s.sync, h: func(target, method string, params json.RawMessage) {
-		h.deliver(s, target, method, params)
+		var pos EventPosition
+		if s.ordered != nil {
+			pos = positionOf(h.c)
+		}
+		h.deliver(s, pos, target, method, params)
 	}})
 }
 
-func (h *handoff) deliver(s *connSub, target, method string, params json.RawMessage) {
-	e := heldEvent{s: s, target: target, method: method, params: params}
+func (h *handoff) deliver(s *connSub, pos EventPosition, target, method string, params json.RawMessage) {
+	h.deliverHeld(heldEvent{s: s, pos: pos, target: target, method: method, params: params})
+}
+
+// deliverReply runs fn, the handler of a reply that c read, in c's
+// read-loop order: held with c's read-loop events until swap delivers them
+// (openReadLoop), under the same limit and overflow rule as a read-loop
+// subscription's event, dropped with them by discard, and at once after
+// openReadLoop.
+func (h *handoff) deliverReply(fn func()) {
+	h.deliverHeld(heldEvent{s: h.replies, method: h.replies.method, reply: fn})
+}
+
+func (h *handoff) deliverHeld(e heldEvent) {
+	s := e.s
 	h.mu.Lock()
 	for s.sync && !h.syncOpen && h.installing != nil && h.held[s] >= handoffLimit {
 		// swap delivers the held read-loop events: wait for it rather than
@@ -391,12 +427,22 @@ func (h *handoff) deliver(s *connSub, target, method string, params json.RawMess
 		}
 	default:
 		h.mu.Unlock()
-		if !s.removed.Load() {
-			s.h(target, method, params)
-		}
+		e.run()
 		return
 	}
 	h.mu.Unlock()
+}
+
+// run delivers a held event to its subscription, or runs a held reply
+// handler.
+func (e heldEvent) run() {
+	if e.reply != nil {
+		e.reply()
+		return
+	}
+	if !e.s.removed.Load() {
+		e.s.call(e.pos, e.target, e.method, e.params)
+	}
 }
 
 // holdLocked appends e to held unless its subscription holds handoffLimit
@@ -458,9 +504,7 @@ func (h *handoff) openReadLoop() {
 		}
 		h.mu.Unlock()
 		for _, e := range batch {
-			if !e.s.removed.Load() {
-				e.s.h(e.target, e.method, e.params)
-			}
+			e.run()
 		}
 	}
 }
@@ -501,7 +545,7 @@ func (h *handoff) replayTo(s *connSub) {
 		}
 		h.replay[s] = q[1:]
 		h.mu.Unlock()
-		s.h(q[0].target, q[0].method, q[0].params)
+		s.call(q[0].pos, q[0].target, q[0].method, q[0].params)
 	}
 }
 
@@ -577,25 +621,67 @@ func closeCaller(c webkit.Caller) {
 }
 
 func subscribeOn(c webkit.Caller, s *connSub) func() {
+	if s.ordered != nil {
+		return subscribeItems(c, s.method, func(target, method string, params json.RawMessage) {
+			s.ordered(positionOf(c), target, method, params)
+		})
+	}
 	if s.sync {
 		return subscribeItems(c, s.method, s.h)
 	}
 	return webkit.SubscribeTarget(c, s.method, s.h)
 }
 
+// call runs the subscription's handler for one event; pos is used only by
+// an ordered subscription.
+func (s *connSub) call(pos EventPosition, target, method string, params json.RawMessage) {
+	if s.ordered != nil {
+		s.ordered(pos, target, method, params)
+		return
+	}
+	s.h(target, method, params)
+}
+
+// positionOf is c's standing right after it read the event that it is
+// delivering, or the reply that it read: it runs in c's read loop, after c
+// updated its own record of the event (webkit.Session.Subscribe, dispatch
+// order step 1).
+func positionOf(c webkit.Caller) EventPosition {
+	pos := EventPosition{Conn: c, ActiveTarget: activeTarget(c)}
+	if rp, ok := c.(interface{ ReadPosition() uint64 }); ok {
+		pos.Seq = rp.ReadPosition()
+	}
+	return pos
+}
+
 func (p *pageConn) subscribe(method string, h webkit.TargetEventHandler, inLoop bool) func() {
+	_, unsub := p.add(&connSub{method: method, h: h, sync: inLoop})
+	return unsub
+}
+
+// subscribeOrdered registers h in the read loop of each connection, with
+// each event's position (SubscribeOrdered). It also returns the connection
+// installed when the subscription started: the events of every later
+// connection come with that connection in their position.
+func (p *pageConn) subscribeOrdered(method string, h OrderedHandler) (webkit.Caller, func()) {
+	return p.add(&connSub{method: method, ordered: h, sync: true})
+}
+
+// add subscribes s on the current connection, and on the prepared one when
+// one is set up; it returns the current connection and the removal.
+func (p *pageConn) add(s *connSub) (webkit.Caller, func()) {
 	p.mu.Lock()
 	id := p.nextSub
 	p.nextSub++
-	s := &connSub{method: method, h: h, sync: inLoop}
-	s.unsub = subscribeOn(p.cur, s)
+	cur := p.cur
+	s.unsub = subscribeOn(cur, s)
 	if p.next != nil {
 		s.pending = p.next.subscribe(s)
 	}
 	p.subs[id] = s
 	p.mu.Unlock()
 	var once sync.Once
-	return func() {
+	return cur, func() {
 		once.Do(func() {
 			p.mu.Lock()
 			if s := p.subs[id]; s != nil {
@@ -775,14 +861,18 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 		return nil, fmt.Errorf("%s: not sent: %w", method, notSentWrap(errConnReplaced))
 	}
 	var res json.RawMessage
+	sctx, replyRan := p.replyOrder(b.ctx)
 	if cs, ok := c.(interface {
 		SendControl(context.Context, string, any) (json.RawMessage, error)
 	}); ok && control {
-		res, err = cs.SendControl(b.ctx, method, params)
+		res, err = cs.SendControl(sctx, method, params)
 	} else {
-		res, err = c.Send(b.ctx, method, params)
+		res, err = c.Send(sctx, method, params)
 	}
 	if err == nil {
+		if err := replyRan(b.ctx); err != nil {
+			return nil, b.cut(method, fmt.Errorf("%s: the reply was read, but its handler was still held with the new connection's events: %w", method, err))
+		}
 		return res, nil
 	}
 	p.writeFailed(c)
@@ -816,6 +906,65 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 		})
 	}
 	return nil, err
+}
+
+// replyOrder turns the WithReplyPosition handler of ctx into the reply
+// hook of a call on one of p's connections (webkit.WithReplyHook): the
+// hook takes the reply's position in the read loop, and the handler runs
+// in that connection's event order (replyRead). The returned function
+// waits, after the call returned without an error, until the handler ran:
+// a handler held for a hand-over runs only when swap delivers the held
+// events, after the call got its reply. It returns at once when the hook
+// did not run (an error reply, or a connection without reply hooks), and
+// with ctx's cause when ctx ends first.
+func (p *pageConn) replyOrder(ctx context.Context) (context.Context, func(context.Context) error) {
+	h, ok := ctx.Value(replyPositionKey{}).(func(EventPosition, string, json.RawMessage))
+	if !ok {
+		return ctx, func(context.Context) error { return nil }
+	}
+	var hooked atomic.Bool
+	ran := make(chan struct{})
+	hctx := webkit.WithReplyHook(ctx, func(c webkit.Caller, target string, result json.RawMessage) {
+		hooked.Store(true)
+		pos := positionOf(c)
+		p.replyRead(c, func() {
+			h(pos, target, result)
+			close(ran)
+		})
+	})
+	return hctx, func(ctx context.Context) error {
+		if !hooked.Load() {
+			return nil
+		}
+		select {
+		case <-ran:
+			return nil
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
+}
+
+// replyRead runs fn, the handler of a reply that c read, where the ordered
+// subscriptions get c's events at that point of c's stream: while c's
+// read-loop events are held (c is prepared, or swap is still delivering
+// its held events), fn is held with them (handoff.deliverReply);
+// otherwise it runs at once, as c's events do. It runs in c's read loop.
+func (p *pageConn) replyRead(c webkit.Caller, fn func()) {
+	p.mu.Lock()
+	var h *handoff
+	switch {
+	case p.next != nil && p.next.c == c:
+		h = p.next
+	case p.opening != nil && p.opening.c == c:
+		h = p.opening
+	}
+	p.mu.Unlock()
+	if h == nil {
+		fn()
+		return
+	}
+	h.deliverReply(fn)
 }
 
 // boundCall is one call on the connection c, bounded by c's stall (bound).

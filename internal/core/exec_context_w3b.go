@@ -41,6 +41,11 @@ type ExecContext struct {
 	conn   webkit.Caller // reporting connection; nil when unknown
 }
 
+// Source returns the target and the connection that reported the
+// context; a CDP attachment compares them with the document that it
+// knows before it uses the context (design 5.3).
+func (ec ExecContext) Source() (target string, conn webkit.Caller) { return ec.target, ec.conn }
+
 // connPinKey is the context key of the connection that a send must reach
 // (ExecContext.pin, pageConn.send).
 type connPinKey struct{}

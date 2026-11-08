@@ -309,10 +309,45 @@ const GeoRestore = `(function () {
   return true;
 })()`
 
+// GeoPartPrefix starts the name of every geolocation shim's bootstrap
+// part: "geolocation:<session>" of a session (SetGeolocation) and
+// "geolocation:<owner>" of a CDP attachment (internal/cdp).
+const GeoPartPrefix = "geolocation:"
+
+// GeoRelease returns the Release of a geolocation owner's entry. The
+// owner's bootstrap part is gone when it runs (core.DesiredState.Release
+// drops an owner's parts before its entries' releases), so the parts left
+// are the surviving owners' overrides (design 2.4: a release removes only
+// the owner's state). It restores the current document's geolocation
+// (GeoRestore); when another owner's geolocation part remains, it installs
+// the effective one, the last in script order, in the current document
+// again, so the surviving override stays active there as in new documents.
+func GeoRelease(boot *core.BootstrapParts) func(context.Context, core.Sender) error {
+	return func(ctx context.Context, s core.Sender) error {
+		if _, err := s.Send(ctx, "Runtime.evaluate", map[string]any{"expression": GeoRestore, "returnByValue": true}); err != nil {
+			return fmt.Errorf("restoring navigator.geolocation in the current document: %w", err)
+		}
+		survivor := ""
+		for _, n := range boot.Names() {
+			if src, ok := boot.Source(n); ok && strings.HasPrefix(n, GeoPartPrefix) {
+				survivor = src
+			}
+		}
+		if survivor == "" {
+			return nil
+		}
+		if _, err := s.Send(ctx, "Runtime.evaluate", map[string]any{"expression": survivor, "returnByValue": true}); err != nil {
+			return fmt.Errorf("installing the remaining geolocation override in the current document: %w", err)
+		}
+		return nil
+	}
+}
+
 // SetGeolocation installs the geolocation shim of session as the bootstrap
 // part "geolocation:<session>" and in the current document. The entry
 // "devtools:geo:<session>" restores the current document's geolocation on
-// release (owner "geo:<session>"); the release removes the bootstrap part.
+// release (owner "geo:<session>"; GeoRelease, which keeps another owner's
+// override); the release removes the bootstrap part.
 // The entry is put before the shim is sent, so a failed send still has
 // its cleanup. It runs as one desired-state change.
 func (p *Page) SetGeolocation(ctx context.Context, c webkit.Caller, session string, lat, lng, accuracy float64) error {
@@ -326,18 +361,10 @@ func (p *Page) SetGeolocation(ctx context.Context, c webkit.Caller, session stri
 func (p *Page) setGeolocation(ctx context.Context, c webkit.Caller, session string, lat, lng, accuracy float64) error {
 	src := GeoShim(lat, lng, accuracy)
 	o := owner("geo", session)
-	if err := p.ps.State.SetPart(o, "geolocation:"+session, core.RankShim, src); err != nil {
+	if err := p.ps.State.SetPart(o, GeoPartPrefix+session, core.RankShim, src); err != nil {
 		return err
 	}
-	p.ps.State.Put(core.Entry{
-		Key: "devtools:geo:" + session, Owner: o, Apply: noop,
-		Release: func(ctx context.Context, s core.Sender) error {
-			if _, err := s.Send(ctx, "Runtime.evaluate", map[string]any{"expression": GeoRestore, "returnByValue": true}); err != nil {
-				return fmt.Errorf("restoring navigator.geolocation in the current document: %w", err)
-			}
-			return nil
-		},
-	})
+	p.ps.State.Put(core.Entry{Key: "devtools:geo:" + session, Owner: o, Apply: noop, Release: GeoRelease(p.ps.Boot)})
 	if _, err := c.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": p.ps.Boot.Script()}); err != nil {
 		return fmt.Errorf("Page.setBootstrapScript: %w", err)
 	}

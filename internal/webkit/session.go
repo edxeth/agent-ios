@@ -228,6 +228,7 @@ type pendingCall struct {
 	// answered is set under Session.mu when the page's reply, or the error
 	// ack of its outer message, was read: no later reply can come (finish).
 	answered bool
+	onReply  ReplyHook // WithReplyHook of the call's context; nil without one
 }
 
 type targetState struct {
@@ -349,7 +350,8 @@ type Session struct {
 
 	dropped   atomic.Int64
 	malformed atomic.Int64
-	workers   atomic.Int64 // running subscriber goroutines
+	workers   atomic.Int64  // running subscriber goroutines
+	reads     atomic.Uint64 // messages read (ReadPosition)
 }
 
 // Dial opens a connection with open and starts a Session on it (design
@@ -1041,7 +1043,7 @@ func (s *Session) write(ctx, callCtx context.Context, target, method string, raw
 		return nil, notSent(&WireLimitError{What: method, Size: len(wire), Limit: lim})
 	}
 
-	in := &inflight{call: &pendingCall{ch: make(chan reply, 1), target: target, method: method}, innerID: innerID, outerID: outerID, target: target, method: method}
+	in := &inflight{call: &pendingCall{ch: make(chan reply, 1), target: target, method: method, onReply: replyHookOf(ctx)}, innerID: innerID, outerID: outerID, target: target, method: method}
 	s.mu.Lock()
 	// Re-check under the lock: the target may have been destroyed or
 	// swapped while the message was built. Nothing is written to it then.
@@ -1409,6 +1411,7 @@ func (s *Session) readLoop() {
 			s.shutdown(fmt.Errorf("%w: %w", ErrSessionClosed, err))
 			return
 		}
+		s.reads.Add(1)
 		s.handle(data)
 	}
 }
@@ -1520,6 +1523,9 @@ func (s *Session) handleFromTarget(params json.RawMessage) {
 			r := decodeReply(m)
 			if r.err == nil && call.method == "Network.disable" && s.opts.NetworkDisabled != nil {
 				s.opts.NetworkDisabled(s, p.TargetID)
+			}
+			if r.err == nil && call.onReply != nil {
+				call.onReply(s, p.TargetID, r.result)
 			}
 			deliver(call, r)
 		}

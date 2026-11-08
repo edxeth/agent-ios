@@ -468,15 +468,45 @@ func TestProtocolDiscovery(t *testing.T) {
 //   - no token or endpoint id ever issued appears in any log line, also
 //     when a client sends one, current or retired, as a header value
 //     (Origin, Host, Referer).
+//
+// Every other run starts with reachPlan, a sequence that reaches each case
+// of the reach check by construction, then runs its random operations; the
+// other runs are random only. So the check that the property is not
+// vacuous holds on every run of the test, without a fixed seed (a random
+// sequence of at most 20 operations reaches an attach only when it issues,
+// upgrades and calls setAutoAttach in that order).
 func TestEndpointLifecycleProperty(t *testing.T) {
 	var reach struct {
 		reissues, staleRequests, staleUpgrades, staleCalls, liveUpgrades, liveRequests, attaches, revokes, releases, restarts, headerRefusals, headerSecrets int
 	}
 	sessions := []string{"s1", "s2"}
 	pages := []string{"One", "Two"}
-	prop := func(ops []uint8) bool {
+	op := func(kind, arg int) uint8 { return uint8(kind + 7*arg) } // the decoding of the switch below
+	reachPlan := []uint8{
+		op(0, 0), // issue s1, page One, page scope
+		op(3, 0), // live upgrade of its browser endpoint
+		op(5, 0), // setAutoAttach on it: an attach
+		op(4, 0), // live GET /json/version
+		op(4, 6), // GET /json/version with a secret as Origin: a header refusal
+		op(1, 0), // revoke s1
+		op(4, 0), // stale request
+		op(3, 0), // stale upgrade
+		op(5, 0), // stale call on the closed connection
+		op(2, 0), // release s1
+		op(6, 0), // listener restart
+	}
+	runs := 0
+	prop := func(ops []uint8) (ok bool) {
 		if len(ops) > 20 {
 			ops = ops[:20]
+		}
+		if runs++; runs%2 == 1 {
+			ops = append(slices.Clone(reachPlan), ops...)
+			defer func() {
+				if !ok {
+					t.Logf("ops %v start with the %d operations of the reach plan", ops, len(reachPlan))
+				}
+			}()
 		}
 		r := newRig(t)
 		type issued struct {

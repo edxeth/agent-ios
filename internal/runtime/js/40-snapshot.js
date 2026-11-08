@@ -88,8 +88,11 @@
         if (textHidden === null) { textHidden = visibilityHidden(node); }
         if (textHidden) { continue; }
         var t = k.data.replace(/\s+/g, " ");
-        if (t !== " " && t !== "") { out.push({ role: "StaticText", name: t }); }
-        else if (t === " ") { out.push({ role: "StaticText", name: " " }); }
+        if (t !== "") {
+          var sn = { role: "StaticText", name: t };
+          if (ctx.full) { sn.h = _.handle(k); }
+          out.push(sn);
+        }
       } else if (k.nodeType === 1) {
         walkElement(k, ctx, out);
       }
@@ -158,7 +161,9 @@
     }
     if (cursor && cursor.hiddenInput && node.role === cursor.hiddenInput.role) { node.checked = cursor.hiddenInput.checked; }
     var ref = INTERACTIVE[role] || (CONTENT[role] && name) || cursor;
-    if (ref) {
+    if (ctx.full) {
+      node.h = _.handle(el);
+    } else if (ref) {
       node.ref = _.refFor(el, role, name, ctx.alloc);
       ctx.refs.push({ ref: node.ref, role: role, name: name });
     }
@@ -171,9 +176,11 @@
   // Without a root, or with this document's body or html element, it walks
   // the page from the body. With another root it runs the page walk and
   // returns the root's part of it; a root that the page walk never enters
-  // gives no nodes.
-  function walk(root, nextRef) {
-    var ctx = { alloc: { next: nextRef || 1 }, refs: [], frameDepth: 0, tree: [], emit: true, scope: null, done: false };
+  // gives no nodes. In full mode (the CDP accessibility tree, 65-cdp.js)
+  // it hands out no refs: every node, text included, gets its node handle
+  // h instead.
+  function walk(root, nextRef, full) {
+    var ctx = { alloc: { next: nextRef || 1 }, refs: [], frameDepth: 0, tree: [], emit: true, scope: null, done: false, full: !!full };
     if (root && root !== document.body && root !== document.documentElement) {
       ctx.emit = false;
       ctx.scope = root;

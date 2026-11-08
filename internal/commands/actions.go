@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/upload"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -26,10 +26,6 @@ const actionTimeout = 5 * time.Second
 
 // dragSteps is the number of pointer increments of drag (design 3.5).
 const dragSteps = 10
-
-// maxUpload is the total size limit of upload on iwdp and direct (design
-// 3.5); on WebKitGTK the wire-byte limit of the transport also applies.
-const maxUpload = 8 << 20
 
 var forceFlag = Flag{Name: "force", Type: FlagBool, Help: "skip the actionability checks (attached, visible, stable, enabled, receives events)"}
 
@@ -563,17 +559,21 @@ type uploadFile struct {
 	B64  string `json:"b64"`
 }
 
+// runUpload reads the files with the shared bounded reader (upload.Read:
+// regular files only, at most the 8 MiB limit of design 3.5 in total,
+// stopped by ctx); on WebKitGTK the wire-byte limit of the transport also
+// applies.
 func runUpload(ctx context.Context, env Env, in Input) (Result, error) {
 	var files []uploadFile
 	total := 0
 	for _, p := range in.Args[1:] {
-		data, err := os.ReadFile(env.ResolvePath(p))
+		data, err := upload.Read(ctx, env.ResolvePath(p), upload.MaxBytes-total)
 		if err != nil {
 			return Result{}, fmt.Errorf("upload: reading %s: %w", p, err)
 		}
 		total += len(data)
-		if total > maxUpload {
-			return Result{}, fmt.Errorf("upload: the files are %d bytes or more; the limit is %d bytes (8 MiB)", total, maxUpload)
+		if total > upload.MaxBytes {
+			return Result{}, fmt.Errorf("upload: the files are %d bytes or more; the limit is %d bytes (8 MiB)", total, upload.MaxBytes)
 		}
 		name := p[strings.LastIndex(p, "/")+1:]
 		files = append(files, uploadFile{Name: name, Type: mimeOf(name), B64: base64.StdEncoding.EncodeToString(data)})

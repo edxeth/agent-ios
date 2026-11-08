@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><title>CDP W5b-2</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  #box { position: absolute; left: 10px; top: 200px; width: 100px; height: 50px; box-sizing: border-box;
+         border: 2px solid black; padding: 3px; margin: 4px; }
+  #go { position: absolute; left: 10px; top: 300px; width: 80px; height: 30px; }
+  #ask { position: absolute; left: 120px; top: 300px; width: 80px; height: 30px; }
+</style>
+</head>
+<body>
+<!-- CDP DOM, Accessibility, Input and Emulation fixture (W5b-2, design
+     5.3). Handlers record into window.T, which e2e/webkitgtk/cdp_w5b2_test.go
+     reads back; its expected values are hand-written there. -->
+<h1>Form</h1>
+<label>Name <input id="name"></label>
+<label><input type="checkbox" id="agree" checked> Agree</label>
+<input type="file" id="file">
+<div id="box">box</div>
+<button id="go">Go</button>
+<button id="ask">Ask</button>
+<script>
+  var T = window.T = { events: [], clicks: 0, files: [], answer: "none" };
+  var go = document.getElementById("go");
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
+    go.addEventListener(t, function (e) { T.events.push(t + ":" + e.isTrusted); });
+  });
+  go.addEventListener("click", function () { T.clicks++; go.textContent = "Clicked " + T.clicks; });
+  document.getElementById("ask").addEventListener("click", function () { T.answer = String(confirm("Sure?")); });
+  document.getElementById("file").addEventListener("change", function (e) {
+    var f = e.target.files[0];
+    T.files.push(f ? f.name + ":" + f.size : "none");
+  });
+</script>
+</body></html>

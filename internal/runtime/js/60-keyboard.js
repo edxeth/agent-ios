@@ -124,15 +124,17 @@
   // key: keydown; unless canceled, keypress and text insertion (printable
   // keys) or the default action; then, as the next native input event,
   // keyup (Space activates on keyup). ph "down" sends only keydown, ph "up"
-  // only keyup.
+  // only keyup. The CDP key events (internal/cdp input_domain.go) use ph
+  // "kd", everything before keyup (CDP keyDown and rawKeyDown), and ph
+  // "ch", keypress and the insertion without keydown (CDP char).
   async function key(x, t, k, m, r, ph) {
     var ok, d = KD[k.key];
-    delete KD[k.key];
+    if (ph !== "ch") { delete KD[k.key]; }
     if (ph === "up") {
       ok = !!d && d.t === t && d.ok;
     } else {
       await gap(x);
-      ok = await kev(x, t, "keydown", k, m);
+      ok = ph === "ch" || await kev(x, t, "keydown", k, m);
       if (ph === "down") {
         KD[k.key] = { t: t, ok: ok };
         return;
@@ -143,6 +145,8 @@
           if (editable(t)) { await edit(x, t, k.text, "insertText"); }
         } else { await defaults(x, t, k, m, r); }
       }
+      if (ph === "kd") { KD[k.key] = { t: t, ok: ok }; }
+      if (ph) { return; }
     }
     await gap(x);
     if (await kev(x, t, "keyup", k, m) && ok && k.key === " " && !editable(t) && /^(button|submit|reset|checkbox|radio)$/.test(t.type)) {

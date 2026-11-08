@@ -123,6 +123,10 @@ func TestDaemonTurnsOnPauseOnStartOnEveryConnection(t *testing.T) {
 
 	f.CloseConnections()
 	waitConns(t, f, 0)
+	// The takeover reconnects only a page that the daemon saw lost; before
+	// its watch observes the close, the page is still attached and the
+	// takeover would reuse the closed connection.
+	waitPageState(t, c, core.ConnLost)
 	open(true)
 	if n := f.ConnectionCount(); n != 2 {
 		t.Fatalf("connections = %d, want 2 (the first and the takeover's)", n)
@@ -131,6 +135,23 @@ func TestDaemonTurnsOnPauseOnStartOnEveryConnection(t *testing.T) {
 		t.Fatalf("Target.setPauseOnStart(true) received on connections %v, want [1 2]: the reconnect must send it again", got)
 	}
 	swapPaused(t, f, "page-3")
+}
+
+// waitPageState waits until the daemon's only page is in state want.
+func waitPageState(t *testing.T, c *Client, want core.ConnState) {
+	t.Helper()
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		st, err := c.Status(ctxFor(t, 5*time.Second))
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if len(st.Pages) == 1 && st.Pages[0].State == want.String() {
+			return
+		}
+		if time.Now().After(end) {
+			t.Fatalf("the daemon's pages are %+v, want one page in state %q", st.Pages, want)
+		}
+	}
 }
 
 func waitConns(t *testing.T, f *fakewebkit.Server, n int) {

@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-mcp/internal/dialogpolicy"
 )
 
 // dialog: the dialog bridge of design 3.7 (agent-browser "dialog"). WIP
@@ -36,8 +35,8 @@ func init() {
 // confirm return false and prompt null; "accept" makes confirm return true
 // and prompt its default value. alert is always accepted.
 const (
-	policyDismiss = "dismiss"
-	policyAccept  = "accept"
+	policyDismiss = dialogpolicy.Dismiss
+	policyAccept  = dialogpolicy.Accept
 )
 
 // dialogUse is one dialog the page answered (80-dialogs.js handle).
@@ -98,7 +97,7 @@ func (b *dialogBridge) newEpoch(e uint64) {
 
 func (b *dialogBridge) policyOrDefault() string {
 	if b.policy == "" {
-		return policyDismiss
+		return dialogpolicy.Default
 	}
 	return b.policy
 }
@@ -221,38 +220,12 @@ func dialogLines(uses []dialogUse) []string {
 	return out
 }
 
-// dialogPart is the bootstrap part that installs the override in a new
-// document before its scripts run (with pause-on-start, design 2.7).
-func dialogPart(policy string) string {
-	return fmt.Sprintf("window.__iwdp && window.__iwdp.call(\"dialogs\", {policy: %q});", policy)
-}
-
-func dialogOwner(session string) core.Owner { return core.SessionOwner("dialog", session) }
-
 // activateDialogs makes the session's dialog override part of the desired
-// state: the bootstrap part "dialog" and the bridge's Console ownership
-// (design 3.7, 2.4). Both are re-applied on reconnect and target swaps and
-// removed when the session releases the page. They are one change of the
-// desired state (DesiredState.Change), so a provisional target whose setup
-// already ran gets them too before it commits (design 2.7).
+// state (dialogpolicy.Install: the bootstrap part "dialog" and the
+// bridge's Console ownership).
 func (w *w3bPage) activateDialogs(ctx context.Context, policy string) error {
 	if w.ps.State != nil {
-		owner := dialogOwner(w.session)
-		err := w.ps.State.Change(ctx, w.caller, func(c webkit.Caller) error {
-			if err := w.ps.State.SetPart(owner, "dialog", core.RankDialog, dialogPart(policy)); err != nil {
-				return err
-			}
-			if _, err := c.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": w.ps.State.Boot.Script()}); err != nil {
-				return fmt.Errorf("installing the dialog override for new documents: %w", err)
-			}
-			if w.ps.State.Acquire(owner, "Console") {
-				if _, err := c.Send(ctx, "Console.enable", nil); err != nil {
-					return fmt.Errorf("enabling Console for the dialog log: %w", err)
-				}
-			}
-			return nil
-		})
-		if err != nil {
+		if err := dialogpolicy.Install(ctx, w.ps.State, w.caller, w.session, policy); err != nil {
 			return err
 		}
 	}

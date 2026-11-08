@@ -3,17 +3,16 @@ package cdp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 )
 
 // The first page-session methods. W5a needs them for its acceptance
 // (design 7.8 item 11: a client evaluates in the page; detaching removes
-// the extra header the attachment set). The Runtime and Network domains
-// belong to W5b, which extends these handlers (execution contexts and
-// utility-world aliases, callFunctionOn, oversized sources) and adds the
-// rest of each domain in its own files.
+// the extra header the attachment set). W5b-1 added execution contexts
+// (contextId and uniqueContextId, worlds.go) to Runtime.evaluate; the rest
+// of the Runtime domain is in runtime_domain.go. Oversized sources (P2
+// item 2) and the Network domain are W5c's.
 
 func init() {
 	register(
@@ -48,6 +47,7 @@ type evalParams struct {
 	IncludeCommandLineAPI bool   `json:"includeCommandLineAPI"`
 	Silent                bool   `json:"silent"`
 	ContextID             int    `json:"contextId"`
+	UniqueContextID       string `json:"uniqueContextId"`
 	ReturnByValue         bool   `json:"returnByValue"`
 	UserGesture           bool   `json:"userGesture"`
 	AwaitPromise          bool   `json:"awaitPromise"`
@@ -63,12 +63,14 @@ type wipResult struct {
 // an object by value (as tools.EvaluateScriptWithOptions does).
 const thisFunction = "function() { return this; }"
 
-// runtimeEvaluate runs the expression in the page's main world. WIP
+// runtimeEvaluate runs the expression in the main world of the context's
+// frame (an alias runs in its frame's main world, worlds.go). WIP
 // evaluate has no awaitPromise (CLAUDE.md), so with awaitPromise it
 // evaluates by reference: a Promise result is awaited with
 // Runtime.awaitPromise in a Later, and the session's next messages do not
 // wait for it; any other object is read by value when returnByValue asks
-// for it.
+// for it (boundOp.finish). Every send of the evaluation keeps the
+// binding of its first one (boundOp).
 func runtimeEvaluate(ctx context.Context, call *Call) (any, Later, error) {
 	var p evalParams
 	if err := call.decode(&p); err != nil {
@@ -79,6 +81,11 @@ func runtimeEvaluate(ctx context.Context, call *Call) (any, Later, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	b, err := s.bind(mo, p.ContextID, p.UniqueContextID)
+	if err != nil {
+		end()
+		return nil, nil, err
+	}
 	wip := map[string]any{
 		"expression": p.Expression, "returnByValue": p.ReturnByValue && !p.AwaitPromise,
 		"emulateUserGesture": p.UserGesture, "doNotPauseOnExceptionsAndMuteConsole": p.Silent,
@@ -87,52 +94,18 @@ func runtimeEvaluate(ctx context.Context, call *Call) (any, Later, error) {
 	if p.ObjectGroup != "" {
 		wip["objectGroup"] = p.ObjectGroup
 	}
-	r, err := wipCall(mo.Op.Context(), mo, "Runtime.evaluate", wip)
-	if err != nil || r.WasThrown || !p.AwaitPromise || !isPromise(r.Result) {
-		defer end()
-		if err == nil && !r.WasThrown && p.AwaitPromise && p.ReturnByValue && r.Result["objectId"] != nil {
-			r, err = s.valueOf(mo, r.Result["objectId"])
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		return cdpResult(r), nil, nil
-	}
-	return nil, func(context.Context) (any, error) {
-		defer end()
-		ar, err := wipCall(mo.Op.Context(), mo, "Runtime.awaitPromise", map[string]any{
-			"promiseObjectId": r.Result["objectId"], "returnByValue": p.ReturnByValue,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return cdpResult(ar), nil
-	}, nil
+	r, err := b.call("Runtime.evaluate", wip)
+	return b.finish(end, r, boundErr(err), p.ReturnByValue, p.AwaitPromise)
 }
 
 // valueOf reads the object objectID by value and releases the reference,
 // which the client never saw.
-func (s *session) valueOf(mo *core.ManagedOp, objectID any) (wipResult, error) {
-	ctx := mo.Op.Context()
-	r, err := wipCall(ctx, mo, "Runtime.callFunctionOn", map[string]any{
+func (b *boundOp) valueOf(objectID any) (wipResult, error) {
+	r, err := b.call("Runtime.callFunctionOn", map[string]any{
 		"objectId": objectID, "functionDeclaration": thisFunction, "returnByValue": true,
 	})
-	if _, rerr := mo.Op.Caller().Send(ctx, "Runtime.releaseObject", map[string]any{"objectId": objectID}); rerr != nil {
-		s.c.s.o.Logf("cdp: %s: releasing the evaluated object of %s session %s: %v", s.c.name, s.kind, shortID(s.id), rerr)
-	}
+	b.release(objectID, "the evaluated object")
 	return r, err
-}
-
-func wipCall(ctx context.Context, mo *core.ManagedOp, method string, params any) (wipResult, error) {
-	raw, err := mo.Op.Caller().Send(ctx, method, params)
-	if err != nil {
-		return wipResult{}, err
-	}
-	var r wipResult
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return wipResult{}, fmt.Errorf("decoding the WIP %s reply: %w", method, err)
-	}
-	return r, nil
 }
 
 func isPromise(o map[string]any) bool {

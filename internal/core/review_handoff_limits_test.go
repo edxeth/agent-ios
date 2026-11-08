@@ -20,7 +20,7 @@ func TestReviewPreparedEventsKeepABoundedQueue(t *testing.T) {
 	h := &handoff{}
 	sub := &connSub{h: func(string, string, json.RawMessage) {}}
 	for i := 0; i < 4*webkit.DefaultEventQueue; i++ {
-		h.deliver(sub, "page-2", "Console.messageAdded", json.RawMessage(`{"message":"replay"}`))
+		h.deliver(sub, EventPosition{}, "page-2", "Console.messageAdded", json.RawMessage(`{"message":"replay"}`))
 	}
 	if len(h.asyncHeld) > webkit.DefaultEventQueue {
 		t.Fatalf("prepared handoff retained %d events for one subscriber, exceeding the existing %d-event queue budget; there is no bound/drop path", len(h.asyncHeld), webkit.DefaultEventQueue)

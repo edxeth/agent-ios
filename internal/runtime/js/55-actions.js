@@ -39,6 +39,15 @@
     await fire(x, e, ME, "mouseover", o); await fire(x, e, ME, "mouseenter", ne(o));
     await fire(x, e, PE, "pointermove", o); await fire(x, e, ME, "mousemove", o);
   }
+  // focusDown: the default action of a mousedown on e. It focuses the
+  // focusable element at or above e, or blurs the focused element when
+  // there is none.
+  function focusDown(e) {
+    var f = B.closest(e, FOC);
+    if (f && !_.disabled(f)) {
+      if (deepActive() !== f) { f.focus(); }
+    } else if (document.activeElement && document.activeElement !== document.body) { document.activeElement.blur(); }
+  }
   // press: one native mouse down (pointerdown, mousedown, and focus, the
   // default action of mousedown), then, after the next frame, one native
   // mouse up (pointerup, mouseup, then click, auxclick for the middle
@@ -48,14 +57,7 @@
     var b = g.b || 0, o = pi(c, g, BTN[b]);
     await gap(x);
     var pd = await fire(x, e, PE, "pointerdown", o), md = pd && await fire(x, e, ME, "mousedown", o);
-    if (md) {
-      await ev(x, function () {
-        var f = B.closest(e, FOC);
-        if (f && !_.disabled(f)) {
-          if (deepActive() !== f) { f.focus(); }
-        } else if (document.activeElement && document.activeElement !== document.body) { document.activeElement.blur(); }
-      });
-    }
+    if (md) { await ev(x, function () { focusDown(e); }); }
     await gap(x, true);
     o = pi(c, g, 0);
     await fire(x, e, PE, "pointerup", o);
@@ -252,6 +254,8 @@
     }
   };
   _.disp = disp; _.bub = bub; _.deepActive = deepActive;
+  // The event primitives that the CDP Input dispatchers (65-cdp.js) build on.
+  _.pi = pi; _.ne = ne; _.fire = fire; _.over = over; _.press = press; _.focusDown = focusDown;
   // pick returns the element of a target (highlight and hover --css get its node through it).
   I.def("pick", function (a, call) { return _.resolve(a.t, call); });
 })(window.__iwdpBuilding);

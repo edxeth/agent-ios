@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -255,19 +256,36 @@ func (c *conn) dispatch(call *Call) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(base, callTimeout)
-	res, later, err := m.Handle(ctx, call)
+	res, later, err := c.handle(call, func() (any, Later, error) { return m.Handle(ctx, call) })
 	if later != nil && err == nil {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
 			defer cancel()
-			r, err := later(ctx)
+			r, _, err := c.handle(call, func() (any, Later, error) {
+				r, err := later(ctx)
+				return r, nil, err
+			})
 			c.reply(call, r, err)
 		}()
 		return
 	}
 	cancel()
 	c.reply(call, res, err)
+}
+
+// handle runs a command's handler or its Later. A panic there would end
+// the daemon (it runs in a session worker), so it becomes the command's
+// error, and the log gets the stack. State that the handler held may
+// stay locked; the panic is a bug to fix.
+func (c *conn) handle(call *Call, run func() (any, Later, error)) (res any, later Later, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			c.s.o.Logf("cdp: %s: %s panicked: %v\n%s", c.name, call.Method, p, debug.Stack())
+			res, later, err = nil, nil, serverError("%s failed with an internal error in the bridge (%v); the daemon log has the details", call.Method, p)
+		}
+	}()
+	return run()
 }
 
 func shortID(id string) string {
@@ -345,6 +363,7 @@ type session struct {
 	owner  core.Owner
 	unhold func()
 	gone   chan struct{} // closed at detach
+	page   *pageState    // events, frames and contexts of a page attachment (events.go); nil for a tab
 
 	// ctx ends when the attachment detaches: its queued and running
 	// commands and the child attaches it started are canceled.
@@ -365,6 +384,9 @@ type session struct {
 	announced bool
 
 	children []string // guarded by c.mu
+
+	input inputState // the mouse buttons it holds (input_domain.go)
+	emu   emuState   // the overrides it set (emulation_domain.go)
 }
 
 var (
@@ -425,6 +447,13 @@ func (s *session) do(ctx context.Context, name string, class core.Class, fn func
 	return fn(mo.Op.Context(), mo)
 }
 
+// closePage ends the page events of a page attachment.
+func (s *session) closePage() {
+	if s.page != nil {
+		s.page.close()
+	}
+}
+
 // fence refuses new work of the attachment and cancels the running work.
 func (s *session) fence() {
 	s.fmu.Lock()
@@ -466,6 +495,9 @@ func (c *conn) attach(ctx context.Context, parent *session, kind string, t targe
 		owner: core.SessionOwner("cdp-"+id, c.rec.session), unhold: m.HoldLease(pg, ao), gone: make(chan struct{}),
 	}
 	s.ctx, s.cancel = context.WithCancel(c.ctx)
+	if kind == kindPage {
+		s.page = newPageState(s)
+	}
 	c.mu.Lock()
 	var refused error
 	switch {
@@ -477,6 +509,7 @@ func (c *conn) attach(ctx context.Context, parent *session, kind string, t targe
 	if refused != nil {
 		c.mu.Unlock()
 		s.cancel()
+		s.closePage()
 		s.unhold()
 		return nil, refused
 	}
@@ -571,6 +604,7 @@ func (c *conn) detach(id string, notify bool) bool {
 	c.mu.Unlock()
 	for _, d := range subtree {
 		d.fence()
+		d.closePage() // no event of d after its detachedFromTarget
 	}
 	for _, d := range subtree {
 		d.work.Wait()

@@ -53,7 +53,9 @@ type rig struct {
 	obsMu      *sync.Mutex // guards observed
 }
 
-func newRig(t *testing.T) *rig {
+// newRig builds the rig; opts change the endpoint's Options before it
+// starts.
+func newRig(t *testing.T, opts ...func(*Options)) *rig {
 	t.Helper()
 	r := &rig{l: fakewebkit.NewListing(false), fake: map[string]*fakewebkit.Server{}, listed: map[string]*fakewebkit.ListedPage{}, log: &logBuf{}}
 	t.Cleanup(r.l.Close)
@@ -82,14 +84,18 @@ func newRig(t *testing.T) *rig {
 	var obsMu sync.Mutex
 	obs := []string{}
 	r.observed, r.obsMu = &obs, &obsMu
-	r.srv = New(Options{
+	o := Options{
 		Manager: r.m, Reservations: r.res, Version: "test", Logf: r.log.logf, PollEvery: 100 * time.Millisecond,
 		Observe: func(req *http.Request, status int) {
 			obsMu.Lock()
 			obs = append(obs, fmt.Sprintf("%s %s %d", req.Method, req.URL.Path, status))
 			obsMu.Unlock()
 		},
-	})
+	}
+	for _, f := range opts {
+		f(&o)
+	}
+	r.srv = New(o)
 	if _, err := r.srv.Start(0, nil); err != nil {
 		t.Fatal(err)
 	}

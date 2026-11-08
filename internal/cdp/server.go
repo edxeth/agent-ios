@@ -76,6 +76,11 @@ type Options struct {
 	// Port is the port of StartDefault (the daemon flag --cdp-port);
 	// 0: DefaultPort.
 	Port int
+	// Dialogs is the dialog bridge of the logical sessions (design 3.7,
+	// 5.2 "Dialogs"); the daemon sets internal/commands CDPDialogs. nil:
+	// none (tests of other domains), so a dialog that an Input event
+	// opens blocks the page until the command deadline.
+	Dialogs Dialogs
 }
 
 // Server is the CDP endpoint of one daemon.

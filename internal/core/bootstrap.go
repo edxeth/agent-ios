@@ -72,6 +72,14 @@ func (b *BootstrapParts) Remove(name string) bool {
 	return ok
 }
 
+// Source returns the source of the part name and whether it exists.
+func (b *BootstrapParts) Source(name string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	p, ok := b.parts[name]
+	return p.source, ok
+}
+
 // Empty reports whether there are no parts.
 func (b *BootstrapParts) Empty() bool {
 	b.mu.Lock()

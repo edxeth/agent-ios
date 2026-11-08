@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
+	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
 // This file is the core API of the CDP endpoint (design
@@ -193,3 +195,71 @@ func (m *Manager) forgetOwner(pg *Page, owner Owner, failed []string) {
 		m.resetUnknownAgents(pg)
 	}
 }
+
+// SubscribeTarget is Subscribe with each event's source target
+// (webkit.TargetEventHandler): a CDP page attachment keys its document
+// generations by target and main-frame loader id (design 2.7, 5.2), and a
+// WIP loader id is unique only within its target's process. Events of
+// every target of the page's connection arrive, also those of a
+// provisional target before its commit; webkit.AllEvents subscribes to
+// every event in arrival order. The subscription follows reconnects.
+func (m *Manager) SubscribeTarget(pg *Page, method string, h webkit.TargetEventHandler) (unsub func()) {
+	return pg.conn.SubscribeTarget(method, h)
+}
+
+// EventPosition is where a connection delivered an event (SubscribeOrdered)
+// or read a reply (WithReplyPosition): the connection, its active target
+// right after it read the message, so with the event already applied (a
+// commit's own event names the new target), and the message's place in
+// the connection's stream.
+type EventPosition struct {
+	Conn         webkit.Caller // the connection that delivered the event
+	ActiveTarget string        // "" on a connection without targets
+	// Seq is the number of messages Conn had read up to and including this
+	// one (webkit.Session.ReadPosition): the events and replies of one
+	// connection are ordered by it. 0 on a connection that does not count.
+	Seq uint64
+}
+
+// OrderedHandler handles one event of an ordered subscription. It runs in
+// the delivering connection's read loop, or in the swap that installs a
+// connection whose events were held until then (pageConn.swap), so it must
+// not block, send, subscribe or unsubscribe.
+type OrderedHandler func(pos EventPosition, target, method string, params json.RawMessage)
+
+// SubscribeOrdered registers h for the events of method (webkit.AllEvents:
+// every event) of each connection of the page, as SubscribeTarget does,
+// but in the read loop and with each event's position: a CDP page
+// attachment classifies an event of a provisional target by the target
+// standing at that event, not at the time a goroutine of its own gets to
+// it (design 2.7). The events of one connection arrive in its order; the
+// events that a new connection delivered before a reconnect installed it
+// arrive at the swap, before its later ones, with the position at which
+// they were read. It returns the connection installed when the
+// subscription started; a later connection is a reconnect.
+func (m *Manager) SubscribeOrdered(pg *Page, method string, h OrderedHandler) (initial webkit.Caller, unsub func()) {
+	return pg.conn.subscribeOrdered(method, h)
+}
+
+// WithReplyPosition returns ctx for a call whose reply must be placed among
+// the page's ordered events (SubscribeOrdered). When the page's connection
+// reads the call's successful reply, it takes the reply's position in its
+// read loop, before it reads the next message (the same connection value
+// as the events' positions, and the reply's own Seq), and runs h with it,
+// the target that sent the reply and its result, in the order in which
+// the ordered subscriptions get that connection's events: at once, or,
+// while the connection's events are held for a hand-over (pageConn.prepare
+// and swap), held with them in read order and run at their delivery
+// (pageConn.replyRead). WebKit sends a target's events and the replies to
+// its commands in one ordered stream, so h runs after the handlers of the
+// events the page sent before the reply and before those of the later
+// ones. When the call returns its reply without an error, h has run (a
+// held h first runs at the delivery; a call whose context ends before it
+// fails). h runs at most once, never for an error reply, a call without a
+// reply or a call that does not go through the page's connection (the
+// callers of a Page); it must not block, send, subscribe or unsubscribe.
+func WithReplyPosition(ctx context.Context, h func(pos EventPosition, target string, result json.RawMessage)) context.Context {
+	return context.WithValue(ctx, replyPositionKey{}, h)
+}
+
+type replyPositionKey struct{}

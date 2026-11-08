@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
+	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
@@ -217,7 +218,7 @@ func newCore(o RunOptions, logf func(string, ...any)) (*core.Manager, *Server, *
 	mo.Session.PauseOnStart, mo.Session.Logf = PauseOnStart, logf
 	m := core.NewManager(mo)
 	srv := NewServer(m, res, o.Version, logf)
-	srv.cdp = cdp.New(cdp.Options{Manager: m, Reservations: res, Version: o.Version, Logf: logf, Enter: srv.enter, Port: o.CDPPort})
+	srv.cdp = cdp.New(cdp.Options{Manager: m, Reservations: res, Version: o.Version, Logf: logf, Enter: srv.enter, Port: o.CDPPort, Dialogs: commands.CDPDialogs})
 	return m, srv, tr
 }
 
