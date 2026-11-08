@@ -1,0 +1,6 @@
+{
+  "agent-browser": [],
+  "chrome-devtools-mcp": [],
+  "playwright-core": [],
+  "puppeteer-core": []
+}

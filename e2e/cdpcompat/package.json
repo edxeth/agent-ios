@@ -1,0 +1,12 @@
+{
+  "name": "iwdp-mcp-cdpcompat",
+  "private": true,
+  "description": "CDP compatibility suite (docs/design/agentic-parity.md 7.8, 8.4): the pinned CDP clients that the Go driver runs against the CDP endpoint. See README.md.",
+  "type": "module",
+  "dependencies": {
+    "agent-browser": "0.41.2",
+    "chrome-devtools-mcp": "1.12.0",
+    "playwright-core": "1.65.0",
+    "puppeteer-core": "25.16.0"
+  }
+}

@@ -78,6 +78,10 @@ type RunOptions struct {
 	// that names none. 0: the endpoint starts only on request, on
 	// cdp.DefaultPort (decision D3).
 	CDPPort int
+	// CDPObserve is passed to cdp.Options.Observe: it sees every HTTP
+	// request of the CDP endpoint with the status it got. Tests use it
+	// (the CDP compatibility suite records client requests); nil: none.
+	CDPObserve func(r *http.Request, status int)
 }
 
 // Run is "daemon run": it checks the socket directory (design 2.2), serves
@@ -218,7 +222,7 @@ func newCore(o RunOptions, logf func(string, ...any)) (*core.Manager, *Server, *
 	mo.Session.PauseOnStart, mo.Session.Logf = PauseOnStart, logf
 	m := core.NewManager(mo)
 	srv := NewServer(m, res, o.Version, logf)
-	srv.cdp = cdp.New(cdp.Options{Manager: m, Reservations: res, Version: o.Version, Logf: logf, Enter: srv.enter, Port: o.CDPPort, Dialogs: commands.CDPDialogs})
+	srv.cdp = cdp.New(cdp.Options{Manager: m, Reservations: res, Version: o.Version, Logf: logf, Enter: srv.enter, Port: o.CDPPort, Dialogs: commands.CDPDialogs, Observe: o.CDPObserve})
 	return m, srv, tr
 }
 

@@ -1,4 +1,4 @@
-.PHONY: build test test-e2e test-coverage coverage-all \
+.PHONY: build test test-e2e test-coverage coverage-all test-cdpcompat \
        sim-setup sim-teardown lint fmt tidy install clean release release-snapshot docs
 
 # Build
@@ -29,6 +29,22 @@ test-coverage:
 # suites, including the binaries they start; needs the e2e/webkitgtk tools.
 coverage-all:
 	./scripts/coverage-all.sh coverage.out
+
+# CDP compatibility suite (design 8.4, gate IWDP_CDP_COMPAT=1): the pinned
+# CDP clients against the CDP endpoint; see e2e/cdpcompat/README.md. Needs
+# Node.js 24+ and npm; the lockfile pins every client, agent-browser
+# included. npm ci runs when the lockfile changed, without install scripts
+# (agent-browser's postinstall can download a binary and patch global bin
+# links); the package ships its binaries, which get their execute bit here.
+CDPCOMPAT := e2e/cdpcompat
+test-cdpcompat: $(CDPCOMPAT)/node_modules/.package-lock.json
+	IWDP_CDP_COMPAT=1 go test -tags=cdpcompat ./$(CDPCOMPAT)/ -v -count=1 -timeout=900s
+
+$(CDPCOMPAT)/node_modules/.package-lock.json: $(CDPCOMPAT)/package.json $(CDPCOMPAT)/package-lock.json
+	@command -v node >/dev/null && command -v npm >/dev/null || \
+		{ echo "test-cdpcompat needs Node.js 24 or later with npm on PATH (see $(CDPCOMPAT)/README.md)" >&2; exit 1; }
+	cd $(CDPCOMPAT) && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund
+	chmod +x $(CDPCOMPAT)/node_modules/agent-browser/bin/agent-browser-*
 
 # E2E tests — boots iOS Simulator + iwdp, runs all tools against real Safari.
 # Usage: make test-e2e
