@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
@@ -49,6 +50,17 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("XDG_RUNTIME_DIR", dir)
 	_ = os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	_ = os.Unsetenv("IWDP_DAEMON_DIR")
+	// A start through proxy.Start (TestEnsureIWDPBacksOffAfterAFailedStart
+	// brings its own fakes) never runs the real iwdp or idevice_id.
+	fakeIWDPBin = filepath.Join(dir, "bin")
+	err = os.Mkdir(fakeIWDPBin, 0o700)
+	if err == nil {
+		err = testutil.InstallFakeIWDP(fakeIWDPBin)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fake iwdp commands:", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
@@ -58,12 +70,23 @@ func TestMain(m *testing.M) {
 // userRuntimeDir is the one they started with.
 var testRuntimeDir, userRuntimeDir string
 
+// fakeIWDPBin holds the fake iwdp and device commands (TestMain).
+var fakeIWDPBin string
+
+// Review round 2, F8: ios_webkit_debug_proxy, pkill and idevice_id
+// resolve to the fakes first on PATH.
+func TestDaemonTestsNeverRunTheRealIWDPOrIdeviceID(t *testing.T) {
+	if err := testutil.CheckFakeIWDP(fakeIWDPBin); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDaemonTestsNeverReadTheRealIWDPListing(t *testing.T) {
 	if a := iwdp.DefaultListingAddr; a == "127.0.0.1:9221" || !strings.HasPrefix(a, "127.0.0.1:") {
 		t.Fatalf("iwdp's default listing is %s, want the private dead listing", a)
 	}
 	// The dead listing answers like an iwdp that is not running.
-	if listingAnswers(ctxFor(t, 5*time.Second), iwdp.DefaultListingAddr) {
+	if proxy.CheckListing(ctxFor(t, 10*time.Second), iwdp.DefaultListingAddr) == nil {
 		t.Fatalf("the private listing %s answers", iwdp.DefaultListingAddr)
 	}
 }

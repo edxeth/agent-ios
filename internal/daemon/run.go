@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/direct"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
@@ -32,8 +33,6 @@ const (
 	// dirEnv carries the socket directory from the client that starts a
 	// daemon to the daemon, so both use the same one.
 	dirEnv = "IWDP_DAEMON_DIR"
-	// listingProbe bounds the check whether iwdp's device list answers.
-	listingProbe = 2 * time.Second
 	// streamDrain bounds the wait for open streams at shutdown.
 	streamDrain = time.Second
 )
@@ -274,39 +273,27 @@ func (ts *transports) get(ctx context.Context, kind, addr string) (transport.Tra
 }
 
 // ensureIWDP checks that iwdp's device list answers and, for the default
-// address, starts iwdp when it does not (D10).
+// address, starts iwdp when nothing listens there (D10). While a process
+// owns the listing port, slow or silent, it never starts a second iwdp.
 func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault bool) error {
-	if listingAnswers(ctx, listing) {
-		return nil
+	err := proxy.CheckListing(ctx, listing)
+	if !errors.Is(err, proxy.ErrNotListening) {
+		return err // nil (answers) or a process owns the port
 	}
 	if !isDefault || ts.o.StartIWDP == nil {
-		return fmt.Errorf("ios_webkit_debug_proxy does not answer on %s; start it with: ios_webkit_debug_proxy --no-frontend (install: brew install ios-webkit-debug-proxy)", listing)
+		return fmt.Errorf("ios_webkit_debug_proxy is not running on %s; start it with: ios_webkit_debug_proxy --no-frontend (install: brew install ios-webkit-debug-proxy)", listing)
 	}
 	ts.starts.Lock()
 	defer ts.starts.Unlock()
-	if listingAnswers(ctx, listing) {
-		return nil
+	err = proxy.CheckListing(ctx, listing)
+	if !errors.Is(err, proxy.ErrNotListening) {
+		return err
 	}
 	ts.logf("ios_webkit_debug_proxy is not running; starting it")
 	if err := ts.o.StartIWDP(ctx); err != nil {
 		return fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", err)
 	}
 	return nil
-}
-
-func listingAnswers(ctx context.Context, addr string) bool {
-	ctx, cancel := context.WithTimeout(ctx, listingProbe)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/json", nil)
-	if err != nil {
-		return false
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false
-	}
-	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
 }
 
 func (ts *transports) close() {

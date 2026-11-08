@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -267,12 +268,21 @@ func extractPort(serverURL string) int {
 }
 
 func TestIsRunning_NoServer(t *testing.T) {
-	// With no server running on the listing port, IsRunning should return false.
-	// We can't easily test this without mocking, but we can verify it doesn't panic.
-	// In CI without iwdp installed, this will always return false.
-	result := IsRunning()
-	// Just verify it returns without panicking — the actual value depends on the environment.
-	_ = result
+	// With no server on the listing address, IsRunning returns false; with
+	// a listing that answers, true. std points at private loopback
+	// addresses, never at port 9221 of the host.
+	old := std
+	t.Cleanup(func() { std = old })
+	std = NewStarter(freeAddr(t))
+	if IsRunning() {
+		t.Fatalf("IsRunning with nothing on %s = true", std.addr)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("[]")) }))
+	t.Cleanup(srv.Close)
+	std = NewStarter(strings.TrimPrefix(srv.URL, "http://"))
+	if !IsRunning() {
+		t.Fatalf("IsRunning with a listing on %s = false", std.addr)
+	}
 }
 
 func TestListPages_ConnectionRefused(t *testing.T) {

@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os/exec"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -34,50 +38,266 @@ const (
 // ::1, turning probes into multi-second hangs instead of fast dials.
 const listingHost = "127.0.0.1"
 
-// IsRunning checks if ios_webkit_debug_proxy is reachable by hitting the
-// listing port (9221). This is the canonical way to detect a running proxy.
-func IsRunning() bool {
-	u := fmt.Sprintf("http://%s:%d/json", listingHost, DefaultListingPort)
-	// iwdp is a single-threaded event loop; under heavy WebKit inspector
-	// traffic /json can stall past 2s and report a false negative, so match
-	// the 5s budget used by ListDevices/ListPages.
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(u)
-	if err != nil {
-		return false
+// ProbeBudget bounds one check whether iwdp's listing answers (CheckListing,
+// IsRunning and the daemon's check). iwdp is a single-threaded event loop;
+// under heavy WebKit inspector traffic or a loaded host its /json can stall
+// past 2 s, and a shorter probe reports a running iwdp as stopped.
+const ProbeBudget = 5 * time.Second
+
+// StartBackoff is how long Start returns the error of a failed start
+// without a new attempt, so a broken iwdp is not started on every call.
+const StartBackoff = 30 * time.Second
+
+const (
+	// startReadyWait bounds the wait for a started iwdp's listing.
+	startReadyWait = 5 * time.Second
+	// startPoll is the interval of the readiness checks.
+	startPoll = 200 * time.Millisecond
+	// stopGrace is how long a started iwdp that failed its start gets to
+	// exit after SIGTERM before its process group gets SIGKILL.
+	stopGrace = 2 * time.Second
+	// stopReap bounds the wait for the rest of that process group to go.
+	stopReap = 2 * time.Second
+)
+
+// ErrNotListening means that no process owns the iwdp listing address:
+// every address of it can be bound. Only then may iwdp be started (D10).
+var ErrNotListening = errors.New("nothing listens on the iwdp listing address")
+
+// CheckListing reports whether ios_webkit_debug_proxy answers on its listing
+// address addr (host:port) within ProbeBudget. It returns an error wrapping
+// ErrNotListening when the address can be bound (portFree), nil when
+// GET /json answers 200, and otherwise an error that says a process owns
+// the address but does not answer as iwdp; then no iwdp may be started.
+func CheckListing(ctx context.Context, addr string) error {
+	begin := time.Now()
+	pctx, cancel := context.WithTimeout(ctx, ProbeBudget)
+	defer cancel()
+	// Ownership first: only a successful bind proves that no process owns
+	// the address. A refused connection does not (a socket that is bound
+	// but does not listen refuses too).
+	bindErr := portFree(pctx, addr)
+	if bindErr == nil {
+		return fmt.Errorf("%w (%s)", ErrNotListening, addr)
 	}
-	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	err := getListing(pctx, addr)
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("checking ios_webkit_debug_proxy on %s: %w", addr, ctx.Err())
+	}
+	var status statusError
+	if errors.As(err, &status) {
+		return fmt.Errorf("the process on %s answers GET /json with HTTP %d, which is not ios_webkit_debug_proxy's device list; no second iwdp is started while it owns the port", addr, int(status))
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return fmt.Errorf("%s refuses connections but cannot be bound (%v): another process holds the port without listening, or the address is not local; no second iwdp is started", addr, bindErr)
+	}
+	return fmt.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json within %s (%v): it is busy or stuck. A process owns the port, so no second iwdp is started; wait and try again, or restart it with the restart_iwdp tool or 'iwdp-cli restart-iwdp'",
+		addr, time.Since(begin).Round(time.Millisecond), err)
 }
 
-// Start launches ios_webkit_debug_proxy as a background process.
-// Uses a detached context so iwdp outlives the MCP server if needed.
-func Start(_ context.Context) error {
+// statusError is a listing answer other than 200.
+type statusError int
+
+func (e statusError) Error() string { return fmt.Sprintf("HTTP %d", int(e)) }
+
+func getListing(ctx context.Context, addr string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/json", nil)
+	if err != nil {
+		return err
+	}
+	req.Close = true // no idle connection is kept in iwdp's event loop
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return statusError(resp.StatusCode)
+	}
+	return nil
+}
+
+// Starter starts ios_webkit_debug_proxy for one listing address. It never
+// starts iwdp while a process owns that address, starts one process at a
+// time (also across processes, lockStart), accepts only a listener of the
+// process it started as ready, stops a started process that does not
+// become ready, and backs off for StartBackoff after a failed start.
+type Starter struct {
+	addr      string        // listing address, host:port
+	readyWait time.Duration // startReadyWait; shorter in tests
+	// listens tells who receives a connection to an endpoint
+	// (groupListens; tests choose an implementation or a failure).
+	listens func(ctx context.Context, pgid int, ep netip.AddrPort) (listener, error)
+
+	mu       sync.Mutex // held for a whole start: one start at a time
+	failErr  error      // the last failed start
+	failedAt time.Time  // when it failed
+}
+
+// NewStarter returns a Starter for the listing address addr (host:port).
+func NewStarter(addr string) *Starter {
+	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens}
+}
+
+// std is the Starter of iwdp's default listing address, used by IsRunning,
+// Start and EnsureRunning.
+var std = NewStarter(fmt.Sprintf("%s:%d", listingHost, DefaultListingPort))
+
+// IsRunning checks if ios_webkit_debug_proxy answers on the listing port
+// (9221) within ProbeBudget. This is the canonical way to detect a running
+// proxy.
+func IsRunning() bool {
+	return CheckListing(context.Background(), std.addr) == nil
+}
+
+// Start starts ios_webkit_debug_proxy on the default listing port unless it
+// already runs (Starter.Start).
+func Start(ctx context.Context) error { return std.Start(ctx) }
+
+// Start starts ios_webkit_debug_proxy as a background process in its own
+// process group, so it outlives the caller, and waits until its listing
+// answers. It returns nil at once when iwdp already answers, and the
+// CheckListing error, without a start, when another process owns the port.
+// When the started process does not answer within the readiness wait,
+// another process takes the port, or ctx ends first, Start stops its
+// process group and waits for it to exit before it returns the error. A
+// failed start (not a cancelled one, nor one that lost the port to another
+// process) is returned again, without an attempt, for StartBackoff.
+func (s *Starter) Start(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := lockStart(ctx, s.addr)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	err = CheckListing(ctx, s.addr)
+	if !errors.Is(err, ErrNotListening) {
+		return err // nil (running) or a process owns the port
+	}
+	if s.failErr != nil {
+		if since := time.Since(s.failedAt); since < StartBackoff {
+			return fmt.Errorf("%w (failed %s ago; not trying again for another %s)", s.failErr, since.Round(time.Second), (StartBackoff - since).Round(time.Second))
+		}
+	}
+	err = s.launch(ctx)
+	if err != nil && ctx.Err() == nil && !errors.Is(err, errPortTaken) {
+		s.failErr, s.failedAt = err, time.Now()
+	} else {
+		s.failErr = nil
+	}
+	return err
+}
+
+// launch runs one ios_webkit_debug_proxy and waits for its listing.
+func (s *Starter) launch(ctx context.Context) error {
 	cmd := exec.Command("ios_webkit_debug_proxy", "-F", "-c", BuildConfig(DeviceUDIDs()))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Device discovery can take a while; ownership is checked again right
+	// before the spawn. The readiness check covers the rest of the window.
+	if err := portFree(ctx, s.addr); err != nil {
+		return fmt.Errorf("%w: %s is no longer free (%v); no ios_webkit_debug_proxy was started", errPortTaken, s.addr, err)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting ios_webkit_debug_proxy: %w\nMake sure it is installed: brew install ios-webkit-debug-proxy", err)
 	}
-	// Don't wait — let it run in the background.
+	// The process is reaped here whether it fails its start or runs on.
+	exited := make(chan struct{})
+	var waitErr error
 	go func() {
-		_ = cmd.Wait()
+		waitErr = cmd.Wait()
+		close(exited)
 	}()
-
-	// Wait briefly and verify it started via the listing port.
-	for i := 0; i < 10; i++ {
-		time.Sleep(300 * time.Millisecond)
-		if IsRunning() {
-			return nil
+	readyBy := time.Now().Add(s.readyWait)
+	deadline := time.NewTimer(s.readyWait)
+	defer deadline.Stop()
+	poll := time.NewTicker(startPoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-exited:
+			stopGroup(cmd.Process.Pid, exited)
+			return fmt.Errorf("ios_webkit_debug_proxy exited during its start (%v); run 'ios_webkit_debug_proxy --no-frontend' to see why", waitErr)
+		case <-ctx.Done():
+			stopGroup(cmd.Process.Pid, exited)
+			return fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
+		case <-deadline.C:
+			stopGroup(cmd.Process.Pid, exited)
+			return fmt.Errorf("the started ios_webkit_debug_proxy did not answer on %s within %s, so it was stopped; run 'ios_webkit_debug_proxy --no-frontend' to see why", s.addr, s.readyWait)
+		case <-poll.C:
+			ok, err := s.ready(ctx, readyBy, cmd.Process.Pid)
+			if err != nil {
+				stopGroup(cmd.Process.Pid, exited)
+				return err
+			}
+			if ok {
+				return nil
+			}
 		}
 	}
-	return fmt.Errorf("ios_webkit_debug_proxy started but not responding on port %d", DefaultListingPort)
+}
+
+// ready reports whether the started process group pgid serves the listing.
+// The group must own the listening socket that receives a connection to
+// the listing endpoint (address and port; classify). A listener of another
+// process is never the started iwdp: then ready returns an errPortTaken
+// error. A failed ownership check is an error too, and when ctx ends
+// during the check, ready returns ctx's error.
+func (s *Starter) ready(ctx context.Context, readyBy time.Time, pgid int) (bool, error) {
+	pctx, cancel := context.WithDeadline(ctx, readyBy)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(pctx, "tcp", s.addr)
+	if err != nil {
+		return false, nil // nothing listens yet; the wait goes on
+	}
+	remote := conn.RemoteAddr().(*net.TCPAddr).AddrPort()
+	_ = conn.Close()
+	ep := netip.AddrPortFrom(remote.Addr().Unmap(), remote.Port())
+	owner, err := s.listens(pctx, pgid, ep)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return false, fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
+	case err != nil && pctx.Err() != nil:
+		return false, nil // the readiness wait ended; launch reports it
+	case err != nil:
+		return false, fmt.Errorf("checking which process listens on %s: %w; the started ios_webkit_debug_proxy was stopped", ep, err)
+	}
+	switch owner {
+	case listenerForeign:
+		return false, fmt.Errorf("%w: another process took port %d (%s) during the start of ios_webkit_debug_proxy; the started process was stopped and no other is started", errPortTaken, ep.Port(), ep)
+	case listenerOwn:
+		return getListing(pctx, s.addr) == nil, nil
+	}
+	return false, nil // the listener went away; the wait goes on
+}
+
+// stopGroup stops the process group pgid of a started iwdp: SIGTERM, then
+// SIGKILL after stopGrace, until its leader has exited (exited closed), and
+// SIGKILL for any rest of the group. It returns when the group is gone, or
+// after stopReap more.
+func stopGroup(pgid int, exited <-chan struct{}) {
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	select {
+	case <-exited:
+	case <-time.After(stopGrace):
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	<-exited
+	for end := time.Now().Add(stopReap); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+	}
 }
 
 // EnsureRunning checks if iwdp is running and starts it if not.
 // If iwdp crashed (e.g., after a large heap snapshot), this will restart it.
+// Start checks the listing first, so a running iwdp is left alone.
 func EnsureRunning(ctx context.Context) error {
-	if IsRunning() {
-		return nil
-	}
 	return Start(ctx)
 }
 
