@@ -39,7 +39,7 @@ func TestBrowserHelpersUseTheSharedBroadwayAndStartGuard(t *testing.T) {
 	}
 	// The helpers of this package when W1c added the check: it must see
 	// each of them (a check that sees none passes for nothing).
-	for _, want := range []string{"browser", "runSuite", "runtimeBrowser", "devtoolsBrowser", "managedBrowser", "newNavEnv", "backAndForward"} {
+	for _, want := range []string{"browser", "runSuite", "runtimeBrowser", "devtoolsBrowser", "managedBrowser", "newNavEnv", "backAndForward", "skillsBrowser"} {
 		if !slices.Contains(helpers, want) {
 			t.Errorf("the check did not see the MiniBrowser helper %s (saw %v)", want, helpers)
 		}

@@ -14,9 +14,18 @@ Earlier releases had one connection per command and one tool per WebKit method. 
 
 ## MCP server
 
-- The server registers the `core` profile by default (47 tools). Earlier releases registered every tool. To get them all back, set `IWDP_MCP_TOOLS=all` or start `iwdp-mcp --tools all`; `--tools core,legacy` keeps the earlier tools beside the new ones. See [guide.md](guide.md#mcp-profiles).
+- The server registers the `core` profile by default (47 tools). Earlier releases registered every tool. To get them all back, set `IWDP_MCP_TOOLS=all` or start `iwdp-mcp --tools all`; `--tools core,legacy` keeps the earlier tool names beside the new ones (the table below says which handler serves a shared name). See [guide.md](guide.md#mcp-profiles).
 - Set `IWDP_SESSION` in the server's environment to a name of its own, and `IWDP_DEVICE_RESERVATION` to the owner of the device reservation.
-- These tools keep their names and their legacy parameters, but now run the registry command: `navigate`, `reload`, `take_screenshot`, `click`, `fill`, `type_text`, `highlight_node`, `set_cookie`, `set_extra_headers`, `list_network_requests`, `get_console_messages`, `clear_console`, `set_emulated_conditions`. A legacy parameter and its new name are aliases (for example click's `selector` and `target`); give one of them, not both. `click`, `fill` and `type_text` now accept `@eN` refs and locators and run the actionability checks.
+- Thirteen registry commands reuse the name and the legacy parameters of a legacy tool. The selected profiles decide which handler serves such a name. When they include the profile of the registry command, the registry command serves the name and the legacy handler is not registered. Otherwise the legacy handler serves the name when the selected profiles register it (`legacy` registers every legacy tool, `core` a fixed list):
+
+  | Tool names | Registry command (profile) serves them in | Legacy handler serves them in | Not registered in |
+  |---|---|---|---|
+  | `navigate`, `reload`, `take_screenshot`, `click`, `fill`, `type_text`, `highlight_node`, `set_cookie` (`core`) | `core` (default), `core,devtools`, `core,legacy`, `all` | `legacy`, `devtools,legacy` | `devtools` |
+  | `set_extra_headers`, `list_network_requests`, `get_console_messages`, `clear_console` (`devtools`) | `devtools`, `core,devtools`, `devtools,legacy`, `all` | `core` (default), `core,legacy`, `legacy` | none |
+  | `set_emulated_conditions` (`devtools`) | `devtools`, `core,devtools`, `devtools,legacy`, `all` | `core,legacy`, `legacy` | `core` (default) |
+
+  In the default `core` profile the network and console tools are therefore the legacy handlers: `list_network_requests` is not masked, and it and `get_console_messages` stay empty there ([known-limits.md](known-limits.md#mcp-profiles)). For the daemon's masked network log and its console buffer, select a profile with `devtools`, for example `IWDP_MCP_TOOLS=core,devtools`.
+- Where the registry command serves the name, a legacy parameter and its new name are aliases (for example click's `selector` and `target`); give one of them, not both. `click`, `fill` and `type_text` then accept `@eN` refs and locators and run the actionability checks of their action ([guide.md](guide.md#the-agentic-loop), step 4); the checks differ per action.
 - New tools: see the index of [commands.md](commands.md). The MCP name of a registry command can differ from its CLI name (`open` is `navigate`, `tab` is `tab_select`, `frame` is `select_frame`, `close` is `close_session`, `read` is `read_page`).
 
 ## CLI: legacy command to registry command

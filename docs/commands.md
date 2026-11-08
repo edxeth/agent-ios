@@ -91,6 +91,9 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`set offline`](#set-offline) | `set_offline` | `devtools` | Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device. |
 | [`set useragent`](#set-useragent) | `set_user_agent` | `devtools` | Override the user agent string of the page (--reset removes the override). |
 | [`set viewport`](#set-viewport) |  |  | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
+| [`skills get`](#skills-get) |  |  | Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill. |
+| [`skills list`](#skills-list) |  |  | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
+| [`skills path`](#skills-path) |  |  | Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all. |
 | [`snapshot`](#snapshot) | `snapshot` | `core` | Print the page's accessibility tree with @eN refs for later commands. |
 | [`state load`](#state-load) | `state_load` | `devtools` | Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's. |
 | [`state save`](#state-save) | `state_save` | `devtools` | Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials). |
@@ -1380,6 +1383,52 @@ Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Appl
 | Argument | Required | Description |
 |---|---|---|
 | `<args>...` | no | ignored |
+
+### `skills get`
+
+```
+iwdp-cli skills get [<name>...] [flags]
+```
+
+Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill.
+
+- MCP tool: none (CLI only)
+- Page: none; runs in the client process, not in the daemon
+
+| Argument | Required | Description |
+|---|---|---|
+| `<name>...` | no | skill name from 'skills list'; several names print several skills |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--all` | none | print every skill |
+
+### `skills list`
+
+```
+iwdp-cli skills list
+```
+
+List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one.
+
+- MCP tool: none (CLI only)
+- Aliases: `skills`
+- Page: none; runs in the client process, not in the daemon
+
+### `skills path`
+
+```
+iwdp-cli skills path [<name>]
+```
+
+Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all.
+
+- MCP tool: none (CLI only)
+- Page: none; runs in the client process, not in the daemon
+
+| Argument | Required | Description |
+|---|---|---|
+| `<name>` | no | skill name; without it, the directory that holds every skill |
 
 ### `snapshot`
 

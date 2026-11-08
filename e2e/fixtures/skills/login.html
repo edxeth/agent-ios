@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><title>Login</title></head>
+<body>
+<form id="login" aria-label="Login">
+  <label for="email">Email</label>
+  <input id="email" type="email">
+  <label for="password">Password</label>
+  <input id="password" type="password">
+  <button type="submit">Sign in</button>
+</form>
+<section id="account" hidden>
+  <h2>Account</h2>
+  <p id="status">Signed in</p>
+  <button id="delete" type="button">Delete draft</button>
+  <a href="/second">Next page</a>
+</section>
+<script>
+document.getElementById("login").addEventListener("submit", function (e) {
+  e.preventDefault();
+  this.hidden = true;
+  document.getElementById("account").hidden = false;
+  console.warn("draft autosave is off");
+  fetch("/api/me");
+});
+document.getElementById("delete").addEventListener("click", function () {
+  document.getElementById("status").textContent = confirm("Delete the draft?") ? "Draft deleted" : "Draft kept";
+});
+</script>
+</body></html>
