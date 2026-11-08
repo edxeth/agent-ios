@@ -160,6 +160,9 @@ func TestReleaseOwnerChangeFailedNetworkResetStaysPending(t *testing.T) {
 func TestReleaseOwnerChangeFailedProvisionalCleanupPendsUntilCommit(t *testing.T) {
 	r := newRig(t, fakewebkit.Options{}, false, setupFirst)
 	r.reserve(t, "agent")
+	// The commit's background reset is held: this test pins the mark that
+	// the commit sets and its end by the next change (holdCommitReset).
+	holdCommitReset(r)
 	ctx := ctxFor(t, 10*time.Second)
 	b := &headerBackend{hdr: map[string]map[string]string{}}
 	b.install(r.f)

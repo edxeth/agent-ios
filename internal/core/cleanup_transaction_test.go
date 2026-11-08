@@ -448,6 +448,10 @@ var setupFirst = ManagerOptions{Session: webkit.SessionOptions{PauseOnStart: tru
 func failedProvisionalCleanup(t *testing.T) (*rig, *Page, *headerBackend) {
 	r := newRig(t, fakewebkit.Options{}, false, setupFirst)
 	r.reserve(t, "agent")
+	// The commit's background reset is held: the tests of this fixture pin
+	// the mark that a commit sets and its end by the next change
+	// (holdCommitReset).
+	holdCommitReset(r)
 	ctx := ctxFor(t, 10*time.Second)
 	b := &headerBackend{hdr: map[string]map[string]string{}}
 	b.install(r.f)
@@ -533,6 +537,9 @@ func TestFailedProvisionalCleanupGoesWithDestroyedTarget(t *testing.T) {
 func TestFailedProvisionalResetPendsUntilCommit(t *testing.T) {
 	r := newRig(t, fakewebkit.Options{}, false, setupFirst)
 	r.reserve(t, "agent")
+	// The commit's background reset is held: this test pins the mark that
+	// the commit sets and its end by the next change (holdCommitReset).
+	holdCommitReset(r)
 	ctx := ctxFor(t, 10*time.Second)
 	b := &headerBackend{hdr: map[string]map[string]string{}}
 	b.install(r.f)

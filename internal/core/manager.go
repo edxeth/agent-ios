@@ -146,8 +146,8 @@ type Page struct {
 	PS  *PageSession
 
 	m        *Manager
-	pageID   string     // transport page id (the ws:// URL for iwdp); identifies the page
-	attachMu sync.Mutex // serializes attach, takeover and recovery
+	pageID   string   // transport page id (the ws:// URL for iwdp); identifies the page
+	attachMu ctxMutex // serializes attach, takeover and recovery
 	conn     *pageConn
 	// gapFrom (under attachMu) is where the next Network gap of a new
 	// connection starts: the retirement of the last installed connection,
@@ -165,7 +165,36 @@ type Page struct {
 	holders    map[string]int // open event streams per session (HoldLease)
 	lastUsed   time.Time
 	recovering bool
+	// recoveryRuns counts the background recoveries that set recovering;
+	// recoveryDone is closed when the latest one ends (waitRecovery).
+	recoveryRuns uint64
+	recoveryDone chan struct{}
 }
+
+// ctxMutex is a mutex whose Lock gives up when ctx ends, so that a command
+// that waits for an attach or a background recovery keeps its deadline.
+// The zero value is unlocked.
+type ctxMutex struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func (l *ctxMutex) slot() chan struct{} {
+	l.once.Do(func() { l.ch = make(chan struct{}, 1) })
+	return l.ch
+}
+
+// Lock locks l, or returns ctx's error when ctx ends first.
+func (l *ctxMutex) Lock(ctx context.Context) error {
+	select {
+	case l.slot() <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (l *ctxMutex) Unlock() { <-l.slot() }
 
 // ManagedOp is an operation that a client opened (design 2.10).
 type ManagedOp struct {
@@ -193,6 +222,12 @@ type Manager struct {
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bg       sync.WaitGroup
+	// bgMu guards bgClosed and each start of a bg goroutine. It is a leaf
+	// lock, so goBackground can run under any other lock: pageConn.swap
+	// starts the new connection's watch and event handoff under pg.mu,
+	// and Manager.page takes pg.mu under m.mu.
+	bgMu     sync.Mutex
+	bgClosed bool
 
 	// recoveryHold, when set (tests only), runs in a background recovery
 	// after the old connection is retired and before the preflight.
@@ -204,6 +239,10 @@ type Manager struct {
 	// installChecked, when set (tests only), runs in a background recovery
 	// under pg.mu after the install check passed and before the swap.
 	installChecked func(pg *Page)
+	// commitResetHold, when set under mu (tests only), runs in the
+	// background reset that a commit with a pending cleanup starts
+	// (commitLeftCleanup), before the reset, with the reset's context.
+	commitResetHold func(ctx context.Context)
 
 	// epochs counts the lease grants of every page. Epochs only grow
 	// within one DaemonID (design 3.1): the page runtime refuses an owner
@@ -246,9 +285,9 @@ func NewManager(o ManagerOptions) *Manager {
 // goBackground runs fn in a goroutine that Close cancels (through ctx) and
 // waits for. After Close it starts nothing and reports false.
 func (m *Manager) goBackground(fn func(ctx context.Context)) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
+	m.bgMu.Lock()
+	defer m.bgMu.Unlock()
+	if m.bgClosed {
 		return false
 	}
 	m.bg.Add(1)
@@ -533,7 +572,7 @@ func (m *Manager) page(t pageTarget) (*Page, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, fmt.Errorf("the daemon is shutting down")
+		return nil, errShuttingDown
 	}
 	pg := m.pages[t.key]
 	if pg == nil && t.page.ID != "" {
@@ -568,53 +607,181 @@ func (m *Manager) page(t pageTarget) (*Page, error) {
 func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *DesiredState, fresh bool) (webkit.Caller, uint64, error) {
 	c, err := t.open(ctx, state)
 	if err != nil {
-		return nil, 0, attachError(fmt.Errorf("connecting to page %q: %w", t.title, err))
+		return nil, 0, attachError(ctx, fmt.Errorf("connecting to page %q: %w", t.title, err))
 	}
+	drop := closeCaller
 	if pg.PS != nil {
 		// A reconnect: the recorded execution contexts are void on c
-		// (Scheduler.contextsMoved).
+		// (Scheduler.contextsMoved), and the events of c's setup reach the
+		// page's subscribers when c is installed (pageConn.prepare); the
+		// caller drops them with c when it is not (Page.dropConn).
 		pg.PS.Sched.contextsMoved()
+		if pg.conn != nil {
+			pg.conn.prepare(c)
+			drop = pg.dropConn
+		}
 	}
 	if tf, ok := c.(interface {
 		SubscribeSync(method string, h webkit.EventHandler) func()
 	}); ok {
-		state.followTargets(tf)
+		state.followCommits(tf, func() { m.commitLeftCleanup(pg) })
 	}
 	if fresh && t.physical {
 		// Design 2.6 step 4: a hidden tab accepts commands and never answers.
 		if err := probeCaller(ctx, c); err != nil {
-			closeCaller(c)
-			if canceledByOwner(ctx, err) {
+			// A peer end tells another story than a hidden tab; it is read
+			// before c is closed here.
+			lerr := lostOnPeerEnd(c, err)
+			drop(c)
+			switch {
+			case canceledByOwner(ctx, err):
 				return nil, 0, fmt.Errorf("connecting to page %q: %w: %w", t.title, errProbeCanceled, err)
+			case errors.Is(lerr, ErrLost):
+				return nil, 0, pg.newConnLost(t.title, "its liveness probe", lerr)
 			}
 			return nil, 0, &CodedError{Code: CodeBusy, Err: fmt.Errorf("tab is not answering; it is probably not the visible Safari tab. Bring it to the front on the device (%w)", err)}
 		}
 	}
 	gen, err := state.applyConn(ctx, c)
 	if err != nil {
-		closeCaller(c)
-		return nil, 0, attachError(fmt.Errorf("re-applying the page state: %w", err))
+		lerr := lostOnPeerEnd(c, err) // read before c is closed here
+		drop(c)
+		if errors.Is(lerr, ErrLost) && !errors.Is(err, context.DeadlineExceeded) && !canceledByOwner(ctx, err) {
+			return nil, 0, pg.newConnLost(t.title, "the re-apply of the page state", lerr)
+		}
+		return nil, 0, attachError(ctx, fmt.Errorf("re-applying the page state: %w", err))
 	}
 	return c, gen, nil
+}
+
+// newConnLost is the error of a new connection that a peer ended during
+// what, before it was installed (lostOnPeerEnd): another inspector may hold
+// the page now. A reconnect (reopen, takeover, recovery) marks the page
+// lost (pageConn.markLost), so that only --takeover connects it again,
+// also on the next command (design 2.5 rule 3). A first attach has no page
+// state to mark. The caller holds attachMu.
+func (pg *Page) newConnLost(title, what string, err error) error {
+	lerr := &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: the new connection ended during %s: %w", title, what, err)}
+	if pg.conn != nil {
+		pg.conn.markLost(lerr)
+	}
+	return lerr
 }
 
 // attachError codes a failed connect or setup of openConn: a timeout (exit
 // 124, decision D9) when the command's deadline ended it, which webkit
 // reports as context.DeadlineExceeded with its cause (a call without a
-// reply, or a write or read that the deadline cut off), else busy (exit 4).
-func attachError(err error) *CodedError {
-	if errors.Is(err, context.DeadlineExceeded) {
+// reply, or a write or read that the deadline cut off); the cancellation
+// itself when ctx's owner (the client, Manager.Close) canceled it, which
+// says nothing about the page (canceledByOwner); else busy (exit 4).
+func attachError(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
 		return &CodedError{Code: CodeTimeout, Err: err}
+	case canceledByOwner(ctx, err):
+		return err
 	}
 	return &CodedError{Code: CodeBusy, Err: err}
 }
 
+// dropConn discards and closes c, a new connection of a reconnect that is
+// not installed (pageConn.discard).
+func (pg *Page) dropConn(c webkit.Caller) {
+	pg.conn.discard(c)
+	closeCaller(c)
+}
+
+// commitLeftCleanup starts the background reset of the agents that a
+// commit left unknown (DesiredState.followCommits): the committed target
+// may still hold released state, and no later change may come to reset it
+// (resetUnknownAgents). A page record whose first attach has not finished
+// has no state to reset.
+func (m *Manager) commitLeftCleanup(pg *Page) {
+	m.mu.Lock()
+	attached, hold := pg.PS != nil, m.commitResetHold
+	m.mu.Unlock()
+	if attached {
+		m.o.Logf("page %s: a commit left a cleanup pending; resetting its agents in the background", pg.Title())
+		m.resetUnknownLater(pg, hold)
+	}
+}
+
+// waitEnded is the error of a wait for what that ctx ended: a timeout (exit
+// 124) at the deadline, the cancellation when ctx's owner canceled it.
+func waitEnded(ctx context.Context, what string) error {
+	err := fmt.Errorf("waiting for %s: %w", what, ctx.Err())
+	if canceledByOwner(ctx, ctx.Err()) {
+		return err
+	}
+	return &CodedError{Code: CodeTimeout, Err: err}
+}
+
+// ensureAttached attaches pg for a command: the first attach, a reopen of a
+// stalled or closed page, or a takeover of a lost one. A command that comes
+// while a background recovery runs waits for it within ctx (orchestrator
+// decision C05): it continues on the new connection when the recovery
+// succeeds, gets the recovery's failure (exit 4) when it fails, and a
+// timeout (exit 124) when ctx ends first. A lost page is never waited for;
+// it needs --takeover.
 func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao AcquireOptions) error {
-	pg.attachMu.Lock()
+	pg.mu.Lock()
+	runs := pg.recoveryRuns
+	if pg.recovering {
+		runs-- // the running recovery is one that this command waits for
+	}
+	pg.mu.Unlock()
+	for {
+		err := m.attach(ctx, pg, t, ao, runs)
+		if !errors.Is(err, errAwaitRecovery) {
+			return err
+		}
+		if err := pg.waitRecovery(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// errAwaitRecovery: a background recovery has started and not yet taken
+// attachMu (attach); the command waits for it without the lock.
+var errAwaitRecovery = errors.New("a background reconnect is running")
+
+// waitRecovery waits until the background recovery of pg that runs, if
+// any, has ended, at most until ctx ends.
+func (pg *Page) waitRecovery(ctx context.Context) error {
+	pg.mu.Lock()
+	rec, done, title := pg.recovering, pg.recoveryDone, pg.target.title
+	pg.mu.Unlock()
+	if !rec {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return waitEnded(ctx, fmt.Sprintf("the background reconnect of page %q", title))
+	}
+}
+
+// attach is one look at pg under attachMu (ensureAttached). It returns
+// errAwaitRecovery when a background recovery has started and not yet
+// taken attachMu. runs is recoveryRuns when the command came, less one when
+// a recovery ran then: a later count means that the command waited for a
+// recovery, here or in waitRecovery, and a stalled page is then that
+// recovery's outcome.
+func (m *Manager) attach(ctx context.Context, pg *Page, t pageTarget, ao AcquireOptions, runs uint64) error {
+	if err := pg.attachMu.Lock(ctx); err != nil {
+		pg.mu.Lock()
+		what := "another attach of page %q"
+		if pg.recovering {
+			what = "the background reconnect of page %q"
+		}
+		pg.mu.Unlock()
+		return waitEnded(ctx, fmt.Sprintf(what, t.title))
+	}
 	defer pg.attachMu.Unlock()
 	pg.mu.Lock()
 	pg.target.title, pg.target.url, pg.target.page.Ownership = t.title, t.url, t.page.Ownership
-	recovering := pg.recovering
+	recovering, waited := pg.recovering, pg.recoveryRuns > runs
 	pg.mu.Unlock()
 	if pg.conn == nil {
 		if err := m.preflight(t, ao.Reservation); err != nil {
@@ -652,8 +819,16 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 		rt := runtime.New(pc, pc.Generation)
 		sched := NewScheduler(pc, SchedulerOptions{Generation: pc.Generation, Runtime: rt.RuntimeCaller()})
 		state.useHolds(sched)
-		// m.mu: allPages (the sweeper, Status) reads PS under it.
+		// m.mu: allPages (the sweeper, Status) reads PS under it. After
+		// Close began, nothing is installed: Close no longer looks for
+		// pages to close (allPages after closed).
 		m.mu.Lock()
+		if m.closed {
+			m.mu.Unlock()
+			sched.Close()
+			pc.close()
+			return errShuttingDown
+		}
 		pg.conn = pc
 		pg.PS = &PageSession{
 			Caller: pc, Device: t.device, Page: t.page, Runtime: rt, Refs: refs.NewTable(), DaemonID: m.o.DaemonID,
@@ -676,14 +851,23 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 			return err
 		}
 		pg.mu.Lock()
-		recovering = pg.recovering
+		recovering, waited = pg.recovering, pg.recoveryRuns > runs
 		pg.mu.Unlock()
 		st = pg.conn.State()
 	}
 	switch {
 	case st == ConnLost:
 		if !ao.Takeover {
-			return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %w", t.title, ErrLost)}
+			// A loss that a new connection's peer end caused names it
+			// (markLost, with the recovery's failure when a recovery
+			// lost it).
+			pg.conn.mu.Lock()
+			lerr := pg.conn.lostErr
+			pg.conn.mu.Unlock()
+			if lerr == nil {
+				lerr = ErrLost
+			}
+			return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %w", t.title, lerr)}
 		}
 		if t.physical {
 			if err := m.preflight(t, ao.Reservation); err != nil {
@@ -691,7 +875,20 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 			}
 		}
 		return m.reattach(ctx, pg, t, ao, "takeover")
-	case st == ConnClosed || (st == ConnStalled && !recovering):
+	case st == ConnStalled && recovering:
+		return errAwaitRecovery
+	case st == ConnStalled && waited:
+		// The recovery that this command waited for failed: the command
+		// gets that failure (exit 4) and does not reconnect again itself.
+		// A command that comes after the failure reopens the page below.
+		pg.conn.mu.Lock()
+		serr := pg.conn.stallErr
+		pg.conn.mu.Unlock()
+		if errors.Is(serr, ErrRecoveryFailed) {
+			return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %w", t.title, serr)}
+		}
+		fallthrough
+	case st == ConnClosed || st == ConnStalled:
 		// The busy hint of t may show the daemon's own stalled connection:
 		// retire it, then list the page again (design 2.5 rule 2).
 		pg.retireConn()
@@ -699,8 +896,6 @@ func (m *Manager) ensureAttached(ctx context.Context, pg *Page, t pageTarget, ao
 			return err
 		}
 		return m.reattach(ctx, pg, t, ao, "reopen")
-	case st == ConnStalled:
-		return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %w; a background reconnect is running", t.title, webkit.ErrSessionStalled)}
 	}
 	return nil
 }
@@ -730,18 +925,28 @@ func (m *Manager) reattach(ctx context.Context, pg *Page, t pageTarget, ao Acqui
 		// connection is installed or closed below.
 		pg.reportNetworkGap()
 		// pg.mu from the check to the grant: a release cannot be claimed
-		// between them (releaseLease claims under pg.mu).
+		// between them (releaseLease claims under pg.mu), and Close does not
+		// close the page's connection between them (shuttingDown).
 		pg.mu.Lock()
+		if m.shuttingDown() {
+			pg.mu.Unlock()
+			pg.dropConn(c)
+			return errShuttingDown
+		}
 		if pg.releasing || pg.PS.State.ReleaseGen() != gen {
 			pg.mu.Unlock()
-			closeCaller(c)
+			pg.dropConn(c)
 			if err := pg.waitReleased(ctx); err != nil {
 				return err
 			}
 			m.o.Logf("page %s: %s: a release ran during the connect; connecting again", t.title, why)
 			continue
 		}
-		pg.conn.swap(c)
+		if err := pg.conn.swap(c); err != nil {
+			pg.mu.Unlock()
+			pg.dropConn(c)
+			return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %s: %w", t.title, why, err)}
+		}
 		pg.gapFrom = time.Time{}
 		m.lifecycle("install", pg, nil)
 		if why == "takeover" {
@@ -790,18 +995,20 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		return
 	}
 	pg.recovering = true
+	pg.recoveryRuns++
+	done := make(chan struct{})
+	pg.recoveryDone = done
 	resOwner := l.resOwner
 	t := pg.target
 	pg.mu.Unlock()
 	defer func() {
 		pg.mu.Lock()
 		pg.recovering = false
+		close(done)
 		pg.mu.Unlock()
 	}()
 	ctx, cancel := context.WithTimeout(bg, m.o.RecoveryBudget)
 	defer cancel()
-	pg.attachMu.Lock()
-	defer pg.attachMu.Unlock()
 	fail := func(err error) {
 		if bg.Err() != nil {
 			// Close canceled the recovery: no failure of the page, and
@@ -811,11 +1018,21 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		}
 		m.o.Logf("page %s: background recovery failed: %v", t.title, err)
 		pg.conn.mu.Lock()
-		if pg.conn.state == ConnStalled {
+		switch pg.conn.state {
+		case ConnStalled:
 			pg.conn.stallErr = fmt.Errorf("%w: %w", ErrRecoveryFailed, err)
+		case ConnLost:
+			// The recovery's new connection was ended by a peer
+			// (newConnLost): the page is lost with this failure.
+			pg.conn.lostErr = fmt.Errorf("%w: %w", ErrRecoveryFailed, err)
 		}
 		pg.conn.mu.Unlock()
 	}
+	if err := pg.attachMu.Lock(ctx); err != nil {
+		fail(fmt.Errorf("waiting for another attach: %w", err))
+		return
+	}
+	defer pg.attachMu.Unlock()
 	if pg.conn.State() != ConnStalled {
 		return // lost pages are never recovered
 	}
@@ -857,8 +1074,15 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		// when the connection is not installed below.
 		pg.reportNetworkGap()
 		if err := probeCaller(ctx, c); err != nil {
-			closeCaller(c)
-			fail(fmt.Errorf("the new connection does not answer either: %w", err))
+			lerr := lostOnPeerEnd(c, err) // read before c is closed here
+			pg.dropConn(c)
+			if errors.Is(lerr, ErrLost) {
+				// Another inspector may hold the page: lost, not stalled,
+				// so that only --takeover connects it again (newConnLost).
+				fail(pg.newConnLost(t.title, "its liveness probe", lerr))
+			} else {
+				fail(fmt.Errorf("the new connection does not answer either: %w", err))
+			}
 			return
 		}
 		// The install rule of reattach (release_lifecycle.go): a changed
@@ -871,29 +1095,58 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		// is set up again with the current state until the budget ends. An
 		// owner removal takes pg.mu too (Manager.forgetOwner), so it comes
 		// before this check or after the swap.
+		// Close does not close the page's connection between the check
+		// and the swap (shuttingDown).
 		pg.mu.Lock()
+		closing := m.shuttingDown()
 		held := pg.lease == l && !pg.releasing && pg.conn.State() == ConnStalled
-		install := held && pg.PS.State.ReleaseGen() == gen
+		install := !closing && held && pg.PS.State.ReleaseGen() == gen
+		var serr error
 		if install {
 			if m.installChecked != nil {
 				m.installChecked(pg)
 			}
-			pg.conn.swap(c)
-			pg.gapFrom = time.Time{}
-			m.lifecycle("install", pg, nil)
+			if serr = pg.conn.swap(c); serr == nil {
+				pg.gapFrom = time.Time{}
+				m.lifecycle("install", pg, nil)
+			}
 		}
 		pg.mu.Unlock()
-		if install {
+		if install && serr == nil {
 			m.o.Logf("page %s: background recovery reconnected", t.title)
 			return
 		}
-		closeCaller(c)
+		pg.dropConn(c)
+		switch {
+		case closing:
+			fail(errShuttingDown)
+			return
+		case serr != nil:
+			fail(serr)
+			return
+		}
 		if !held {
 			fail(errLeaseChanged)
 			return
 		}
 		m.o.Logf("page %s: background recovery: the page state changed during the reconnect; connecting again", t.title)
 	}
+}
+
+// errShuttingDown: Manager.Close has begun, so no attach, reattach or
+// recovery installs a connection (shuttingDown).
+var errShuttingDown = errors.New("the daemon is shutting down")
+
+// shuttingDown reports whether Close has begun. Close sets it (bgClosed)
+// before it closes the pages, and it locks each page's pg.mu before it
+// closes that page's connection. A reattach or recovery checks it under
+// pg.mu and keeps pg.mu until its swap: so either Close sees and closes
+// the new connection, or the install sees Close and closes the connection
+// itself. bgMu is a leaf lock, so the check runs under pg.mu.
+func (m *Manager) shuttingDown() bool {
+	m.bgMu.Lock()
+	defer m.bgMu.Unlock()
+	return m.bgClosed
 }
 
 // errLeaseChanged: the lease that a recovery started under ended or was
@@ -1155,6 +1408,11 @@ func (m *Manager) Begin(ctx context.Context, req PageRequest, ao AcquireOptions,
 			notRunning()
 			if errors.Is(perr, errProbeCanceled) {
 				return nil, fmt.Errorf("%s was not sent: %w", name, perr)
+			}
+			if errors.Is(perr, ErrLost) {
+				// The probe found the connection ended by a peer: the page
+				// is lost, not stalled, and no reconnect runs (probe).
+				return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: the connection ended during the liveness probe after %s idle, so %s was not sent: %w", pg.Title(), idle.Round(time.Second), name, perr)}
 			}
 			return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: page %q did not answer the liveness probe after %s idle, so %s was not sent (%v)", webkit.ErrSessionStalled, pg.Title(), idle.Round(time.Second), name, perr)}
 		}
@@ -1619,12 +1877,19 @@ func releaseOwners(ctx context.Context, ps *PageSession, session string, c webki
 // change through the control lane. It is bounded by forwardBudget; a
 // failure is logged, and the agents stay unknown for the next change or
 // setup that uses them.
-func (m *Manager) resetUnknownAgents(pg *Page) {
+func (m *Manager) resetUnknownAgents(pg *Page) { m.resetUnknownLater(pg, nil) }
+
+// resetUnknownLater is resetUnknownAgents; hold, when not nil (tests
+// only), runs first with the reset's context.
+func (m *Manager) resetUnknownLater(pg *Page, hold func(ctx context.Context)) {
 	m.goBackground(func(bg context.Context) {
 		ctx, cancel := context.WithTimeout(bg, forwardBudget)
 		defer cancel()
+		if hold != nil {
+			hold(ctx)
+		}
 		if err := resetUnknown(ctx, pg); err != nil {
-			m.o.Logf("page %s: resetting the agents of a release without cleanup: %v", pg.Title(), err)
+			m.o.Logf("page %s: resetting the agents whose cleanup is pending: %v", pg.Title(), err)
 		}
 	})
 }
@@ -1880,10 +2145,16 @@ func (m *Manager) Close(ctx context.Context) error {
 	}
 	m.closed = true
 	m.mu.Unlock()
+	m.bgMu.Lock()
+	m.bgClosed = true
+	m.bgMu.Unlock()
 	m.bgCancel()
 	defer m.bg.Wait()
 	var firstErr error
 	for _, pg := range m.allPages() {
+		// pg.mu after bgClosed: a reattach or recovery that checked
+		// shuttingDown before has swapped its connection in by now, so
+		// pg.conn.close below closes it (shuttingDown).
 		pg.mu.Lock()
 		l := pg.lease
 		pg.mu.Unlock()

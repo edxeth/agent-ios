@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -33,7 +34,8 @@ func (s ConnState) String() string {
 type pageConn struct {
 	onStall func() // starts background recovery; runs once per stall
 	// background runs a goroutine that the page's owner cancels and waits
-	// for when it closes (Manager.goBackground).
+	// for when it closes (Manager.goBackground). It must not take a lock
+	// that is held around swap (Manager.goBackground takes a leaf lock).
 	background func(func(ctx context.Context)) bool
 	logf       func(string, ...any)
 
@@ -41,12 +43,17 @@ type pageConn struct {
 	cur      webkit.Caller
 	state    ConnState
 	stallErr error
+	lostErr  error // why a new connection's peer end made the page lost (markLost); nil: unknown
 	subs     map[int]*connSub
 	nextSub  int
 	probing  bool
 	expected map[webkit.Caller]bool // connections the daemon closes itself
+	next     *handoff               // the new connection being set up (prepare)
 	done     chan struct{}          // closed when the page is lost or closed
 	dropped  time.Time              // last transport messageDropped event
+	// heldDrops counts the events that prepared connections dropped at
+	// handoffLimit (DroppedEvents).
+	heldDrops atomic.Int64
 	// stall ends, with the stall error as its cause, when the liveness
 	// probe declares cur stalled; swap gives the new connection its own.
 	// Every call that waits on cur is bounded by it (bound), so the probe's
@@ -60,6 +67,10 @@ type connSub struct {
 	h      webkit.TargetEventHandler
 	sync   bool
 	unsub  func()
+	// pending removes the subscription on the new connection that is being
+	// set up (prepare), nil when none is.
+	pending func()
+	removed atomic.Bool // unsubscribed: held events are not delivered
 }
 
 func newPageConn(c webkit.Caller, onStall func(), background func(func(ctx context.Context)) bool, logf func(string, ...any)) *pageConn {
@@ -70,29 +81,43 @@ func newPageConn(c webkit.Caller, onStall func(), background func(func(ctx conte
 }
 
 // watch marks the page lost when c ends without a request from the daemon,
-// unless a socket write that timed out ended it (writeFailed).
-func (p *pageConn) watch(c webkit.Caller) {
-	go func() {
-		<-c.Done()
-		p.mu.Lock()
-		if p.expected[c] {
-			delete(p.expected, c)
-			p.mu.Unlock()
-			return
+// unless a socket write that timed out ended it (writeFailed). The
+// goroutine runs through background, so the page's owner waits for it when
+// it closes (Manager.Close); it ends at the end of c or when the owner
+// closes, which closes c itself. It reports false when background refuses:
+// the owner has closed, and nobody watches c. The manager installs no
+// connection after its Close began (Manager.shuttingDown), so a refused
+// watch never leaves an installed connection of a live manager unwatched.
+func (p *pageConn) watch(c webkit.Caller) bool {
+	return p.background(func(ctx context.Context) {
+		select {
+		case <-c.Done():
+			p.ended(c)
+		case <-ctx.Done():
 		}
+	})
+}
+
+// ended is watch's verdict on c, which has ended.
+func (p *pageConn) ended(c webkit.Caller) {
+	p.mu.Lock()
+	if p.expected[c] {
+		delete(p.expected, c)
 		p.mu.Unlock()
-		if p.writeFailed(c) {
-			return
-		}
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if p.cur != c || p.state == ConnClosed || p.state == ConnLost {
-			return
-		}
-		p.state = ConnLost
-		p.logf("page connection closed unexpectedly; the lease is lost")
-		close(p.done)
-	}()
+		return
+	}
+	p.mu.Unlock()
+	if p.writeFailed(c) {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cur != c || p.state == ConnClosed || p.state == ConnLost {
+		return
+	}
+	p.state = ConnLost
+	p.logf("page connection closed unexpectedly; the lease is lost")
+	close(p.done)
 }
 
 // writeFailed reports whether c ended because one of its socket writes
@@ -186,27 +211,315 @@ func (p *pageConn) installed(c webkit.Caller) bool {
 
 // swap replaces the connection (recovery or takeover); the old one is
 // closed as expected, subscriptions move, and the state is attached again.
-func (p *pageConn) swap(c webkit.Caller) {
+// When c was prepared (prepare), the subscriptions keep their
+// subscriptions on c, and the events c delivered before the swap reach
+// them now, in the order c delivered them: first to the subscriptions that
+// run in the read loop, in the caller (their handlers do not block), then
+// to each queued subscription on its own goroutine (handoff.openQueued).
+// It installs nothing and returns an error when a read-loop subscription
+// lost a held event of c (handoff.install); the caller closes c then.
+func (p *pageConn) swap(c webkit.Caller) error {
 	p.mu.Lock()
+	h := p.next
+	if h != nil && h.c != c {
+		p.discardLocked() // prepared for another connection, which is not installed
+		h = nil
+	}
+	if h != nil {
+		if err := h.install(); err != nil {
+			p.discardLocked()
+			p.mu.Unlock()
+			return err
+		}
+	}
 	old := p.cur
 	select {
 	case <-old.Done(): // retired or gone; watch has seen it end
 	default:
 		p.expected[old] = true
 	}
+	p.next = nil
 	p.cur = c
 	if p.state == ConnLost || p.state == ConnClosed {
 		p.done = make(chan struct{})
 	}
-	p.state, p.stallErr = ConnOK, nil
+	p.state, p.stallErr, p.lostErr = ConnOK, nil, nil
 	p.stall, p.stallFired = context.WithCancelCause(context.Background())
 	for _, s := range p.subs {
 		s.unsub()
-		s.unsub = subscribeOn(c, s)
+		if h != nil && s.pending != nil {
+			s.unsub, s.pending = s.pending, nil
+		} else {
+			s.unsub = subscribeOn(c, s)
+		}
 	}
 	p.mu.Unlock()
-	p.watch(c)
+	if h != nil {
+		h.openReadLoop()
+	}
+	watched := p.watch(c)
+	if h != nil {
+		if watched {
+			h.openQueued()
+		} else {
+			h.drop() // the manager closes; nobody reads the events any more
+		}
+	}
 	closeCaller(old)
+	return nil
+}
+
+// prepare subscribes every subscription on c, a new connection that is
+// set up before swap installs it (Manager.openConn), so that the events of
+// its setup reach the subscribers: for example the replay of Console.enable
+// with the messages logged while no connection was installed. Until swap
+// installs c, they are held (handoff); discard drops them when c is not
+// installed. One connection is prepared at a time (the page's attachMu).
+func (p *pageConn) prepare(c webkit.Caller) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.discardLocked()
+	h := &handoff{c: c, drops: &p.heldDrops}
+	p.next = h
+	for _, s := range p.subs {
+		s.pending = h.subscribe(s)
+	}
+}
+
+// discard drops the events of c, a prepared connection that is not
+// installed, and its subscriptions; the caller closes c.
+func (p *pageConn) discard(c webkit.Caller) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.next != nil && p.next.c == c {
+		p.discardLocked()
+	}
+}
+
+func (p *pageConn) discardLocked() {
+	h := p.next
+	if h == nil {
+		return
+	}
+	p.next = nil
+	for _, s := range p.subs {
+		if s.pending != nil {
+			s.pending()
+			s.pending = nil
+		}
+	}
+	h.drop()
+}
+
+// handoffLimit bounds the events that a prepared connection holds for one
+// subscription: the capacity of a Session subscriber's queue
+// (webkit.DefaultEventQueue), the budget that each subscriber has on an
+// installed connection.
+const handoffLimit = webkit.DefaultEventQueue
+
+// handoff holds the events of a prepared connection until swap installs
+// it or discard drops them (drop). Events for subscriptions that run in
+// the read loop and for queued ones are held apart: each kind is delivered
+// in the order the connection delivered it, the read-loop kind first, as
+// the connection itself delivers them.
+//
+// Each subscription holds at most handoffLimit events. A queued
+// subscription's event beyond it is dropped and counted (drops,
+// pageConn.DroppedEvents), as a full Session subscriber queue drops and
+// counts it. A read-loop subscription's event is bookkeeping that later
+// readers rely on (the scheduler's pending items), so it is never dropped
+// silently: an event beyond the limit fails the handoff, and swap does not
+// install the connection (install). deliver, which the connection calls,
+// never waits, except for a read-loop event that finds its subscription's
+// buffer full while swap delivers the held read-loop events.
+type handoff struct {
+	c     webkit.Caller
+	drops *atomic.Int64 // counts the events dropped at handoffLimit; nil: not counted
+
+	mu sync.Mutex
+	// syncHeld and asyncHeld are the held events of the read-loop and of
+	// the queued subscriptions, each in the order c delivered them; held
+	// counts them per subscription.
+	syncHeld, asyncHeld []heldEvent
+	held                map[*connSub]int
+	// replay holds, after openQueued, the events that the replay goroutine
+	// of each queued subscription has still to deliver (replayTo).
+	replay     map[*connSub][]heldEvent
+	syncOpen   bool          // openReadLoop delivered the held read-loop events
+	asyncOpen  bool          // openQueued gave the held queued events to replayTo
+	installing chan struct{} // set by install, closed when openReadLoop ends
+	overflow   error         // a read-loop subscription lost an event
+	dropped    bool
+}
+
+type heldEvent struct {
+	s              *connSub
+	target, method string
+	params         json.RawMessage
+}
+
+// subscribe subscribes s on the prepared connection through h.
+func (h *handoff) subscribe(s *connSub) func() {
+	return subscribeOn(h.c, &connSub{method: s.method, sync: s.sync, h: func(target, method string, params json.RawMessage) {
+		h.deliver(s, target, method, params)
+	}})
+}
+
+func (h *handoff) deliver(s *connSub, target, method string, params json.RawMessage) {
+	e := heldEvent{s: s, target: target, method: method, params: params}
+	h.mu.Lock()
+	for s.sync && !h.syncOpen && h.installing != nil && h.held[s] >= handoffLimit {
+		// swap delivers the held read-loop events: wait for it rather than
+		// lose this one (install).
+		wait := h.installing
+		h.mu.Unlock()
+		<-wait
+		h.mu.Lock()
+	}
+	_, replaying := h.replay[s]
+	switch {
+	case h.dropped:
+	case s.sync && !h.syncOpen:
+		h.holdLocked(&h.syncHeld, e)
+	case !s.sync && !h.asyncOpen:
+		h.holdLocked(&h.asyncHeld, e)
+	case !s.sync && replaying:
+		if len(h.replay[s]) >= handoffLimit {
+			h.countDrop()
+		} else {
+			h.replay[s] = append(h.replay[s], e)
+		}
+	default:
+		h.mu.Unlock()
+		if !s.removed.Load() {
+			s.h(target, method, params)
+		}
+		return
+	}
+	h.mu.Unlock()
+}
+
+// holdLocked appends e to held unless its subscription holds handoffLimit
+// events already: then e is dropped and counted, and for a read-loop
+// subscription the handoff fails (overflow).
+func (h *handoff) holdLocked(held *[]heldEvent, e heldEvent) {
+	if h.held == nil {
+		h.held = map[*connSub]int{}
+	}
+	if h.held[e.s] >= handoffLimit {
+		h.countDrop()
+		if e.s.sync && h.overflow == nil {
+			h.overflow = fmt.Errorf("the new connection delivered more than %d %s events to a read-loop subscription before it was installed, so their bookkeeping is incomplete", handoffLimit, e.method)
+		}
+		return
+	}
+	h.held[e.s]++
+	*held = append(*held, e)
+}
+
+func (h *handoff) countDrop() {
+	if h.drops != nil {
+		h.drops.Add(1)
+	}
+}
+
+// install starts the installation of c (swap). It fails when a read-loop
+// subscription lost an event of c (holdLocked). From then on, a read-loop
+// event that finds its subscription's buffer full waits until
+// openReadLoop has delivered the held ones, instead of being lost.
+func (h *handoff) install() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.overflow != nil {
+		return h.overflow
+	}
+	h.installing = make(chan struct{})
+	return nil
+}
+
+// openReadLoop delivers the held read-loop events in their order, also
+// those that arrive meanwhile, and then lets the connection deliver them
+// at once. The handlers run without h.mu. As in c's read loop, they must
+// not subscribe on c or unsubscribe from it: c's read loop may wait for
+// this delivery (deliver), holding its subscriber lock.
+func (h *handoff) openReadLoop() {
+	for {
+		h.mu.Lock()
+		batch := h.syncHeld
+		h.syncHeld = nil
+		for _, e := range batch {
+			h.held[e.s]--
+		}
+		if len(batch) == 0 {
+			h.syncOpen = true
+			close(h.installing)
+			h.mu.Unlock()
+			return
+		}
+		h.mu.Unlock()
+		for _, e := range batch {
+			if !e.s.removed.Load() {
+				e.s.h(e.target, e.method, e.params)
+			}
+		}
+	}
+}
+
+// openQueued gives the held events of each queued subscription to a
+// goroutine of that subscription (replayTo), so that a slow subscriber
+// delays only its own events, as it does on a Session (Session.Subscribe).
+// Nobody waits for these goroutines, as nobody waits for a Session's
+// subscriber goroutines: Manager.Close never waits for a subscriber's
+// handler.
+func (h *handoff) openQueued() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.asyncOpen = true
+	h.replay = map[*connSub][]heldEvent{}
+	for _, e := range h.asyncHeld {
+		h.replay[e.s] = append(h.replay[e.s], e)
+	}
+	h.asyncHeld, h.held = nil, nil
+	for s := range h.replay {
+		go h.replayTo(s)
+	}
+}
+
+// replayTo delivers s's held events in their order, also those that arrive
+// meanwhile (deliver keeps at most handoffLimit of them), and then lets the
+// connection deliver to s at once. Like a Session subscriber's goroutine,
+// it ends after the running handler when s is unsubscribed or the
+// connection ends; the events left are dropped.
+func (h *handoff) replayTo(s *connSub) {
+	for {
+		h.mu.Lock()
+		q := h.replay[s]
+		if len(q) == 0 || s.removed.Load() || callerEnded(h.c) {
+			delete(h.replay, s)
+			h.mu.Unlock()
+			return
+		}
+		h.replay[s] = q[1:]
+		h.mu.Unlock()
+		s.h(q[0].target, q[0].method, q[0].params)
+	}
+}
+
+func callerEnded(c webkit.Caller) bool {
+	select {
+	case <-c.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// drop ends the delivery of h's events: the held ones and any later one.
+func (h *handoff) drop() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.dropped = true
+	h.syncHeld, h.asyncHeld, h.held = nil, nil, nil
 }
 
 // retire closes the current connection as expected without changing the
@@ -223,6 +536,24 @@ func (p *pageConn) retire() {
 	}
 	p.mu.Unlock()
 	closeCaller(c)
+}
+
+// markLost marks the page lost with cause, which wraps ErrLost, after a
+// peer ended the new connection of a reconnect before it was installed
+// (Page.newConnLost), as watch does for the installed connection (ended):
+// only --takeover connects it again (design 2.5 rule 3). The caller holds
+// the page's attachMu.
+func (p *pageConn) markLost(cause error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lostErr = cause
+	if p.state == ConnLost {
+		return
+	}
+	if p.state != ConnClosed {
+		close(p.done)
+	}
+	p.state = ConnLost
 }
 
 // close ends the connection on the daemon's request.
@@ -258,6 +589,9 @@ func (p *pageConn) subscribe(method string, h webkit.TargetEventHandler, inLoop 
 	p.nextSub++
 	s := &connSub{method: method, h: h, sync: inLoop}
 	s.unsub = subscribeOn(p.cur, s)
+	if p.next != nil {
+		s.pending = p.next.subscribe(s)
+	}
 	p.subs[id] = s
 	p.mu.Unlock()
 	var once sync.Once
@@ -265,7 +599,12 @@ func (p *pageConn) subscribe(method string, h webkit.TargetEventHandler, inLoop 
 		once.Do(func() {
 			p.mu.Lock()
 			if s := p.subs[id]; s != nil {
+				s.removed.Store(true)
 				s.unsub()
+				if s.pending != nil {
+					s.pending()
+					s.pending = nil
+				}
 				delete(p.subs, id)
 			}
 			p.mu.Unlock()
@@ -455,8 +794,14 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 	case errors.Is(err, webkit.ErrCallTimeout):
 		// Design 2.6 step 2: at the call budget, probe within the time left.
 		// A probe that the operation's owner canceled is no stall; the
-		// call keeps its own error.
-		if perr := p.probe(ctx, c); perr != nil && !errors.Is(perr, errProbeCanceled) {
+		// call keeps its own error. A probe that found the connection
+		// ended by a peer leaves the page lost (probe), so the call says
+		// so, with the --takeover guidance of ErrLost: no reconnect runs.
+		perr := p.probe(ctx, c)
+		switch {
+		case errors.Is(perr, ErrLost):
+			return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%s: no reply, and the connection ended during the liveness probe: %w (call: %w)", method, perr, err)}
+		case perr != nil && !errors.Is(perr, errProbeCanceled):
 			return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: %w", webkit.ErrSessionStalled, err)}
 		}
 		return nil, err
@@ -574,8 +919,8 @@ func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 	if err != nil && canceledByOwner(ctx, err) {
 		err = fmt.Errorf("%w: %w", errProbeCanceled, err)
 	}
-	if err != nil && !errors.Is(err, errProbeCanceled) && endedByPeer(c) {
-		err = fmt.Errorf("%w: %w", ErrLost, err)
+	if err != nil && !errors.Is(err, errProbeCanceled) {
+		err = lostOnPeerEnd(c, err)
 	}
 	p.mu.Lock()
 	p.probing = false
@@ -617,6 +962,17 @@ func endedByPeer(c webkit.Caller) bool {
 	return !ok || !errors.Is(ce.Err(), webkit.ErrWriteTimeout)
 }
 
+// lostOnPeerEnd wraps ErrLost, with its --takeover guidance, around err, the
+// failure of a liveness probe on c, when c ended for a cause other than a
+// write timeout (endedByPeer): another inspector may have taken the page, so
+// the failure says nothing about a stalled or hidden tab.
+func lostOnPeerEnd(c webkit.Caller, err error) error {
+	if endedByPeer(c) {
+		return fmt.Errorf("%w: %w", ErrLost, err)
+	}
+	return err
+}
+
 // writeInterrupter is a connection whose socket writes in progress can be
 // interrupted (webkit.Session.InterruptWrites, webkit.Client.InterruptWrites).
 type writeInterrupter interface{ InterruptWrites() }
@@ -638,6 +994,17 @@ func probeCaller(ctx context.Context, c webkit.Caller) error {
 		return fmt.Errorf("liveness probe: %w", err)
 	}
 	return nil
+}
+
+// DroppedEvents counts the events that a subscriber lost because its queue
+// was full: on the current connection (webkit.Session.DroppedEvents) and in
+// the handoffs of new connections (handoffLimit).
+func (p *pageConn) DroppedEvents() int64 {
+	n := p.heldDrops.Load()
+	if d, ok := p.currentConn().(interface{ DroppedEvents() int64 }); ok {
+		n += d.DroppedEvents()
+	}
+	return n
 }
 
 // markDropped records a transport messageDropped event (direct transport).

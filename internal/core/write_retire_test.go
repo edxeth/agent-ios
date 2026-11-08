@@ -277,7 +277,7 @@ func TestWatchStallsAPageWhoseWriteFailed(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	var recoveries atomic.Int32
-	p := newPageConn(c, func() { recoveries.Add(1) }, func(func(context.Context)) bool { return false }, func(string, ...any) {})
+	p := newPageConn(c, func() { recoveries.Add(1) }, trackedBackground(t), func(string, ...any) {})
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	if _, err := c.Send(ctx, "DOM.getDocument", nil); !errors.Is(err, context.DeadlineExceeded) {
@@ -309,7 +309,7 @@ func TestConnectionWithoutACauseIsStillLost(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	var recoveries atomic.Int32
-	p := newPageConn(struct{ webkit.Caller }{c}, func() { recoveries.Add(1) }, func(func(context.Context)) bool { return false }, func(string, ...any) {})
+	p := newPageConn(struct{ webkit.Caller }{c}, func() { recoveries.Add(1) }, trackedBackground(t), func(string, ...any) {})
 	f.Close()
 	select {
 	case <-p.Done():
@@ -340,7 +340,7 @@ func TestTimedOutWriteAfterALossKeepsThePageLost(t *testing.T) {
 	timedOut := fmt.Errorf("%w: %w: %w", webkit.ErrSessionClosed, webkit.ErrWriteFailed, webkit.ErrWriteTimeout)
 	c := endedCaller{done: done, err: timedOut}
 	var recoveries atomic.Int32
-	p := newPageConn(c, func() { recoveries.Add(1) }, func(func(context.Context)) bool { return false }, func(string, ...any) {})
+	p := newPageConn(c, func() { recoveries.Add(1) }, trackedBackground(t), func(string, ...any) {})
 	// The read error was published first: the page is lost.
 	p.mu.Lock()
 	p.state = ConnLost

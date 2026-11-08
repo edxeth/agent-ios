@@ -83,6 +83,9 @@ func receivedOn(f *fakewebkit.Server, target, method, sub string) bool {
 // its own item.
 func queuedReleaseCleanup(t *testing.T, targets ...string) (*rig, *Page, *headerBackend) {
 	r, pg, b := provisionalWithReleasedHeader(t, targets...)
+	// These tests pin the marks of a commit and their end by the next
+	// change, so the commit's background reset is held (holdCommitReset).
+	holdCommitReset(r)
 	d := pg.PS.State
 	ctx := ctxFor(t, 10*time.Second)
 	// Another header change of s1, made as legacyCall makes it: its send to

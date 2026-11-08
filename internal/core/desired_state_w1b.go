@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -19,14 +20,39 @@ func (d *DesiredState) followTargets(c interface {
 	SubscribeSync(method string, h webkit.EventHandler) func()
 },
 ) {
-	c.SubscribeSync("Target.didCommitProvisionalTarget", func(_ string, params json.RawMessage) {
+	d.followCommits(c, nil)
+}
+
+// followCommits is followTargets with pending, called after a commit that
+// left a cleanup pending on the committed target (commitTarget): the
+// committed target may hold released state until its agents are reset
+// (Manager.commitLeftCleanup). pending runs from a queued event
+// subscription (Subscribe; on a webkit.Session it runs outside the read
+// loop), after the commit's bookkeeping in the read loop; several commits
+// before it runs give one call.
+func (d *DesiredState) followCommits(c interface {
+	SubscribeSync(method string, h webkit.EventHandler) func()
+}, pending func(),
+) {
+	const commit = "Target.didCommitProvisionalTarget"
+	var marked atomic.Bool
+	c.SubscribeSync(commit, func(_ string, params json.RawMessage) {
 		var p struct {
 			NewTargetID string `json:"newTargetId"`
 		}
-		if json.Unmarshal(params, &p) == nil && p.NewTargetID != "" {
-			d.commitTarget(p.NewTargetID)
+		if json.Unmarshal(params, &p) == nil && p.NewTargetID != "" && d.commitTarget(p.NewTargetID) {
+			marked.Store(true)
 		}
 	})
+	if as, ok := c.(interface {
+		Subscribe(method string, h webkit.EventHandler) func()
+	}); ok && pending != nil {
+		as.Subscribe(commit, func(string, json.RawMessage) {
+			if marked.Swap(false) {
+				pending()
+			}
+		})
+	}
 	c.SubscribeSync("Target.targetDestroyed", func(_ string, params json.RawMessage) {
 		var p struct {
 			TargetID string `json:"targetId"`
@@ -39,10 +65,14 @@ func (d *DesiredState) followTargets(c interface {
 
 // commitTarget makes target the active target: the old document's Scoped
 // entries are dropped without a reset (their ids do not exist on target),
-// and the breakpoint ids that target's setup got replace the old ones.
-func (d *DesiredState) commitTarget(target string) {
+// and the breakpoint ids that target's setup got replace the old ones. It
+// reports whether the commit marked a domain unknown: a cleanup is pending
+// on target then.
+func (d *DesiredState) commitTarget(target string) (marked bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	seq := d.markSeq
+	defer func() { marked = d.markSeq != seq }()
 	if old := d.syncs[d.active]; old != nil && d.active != target {
 		// The commit replaces the old active target, and its backend with
 		// the state that its unsent cleanup sends were to remove, so the
@@ -85,6 +115,7 @@ func (d *DesiredState) commitTarget(target string) {
 		d.markUnsentCleanupLocked(ts)
 	}
 	d.active = target
+	return // marked: set by the deferred comparison of markSeq
 }
 
 // abandonTarget drops the staged breakpoint ids of a destroyed target. The
