@@ -682,23 +682,25 @@ func (c opCaller) opEnded() bool { return c.op.ctx.Err() != nil }
 
 func (c opCaller) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	op := c.op
+	// Each refusal here is before the write: webkit.ErrNotSent, whose text
+	// is "not sent".
 	if err := op.active(); err != nil {
-		return nil, fmt.Errorf("%s: not sent: %w", method, err)
+		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
 	}
 	select {
 	case op.s.sem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, fmt.Errorf("%s: not sent: %w", method, ctx.Err())
+		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, ctx.Err())
 	case <-op.ctx.Done():
-		return nil, fmt.Errorf("%s: not sent: %w", method, context.Cause(op.ctx))
+		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, context.Cause(op.ctx))
 	}
 	defer func() { <-op.s.sem }()
 	if err := op.active(); err != nil {
-		return nil, fmt.Errorf("%s: not sent: %w", method, err)
+		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
 	}
 	// The active target may have changed since admission (design 2.7).
 	if err := op.setupReady(ctx); err != nil {
-		return nil, fmt.Errorf("%s: not sent: %w", method, err)
+		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
 	}
 	callCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
