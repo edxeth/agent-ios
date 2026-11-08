@@ -43,6 +43,19 @@ func (d *DesiredState) followTargets(c interface {
 func (d *DesiredState) commitTarget(target string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if old := d.syncs[d.active]; old != nil && d.active != target {
+		// The commit replaces the old active target, and its backend with
+		// the state that its unsent cleanup sends were to remove, so the
+		// marks they carry end (settleLocked) before target's own are set
+		// below. A mark that stayed would make target's unsent cleanup
+		// look pending already (markUnsentCleanupLocked), and then end with
+		// the old target's record (abandonTarget).
+		for _, q := range append([]*queued{old.sending}, old.queue...) {
+			if q != nil {
+				d.settleLocked(q)
+			}
+		}
+	}
 	for k, e := range d.entries {
 		if e.Scoped {
 			delete(d.entries, k)
@@ -63,11 +76,13 @@ func (d *DesiredState) commitTarget(target string) {
 		// change drops the record once the queue is empty.
 		ts.committed = true
 		// The cleanup sends that failed on it are pending on the active
-		// target now (cleanupFailedLocked).
+		// target now (cleanupFailedLocked), and so are those still on
+		// their way to it (markUnsentCleanupLocked).
 		for dom := range ts.unclean {
 			d.markUnknownLocked(dom)
 		}
 		ts.unclean = nil
+		d.markUnsentCleanupLocked(ts)
 	}
 	d.active = target
 }
@@ -80,7 +95,7 @@ func (d *DesiredState) abandonTarget(target string) {
 	delete(d.staged, target)
 	delete(d.stagedVia, target)
 	if ts := d.syncs[target]; ts != nil {
-		dropQueueLocked(ts) // the target took its state with it
+		d.dropQueueLocked(ts) // the target took its state with it
 		delete(d.syncs, target)
 	}
 }

@@ -67,6 +67,14 @@ import (
 //     before commit takes the state with it. A cleanup send that a commit
 //     cut off (ErrTargetSwapped) marks its domain until its forwarded send
 //     to the target that is active now succeeds (enqueueLocked).
+//   - A forwarded cleanup send that is still on its way to a provisional
+//     target (in flight or queued) when that target commits marks its
+//     domain until it succeeds (markUnsentCleanupLocked, core-events round
+//     8): the release or reset that queued it may have ended, and removed
+//     its own mark, because its own target was cleaned. The commit first
+//     ends the marks of the replaced target's unsent sends, whose backend
+//     goes with it. A cleanup send or disable that the active target
+//     refuses as not enabled is still forwarded (changeSender.Send).
 //   - A setup of the active target (Session.ReapplySetup, the recovery of a
 //     failed provisional setup) and a setup that runs again reset the
 //     target's Network agent while it may hold requests: an active Network

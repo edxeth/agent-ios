@@ -50,7 +50,10 @@ import (
 //   - after every release, the released state is gone from the installed
 //     connection's active backend, or a cleanup is pending: the Network
 //     agent is unknown (d.unknown), or the target's setup still runs or
-//     failed (checked at every lifecycle event and at the end);
+//     failed (checked at every lifecycle event and at the end); while the
+//     session has committed a target and the model has not processed that
+//     commit yet, a Network cleanup that the model holds for that target
+//     counts too (networkCleanupOwed, core-events round 8);
 //   - no held request is continued by a reset without being recorded as
 //     reset: every request the scheduler lists is held by the backend
 //     (checked twice, 200 ms apart, so a reply in flight does not count);
@@ -235,15 +238,45 @@ func (lr *lifecycleRun) newestSetUpConn() int {
 	return conn
 }
 
-// cleanupPending reports whether pg has a pending cleanup: an unknown
-// Network agent, or an active target whose setup still runs or failed.
-func cleanupPending(pg *Page) bool {
-	if pg.PS.State.isUnknown("Network") {
+// cleanupPending reports whether pg has a pending cleanup for target, the
+// connection's active target: a Network cleanup the model owes target
+// (networkCleanupOwed), or an active target whose setup still runs or
+// failed.
+func cleanupPending(pg *Page, target string) bool {
+	if networkCleanupOwed(pg.PS.State, target) {
 		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer cancel()
 	return pg.conn.ActiveSetup(ctx) != nil
+}
+
+// networkCleanupOwed reports, in one critical section, whether the Network
+// agent is unknown, or whether the session made target its active target
+// before the model processed that commit while target's record holds a
+// Network cleanup: one that failed there (unclean) or one still on its
+// way (in flight or queued). The session switches its active target in
+// its read loop and then runs its subscribers, among them the model's
+// commit (followTargets, commitTarget), which turns exactly these into an
+// unknown Network agent (markUnsentCleanupLocked). Every production path
+// reads the model's active target (beginChange), so only a check that
+// reads the session's active target sees this step.
+func networkCleanupOwed(d *DesiredState, target string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.unknown["Network"] != 0 {
+		return true
+	}
+	ts := d.syncs[target]
+	if target == d.active || ts == nil {
+		return false
+	}
+	if ts.unclean["Network"] {
+		return true
+	}
+	return slices.ContainsFunc(append([]*queued{ts.sending}, ts.queue...), func(q *queued) bool {
+		return q != nil && q.cleanup == "Network"
+	})
 }
 
 // checkBackendLocked: no header of a session whose release ended in the
@@ -257,7 +290,7 @@ func (lr *lifecycleRun) checkBackendLocked(pg *Page, when string) {
 	hdr := maps.Clone(lr.hdr[backendKey(lr.installed, target)])
 	lr.fmu.Unlock()
 	for s := range lr.ended {
-		if v, ok := hdr["X-Sess-"+s]; ok && !cleanupPending(pg) {
+		if v, ok := hdr["X-Sess-"+s]; ok && !cleanupPending(pg, target) {
 			lr.bad = append(lr.bad, fmt.Sprintf("at %s: the release of %s ended, its header (epoch %s) is in the backend of target %s of connection %d, and no cleanup is pending", when, s, v, target, lr.installed))
 		}
 	}
@@ -710,6 +743,24 @@ var reviewerPlans = map[string]lifecyclePlan{
 		{Kind: stepUsePrev, StartMS: 138, DeadMS: 3000, Param: 98},
 		{Kind: stepUse, StartMS: 832, DeadMS: 60, Param: 415},
 	}},
+	// Core-events round 8 (generated plan #11 of the core-notsent run):
+	// the provisional target p1 gets s1's header from its setup; the
+	// release's Network.disable is refused on the active target, so
+	// Network is unknown; the next change resets the active target, which
+	// ends that mark, and queues the reset for p1, but its delayed header
+	// reply holds it past its deadline, so nobody sends the queue. p1
+	// commits with the reset still queued: its cleanup must be pending.
+	"commit with a queued cleanup": {Steps: []lifecycleStep{
+		{Kind: stepDelay, StartMS: 393, DeadMS: 60, Param: 501},
+		{Kind: stepTouchFirst, StartMS: 359, DeadMS: 60, Param: 263},
+		{Kind: stepBreak, StartMS: 522, DeadMS: 60, Param: 563},
+		{Kind: stepUsePrev, StartMS: 307, DeadMS: 1000, Param: 121},
+		{Kind: stepRefuse, StartMS: 481, DeadMS: 3000, Param: 147},
+		{Kind: stepSwap, StartMS: 318, DeadMS: 250, Param: 539},
+		{Kind: stepHolds, StartMS: 69, DeadMS: 60, Param: 513},
+		{Kind: stepUse, StartMS: 797, DeadMS: 60, Param: 474},
+		{Kind: stepTakeover, StartMS: 755, DeadMS: 60, Param: 31},
+	}},
 }
 
 func lifecycleCount(t *testing.T) int {
@@ -721,6 +772,21 @@ func lifecycleCount(t *testing.T) int {
 		return n
 	}
 	return 25
+}
+
+// lifecycleSeed is the seed of the generated plans: IWDP_LIFECYCLE_SEED,
+// or the time. It is logged, so a failing run can be repeated.
+func lifecycleSeed(t *testing.T) int64 {
+	seed := time.Now().UnixNano()
+	if s := os.Getenv("IWDP_LIFECYCLE_SEED"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			t.Fatalf("IWDP_LIFECYCLE_SEED=%q: want an integer", s)
+		}
+		seed = n
+	}
+	t.Logf("generated plans: IWDP_LIFECYCLE_SEED=%d", seed)
+	return seed
 }
 
 func TestReleaseAttachLifecycleProperty(t *testing.T) {
@@ -743,7 +809,7 @@ func TestReleaseAttachLifecycleProperty(t *testing.T) {
 		})
 		return ok
 	}
-	if err := quick.Check(prop, &quick.Config{MaxCount: lifecycleCount(t)}); err != nil {
+	if err := quick.Check(prop, &quick.Config{MaxCount: lifecycleCount(t), Rand: rand.New(rand.NewSource(lifecycleSeed(t)))}); err != nil {
 		t.Error(err)
 	}
 }

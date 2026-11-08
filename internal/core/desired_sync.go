@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -42,7 +44,9 @@ import (
 //     target took its state with it, or ReapplySetup sends the whole state.
 //   - A cleanup send (asCleanup) that fails on a target keeps that cleanup
 //     pending for the target (cleanupFailedLocked): its domain becomes
-//     unknown (d.unknown) once the target is the active one.
+//     unknown (d.unknown) once the target is the active one. A cleanup send
+//     that is still in flight or queued when its target commits keeps its
+//     domain unknown until it succeeds (markUnsentCleanupLocked).
 //   - Changes run one at a time (d.chg) but wait for their items after
 //     releasing d.chg; setups never wait for a change, because a change can
 //     wait for a setup (the gate of webkit.Session).
@@ -60,6 +64,7 @@ type targetSync struct {
 	idle      chan struct{} // closed when the current sending ends
 	committed bool          // became the active target; dropped by the next change
 	failed    bool          // its setup failed; ReapplySetup sends the full state
+	sending   *queued       // the item pump sends now, taken from queue
 	// unclean holds the domains of the cleanup sends that failed on the
 	// target while it was provisional; they become unknown when it commits
 	// (commitTarget).
@@ -73,7 +78,7 @@ type queued struct {
 	// cleanup is the domain of a cleanup send (asCleanup; "" for other
 	// sends): its failure keeps that cleanup pending (cleanupFailedLocked).
 	// mark is the unknown mark of cleanup that the item's success removes
-	// (0 for none; enqueueLocked, swapped).
+	// (0 for none; enqueueLocked, swapped; markUnsentCleanupLocked).
 	cleanup   string
 	mark      uint64
 	completed bool
@@ -90,13 +95,52 @@ func (q *queued) completeLocked(err error) {
 }
 
 // dropQueueLocked completes every item of ts's queue without error and
-// empties it: the target is gone or gets the whole state again. The caller
-// holds d.mu.
-func dropQueueLocked(ts *targetSync) {
+// empties it: the target is gone or gets the whole state again, so the
+// marks the items carry end too (settleLocked). The caller holds d.mu.
+func (d *DesiredState) dropQueueLocked(ts *targetSync) {
 	for _, q := range ts.queue {
+		d.settleLocked(q)
 		q.completeLocked(nil)
 	}
 	ts.queue = nil
+}
+
+// settleLocked ends the unknown mark that q carries, unless a later mark
+// replaced it: q was sent, or its target no longer needs it. The caller
+// holds d.mu.
+func (d *DesiredState) settleLocked(q *queued) {
+	if q.mark != 0 && d.unknown[q.cleanup] == q.mark {
+		delete(d.unknown, q.cleanup)
+	}
+	q.mark = 0
+}
+
+// markUnsentCleanupLocked keeps the cleanup sends that are still on their
+// way to ts's target, in flight or queued, pending when that target
+// becomes the active one (commitTarget). Until such a send succeeded, the
+// target's backend may hold the state it removes (a provisional target's
+// setup snapshot from before a release), and the send is the only record
+// of that obligation: the release or reset that queued it may have ended,
+// its marks removed, because its own target was cleaned. For each domain
+// the last of these sends carries a new mark, which its success removes
+// (pump): the queue is sent in order, so the earlier ones were sent by
+// then, and a failure of any of them marks the domain again
+// (cleanupFailedLocked). A domain that is unknown already keeps its mark:
+// that obligation may be older than these sends, so their success does
+// not end it. The caller holds d.mu.
+func (d *DesiredState) markUnsentCleanupLocked(ts *targetSync) {
+	last := map[string]*queued{}
+	for _, q := range append([]*queued{ts.sending}, ts.queue...) {
+		if q != nil && q.cleanup != "" {
+			last[q.cleanup] = q
+		}
+	}
+	for _, dom := range slices.Sorted(maps.Keys(last)) {
+		if d.unknown[dom] == 0 {
+			d.markUnknownLocked(dom)
+			last[dom].mark = d.markSeq
+		}
+	}
 }
 
 // registerLocked records target's setup snapshot. The caller holds d.mu and
@@ -108,7 +152,7 @@ func (d *DesiredState) registerLocked(target string, via Sender) *targetSync {
 		d.syncs = map[string]*targetSync{}
 	}
 	if old := d.syncs[target]; old != nil {
-		dropQueueLocked(old)
+		d.dropQueueLocked(old)
 	}
 	d.syncs[target] = ts
 	return ts
@@ -177,17 +221,17 @@ func (d *DesiredState) pump(ctx context.Context, target string, ts *targetSync, 
 		}
 		q := ts.queue[0]
 		ts.queue = ts.queue[1:]
+		ts.sending = q
 		d.mu.Unlock()
 		err := q.send(ctx, ts.via)
 		d.mu.Lock()
+		ts.sending = nil
 		switch {
 		case err == nil:
-			if q.mark != 0 && d.unknown[q.cleanup] == q.mark {
-				delete(d.unknown, q.cleanup)
-			}
+			d.settleLocked(q)
 		case targetGone(err):
 			err = nil
-			dropQueueLocked(ts)
+			d.dropQueueLocked(ts)
 		default:
 			err = fmt.Errorf("page target %s: %w", target, err)
 			errs = append(errs, err)
@@ -198,7 +242,7 @@ func (d *DesiredState) pump(ctx context.Context, target string, ts *targetSync, 
 		q.completeLocked(err)
 	}
 	if d.syncs[target] != ts {
-		dropQueueLocked(ts) // the record was dropped while an item was sent
+		d.dropQueueLocked(ts) // the record was dropped while an item was sent
 	}
 	ts.busy = false
 	close(ts.idle)
@@ -322,7 +366,7 @@ func (d *DesiredState) finishSetup(ctx context.Context, target string, ts *targe
 	}
 	d.mu.Lock()
 	ts.failed, ts.busy = true, false
-	dropQueueLocked(ts)
+	d.dropQueueLocked(ts)
 	close(ts.idle)
 	d.mu.Unlock()
 	return err
@@ -374,32 +418,46 @@ var needsReply = map[string]bool{"Debugger.setBreakpointByUrl": true, "Debugger.
 // A cleanup send (asCleanup) that a commit cut off this way did not clean
 // the target that is active now, which may hold the released state; its
 // forwarded send to that target is the cleanup (enqueueLocked, swapped).
+//
+// A cleanup send or a disable that the change's target refuses because
+// its agent is not enabled (webkit.NotEnabled) is forwarded too, and the
+// refusal is returned: the caller counts it as done (sendDisable,
+// resetAndApplyDomain, disableDomain), because that target is in the
+// state the call wants, but a provisional target's setup may have enabled
+// the agent with the state the call removes. The same refusal by a
+// provisional target counts as done there too (doneIfNotEnabled).
 func (c *changeSender) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	cleanup := ""
 	if ctx.Value(cleanupKey{}) != nil {
 		cleanup = agentDomain(method)
 	}
+	removes := cleanup != "" || strings.HasSuffix(method, ".disable")
 	sctx := ctx
 	if c.target != "" {
 		sctx = webkit.WithTarget(ctx, c.target)
 	}
 	res, err := c.Caller.Send(sctx, method, params)
 	swapped := false
-	if err != nil {
-		if !errors.Is(err, webkit.ErrTargetSwapped) {
-			return res, err
-		}
+	switch {
+	case err == nil:
+	case errors.Is(err, webkit.ErrTargetSwapped):
 		if needsReply[method] {
 			if !errors.Is(err, webkit.ErrNotSent) || !c.retarget(ctx) {
 				return res, err
 			}
 			return c.Send(ctx, method, params)
 		}
-		res = json.RawMessage("{}")
+		res, err = json.RawMessage("{}"), nil
 		swapped = true
+	case notEnabled(err) && removes:
+	default:
+		return res, err
 	}
 	if forwarded(method) && ctx.Value(noForwardKey{}) == nil {
 		call := forwardCall(method, params)
+		if removes {
+			call = doneIfNotEnabled(call)
+		}
 		d := c.d
 		d.mu.Lock()
 		if method == "Page.setBootstrapScript" {
@@ -410,7 +468,7 @@ func (c *changeSender) Send(ctx context.Context, method string, params any) (jso
 		c.enqueueLocked(d.ver, cleanup, swapped, call)
 		d.mu.Unlock()
 	}
-	return res, nil
+	return res, err
 }
 
 // retarget makes the change address the target that replaced its target,
@@ -452,6 +510,18 @@ func forwardCall(method string, params any) func(context.Context, Sender) error 
 	return func(ctx context.Context, s Sender) error {
 		_, err := s.Send(ctx, method, params)
 		return err
+	}
+}
+
+// doneIfNotEnabled makes f, the forwarded send of a cleanup send or a
+// disable, succeed when its target refuses it because the agent is not
+// enabled: that agent is in the state the call wants (changeSender.Send).
+func doneIfNotEnabled(f func(context.Context, Sender) error) func(context.Context, Sender) error {
+	return func(ctx context.Context, s Sender) error {
+		if err := f(ctx, s); err != nil && !notEnabled(err) {
+			return err
+		}
+		return nil
 	}
 }
 

@@ -134,6 +134,15 @@ func TestReviewCommittedSetupResetAccountsForHolds(t *testing.T) {
 	eventually(t, 3*time.Second, "setup retry disabled Network", func() bool {
 		return len(r.f.HeldRequests("page-2")) == 0
 	})
+	// The fake drops the hold when it runs the reset's continue, before the
+	// scheduler gets the reply and records the reset (resetTargetHolds), so
+	// wait until the setup retry, which records it before its Network
+	// reset, has ended.
+	setupCtx, setupCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer setupCancel()
+	if err := pg.conn.ActiveSetup(setupCtx); setupCtx.Err() != nil {
+		t.Fatalf("the setup retry of page-2 did not end: %v", err)
+	}
 	pending := pg.PS.Sched.PendingRequests()
 	_, err = pg.PS.Sched.control(ctx, ControlMsg{Kind: ControlCompleteRequest, TargetID: "page-2", RequestID: "post-release", Method: "Network.interceptContinue"})
 	t.Logf("pending=%v completion error=%v", pending, err)

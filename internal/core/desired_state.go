@@ -339,7 +339,7 @@ func (d *DesiredState) applyConn(ctx context.Context, s Sender) (uint64, error) 
 	if !oneTarget {
 		// A new connection replaces every target, and its queue with it.
 		for _, old := range d.syncs {
-			dropQueueLocked(old)
+			d.dropQueueLocked(old)
 		}
 		d.syncs = nil
 		d.active = ""
