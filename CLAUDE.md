@@ -14,14 +14,15 @@ make test-coverage                # Run tests with coverage → coverage.html
 make sim-setup                    # Boot iOS Simulator + iwdp (prints IWDP_SIM_WS_URL)
 make sim-teardown                 # Shut down simulator + iwdp
 make fmt                          # gofumpt -w . (format all Go files)
-make lint                         # golangci-lint run ./...
+make lint                         # golangci-lint run ./... (needs golangci-lint v2.15+ built with Go 1.27)
+make docs                         # regenerate docs/commands.md from the command registry
 make tidy                         # go mod tidy
 make clean                        # Remove bin/ and coverage files
 ```
 
 ## Pre-commit
 
-Before committing, always run `make fmt` and `make lint` and fix any issues.
+Before committing, always run `make fmt` and `make lint` and fix any issues. Use golangci-lint v2.15 or later, built with Go 1.27: an older binary cannot read Go 1.27 export data and reports false type errors. After changing a registry command, run `make docs`; `internal/commands/refgen` tests fail on a stale docs/commands.md.
 
 ## How ios-webkit-debug-proxy Works
 
@@ -66,9 +67,20 @@ Some `<Domain>.enable` methods work through iwdp Target routing (e.g., `Debugger
 - Every `iwdp-cli` command runs under a deadline: 30 s, `--timeout <duration>` or `IWDP_TIMEOUT`. Recording commands add their `-d` duration; `heap-snapshot` defaults to 5 min; `console`/`network --follow` bound only the connect and enable steps. A deadline error exits 124 and names the command, page, elapsed time and likely causes; a watchdog ends commands that ignore the context.
 - `iwdp-cli <command> --help` (or `-h`) prints usage and exits before any connection. Add every new command to both `commands` (main.go) and `helpSections` (usage.go); `TestEveryCommandHasHelp` checks this.
 - Only **one WebSocket debugger connection per page** — simulator tests use a `sync.Once` shared connection pattern.
+
+### Rules for agents working on a device
+
+- Never stop, restart or pattern-kill an iwdp you did not start; `restart_iwdp`/`restart-iwdp` refuse for such an iwdp (decision L02, docs/device-runbook.md).
+- Use a distinct `--session`; reserve physical devices (`device reserve`) and release them; on "lost" stop and ask before `--takeover`.
+- All input is synthetic (`isTrusted=false`); `set viewport`, PDF, downloads and browser contexts are impossible (docs/synthetic-input.md).
+- Pause-on-start is on in the daemon but best effort; "runs before page scripts" is partial without it.
 - iwdp sends error `data` as a JSON array `[{"code":...,"message":...}]` — `ErrorData.Data` is `json.RawMessage` to handle this.
 
 ## Architecture
+
+User docs: docs/README.md (canonical). Design: docs/design/agentic-parity.md. docs/notes/ is workstream history. Accepted limits: docs/known-limits.md.
+
+A per-user daemon (`internal/daemon`, started on demand as `<binary> daemon run`) owns every page connection; the CLI, the MCP server (a daemon client, decision D1) and the opt-in CDP endpoint (`internal/cdp`, `get cdp-url`, tokenized URLs) are its clients. `internal/core` holds sessions, leases with epochs, device reservations, the per-page scheduler and the desired state that release cleans up. `internal/commands` is the command registry (one file per command; CLI parser, help, MCP schema and dispatch come from it). `internal/runtime` is the injected agent runtime (snapshots, refs, synthetic actions, waits, dialogs); `internal/devtools` the DevTools extras; `internal/transport` the iwdp, direct (go-ios) and webkitgtk transports. MCP profiles: `core` (default), `devtools`, `legacy`, `all` (`IWDP_MCP_TOOLS`, `--tools`).
 
 Two binaries, one shared `internal/` package tree:
 

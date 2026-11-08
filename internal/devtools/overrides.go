@@ -357,7 +357,8 @@ var NetworkPresets = map[string]int{
 
 // EmulateNetwork throttles the page to preset (owner "emulate:<session>"),
 // or removes the throttle for "none". Network.setEmulatedConditions is in
-// the iOS 16.4 to 26.2 and 27.3+ command lists only.
+// the iOS 16.4 to 17.x and 27.3+ command lists only (internal/wip: the
+// 16.4 and 17.0 lists have it; the 18.0 to 27.0 lists do not).
 func (p *Page) EmulateNetwork(ctx context.Context, c webkit.Caller, session, preset string) error {
 	bps := 0
 	if preset != "none" {

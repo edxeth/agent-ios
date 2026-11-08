@@ -286,12 +286,12 @@ Behavior:
 - Test: internal/core TestReplacedTargetHoldsStayDroppedAcrossARestore runs both fake models: after the commit the scheduler holds nothing (in the suspended model the fake still holds r1 for page-1), the restore's setup continues r1 in the backend, and the release sends no completion. With both drop paths mutated the test fails (mutation log /home/devkit/.pi/artifacts/worker/core-events/r1/mutation-dropholds.log).
 - Residual: in the suspended model the request stays paused inside the cached page until it is restored or evicted (eviction closes it: SuspendedPageProxy::close); it cannot block the active page. A restore whose setup fails before its Network.disable leaves such a request paused in WebKit and unknown to the scheduler.
 
-Not done: Debugger pauses are still one page-wide item (a pause on a provisional target is resumed on the active target); the legacy webkit.Client reports "" for every event.
+Not done at the time of this pass: Debugger pauses were one page-wide item (fixed in W1c-2, docs/notes/w1c.md: pauses are per target); the legacy webkit.Client reports "" for every event (still open, C15 in docs/known-limits.md).
 
 ## Remaining (exact)
 1. client.go split (design 7.2/7.3): deferred. webkit.Client is still the connection of explicit ws:// URLs in the daemon (ManagerOptions.OpenURL), of the legacy mock tests (100 ms direct-mode fallback) and of the simulator e2e suite. Moving it onto Session and wsconn changes the Target-wait rules (Session has no direct fallback, design 2.6) under every CLI test that uses testutil.MockServer, so it needs its own change with the mock tests ported to fakewebkit first.
-2. Device runbook below: not run (needs the orchestrator's grant).
-3. Not implemented from the design: "--tools" and combined IWDP_MCP_TOOLS values (core,devtools,legacy); a final "closed" event on daemon shutdown for MCP event streams (the stream ends when the socket closes).
+2. Device runbook below: not run (needs the orchestrator's grant). The current runbook is docs/device-runbook.md.
+3. Done later: "--tools" and combined IWDP_MCP_TOOLS values (W4-3, docs/notes/w4.md "MCP profiles") and the final "closed" event on daemon shutdown (round 2, R2-7).
 
 ## Decisions and deviations so far
 - D9 resolved the exit code: 124 for every expired deadline (legacy and registry).

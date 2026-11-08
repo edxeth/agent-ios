@@ -20,7 +20,7 @@ func init() {
 		Name:    "emulate network",
 		MCPName: "set_emulated_conditions",
 		Profile: ProfileDevtools,
-		Summary: "Throttle the page's network to a preset (" + strings.Join(networkPresets(), ", ") + ") or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which iOS has only in 16.4 to 26.2 and 27.3+.",
+		Summary: "Throttle the page's network to a preset (" + strings.Join(networkPresets(), ", ") + ") or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have.",
 		Args:    []Arg{{Name: "preset", Help: strings.Join(networkPresets(), ", ") + " or none"}},
 		Flags: []Flag{
 			// The parameter name of the earlier MCP tool set_emulated_conditions,

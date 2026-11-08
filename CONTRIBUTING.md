@@ -18,16 +18,21 @@ brew install ios-webkit-debug-proxy
 
 ```bash
 make fmt    # gofumpt formatting
-make lint   # golangci-lint
+make lint   # golangci-lint v2.15 or later, built with Go 1.27
+make docs   # after a change to a registry command: regenerate docs/commands.md
 make test   # all unit tests
 ```
+
+An older golangci-lint binary cannot read Go 1.27 export data and reports type errors that are not in the code. `TestReferenceIsCurrent` fails when docs/commands.md is stale.
 
 ## Testing
 
 - **Unit tests** (`make test`) — no device needed, uses mock WebSocket server
 - **E2E tests** (`make test-e2e`) — builds binaries, tests CLI + MCP server JSON-RPC
-- **Integration tests** (`make test-integration`) — requires `ios_webkit_debug_proxy` binary
-- **Simulator tests** (`make test-simulator`) — boots iOS Simulator, tests all tools against real Safari
+- **WebKitGTK tests** (`go test -tags=webkitgtk ./e2e/webkitgtk/`) — local MiniBrowser under broadwayd, no phone
+- **Simulator tests** (`make test-e2e`) — boots iOS Simulator, tests all tools against real Safari
+- **Coverage** (`make coverage-all`) — unit tests plus the WebKitGTK suites
+- Tests never start, stop or read the real iwdp; never run device tests without the device owner's approval ([docs/device-runbook.md](docs/device-runbook.md)).
 
 ## Commit Messages
 
@@ -58,7 +63,12 @@ refactor/proxy-port-parsing
 - `cmd/iwdp-mcp/` — MCP server binary (stdio transport)
 - `cmd/iwdp-cli/` — CLI binary
 
-All WebKit protocol communication goes through `webkit.Client`. Tools return structured results; formatting is done by the caller (MCP or CLI).
+- `internal/daemon/`, `internal/core/` — the daemon, sessions, leases, reservations, desired state, scheduler
+- `internal/commands/` — the command registry (one file per command; `make docs` writes docs/commands.md)
+- `internal/runtime/`, `internal/refs/` — the injected agent runtime and refs
+- `internal/devtools/`, `internal/cdp/`, `internal/transport/` — DevTools extras, CDP endpoint, transports
+
+A new command is a new file in `internal/commands` whose `init()` calls `Register`. Legacy tools return structured results; formatting is done by the caller (MCP or CLI). User docs live in docs/ (see docs/README.md); docs/notes/ is history.
 
 ## License
 

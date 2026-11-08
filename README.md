@@ -18,7 +18,9 @@
 
 <video src="https://github.com/user-attachments/assets/dcc0dc05-3a1f-4454-88a8-51ee28da9fd2" poster="https://github.com/user-attachments/assets/3901f7ff-6531-4866-b49e-cf5d17304327" autoplay loop muted playsinline></video>
 
-100+ tools across all 27 WebKit Inspector Protocol domains — navigation, screenshots, DOM inspection, CSS, network interception, httpOnly cookies, JS debugging, heap snapshots, profiling, and more. Full feature parity between MCP server and CLI.
+An agentic loop in the style of agent-browser (snapshots with `@eN` refs, actions, waits, dialogs, tabs, frames), DevTools extras (network log, routes, HAR, console, overrides, storage state, traces, profiles, Web Vitals), an opt-in CDP endpoint for agent-browser, Puppeteer, Playwright and chrome-devtools-mcp, and the 100+ legacy tools across the WebKit Inspector Protocol domains. A background daemon owns every page connection, so the CLI, the MCP server and CDP clients share sessions, leases and refs.
+
+Documentation: [docs/README.md](docs/README.md) (user guide, sessions and leases, synthetic input, CDP, device runbook, migration, known limits) and the generated [command reference](docs/commands.md).
 
 ## Why?
 
@@ -104,6 +106,22 @@ iwdp-cli network -d 30s
 # Help for one command (never connects to a page)
 iwdp-cli screenshot --help
 ```
+
+### The agentic loop
+
+```bash
+export IWDP_SESSION=my-agent                    # one stable session per agent
+iwdp-cli device reserve --owner my-agent        # physical devices need a reservation
+iwdp-cli open https://example.com/login         # navigate and wait for load
+iwdp-cli snapshot -i                            # accessibility tree with @eN refs
+iwdp-cli fill @e3 user@example.com
+iwdp-cli dialog accept                          # arm the answer before the action
+iwdp-cli click @e5                              # synthetic events after actionability checks
+iwdp-cli wait --url '**/home'
+iwdp-cli close && iwdp-cli device release --owner my-agent
+```
+
+All input is synthetic (`isTrusted=false`); see [docs/synthetic-input.md](docs/synthetic-input.md). Sessions, leases and reservations: [docs/sessions.md](docs/sessions.md). The MCP server registers the `core` profile (47 tools) by default; `IWDP_MCP_TOOLS=all` or `iwdp-mcp --tools all` registers every tool ([MCP profiles](docs/guide.md#mcp-profiles)). A CDP URL for other clients: `iwdp-cli get cdp-url` ([docs/cdp.md](docs/cdp.md)).
 
 Every command runs under a deadline: 30 s by default, set with `--timeout <duration>` (any position) or `IWDP_TIMEOUT`. Recording commands add their `-d` duration; `heap-snapshot` defaults to 5 min. On expiry the command exits 124 and prints the page, the elapsed time and the likely causes (another inspector session holds the page, the page is stalled or shows a dialog, the device is locked).
 
@@ -349,7 +367,7 @@ Check if there are any web workers running
 - **Port 9222+** — each device gets an incremented port listing its Safari tabs
 - Each tab provides a **WebSocket URL** for the WebKit Inspector Protocol
 
-`iwdp-mcp` connects to those WebSocket endpoints and exposes 100+ tools.
+`iwdp-mcp` and `iwdp-cli` start a per-user daemon (`<binary> daemon run`) that connects to those WebSocket endpoints, keeps the page connections, and serves the CLI, the MCP server and the optional CDP endpoint over a private Unix socket. `--transport direct` reaches the device through usbmuxd without iwdp (opt-in), and `--transport webkitgtk` drives a local WebKitGTK MiniBrowser for tests. See [docs/guide.md](docs/guide.md).
 
 ## Tools
 
@@ -357,7 +375,7 @@ Check if there are any web workers running
 | Tool | Description |
 |------|-------------|
 | `iwdp_status` | Check/auto-start ios-webkit-debug-proxy |
-| `restart_iwdp` | Restart iwdp after a crash (e.g., heap snapshot) |
+| `restart_iwdp` | Restart iwdp after a crash, only when iwdp-mcp started it; refuses for any other iwdp ([runbook](docs/device-runbook.md)) |
 | `list_devices` | List connected iOS devices (HTTP GET :9221) |
 | `list_pages` | List Safari tabs (HTTP GET :9222+) |
 | `select_page` | Connect to a specific tab |
@@ -394,6 +412,7 @@ make test-e2e           # E2E tests (boots iOS Simulator, tests all tools)
 make test-coverage      # Tests with coverage report
 make lint               # golangci-lint
 make fmt                # gofumpt formatting
+make docs               # regenerate docs/commands.md from the command registry
 ```
 
 ### Testing

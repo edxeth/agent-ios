@@ -1,5 +1,5 @@
 .PHONY: build test test-e2e test-coverage coverage-all \
-       sim-setup sim-teardown lint fmt tidy install clean release release-snapshot
+       sim-setup sim-teardown lint fmt tidy install clean release release-snapshot docs
 
 # Build
 build:
@@ -48,7 +48,11 @@ test-e2e:
 		./scripts/sim-setup.sh --teardown
 	@./scripts/sim-setup.sh --teardown 2>/dev/null || true
 
-# Lint
+# Command reference (docs/commands.md) from the command registry
+docs:
+	go run ./internal/commands/refgen docs/commands.md
+
+# Lint (golangci-lint v2.15 or later, built with Go 1.27)
 lint:
 	golangci-lint run ./...
 
