@@ -105,6 +105,12 @@ type rtHarness struct {
 
 func newHarness(t *testing.T) *rtHarness {
 	t.Helper()
+	return newHarnessWith(t, transport.Limits{Routed: true})
+}
+
+// newHarnessWith is newHarness on a connection with the limits lim.
+func newHarnessWith(t *testing.T, lim transport.Limits) *rtHarness {
+	t.Helper()
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
 	h := &rtHarness{page: &fakePage{replies: map[string]any{}}, gen: 1, f: f}
@@ -112,7 +118,7 @@ func newHarness(t *testing.T) *rtHarness {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := webkit.Dial(ctx, func(ctx context.Context) (transport.MessageConn, error) {
-		return webkit.DialWebSocket(ctx, f.URL, transport.Limits{Routed: true})
+		return webkit.DialWebSocket(ctx, f.URL, lim)
 	}, webkit.SessionOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -307,10 +313,17 @@ func TestGetOutputs(t *testing.T) {
 		{[]string{"get", "count", "input"}, okEnv(5), "5", map[string]any{"what": "count", "target": map[string]any{"selector": "input"}}},
 		{[]string{"get", "attr", "#link", "href"}, okEnv("#x"), "#x", map[string]any{"what": "attr", "target": map[string]any{"selector": "#link"}, "name": "href"}},
 		{[]string{"get", "attr", "#link", "rel"}, okEnv(nil), "", nil},
-		{[]string{"get", "box", "#box"}, okEnv(map[string]any{"x": 10, "y": 20.5, "width": 100, "height": 50, "visible": true, "enabled": false}),
-			`{"x":10,"y":20.5,"width":100,"height":50,"visible":true,"enabled":false}`, nil},
-		{[]string{"get", "styles", "#box", "position, width"}, okEnv([]any{[]any{"position", "absolute"}, []any{"width", "100px"}}),
-			"position: absolute\nwidth: 100px", map[string]any{"what": "styles", "target": map[string]any{"selector": "#box"}, "name": "position, width"}},
+		{
+			[]string{"get", "box", "#box"},
+			okEnv(map[string]any{"x": 10, "y": 20.5, "width": 100, "height": 50, "visible": true, "enabled": false}),
+			`{"x":10,"y":20.5,"width":100,"height":50,"visible":true,"enabled":false}`, nil,
+		},
+		{
+			[]string{"get", "styles", "#box", "position, width"},
+			okEnv([]any{[]any{"position", "absolute"}, []any{"width", "100px"}}),
+			"position: absolute\nwidth: 100px",
+			map[string]any{"what": "styles", "target": map[string]any{"selector": "#box"}, "name": "position, width"},
+		},
 		{[]string{"get", "text", "#a"}, map[string]any{"ok": true, "value": "Sign In", "warnings": []string{"@e2 was replaced"}}, "Sign In\nwarning: @e2 was replaced", nil},
 	} {
 		h.page.set("get", c.reply)
@@ -348,8 +361,10 @@ func TestGetIsFindUsageErrors(t *testing.T) {
 		{"find", "bogus", "x"},
 		{"find", "nth", "x", "input"},
 		{"find", "nth", "1"},
-		{"find", "text", "Under", "click"},
-		{"find", "first", "input", "click"},
+		// find with an action is valid since W3b (TestFindWithAction); an
+		// unknown action or a missing action argument is a usage error.
+		{"find", "text", "Under", "explode"},
+		{"find", "first", "input", "fill"},
 		{"hit-test", "a", "1"},
 		{"hit-test", "1", "NaN"},
 		{"read", "ftp://x.test/"},

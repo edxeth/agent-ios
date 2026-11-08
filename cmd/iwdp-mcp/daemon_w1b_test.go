@@ -327,8 +327,14 @@ func TestDefaultProfileIsCore(t *testing.T) {
 	if len(core) < 35 || len(core) > 50 {
 		t.Fatalf("core profile has %d tools, want about 40: %v", len(core), core)
 	}
+	// W3b decision 3: the agentic tools replace the legacy reads they
+	// supersede; the long-tail input tools (dblclick, focus,
+	// scroll_into_view, drag, mouse, keyboard) are in devtools. W3b-2a
+	// adds history, tab and frame selection to core.
 	want := append(slices.Clone(coreLegacyTools), "session_info", "close_session",
-		"snapshot", "diff_snapshot", "get", "is", "find", "hit_test", "read_page")
+		"snapshot", "diff_snapshot", "get", "is", "find", "hit_test", "read_page",
+		"dialog", "wait", "hover", "check", "select_option", "scroll", "press", "tap", "upload_file", "swipe",
+		"go_back", "go_forward", "tab_list", "tab_select", "select_frame")
 	sort.Strings(want)
 	if !slices.Equal(core, want) {
 		t.Fatalf("core tools = %v\nwant %v", core, want)

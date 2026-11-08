@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><title>Dialogs</title>
+<script>
+// DOC names this document in the server's record of dialog results.
+var DOC = Math.random().toString(36).slice(2);
+function record(type, result) {
+  document.getElementById("out").textContent = type + ":" + JSON.stringify(result);
+  fetch("/record?doc=" + DOC + "&type=" + type + "&result=" + encodeURIComponent(JSON.stringify(result)) + "&origin=" + encodeURIComponent(location.origin));
+}
+</script>
+</head>
+<body>
+<button id="confirm" onclick="record('confirm', confirm('Proceed?'))">Confirm</button>
+<button id="prompt" onclick="record('prompt', prompt('Your name?', 'default'))">Prompt</button>
+<button id="alert" onclick="alert('Hello'); record('alert', 'done')">Alert</button>
+<p id="out"></p>
+</body></html>

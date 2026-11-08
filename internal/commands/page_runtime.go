@@ -46,6 +46,11 @@ func openRuntime(ctx context.Context, env Env) (*pageRuntime, error) {
 	rt := ps.Runtime
 	if oe, ok := env.(interface{ Op() *core.Op }); ok && oe.Op() != nil {
 		rt = rt.Via(oe.Op().Caller())
+		releaseEarlierFrames(ctx, env, ps, oe.Op())
+		// The session's frame scope (frame.go, design 3.8).
+		if _, err := applyFrameScope(ps, oe.Op(), rt.Generation()); err != nil {
+			return nil, err
+		}
 	}
 	return &pageRuntime{rt: rt, refs: t, session: historySession(ps)}, nil
 }

@@ -100,6 +100,12 @@ type Limits struct {
 	MaxIncoming int
 	// Routed is true when the endpoint uses Target routing.
 	Routed bool
+	// CSSDomain is true when the endpoint answers CSS.enable,
+	// CSS.getAllStyleSheets and CSS.getStyleSheetText (WebKitGTK, checked
+	// in e2e/webkitgtk TestActionHoverCSS). Through iwdp they hang and
+	// stall the connection, and the direct transport is not checked, so
+	// webkit.Session refuses them unless this is set.
+	CSSDomain bool
 }
 
 // Limits of the known endpoints (design 2.8 and spike A step D).

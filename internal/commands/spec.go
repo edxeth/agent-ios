@@ -7,6 +7,7 @@ package commands
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
@@ -92,12 +93,21 @@ type Command struct {
 	// the command as text: an object or an array as its JSON, a number in
 	// decimal notation (mcpText).
 	MCPSchema map[string]map[string]any
-	// NotOnCommandLine commands run only for MCP or when another command
-	// forwards them (RunRemote); RunCLI refuses them with this text
-	// before any connection, because their flags (a password) would be
-	// in the process's argv.
-	NotOnCommandLine string
-	Run              func(ctx context.Context, env Env, in Input) (Result, error)
+	// ClientStep, when set, runs in the iwdp-cli process after parsing and
+	// before the command runs or goes to the daemon (RunCLI only, never for
+	// MCP), under the command deadline (ctx). It may change the input: a
+	// secret read from the standard input here (fill --stdin, the password
+	// of set credentials) reaches the daemon in the /v1/run request body,
+	// never in argv. A read that may block must end when ctx ends
+	// (readWithin).
+	ClientStep func(ctx context.Context, in *Input, stdin io.Reader) error
+	// MCPCheck, when set, checks the input of an MCP call after the
+	// arguments are read (mcpInput; never for the CLI). It keeps a rule
+	// that the legacy MCP tool of the same name had and the CLI command
+	// does not, so the tool keeps its meaning (design 4.1); for example
+	// navigate accepts only http and https URLs.
+	MCPCheck func(in Input) error
+	Run      func(ctx context.Context, env Env, in Input) (Result, error)
 }
 
 // Env is what a running command can use.

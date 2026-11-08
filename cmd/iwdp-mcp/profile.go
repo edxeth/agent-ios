@@ -11,32 +11,40 @@ import (
 
 // coreLegacyTools are the legacy tools of the default MCP profile "core"
 // (decision D2): page selection, navigation and screenshots, evaluation,
-// DOM reads, computed styles, interaction, network, cookies and storage,
-// and console. With the core registry tools (session_info, close_session
-// and the W3a tools snapshot, diff_snapshot, get, is, find, hit_test and
-// read_page) the profile has 47 tools. IWDP_MCP_TOOLS=all registers every tool. This
-// list is the single definition of the profile; docs/notes/w1b.md lists it
-// for the README.
+// matched styles, interaction, network, cookies and storage, and console.
+// The agentic registry tools supersede the legacy DOM reads (snapshot,
+// get, find), raw runtime calls, domain enable and disable tools,
+// hide_highlight and set_local_storage_item, which are outside core (W3b
+// decision 3). With the core registry tools (session_info, close_session,
+// the W3a tools snapshot, diff_snapshot, get, is, find, hit_test and
+// read_page, and the W3b tools dialog, wait, hover, check, select_option,
+// scroll, press, tap, upload_file, swipe, go_back, go_forward, tab_list,
+// tab_select and select_frame) the profile has 47 tools, inside the bound
+// of 35 to 50 that TestDefaultProfileIsCore checks (decision D2: "about
+// 40"); click, fill, type_text, highlight_node, take_screenshot, navigate,
+// reload and set_cookie are registry tools that keep their legacy
+// parameters. IWDP_MCP_TOOLS=all registers every tool. This
+// list is the single definition of the profile; docs/notes/w1b.md and
+// docs/notes/w3b-actions.md list it for the README.
 var coreLegacyTools = []string{
 	// iwdp, devices and pages
 	"iwdp_status", "list_devices", "list_pages", "select_page",
 	// page
-	"navigate", "reload", "take_screenshot", "snapshot_node",
+	"navigate", "reload", "take_screenshot",
 	// runtime
-	"evaluate_script", "call_function", "get_properties",
+	"evaluate_script",
 	// DOM
-	"get_document", "query_selector", "query_selector_all", "get_outer_html",
-	"get_attributes", "highlight_node", "hide_highlight",
-	// CSS (computed and matched styles work through Target routing)
-	"get_computed_style", "get_matched_styles",
+	"highlight_node",
+	// CSS (matched styles work through Target routing)
+	"get_matched_styles",
 	// interaction
 	"click", "fill", "type_text",
 	// network
-	"network_enable", "network_disable", "list_network_requests", "get_response_body", "set_extra_headers",
+	"list_network_requests", "get_response_body", "set_extra_headers",
 	// cookies and storage
-	"get_cookies", "set_cookie", "delete_cookie", "get_local_storage", "set_local_storage_item", "get_session_storage",
+	"get_cookies", "set_cookie", "delete_cookie", "get_local_storage", "get_session_storage",
 	// console
-	"console_enable", "console_disable", "get_console_messages", "clear_console",
+	"get_console_messages", "clear_console",
 }
 
 // legacyToolSelected reports whether the selected profile registers the

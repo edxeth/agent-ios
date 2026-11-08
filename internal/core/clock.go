@@ -109,6 +109,7 @@ type ClockMap struct {
 	mu      sync.Mutex
 	doc     string
 	samples []ClockSample
+	last    time.Duration // round trip (H1-H0) of the latest sample
 }
 
 // BindDoc binds the map to the document id doc that a measurement
@@ -136,6 +137,7 @@ func (m *ClockMap) Observe(s ClockSample) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.last = s.H1 - s.H0
 	m.samples = append(m.samples, s)
 	// Keep the sample that gives the largest lower bound and the one that
 	// gives the smallest upper bound; for a fixed rho the order of the bounds
@@ -161,6 +163,14 @@ func lowKey(s ClockSample) time.Duration { return s.P - s.H1 + drift(s.H1) }
 
 // highKey orders samples by their upper bound (p - (1+rho)*h0, scaled).
 func highKey(s ClockSample) time.Duration { return s.P - s.H0 - drift(s.H0) }
+
+// RoundTrip is the round trip of the latest sample: the time from the send
+// of the runtime call that measured it to its reply (0 before the first).
+func (m *ClockMap) RoundTrip() time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.last
+}
 
 // Measured reports whether the map has a sample.
 func (m *ClockMap) Measured() bool {

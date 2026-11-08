@@ -360,7 +360,7 @@ func (m *Manager) findListed(ctx context.Context, req PageRequest, match func(ke
 					return transport.Page{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: %s no longer lists page %q", ErrNoPage, dev.Label, page.Title)}
 				},
 				key: key, title: p.Title, url: p.URL, device: d, page: p,
-				physical: (t.Kind() == transport.KindIWDP && d.ID != "SIMULATOR") || t.Kind() == transport.KindDirect,
+				physical: physicalDevice(t.Kind(), d.ID),
 				open: func(ctx context.Context, state *DesiredState) (webkit.Caller, error) {
 					o := m.o.Session
 					o.Setup = func(ctx context.Context, tc webkit.TargetCaller) error { return state.Apply(ctx, tc) }
@@ -569,6 +569,11 @@ func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *D
 	c, err := t.open(ctx, state)
 	if err != nil {
 		return nil, 0, attachError(fmt.Errorf("connecting to page %q: %w", t.title, err))
+	}
+	if pg.PS != nil {
+		// A reconnect: the recorded execution contexts are void on c
+		// (Scheduler.contextsMoved).
+		pg.PS.Sched.contextsMoved()
 	}
 	if tf, ok := c.(interface {
 		SubscribeSync(method string, h webkit.EventHandler) func()
@@ -1095,7 +1100,8 @@ func (m *Manager) Touch(ctx context.Context, req PageRequest, ao AcquireOptions)
 }
 
 func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions, op bool) (*Page, uint64, time.Time, error) {
-	t, err := m.resolve(ctx, req)
+	// The session's current page and tab ids (pages_w3b.go, design 3.8).
+	t, err := m.resolve(ctx, m.sessionPage(ao.Session, req))
 	if err != nil {
 		return nil, 0, time.Time{}, err
 	}
@@ -1548,7 +1554,11 @@ const (
 // deadline minus runtimeReleaseReserve; when that is below
 // runtimeReleaseMin it sends nothing. A skip or a failure is logged and
 // does not fail the release: the next owner's first runtime call resets
-// the page maps anyway (design 3.1 owner epoch).
+// the page maps anyway (design 3.1 owner epoch). The release runs in the
+// main context and then in every frame context that operations of l's
+// epoch selected (Scheduler.ReleaseExecutionContexts); a frame context
+// whose release failed or was skipped is released at the next owner's
+// first runtime command (commands.openRuntime).
 func (m *Manager) releaseRuntime(ctx context.Context, pg *Page, l *lease, c webkit.Caller) {
 	budget := runtimeReleaseBudget
 	if dl, ok := ctx.Deadline(); ok {
@@ -1563,6 +1573,10 @@ func (m *Manager) releaseRuntime(ctx context.Context, pg *Page, l *lease, c webk
 	defer cancel()
 	if err := pg.PS.Runtime.Release(ctx, c, l.epoch); err != nil {
 		m.o.Logf("page %s: page-side runtime release of %q (epoch %d): %v", pg.Title(), l.session, l.epoch, err)
+	}
+	release := func(ctx context.Context, c webkit.Caller) error { return pg.PS.Runtime.Release(ctx, c, l.epoch) }
+	if err := pg.PS.ReleaseFrameContexts(ctx, l.epoch, l.session, c, release); err != nil {
+		m.o.Logf("page %s: page-side runtime release of %q (epoch %d) in frames: %v", pg.target.title, l.session, l.epoch, err)
 	}
 }
 

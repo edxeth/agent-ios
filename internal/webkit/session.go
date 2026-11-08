@@ -177,6 +177,8 @@ func WithCallBudget(ctx context.Context, d time.Duration) context.Context {
 
 // HangsThroughTarget reports whether method gets no reply through Target
 // routing (CSS.enable, CSS.getAllStyleSheets, CSS.getStyleSheetText).
+// A Session refuses these methods unless its connection's limits set
+// CSSDomain.
 func HangsThroughTarget(method string) bool { return hangsThroughTarget[method] }
 
 // TargetCaller sends commands to one specific target, for example a
@@ -787,7 +789,7 @@ func (s *Session) dispatch(target, method string, params json.RawMessage) {
 // not know goes out after that agent's reset, in one round trip
 // (sendWithReset).
 func (s *Session) sendTo(ctx context.Context, target string, gate bool, method string, params any) (json.RawMessage, error) {
-	if hangsThroughTarget[method] {
+	if hangsThroughTarget[method] && !s.conn.Limits().CSSDomain {
 		return nil, notSent(fmt.Errorf("%s: %w", method, ErrHangsThroughTarget))
 	}
 	callCtx, cancel := s.callContext(ctx)
@@ -826,7 +828,7 @@ func marshalParams(method string, params any) (json.RawMessage, error) {
 	}
 	raw, err := json.Marshal(params)
 	if err != nil {
-		return nil, fmt.Errorf("%s: marshaling params: %w", method, err)
+		return nil, notSent(fmt.Errorf("%s: marshaling params: %w", method, err))
 	}
 	return raw, nil
 }
@@ -891,16 +893,16 @@ func (s *Session) write(ctx, callCtx context.Context, target, method string, raw
 	innerID := s.nextID.Add(1)
 	inner, err := json.Marshal(Message{ID: innerID, Method: method, Params: rawParams})
 	if err != nil {
-		return nil, fmt.Errorf("%s: marshaling message: %w", method, err)
+		return nil, notSent(fmt.Errorf("%s: marshaling message: %w", method, err))
 	}
 	outerID := s.nextID.Add(1)
 	outerParams, err := json.Marshal(map[string]string{"targetId": target, "message": string(inner)})
 	if err != nil {
-		return nil, fmt.Errorf("%s: marshaling outer params: %w", method, err)
+		return nil, notSent(fmt.Errorf("%s: marshaling outer params: %w", method, err))
 	}
 	wire, err := json.Marshal(Message{ID: outerID, Method: "Target.sendMessageToTarget", Params: outerParams})
 	if err != nil {
-		return nil, fmt.Errorf("%s: marshaling outer message: %w", method, err)
+		return nil, notSent(fmt.Errorf("%s: marshaling outer message: %w", method, err))
 	}
 	if lim := s.conn.Limits().MaxOutgoing; lim > 0 && len(wire) > lim {
 		return nil, notSent(&WireLimitError{What: method, Size: len(wire), Limit: lim})
@@ -924,6 +926,7 @@ func (s *Session) write(ctx, callCtx context.Context, target, method string, raw
 		s.finish(in, err)
 		return nil, err
 	}
+	MarkWritten(ctx)
 	return in, nil
 }
 

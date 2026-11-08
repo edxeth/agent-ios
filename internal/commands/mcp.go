@@ -1,10 +1,12 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -262,22 +264,11 @@ func RegisterMCP(s *mcp.Server, profile string, newEnv func(ctx context.Context,
 				if err != nil {
 					return toolError(err), nil
 				}
-				text := res.Text
-				var structured any
-				if res.Data != nil {
-					data, err := json.Marshal(res.Data)
-					if err != nil {
-						return toolError(err), nil
-					}
-					text = string(data)
-					// MCP structured content must be a JSON object; a tool
-					// that takes over a legacy tool keeps the legacy
-					// structured output this way (set_cookie's {ok, cookie}).
-					if len(data) > 0 && data[0] == '{' {
-						structured = json.RawMessage(data)
-					}
+				out, err := mcpResult(cmd, res)
+				if err != nil {
+					return toolError(err), nil
 				}
-				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}, StructuredContent: structured}, nil
+				return out, nil
 			})
 	}
 }
@@ -299,6 +290,62 @@ func mcpText(v any) (string, error) {
 		return string(data), nil
 	}
 	return fmt.Sprint(v), nil
+}
+
+// mcpImageLimit is the largest PNG that a tool result carries as image
+// content. MCP clients pass images to models with size limits (the
+// Anthropic API takes at most 5 MB per image, which base64 makes from
+// about 3.75 MB), so a larger capture is only named by its file.
+const mcpImageLimit = 3_750_000
+
+// pngSignature starts every PNG file.
+var pngSignature = []byte("\x89PNG\r\n\x1a\n")
+
+// mcpResult is the MCP form of a command result: its data as JSON text, or
+// its text when it has no data. A file command whose data names a PNG
+// file in "path" (screenshot) returns its text, the image and its data as
+// structured content, with "file_path" as the legacy take_screenshot tool
+// had it.
+func mcpResult(c *Command, res Result) (*mcp.CallToolResult, error) {
+	if res.Data == nil {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: res.Text}}}, nil
+	}
+	data, err := json.Marshal(res.Data)
+	if err != nil {
+		return nil, err
+	}
+	var file struct {
+		Path string `json:"path"`
+	}
+	if c.Output != OutputFile || json.Unmarshal(data, &file) != nil || !strings.HasSuffix(file.Path, ".png") {
+		out := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(data)}}}
+		// MCP structured content must be a JSON object; a tool that takes
+		// over a legacy tool keeps the legacy structured output this way
+		// (set_cookie's {ok, cookie}).
+		if len(data) > 0 && data[0] == '{' {
+			out.StructuredContent = json.RawMessage(data)
+		}
+		return out, nil
+	}
+	var structured map[string]any
+	if err := json.Unmarshal(data, &structured); err != nil {
+		return nil, fmt.Errorf("%s: result data is not an object: %w", c.MCPName, err)
+	}
+	structured["file_path"] = file.Path
+	img, err := os.ReadFile(file.Path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: reading the capture for the MCP result: %w", c.MCPName, err)
+	}
+	content := []mcp.Content{&mcp.TextContent{Text: res.Text}}
+	switch {
+	case !bytes.HasPrefix(img, pngSignature):
+		content[0] = &mcp.TextContent{Text: res.Text + "\nimage not attached: the file is not a PNG"}
+	case len(img) > mcpImageLimit:
+		content[0] = &mcp.TextContent{Text: fmt.Sprintf("%s\nimage not attached: %d bytes is more than the %d bytes an MCP image may have; read the file", res.Text, len(img), mcpImageLimit)}
+	default:
+		content = append(content, &mcp.ImageContent{Data: img, MIMEType: "image/png"})
+	}
+	return &mcp.CallToolResult{Content: content, StructuredContent: structured}, nil
 }
 
 func toolError(err error) *mcp.CallToolResult {
@@ -382,6 +429,11 @@ func mcpInput(c *Command, raw json.RawMessage) (Input, error) {
 		}
 		sort.Strings(extra)
 		return in, fmt.Errorf("%s: unknown argument %s", c.MCPName, strings.Join(extra, ", "))
+	}
+	if c.MCPCheck != nil {
+		if err := c.MCPCheck(in); err != nil {
+			return in, fmt.Errorf("%s: %w", c.MCPName, err)
+		}
 	}
 	return in, nil
 }

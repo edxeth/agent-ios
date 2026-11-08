@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><title>Nav</title></head>
+<body>
+<h1>Navigation</h1>
+<p id="banner">Banner</p>
+<script>
+// Each later* function changes the page after ms milliseconds; the wait
+// tests call them right before the wait.
+function laterElement(ms) { setTimeout(function () { var p = document.createElement("p"); p.id = "late"; p.textContent = "Ready later"; document.body.appendChild(p); }, ms); }
+function laterFlag(ms) { setTimeout(function () { window.flag = 1; }, ms); }
+function laterRemoveBanner(ms) { setTimeout(function () { var b = document.getElementById("banner"); b.parentNode.removeChild(b); }, ms); }
+function laterGo(url, ms) { setTimeout(function () { location.href = url; }, ms); }
+function slowFetch(ms) { fetch("/slow?ms=" + ms); return true; }
+</script>
+</body></html>

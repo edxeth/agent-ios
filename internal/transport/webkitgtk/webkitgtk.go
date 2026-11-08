@@ -73,6 +73,7 @@ func (t *Transport) Open(ctx context.Context, p transport.Page) (transport.Messa
 		MaxOutgoing: transport.WebKitGTKMaxOutgoing,
 		MaxIncoming: transport.DefaultMaxIncoming,
 		Routed:      true,
+		CSSDomain:   true,
 	})
 }
 

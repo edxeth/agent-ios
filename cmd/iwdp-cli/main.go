@@ -201,8 +201,12 @@ func main() {
 		// work as before (design 7.3 test 13). The words skip the
 		// registry's global flags, which may stand between them (design
 		// 2.11: "network --json requests" is "network requests").
+		// A line that names its page by URL (a ws:// argument or
+		// IWDP_WS_URL) keeps the legacy command of a word that is also a
+		// registry command alone (screenshot, click, reload): only legacy
+		// commands connect by URL (design 7.3 test 13).
 		if c, n := reg.Lookup(reg.CommandWords(args)); c != nil {
-			if _, err := reg.Parse(os.Args[1:], os.Getenv); n > 1 || err == nil {
+			if _, err := reg.Parse(os.Args[1:], os.Getenv); n > 1 || (err == nil && getWSURL(cmdArgs) == "") {
 				ok = false
 			}
 		}

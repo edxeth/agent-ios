@@ -150,6 +150,14 @@ func (p *pageConn) State() ConnState {
 	return p.state
 }
 
+// currentConn returns the current connection in any state; the execution
+// contexts that the scheduler looks up belong to it (Scheduler.inventory).
+func (p *pageConn) currentConn() webkit.Caller {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cur
+}
+
 func (p *pageConn) current() (webkit.Caller, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -338,6 +346,21 @@ func (p *pageConn) ExecutionContexts(target string) []webkit.ExecutionContext {
 	return nil
 }
 
+// AgentStates returns what the current connection knows about the agents
+// of target (webkit.Session.AgentStates); nil for a connection without
+// targets.
+func (p *pageConn) AgentStates(target string) map[string]webkit.AgentState {
+	p.mu.Lock()
+	c := p.cur
+	p.mu.Unlock()
+	if as, ok := c.(interface {
+		AgentStates(string) map[string]webkit.AgentState
+	}); ok {
+		return as.AgentStates(target)
+	}
+	return nil
+}
+
 func (p *pageConn) ActiveSetup(ctx context.Context) error {
 	b, err := p.bound(ctx)
 	if err != nil {
@@ -407,6 +430,11 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 	}
 	defer b.stop()
 	c := b.c
+	// A send addressed to an execution context's reporting connection
+	// (ExecContext.pin) never goes to the connection that replaced it.
+	if pin, ok := pinnedConn(ctx); ok && pin != c {
+		return nil, fmt.Errorf("%s: not sent: %w", method, notSentWrap(errConnReplaced))
+	}
 	var res json.RawMessage
 	if cs, ok := c.(interface {
 		SendControl(context.Context, string, any) (json.RawMessage, error)

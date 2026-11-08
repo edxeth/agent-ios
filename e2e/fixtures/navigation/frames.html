@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><title>Frames</title></head>
+<body>
+<h1>Frames</h1>
+<iframe id="same" src="second.html" title="Same origin"></iframe>
+<iframe id="other" title="Other origin"></iframe>
+<iframe id="kid" src="child.html" title="Child"></iframe>
+<script>
+// ?other=<origin> puts the child page of the other site into #other.
+var o = new URLSearchParams(location.search).get("other");
+if (o) { document.getElementById("other").src = o + "/child.html"; }
+</script>
+</body></html>

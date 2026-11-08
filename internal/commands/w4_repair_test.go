@@ -233,18 +233,7 @@ func TestSetExtraHeadersTakesTheLegacyHeadersObject(t *testing.T) {
 // daemon command (W4 command review, finding set.go:224).
 func TestSetCredentialsStdinEndsAtTheDeadline(t *testing.T) {
 	const partial = "partial-pa55"
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = r.Close() })
-	t.Cleanup(func() { _ = w.Close() })
-	old := credentialsStdin
-	t.Cleanup(func() { credentialsStdin = old })
-	credentialsStdin = r
-	if _, err := w.WriteString(partial); err != nil {
-		t.Fatal(err)
-	}
+	stdinPipe(t, partial, false)
 	h := newDTHarness(t)
 	type result struct {
 		code     int
@@ -265,9 +254,7 @@ func TestSetCredentialsStdinEndsAtTheDeadline(t *testing.T) {
 				res.code, time.Since(start), res.out, res.err, len(h.forwarded), ExitTimeout)
 		}
 	case <-time.After(3 * time.Second):
-		_ = w.Close()
-		res := <-done
-		t.Fatalf("still reading stdin 3 s after a 50 ms deadline; after closing the writer: exit %d", res.code)
+		t.Fatalf("still reading stdin 3 s after a 50 ms deadline")
 	}
 }
 

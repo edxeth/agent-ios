@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
@@ -368,16 +370,18 @@ func TestSetCommands(t *testing.T) {
 	}
 }
 
-// Design 4.2 "set credentials", 7.7 test 7 and W4-2a decision 4: the CLI
-// form reads the password from stdin and forwards it to the daemon
-// command; a transport without a verified origin scope refuses; the
-// password is in no output and no error.
+// Design 4.2 "set credentials", 7.7 test 7 and W4-2a decision 4: on a
+// command line the password comes from stdin, read by the client step in
+// the iwdp-cli process; the input that goes to the daemon carries it (in
+// the /v1/run body, never in argv). A transport without a verified origin
+// scope refuses; the password is in no output and no error. A --password
+// on a command line (where other local users can read argv) is refused
+// before any connection, without echoing it. MCP clients pass the password
+// as a parameter of the same command (set_credentials).
 func TestSetCredentialsReadsStdinAndNeverPrintsThePassword(t *testing.T) {
 	const password = "pa55-w0rd-xyz"
 	h := newDTHarness(t)
-	old := credentialsStdin
-	t.Cleanup(func() { credentialsStdin = old })
-	credentialsStdin = strings.NewReader(password + "\n")
+	stdinPipe(t, password+"\n", true)
 	code, out, errOut := h.run("set", "credentials", "--origin", "https://fixture.example", "alice")
 	if code != ExitError || !strings.Contains(errOut, "unsupported") || strings.Contains(out+errOut, password) {
 		t.Fatalf("set credentials on a device: exit %d, stdout %q, stderr %q; want unsupported without the password", code, out, errOut)
@@ -385,30 +389,67 @@ func TestSetCredentialsReadsStdinAndNeverPrintsThePassword(t *testing.T) {
 	if n := len(h.forwarded); n != 1 || h.forwarded[0].Flags["password"] != password || h.forwarded[0].Args[0] != "alice" {
 		t.Fatalf("forwarded %d inputs, want one with the stdin password", n)
 	}
-	credentialsStdin = strings.NewReader("")
+	stdinPipe(t, "", true)
 	if code, _, errOut := h.run("set", "credentials", "--origin", "https://fixture.example", "alice"); code != ExitUsage || !strings.Contains(errOut, "no password on stdin") {
 		t.Fatalf("empty stdin: exit %d %q", code, errOut)
 	}
 	if code, _, _ := h.run("set", "credentials", "alice"); code != ExitUsage {
 		t.Fatalf("no --origin: exit %d, want %d", code, ExitUsage)
 	}
+	if n := len(h.forwarded); n != 1 {
+		t.Fatalf("usage errors reached the daemon (%d forwards)", n)
+	}
 
-	// The daemon command that takes the password as a flag (the MCP tool
-	// set_credentials, and the target of the stdin form's forward) never
-	// runs from a command line, where --password would be in argv (W4-3
-	// brief item 3). It is refused before any connection.
+	// stdin holds a password too, so only the refusal stops this line.
+	stdinPipe(t, "from-stdin\n", true)
 	envBuilt := false
 	var out2, errb bytes.Buffer
-	code = RunCLI(context.Background(), []string{"set", "credentials-apply", "--origin", "https://fixture.example", "--password", password, "alice"}, &out2, &errb,
+	code = RunCLI(context.Background(), []string{"set", "credentials", "--origin", "https://fixture.example", "--password", password, "alice"}, &out2, &errb,
 		func(context.Context, *Invocation) (Env, error) { envBuilt = true; return dtEnv{h: h}, nil })
-	if code != ExitUsage || envBuilt || !strings.Contains(errb.String(), "'set credentials --origin") || strings.Contains(out2.String()+errb.String(), password) {
-		t.Fatalf("set credentials-apply on a command line: exit %d, env built %v, stdout %q, stderr %q; want a usage error that points to 'set credentials', without the password", code, envBuilt, out2.String(), errb.String())
+	if code != ExitUsage || envBuilt || !strings.Contains(errb.String(), "stdin") || strings.Contains(out2.String()+errb.String(), password) {
+		t.Fatalf("set credentials --password on a command line: exit %d, env built %v, stdout %q, stderr %q; want a usage error that points to stdin, without the password", code, envBuilt, out2.String(), errb.String())
 	}
-	if n := len(h.forwarded); n != 1 {
-		t.Fatalf("set credentials-apply on a command line reached the daemon (%d forwards)", n)
+
+	// --clear reads no stdin (an empty, still open pipe would block) and
+	// takes no user or --origin.
+	stdinPipe(t, "", false)
+	if code, _, errOut := h.run("set", "credentials", "--clear", "alice"); code != ExitUsage || !strings.Contains(errOut, "--clear takes no user") {
+		t.Fatalf("set credentials --clear alice: exit %d %q; want a usage error", code, errOut)
 	}
-	if code, out, _ := h.run("set", "credentials-apply", "--help"); code != ExitOK || !strings.Contains(out, "Usage: iwdp-cli set credentials-apply") {
-		t.Fatalf("set credentials-apply --help: exit %d %q; want its help", code, out)
+	h.run("set", "credentials", "--clear")
+	if n := len(h.forwarded); n != 2 || h.forwarded[1].Flags["clear"] != true || h.forwarded[1].Flags["password"] != nil {
+		t.Fatalf("set credentials --clear: %d forwards (%+v); want a second one with clear and no password", n, h.forwarded)
+	}
+
+	// MCP: set_credentials takes the password as a parameter and runs the
+	// same command; the tool error does not echo it.
+	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterMCP(server, ProfileDevtools, func(context.Context, Globals) (Env, error) { return dtEnv{h: h}, nil })
+	st, ct := mcp.NewInMemoryTransports()
+	ctx := context.Background()
+	if _, err := server.Connect(ctx, st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "set_credentials", Arguments: map[string]any{"user": "alice", "origin": "https://fixture.example", "password": password}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			text.WriteString(tc.Text)
+		}
+	}
+	if !res.IsError || !strings.Contains(text.String(), "unsupported") || strings.Contains(text.String(), password) {
+		t.Fatalf("set_credentials: error %v, text %q; want unsupported without the password", res.IsError, text.String())
+	}
+	if n := len(h.forwarded); n != 3 || h.forwarded[2].Flags["password"] != password {
+		t.Fatalf("set_credentials: %d forwards; want a third one with the password parameter", n)
 	}
 }
 

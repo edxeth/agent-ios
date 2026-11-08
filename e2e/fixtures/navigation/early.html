@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><title>Early</title>
+<script>
+// The first inline script: what the bootstrap parts left before any page
+// script ran (design 2.7, 3.7; 7.6 item 8). A native confirm here would
+// block the page, so the answer proves the override was installed.
+window.__early = { confirm: confirm("early?"), init: String(window.__userInit) };
+</script>
+</head>
+<body><p>early</p></body></html>

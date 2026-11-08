@@ -1,4 +1,4 @@
-.PHONY: build test test-e2e test-coverage \
+.PHONY: build test test-e2e test-coverage coverage-all \
        sim-setup sim-teardown lint fmt tidy install clean release release-snapshot
 
 # Build
@@ -24,6 +24,11 @@ test:
 test-coverage:
 	go test ./... -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
+
+# One coverage profile (coverage.out) from the unit tests and the WebKitGTK
+# suites, including the binaries they start; needs the e2e/webkitgtk tools.
+coverage-all:
+	./scripts/coverage-all.sh coverage.out
 
 # E2E tests — boots iOS Simulator + iwdp, runs all tools against real Safari.
 # Usage: make test-e2e

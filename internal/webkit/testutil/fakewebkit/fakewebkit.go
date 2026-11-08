@@ -345,6 +345,34 @@ func (s *Server) ReceivedMethod(method string) []Record {
 	return out
 }
 
+// WithoutAgentResets returns recs without the agent resets of a
+// webkit.Session: before the first <Domain>.enable that a session sends to
+// a target whose agent state it does not know, it sends the agent's reset,
+// by default <Domain>.disable (webkit.SessionOptions.AgentReset). Each
+// <Domain>.disable received on a connection and target before that
+// domain's first <Domain>.enable there is such a reset; the other records
+// are the calls of the domain's owners.
+func WithoutAgentResets(recs []Record) []Record {
+	type place struct {
+		conn           int
+		target, domain string
+	}
+	enabled := map[place]bool{}
+	var out []Record
+	for _, r := range recs {
+		dom, verb, _ := strings.Cut(r.Method, ".")
+		p := place{r.Conn, r.Target, dom}
+		switch {
+		case verb == "enable":
+			enabled[p] = true
+		case verb == "disable" && !enabled[p]:
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // Emit sends a page event from the active target to every connection.
 func (s *Server) Emit(method string, params any) {
 	s.mu.Lock()

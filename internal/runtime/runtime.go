@@ -9,22 +9,26 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"embed"
+	_ "embed" // bundle.js
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
-//go:embed js/*.js
-var jsFiles embed.FS
+// bundle is the installed bundle: js/*.js joined in name order and
+// minified by esbuild (package bundlegen). Edit the readable sources in
+// js/, then run go generate ./internal/runtime; TestBundleMatchesSources
+// fails while bundle.js is out of date.
+//
+//go:generate go run gen_bundle.go
+//go:embed bundle.js
+var bundle string
 
 // MissingSentinel is what a call expression returns when the runtime of
 // this Version is not installed in the document.
@@ -53,21 +57,6 @@ func randomID() string {
 }
 
 func init() {
-	names, err := fs.Glob(jsFiles, "js/*.js")
-	if err != nil {
-		panic(fmt.Sprintf("runtime: listing js files: %v", err))
-	}
-	sort.Strings(names)
-	var b strings.Builder
-	for _, n := range names {
-		data, err := jsFiles.ReadFile(n)
-		if err != nil {
-			panic(fmt.Sprintf("runtime: reading %s: %v", n, err))
-		}
-		b.Write(data)
-		b.WriteString("\n")
-	}
-	bundle := b.String()
 	sum := sha256.Sum256([]byte(bundle))
 	Version = hex.EncodeToString(sum[:])[:12]
 	// The bundle's files run in name order; 10-core.js exposes the runtime
@@ -245,14 +234,30 @@ func (r *Runtime) Generation() uint64 {
 	return r.gen()
 }
 
+// asyncFns are the runtime functions that the attempt loop calls (through
+// RuntimeCaller) and that answer with a promise: "act" dispatches the
+// events of an action step in separate tasks (design 3.5, W3b), so its
+// envelope comes from Runtime.awaitPromise.
+var asyncFns = map[string]bool{"act": true, "actGesture": true, "actProbe": true}
+
+// gestureFns are the runtime functions whose Runtime.evaluate carries
+// emulateUserGesture. actGesture is act for click --new-tab, whose
+// window.open needs a user gesture against popup blocking (design 3.5).
+// WebKit grants the page a user activation when it receives the call,
+// before the attempt's fence can refuse it, so the attempt loop sends it
+// only after its probe actProbe (the same attempt without the gesture,
+// which only checks) answered ready, and in a window sized from the
+// measured round trip (core.Action.Probe).
+var gestureFns = map[string]bool{"actGesture": true}
+
 // RuntimeCaller returns a function with the signature of
 // core.SchedulerOptions.Runtime: it runs fn through the given caller (an
 // operation's fenced caller) with this runtime's owner and returns the
-// envelope's value.
+// envelope's value. Functions in asyncFns use the async call path.
 func (r *Runtime) RuntimeCaller() func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
 	return func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
 		var v json.RawMessage
-		if _, err := r.callVia(ctx, c, fn, args, false, &v); err != nil {
+		if _, err := r.callVia(ctx, c, fn, args, asyncFns[fn], &v); err != nil {
 			return nil, err
 		}
 		return v, nil
@@ -276,11 +281,12 @@ func ownedExpression(fn string, args any, o *Owner) (string, error) {
 }
 
 type remoteObject struct {
-	Type     string          `json:"type"`
-	Subtype  string          `json:"subtype"`
-	Value    json.RawMessage `json:"value"`
-	ObjectID string          `json:"objectId"`
-	Desc     string          `json:"description"`
+	Type      string          `json:"type"`
+	Subtype   string          `json:"subtype"`
+	ClassName string          `json:"className"`
+	Value     json.RawMessage `json:"value"`
+	ObjectID  string          `json:"objectId"`
+	Desc      string          `json:"description"`
 }
 
 type evalResult struct {
@@ -366,7 +372,11 @@ func install(ctx context.Context, c webkit.Caller) error {
 }
 
 func (r *Runtime) eval(ctx context.Context, c webkit.Caller, fn, expr string, async bool) (json.RawMessage, error) {
-	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": expr, "returnByValue": !async})
+	params := map[string]any{"expression": expr, "returnByValue": !async}
+	if gestureFns[fn] {
+		params["emulateUserGesture"] = true
+	}
+	raw, err := c.Send(ctx, "Runtime.evaluate", params)
 	if err != nil {
 		return nil, fmt.Errorf("runtime call %s: %w", fn, err)
 	}
@@ -380,9 +390,22 @@ func (r *Runtime) eval(ctx context.Context, c webkit.Caller, fn, expr string, as
 	if !async || res.Result.ObjectID == "" {
 		return res.Result.Value, nil
 	}
-	raw, err = c.Send(ctx, "Runtime.awaitPromise", map[string]any{"promiseObjectId": res.Result.ObjectID, "returnByValue": true})
-	if err != nil {
-		return nil, fmt.Errorf("runtime call %s: awaiting promise: %w", fn, err)
+	if cn := res.Result.ClassName; cn != "" && cn != "Promise" {
+		// The page answered at once with an object, not a promise (the
+		// call contract answers a refused owner synchronously): read it
+		// by value instead of awaiting it.
+		raw, err = c.Send(ctx, "Runtime.callFunctionOn", map[string]any{
+			"objectId":            res.Result.ObjectID,
+			"functionDeclaration": "function () { return this; }", "returnByValue": true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("runtime call %s: reading the result: %w", fn, err)
+		}
+	} else {
+		raw, err = c.Send(ctx, "Runtime.awaitPromise", map[string]any{"promiseObjectId": res.Result.ObjectID, "returnByValue": true})
+		if err != nil {
+			return nil, fmt.Errorf("runtime call %s: awaiting promise: %w", fn, err)
+		}
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return nil, fmt.Errorf("runtime call %s: decoding awaited reply: %w", fn, err)

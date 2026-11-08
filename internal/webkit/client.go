@@ -44,6 +44,8 @@ type Client struct {
 	targetID    string
 	targetReady chan struct{}
 
+	contexts clientContexts // execution contexts per target (ContextInventory)
+
 	// Dialer allows overriding the WebSocket dialer for testing.
 	Dialer *websocket.Dialer
 }
@@ -194,7 +196,8 @@ func (c *Client) IsTargetRouted() bool {
 // If Target routing is active, the message is automatically wrapped.
 // When ctx has no deadline, Send waits at most DefaultSendTimeout.
 func (c *Client) Send(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
-	// Early check: if already closed, fail fast.
+	// Early check: if already closed, fail fast. Every failure before the
+	// write is marked ErrNotSent; one after it is not.
 	select {
 	case <-c.done:
 		if err := c.Err(); errors.Is(err, ErrWriteFailed) {
@@ -237,6 +240,12 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 
 	if tid != "" && hangsThroughTarget[method] {
 		return nil, notSent(fmt.Errorf("%s: %w", method, ErrHangsThroughTarget))
+	}
+	// A call addressed to a target (WithTarget, for example one that
+	// carries an execution context id of that target) never goes to the
+	// target that replaced it.
+	if want, ok := TargetOf(ctx); ok && want != tid {
+		return nil, notSent(fmt.Errorf("%s to %s: %w", method, want, ErrTargetSwapped))
 	}
 
 	var wireData []byte
@@ -304,6 +313,7 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		<-c.writeSem
 		return nil, notSent(fmt.Errorf("%s: writing message: %w", method, deadlineCaused(ctx, err)))
 	}
+	// A failed write may have written part of the message: not marked.
 	err := c.conn.WriteMessage(websocket.TextMessage, wireData)
 	if err != nil {
 		err = c.wire.failed(err) // before the next writer takes the slot
@@ -313,6 +323,7 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		c.retireOn(err)
 		return nil, fmt.Errorf("%s: writing message: %w", method, deadlineCaused(ctx, err))
 	}
+	MarkWritten(ctx)
 
 	select {
 	case <-ctx.Done():
@@ -423,6 +434,7 @@ func (c *Client) readLoop() {
 			}
 		} else if msg.Method != "" {
 			// Event
+			c.contexts.track("", msg.Method, msg.Params)
 			c.dispatchEvent(msg.Method, msg.Params)
 		}
 	}
@@ -440,8 +452,12 @@ func (c *Client) handleTargetCreated(params json.RawMessage) {
 	}
 	if p.TargetInfo.TargetID != "" && p.TargetInfo.Type == "page" {
 		c.mu.Lock()
+		old := c.targetID
 		c.targetID = p.TargetInfo.TargetID
 		c.mu.Unlock()
+		if old != p.TargetInfo.TargetID {
+			c.contexts.drop(old) // commands no longer go there
+		}
 		select {
 		case <-c.targetReady:
 			// already closed
@@ -478,6 +494,7 @@ func (c *Client) handleDispatchFromTarget(params json.RawMessage) {
 		}
 	} else if innerMsg.Method != "" {
 		// Event from the target (e.g., Console.messageAdded, Network.requestWillBeSent)
+		c.contexts.track(p.TargetID, innerMsg.Method, innerMsg.Params)
 		c.dispatchEvent(innerMsg.Method, innerMsg.Params)
 	}
 }

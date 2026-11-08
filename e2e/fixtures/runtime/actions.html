@@ -1,0 +1,130 @@
+<!doctype html>
+<html><head><title>Actions</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  .row { margin: 6px 8px; height: 26px; }
+  #coverbox { position: relative; }
+  .modal { position: absolute; left: 0; top: 0; width: 300px; height: 40px; background: rgba(0,0,0,0.3); }
+  #dst { display: inline-block; width: 80px; height: 30px; background: #ddf; margin-left: 200px; }
+  #src { display: inline-block; width: 60px; height: 30px; background: #fdd; }
+  #hov { color: rgb(0, 0, 0); }
+  #hov:hover { color: rgb(255, 0, 0); }
+  .block { margin: 6px 8px; }
+  #box { width: 200px; height: 50px; overflow: auto; }
+</style>
+</head>
+<body>
+<!-- W3b actions fixture (design 3.5, 7.6 items 1 to 5). Every handler
+     records into window.T, which the WebKitGTK suite reads back; expected
+     values are hand-written in e2e/webkitgtk/actions_test.go. -->
+<div class="row"><button id="btn">Count</button></div>
+<div class="row"><button id="seq">Sequence</button></div>
+<div class="row" id="coverbox"><button id="covered">Buy</button><a id="coveredlink" href="child.html">Open</a><div id="cover" class="modal"></div></div>
+<div class="row"><input id="name" value="old"><input id="cancelbi" value="keep"></div>
+<div class="row"><input id="kp" value=""><input id="sel" value="hello world"><input id="react" value=""></div>
+<div class="row"><input id="slow" value=""><textarea id="ta"></textarea></div>
+<form id="f1" class="row"><input id="q1" name="q1"><input id="q1b" name="q1b"><button id="go" type="submit">Go</button></form>
+<form id="f2" class="row"><input id="a2"><input id="b2"></form>
+<form id="f3" class="row"><input id="q3"><button id="go3" type="submit">Go</button></form>
+<div class="row"><input type="checkbox" id="hc" style="display:none"><label for="hc" id="hcl">Agree</label></div>
+<div class="row"><span id="src" draggable="true">drag</span><span id="dst">drop</span></div>
+<div class="row"><a id="link" href="child.html">Child</a> <input type="checkbox" id="cb"><input type="radio" name="rg" id="r1"><input type="radio" name="rg" id="r2"> <span id="hov">Hover</span> <input id="keys"></div>
+<div class="row"><select id="pick"><option value="a">Apple</option><option value="b">Banana</option><option value="c">Cherry</option></select> <input type="file" id="file"></div>
+<div class="block"><select id="multi" multiple size="3"><option value="x">Xray</option><option value="y">Yankee</option><option value="z">Zulu</option></select></div>
+<div class="block"><div id="box"><div style="height: 400px">box</div></div></div>
+<div style="height: 3000px"></div>
+<div class="row"><button id="far">Far</button></div>
+<div style="height: 1000px"></div>
+<script>
+  var T = window.T = { clicks: 0, coveredClicks: 0, events: [], seq: [], submitted: {}, react: null, drag: [], moves: [], dropped: 0 };
+  var btn = document.getElementById("btn");
+  ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove", "pointerdown", "mousedown",
+   "focus", "pointerup", "mouseup", "click"].forEach(function (type) {
+    btn.addEventListener(type, function () { T.events.push(type); });
+  });
+  btn.addEventListener("click", function () { T.clicks++; });
+
+  // A mousedown handler schedules a microtask and a task; the click
+  // handler depends on the task. Real input: mousedown, micro, task, click.
+  var seq = document.getElementById("seq"), ready = false;
+  seq.addEventListener("mousedown", function () {
+    T.seq.push("mousedown");
+    Promise.resolve().then(function () { T.seq.push("micro"); });
+    setTimeout(function () { ready = true; T.seq.push("task"); }, 0);
+  });
+  seq.addEventListener("click", function () { T.seq.push("click:" + (ready ? "ready" : "early")); });
+
+  document.getElementById("covered").addEventListener("click", function () { T.coveredClicks++; });
+  document.getElementById("cancelbi").addEventListener("beforeinput", function (e) { e.preventDefault(); });
+  document.getElementById("kp").addEventListener("keypress", function (e) { e.preventDefault(); });
+  document.getElementById("q3").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); } });
+  ["f1", "f2", "f3"].forEach(function (id) {
+    document.getElementById(id).addEventListener("submit", function (e) {
+      e.preventDefault();
+      T.submitted[id] = e.submitter ? e.submitter.id : "none";
+    });
+  });
+
+  // React-style controlled input: React tracks the value through an own
+  // "value" property of the node and ignores an input event whose value
+  // equals the tracked one, so only the prototype's native setter makes an
+  // input event count.
+  var react = document.getElementById("react"), proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  var tracked = react.value;
+  Object.defineProperty(react, "value", { configurable: true,
+    get: function () { return proto.get.call(this); },
+    set: function (v) { tracked = String(v); proto.set.call(this, v); } });
+  react.addEventListener("input", function () {
+    var cur = proto.get.call(react);
+    if (cur !== tracked) { tracked = cur; T.react = cur; }
+  });
+
+  var dst = document.getElementById("dst");
+  ["dragstart", "dragend"].forEach(function (type) {
+    document.getElementById("src").addEventListener(type, function () { T.drag.push(type); });
+  });
+  dst.addEventListener("dragenter", function () { T.drag.push("dragenter"); });
+  dst.addEventListener("dragover", function (e) { e.preventDefault(); });
+  dst.addEventListener("drop", function (e) { e.preventDefault(); T.drag.push("drop"); T.dropped++; });
+  document.addEventListener("mousemove", function (e) { T.moves.push([e.buttons, Math.round(e.clientX), Math.round(e.clientY)]); }, true);
+
+  // More actions (W3b repair round 1, design 3.5 and 7.6 item 1).
+  // T.at: the client coordinates the button receives; T.opened: the URLs
+  // that window.open got (no window opens) and whether the page had a
+  // user gesture then; T.form: input and change of the form controls;
+  // T.hover: the events of the hover target; T.mouse: the button and
+  // wheel events with buttons, coordinates and target; T.keys: the key
+  // and input events of #keys. T.cancelKey cancels keydown on #btn,
+  // T.cancelWheel cancels wheel.
+  T.at = []; T.opened = []; T.form = []; T.hover = []; T.mouse = []; T.keys = [];
+  T.cancelKey = false; T.cancelWheel = false;
+  ["touchstart", "touchend", "pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (type) {
+    btn.addEventListener(type, function (e) {
+      var p = e.touches ? e.changedTouches[0] : e;
+      T.at.push([type, Math.round(p.clientX), Math.round(p.clientY)]);
+    });
+  });
+  btn.addEventListener("keydown", function (e) { if (T.cancelKey) { e.preventDefault(); } });
+  window.open = function (url) {
+    T.opened.push({ url: String(url), gesture: navigator.userActivation ? navigator.userActivation.isActive : null });
+    return null;
+  };
+  ["pick", "multi", "file"].forEach(function (id) {
+    ["input", "change"].forEach(function (type) {
+      document.getElementById(id).addEventListener(type, function () { T.form.push(id + ":" + type); });
+    });
+  });
+  ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove", "pointerdown", "mousedown", "click"].forEach(function (type) {
+    document.getElementById("hov").addEventListener(type, function () { T.hover.push(type); });
+  });
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "wheel"].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      T.mouse.push([type, e.button, e.buttons, Math.round(e.clientX), Math.round(e.clientY), e.target.id || e.target.localName]);
+      if (type === "wheel" && T.cancelWheel) { e.preventDefault(); }
+    }, { capture: true, passive: false });
+  });
+  ["keydown", "keypress", "input", "keyup"].forEach(function (type) {
+    document.getElementById("keys").addEventListener(type, function (e) { T.keys.push(type + ":" + (e.key || e.data)); });
+  });
+</script>
+</body></html>

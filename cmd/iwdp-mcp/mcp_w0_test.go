@@ -198,7 +198,13 @@ func TestTakeScreenshotToolDefaultsToViewport(t *testing.T) {
 		return map[string]string{"dataURL": "data:image/png;base64,iVBORw0KGgo="}, nil
 	})
 	t.Setenv("TMPDIR", t.TempDir())
-	cs := connectMCP(t, mock)
+	// take_screenshot is the registry screenshot command (W3b), which runs
+	// in the daemon on the page that select_page leased.
+	privateDaemonDir(t)
+	cs := mcpServerSession(t)
+	if res, text := callTool(t, cs, "select_page", map[string]any{"websocket_url": mock.URL}); res.IsError {
+		t.Fatalf("select_page: %s", text)
+	}
 
 	for _, args := range []map[string]any{{}, {"full_page": true}} {
 		if res, text := callTool(t, cs, "take_screenshot", args); res.IsError {

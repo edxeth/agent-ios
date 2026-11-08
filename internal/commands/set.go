@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 
@@ -93,34 +92,20 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "set credentials",
-		Summary: "Send HTTP Basic credentials, with the password read from stdin, to the requests of one origin only. Supported only where a test has shown that other origins and cross-origin redirects never get them (WebKitGTK today).",
-		Args:    []Arg{{Name: "user", Help: "user name (the password is the first line of stdin)"}},
-		Flags: []Flag{
-			{Name: "origin", Type: FlagString, Help: "the origin that gets the credentials, for example https://example.com"},
-			{Name: "clear", Type: FlagBool, Help: "remove every credential of this session instead"},
-		},
-		Local:  true, // reads stdin here, so the password is never in a command line
-		Output: OutputText,
-		Run:    runSetCredentials,
-	})
-	Register(&Command{
-		Name:    "set credentials-apply",
 		MCPName: "set_credentials",
 		Profile: ProfileDevtools,
-		Summary: "Apply origin-scoped HTTP Basic credentials (the MCP tool; on the command line use 'set credentials', which reads the password from stdin).",
-		Args:    []Arg{{Name: "user", Help: "user name"}},
+		Summary: "Send HTTP Basic credentials to the requests of one origin only; on a command line the password is the first line of stdin. Supported only where a test has shown that other origins and cross-origin redirects never get them (WebKitGTK today).",
+		Args:    []Arg{{Name: "user", Help: "user name (on a command line, the password is the first line of stdin)"}},
 		Flags: []Flag{
-			{Name: "origin", Type: FlagString, Help: "the origin that gets the credentials"},
-			{Name: "password", Type: FlagString, Help: "password; never logged or printed"},
+			{Name: "origin", Type: FlagString, Help: "the origin that gets the credentials, for example https://example.com"},
+			{Name: "password", Type: FlagString, Help: "MCP only (a command line refuses it, because argv is readable by other local users; pipe the password to stdin); never logged or printed"},
 			{Name: "clear", Type: FlagBool, Help: "remove every credential of this session instead"},
 		},
-		Page:    LeasedPage,
-		Mutates: true,
-		Output:  OutputText,
-		// --password on a command line would be in argv, which other
-		// local users and process listings can read.
-		NotOnCommandLine: "not a command line command, because its --password would be visible in the process list; use 'set credentials --origin <origin> <user>' with the password on stdin",
-		Run:              runApplyCredentials,
+		Page:       LeasedPage,
+		Mutates:    true,
+		Output:     OutputText,
+		ClientStep: credentialsStdin,
+		Run:        runApplyCredentials,
 	})
 	Register(&Command{
 		Name:    "set geo",
@@ -197,71 +182,41 @@ func runSetHeaders(ctx context.Context, env Env, in Input) (Result, error) {
 	return Result{Text: text, Data: map[string]any{"headers": len(h), "networkReset": reset}}, nil
 }
 
-// credentialsStdin is where "set credentials" reads the password (a
-// variable for tests).
-var credentialsStdin io.Reader = os.Stdin
-
-// errNoForward: the Local "set credentials" ran in an environment that
-// cannot run a command in the daemon.
-var errNoForward = errors.New("set credentials: this client cannot forward commands to the daemon")
-
-// runSetCredentials reads the password from the first line of stdin and
-// runs "set credentials-apply" in the daemon with it. The password is
-// never part of a command line, a result or an error.
-func runSetCredentials(ctx context.Context, env Env, in Input) (Result, error) {
-	apply, _ := Lookup([]string{"set", "credentials-apply"})
-	re, ok := env.(RemoteEnv)
-	if apply == nil || !ok {
-		return Result{}, errNoForward
+// credentialsStdin is the client step of "set credentials" (iwdp-cli
+// only): it reads the password from the first line of stdin, under the
+// command deadline, into the password flag, which reaches the daemon in
+// the /v1/run request body. A --password given on the command line is
+// refused, because argv is readable by other local users. The password is
+// never part of a result or an error.
+func credentialsStdin(ctx context.Context, in *Input, stdin io.Reader) error {
+	if _, given := in.Flags["password"]; given {
+		return usagef("set credentials: --password is refused on a command line, where other local users can read it; pipe the password to stdin, for example: printf '%%s\\n' \"$PASS\" | iwdp-cli set credentials --origin <origin> <user>")
 	}
-	fwd := Input{Flags: map[string]any{}, Global: in.Global}
-	if flagBool(in, "clear") {
-		if arg(in, 0) != "" || flagString(in, "origin") != "" {
-			return Result{}, usagef("set credentials: --clear takes no user or --origin")
+	if flagBool(*in, "clear") {
+		if arg(*in, 0) != "" || flagString(*in, "origin") != "" {
+			return usagef("set credentials: --clear takes no user or --origin")
 		}
-		fwd.Flags["clear"] = true
-		return re.RunRemote(ctx, apply, fwd)
+		return nil
 	}
-	if arg(in, 0) == "" || flagString(in, "origin") == "" {
-		return Result{}, usagef("set credentials: want --origin <origin> <user>, with the password on stdin")
+	if arg(*in, 0) == "" || flagString(*in, "origin") == "" {
+		return usagef("set credentials: want --origin <origin> <user>, with the password on stdin")
 	}
-	line, err := readLine(ctx, credentialsStdin)
-	if err != nil {
-		return Result{}, fmt.Errorf("set credentials: reading the password from stdin: %w", err)
-	}
-	password := strings.TrimRight(line, "\r\n")
-	if password == "" {
-		return Result{}, usagef("set credentials: no password on stdin; pipe it in, for example: printf '%%s\\n' \"$PASS\" | iwdp-cli set credentials --origin <origin> <user>")
-	}
-	fwd.Args = []string{arg(in, 0)}
-	fwd.Flags["origin"], fwd.Flags["password"] = flagString(in, "origin"), password
-	return re.RunRemote(ctx, apply, fwd)
-}
-
-// readLine reads the first line of r, or all of r when it has no newline,
-// until ctx ends. A read blocks without a deadline (a terminal or a pipe
-// whose writer stays open), so it runs in a goroutine; when ctx ends
-// first, readLine returns ctx's error and drops what was read. The
-// goroutine ends when r returns, at the latest when the process exits.
-func readLine(ctx context.Context, r io.Reader) (string, error) {
-	type read struct {
-		line string
-		err  error
-	}
-	done := make(chan read, 1) // the goroutine never blocks on the send
-	go func() {
-		line, err := bufio.NewReader(r).ReadString('\n')
+	line, err := readWithin(ctx, func() (string, error) {
+		line, err := bufio.NewReader(stdin).ReadString('\n')
 		if errors.Is(err, io.EOF) {
 			err = nil
 		}
-		done <- read{line, err}
-	}()
-	select {
-	case res := <-done:
-		return res.line, res.err
-	case <-ctx.Done():
-		return "", ctx.Err()
+		return line, err
+	})
+	if err != nil {
+		return fmt.Errorf("set credentials: reading the password from stdin: %w", err)
 	}
+	password := strings.TrimRight(line, "\r\n")
+	if password == "" {
+		return usagef("set credentials: no password on stdin; pipe it in, for example: printf '%%s\\n' \"$PASS\" | iwdp-cli set credentials --origin <origin> <user>")
+	}
+	in.Flags["password"] = password // Parse always makes the map
+	return nil
 }
 
 func runApplyCredentials(ctx context.Context, env Env, in Input) (Result, error) {

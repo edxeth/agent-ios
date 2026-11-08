@@ -414,12 +414,14 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv
 		}
 		return ExitOK
 	}
-	if inv.Cmd.NotOnCommandLine != "" {
-		_, _ = fmt.Fprintf(stderr, "Error: %s: %s\n", inv.Cmd.Name, inv.Cmd.NotOnCommandLine) // nothing to do when stderr fails
-		return ExitUsage
-	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout(inv.Cmd, inv.Input.Global))
 	defer cancel()
+	if inv.Cmd.ClientStep != nil {
+		if err := inv.Cmd.ClientStep(ctx, &inv.Input, os.Stdin); err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err) // nothing to do when stderr fails
+			return ExitCodeOf(err)
+		}
+	}
 	env, err := newEnv(ctx, inv)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -435,6 +437,29 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv
 		return ExitError
 	}
 	return ExitOK
+}
+
+// readWithin runs read, which may block without a deadline (a terminal,
+// or a pipe whose writer stays open), in a goroutine, and returns its
+// result; when ctx ends first, it returns ctx's error and drops what was
+// read. The goroutine ends when read returns, at the latest when the
+// process exits.
+func readWithin(ctx context.Context, read func() (string, error)) (string, error) {
+	type result struct {
+		s   string
+		err error
+	}
+	done := make(chan result, 1) // the goroutine never blocks on the send
+	go func() {
+		s, err := read()
+		done <- result{s, err}
+	}()
+	select {
+	case res := <-done:
+		return res.s, res.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // run runs c in env: through RunRemote when env is a RemoteEnv and c is

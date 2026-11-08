@@ -129,7 +129,8 @@ type Scheduler struct {
 	running  map[*Op]bool
 	changed  chan struct{} // closed and replaced when running shrinks or a completion ends
 	nextOp   int
-	clocks   map[uint64]*ClockMap // by document generation
+	clocks   map[clockKey]*ClockMap // by document generation and execution context
+	ctxs     contextBook            // execution contexts that operations selected (exec_context_w3b.go)
 
 	// Pending control items (design 2.10). Each is completed at most once:
 	// an item stays pending while its completion is being written. A held
@@ -190,7 +191,7 @@ func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
 		o:           o,
 		running:     make(map[*Op]bool),
 		changed:     make(chan struct{}),
-		clocks:      make(map[uint64]*ClockMap),
+		clocks:      make(map[clockKey]*ClockMap),
 		intercepted: make(map[holdKey]*heldRequest),
 		sem:         make(chan struct{}, o.MaxInFlight),
 	}
@@ -348,6 +349,8 @@ type Op struct {
 	mu       sync.Mutex
 	ended    bool
 	inflight *inflightAttempt
+	exec     atomic.Pointer[ExecContext] // execution context it works in; nil: main (exec_context_w3b.go)
+	finally  []opFinally                 // cleanups that End runs before the slot is released (op_finally_w3b.go)
 }
 
 type inflightAttempt struct {
@@ -425,6 +428,7 @@ func (c attemptCaller) Send(ctx context.Context, method string, params any) (jso
 	if err := c.inf.admit(c.op, c.commit); err != nil {
 		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
 	}
+	ctx, params = c.op.route(ctx, method, params)
 	return c.op.s.c.Send(ctx, method, params)
 }
 
@@ -632,7 +636,9 @@ func (op *Op) active() error {
 
 // End ends the operation. When an attempt is still in flight, the slot is
 // released only at its reply or its slot-release boundary (design 2.6), so a
-// conflicting successor never overlaps it. End does not wait for that.
+// conflicting successor never overlaps it. Then the cleanups registered
+// with Finally run, and only after them is the slot released. End does
+// not wait for any of that.
 func (op *Op) End() {
 	op.mu.Lock()
 	if op.ended {
@@ -640,18 +646,21 @@ func (op *Op) End() {
 		return
 	}
 	op.ended = true
-	inf := op.inflight
+	inf, fin := op.inflight, op.finally
 	op.mu.Unlock()
 	op.cancel(ErrOpEnded)
-	if inf == nil {
+	if inf == nil && len(fin) == 0 {
 		op.s.release(op)
 		return
 	}
 	go func() {
-		select {
-		case <-inf.replied:
-		case <-op.s.o.Clock.After(inf.boundary - op.s.o.Clock.Now()):
+		if inf != nil {
+			select {
+			case <-inf.replied:
+			case <-op.s.o.Clock.After(inf.boundary - op.s.o.Clock.Now()):
+			}
 		}
+		op.runFinally(fin)
 		op.s.release(op)
 	}()
 }
@@ -706,6 +715,7 @@ func (c opCaller) Send(ctx context.Context, method string, params any) (json.Raw
 	defer cancel(nil)
 	stop := context.AfterFunc(op.ctx, func() { cancel(context.Cause(op.ctx)) })
 	defer stop()
+	callCtx, params = op.route(callCtx, method, params)
 	return op.s.c.Send(callCtx, method, params)
 }
 
@@ -1201,25 +1211,26 @@ func (s *Scheduler) Barrier(ctx context.Context) (reopen func(), err error) {
 	}
 }
 
-// clockMap returns the clock mapping of document generation g.
-func (s *Scheduler) clockMap(g uint64) *ClockMap {
+// clockMap returns the clock mapping of k (a document generation and an
+// execution context).
+func (s *Scheduler) clockMap(k clockKey) *ClockMap {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := s.clocks[g]
+	m := s.clocks[k]
 	if m == nil {
 		m = &ClockMap{}
-		s.clocks[g] = m
+		s.clocks[k] = m
 	}
 	return m
 }
 
-// dropClock forgets m, the mapping of generation g, after the page showed
-// another document under the same generation; the next attempt measures
-// the page again.
-func (s *Scheduler) dropClock(g uint64, m *ClockMap) {
+// dropClock forgets m, the mapping of k, after the page showed another
+// document under the same generation; the next attempt measures the page
+// again.
+func (s *Scheduler) dropClock(k clockKey, m *ClockMap) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.clocks[g] == m {
-		delete(s.clocks, g)
+	if s.clocks[k] == m {
+		delete(s.clocks, k)
 	}
 }

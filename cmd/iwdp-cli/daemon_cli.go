@@ -224,16 +224,6 @@ func (cliHost) RunOptions() daemon.RunOptions {
 	return daemon.RunOptions{Version: daemon.BuildVersion(), StartIWDP: daemonStartIWDP}
 }
 
-// RunRemote lets a Local command run another command in the daemon: "set
-// credentials" reads the password from stdin here and forwards it.
-func (cliHost) RunRemote(ctx context.Context, c *reg.Command, in reg.Input) (reg.Result, error) {
-	dc, err := daemon.Connect(ctx, daemonOptions())
-	if err != nil {
-		return reg.Result{}, err
-	}
-	return (&remoteEnv{c: dc}).RunRemote(ctx, c, in)
-}
-
 // remoteEnv runs registry commands in the daemon (commands.RemoteEnv).
 type remoteEnv struct {
 	cliHost
