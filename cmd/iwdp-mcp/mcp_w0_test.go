@@ -133,6 +133,49 @@ func TestSetCookieToolVerifiesAndConvertsExpiry(t *testing.T) {
 	}
 }
 
+// set_cookie without a path sends path "/", as "cookies set" and the CLI's
+// set-cookie do, in every profile: the registry command answers it in
+// the core profile (and all), the legacy handler in the legacy profile.
+// WebKit stores the path as given (an empty path stays empty on
+// WebKitGTK), and the read-back compares it exactly, so the default makes
+// the stored cookie the same on every backend.
+func TestSetCookieToolDefaultsThePathToSlash(t *testing.T) {
+	for _, profile := range []string{"all", "legacy"} {
+		t.Run(profile, func(t *testing.T) {
+			t.Setenv("IWDP_MCP_TOOLS", profile)
+			mock := testutil.NewMockServer()
+			defer mock.Close()
+			var mu sync.Mutex
+			var sent []webkit.Cookie
+			mock.Handle("Page.setCookie", func(_ string, params json.RawMessage) (any, error) {
+				var p struct {
+					Cookie webkit.Cookie `json:"cookie"`
+				}
+				_ = json.Unmarshal(params, &p)
+				mu.Lock()
+				sent = append(sent, p.Cookie)
+				mu.Unlock()
+				return map[string]any{}, nil
+			})
+			mock.Handle("Page.getCookies", func(string, json.RawMessage) (any, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				return map[string]any{"cookies": sent}, nil
+			})
+			cs := connectMCP(t, mock)
+			res, text := callTool(t, cs, "set_cookie", map[string]any{"name": "sid", "value": "v", "domain": "example.com"})
+			if res.IsError {
+				t.Fatalf("set_cookie: %s", text)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(sent) != 1 || sent[0].Path != "/" {
+				t.Fatalf("Page.setCookie cookies %+v; want one with path /", sent)
+			}
+		})
+	}
+}
+
 func TestSetCookieToolFailsWhenNotReadBack(t *testing.T) {
 	mock := testutil.NewMockServer()
 	defer mock.Close()

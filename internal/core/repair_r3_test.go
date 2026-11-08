@@ -194,13 +194,20 @@ func TestAbandonedProvisionalKeepsActiveCleanup(t *testing.T) {
 	// The target is destroyed after its setup replayed the breakpoint, not
 	// after a fixed time: a target destroyed earlier gets no replay
 	// (docs/notes/w1b.md, "core-events r2: two swap tests read too early").
+	// The replay counts as done when the client recorded the provisional
+	// target's id (staged), not when the fake received the call: the
+	// setup records the reply on its own goroutine, and a destroy event
+	// read before that record would be followed by it.
+	st := mo.Page.PS.State
 	r.f.Provisional("page-abort")
 	eventually(t, 5*time.Second, "provisional breakpoint replay", func() bool {
-		return len(r.f.ReceivedMethod("Debugger.setBreakpointByUrl")) == 2
+		sent := len(r.f.ReceivedMethod("Debugger.setBreakpointByUrl"))
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return sent == 2 && st.staged["page-abort"]["bp-1"] == "bp-2"
 	})
 	r.f.DestroyTarget("page-abort")
 	eventually(t, 5*time.Second, "the abort reaches the client", func() bool {
-		st := mo.Page.PS.State
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		return st.syncs["page-abort"] == nil && st.staged["page-abort"] == nil // abandonTarget ran

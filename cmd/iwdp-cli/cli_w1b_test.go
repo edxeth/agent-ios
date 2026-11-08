@@ -176,11 +176,15 @@ func TestCLICloseAllNeverConnects(t *testing.T) {
 // stalled. Recovery is checked at core level
 // (TestDeadProbeStallsThenRecoversOnce).
 //
-// The 1.2 s bound is measured from the CLI process's package
-// initialization to its exit (runCLIFromInit). Design 2.6, "One absolute deadline per operation": the
-// command deadline "is fixed when the request arrives" and covers
-// everything from there; process creation and the Go runtime start come
-// before the command exists, so they are not part of the bound.
+// The 1.2 s bound is measured inside the CLI process, from the start of
+// the command (current.begin, which fixes the deadline) to its call of
+// os.Exit (runCLITimed). Design 2.6, "One absolute deadline per
+// operation": the command deadline "is fixed when the request arrives"
+// and covers everything from there; "when it expires the command returns
+// at once with exit code 124". Process creation, the Go runtime start and
+// the test's own work (the start file it has the process write, its wait
+// for the process to end) come before or after the command, so they are
+// not part of the bound.
 func TestCLIEvalDeadlineWithDeadProbe(t *testing.T) {
 	env := privateDaemon(t)
 	f := fakewebkit.New(fakewebkit.Options{})
@@ -190,11 +194,11 @@ func TestCLIEvalDeadlineWithDeadProbe(t *testing.T) {
 	if res := runCLI(t, "", e, "session"); res.code != 0 { // starts the daemon
 		t.Fatalf("session: exit %d, stderr %q", res.code, res.stderr)
 	}
-	res, ran := runCLIFromInit(t, e, "eval", "--timeout", "1s", "6*7")
+	res, times := runCLITimed(t, e, "eval", "--timeout", "1s", "6*7")
 	wantExit(t, res, 124, "Runtime.evaluate")
-	t.Logf("eval --timeout 1s: %v from package initialization to exit, %v including the process start", ran, res.elapsed)
-	if ran > 1200*time.Millisecond {
-		t.Fatalf("eval --timeout 1s exited %v after its package initialization, want at most 1.2 s", ran)
+	t.Logf("eval --timeout 1s: %v from the command's start to its exit call, %v from package initialization to the end of the process, %v including the process start", times.command, times.fromInit, res.elapsed)
+	if times.command > 1200*time.Millisecond {
+		t.Fatalf("eval --timeout 1s exited %v after the command started, want at most 1.2 s", times.command)
 	}
 	n := 0
 	for _, r := range f.ReceivedMethod("Runtime.evaluate") {

@@ -286,11 +286,7 @@ func SetCookieVerified(ctx context.Context, client webkit.Caller, cookie webkit.
 	if err != nil {
 		return nil, fmt.Errorf("reading cookie %s back: %w", cookie.Name, err)
 	}
-	for i := range cookies {
-		got := &cookies[i]
-		if got.Name != cookie.Name || !sameCookieDomain(got.Domain, cookie.Domain) || (cookie.Path != "" && got.Path != cookie.Path) {
-			continue
-		}
+	if got := storedCookie(cookies, cookie); got != nil {
 		var diffs []string
 		if got.Value != cookie.Value {
 			diffs = append(diffs, "value differs")
@@ -323,13 +319,25 @@ func formatCookieExpiry(ms float64) string {
 	return time.UnixMilli(int64(ms)).UTC().Format(time.RFC3339)
 }
 
-// sameCookieDomain compares cookie domains, ignoring case and the leading dot
-// WebKit adds to domain cookies. An empty wanted domain matches any domain.
-func sameCookieDomain(got, want string) bool {
-	if want == "" {
-		return true
+// storedCookie finds the cookie that Page.setCookie stored for want among
+// cookies: the same name, the same path and the same domain, case aside
+// (RFC 6265 section 5.1.2 compares host names without case). Page.setCookie
+// stores the domain and the path as given, and the domain's leading dot is
+// the cookie's kind: "a.test" is a host-only cookie, ".a.test" a domain
+// cookie, and both can exist with the same name and path
+// (TestDevtoolsCookieIdentityIsStoredAsSet on WebKitGTK; WebKit passes the
+// domain unchanged to NSHTTPCookieDomain and soup_cookie_new). Only a
+// Set-Cookie Domain attribute gets the dot added, and Page.getCookies then
+// reports it with the dot. So a cookie of the other kind, of another path
+// or of another domain is never the one that was set.
+func storedCookie(cookies []webkit.Cookie, want webkit.Cookie) *webkit.Cookie {
+	for i := range cookies {
+		got := &cookies[i]
+		if got.Name == want.Name && got.Path == want.Path && strings.EqualFold(got.Domain, want.Domain) {
+			return got
+		}
 	}
-	return strings.EqualFold(strings.TrimPrefix(got, "."), strings.TrimPrefix(want, "."))
+	return nil
 }
 
 // maxRedactedPrefix is the most characters RedactCookieValue reveals.

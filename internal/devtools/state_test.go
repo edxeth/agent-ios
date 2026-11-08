@@ -58,6 +58,9 @@ func TestStorageOperations(t *testing.T) {
 // genState is a random state of origin https://app.test: cookies of the
 // origin's host and its parent domain with distinct (name, domain, path),
 // both expiry kinds and every SameSite value, and storage with any text.
+// A host-only cookie (domain "app.test") and a domain cookie (".app.test")
+// may have the same name and path: WebKit's jar keeps them apart
+// (TestDevtoolsCookieIdentityIsStoredAsSet in e2e/webkitgtk).
 func genState(r *rand.Rand) State {
 	s := State{Version: StateVersion, Cookies: []StateCookie{}, Origins: []StateOrigin{{Origin: "https://app.test", LocalStorage: []StorageEntry{}, SessionStorage: []StorageEntry{}}}}
 	seen := map[string]bool{}
@@ -162,6 +165,13 @@ func TestStateLoadSaveRoundTripProperty(t *testing.T) {
 		}
 		fmt.Println("the cookie of other.test was removed")
 		return false
+	}
+	// Seeds that failed before, checked first on every run. The first
+	// holds a host-only and a domain cookie of the same name and path.
+	for _, seed := range []int64{-8373736535080432565} {
+		if !f(seed) {
+			t.Fatalf("seed %d: the round trip changed the state", seed)
+		}
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 60}); err != nil {
 		t.Fatal(err)

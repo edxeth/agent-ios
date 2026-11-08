@@ -1251,17 +1251,23 @@ func registerTools(server *mcp.Server) {
 	})
 
 	addTool(server, &mcp.Tool{
-		Name: "set_cookie", Description: "Set a cookie and verify it by reading it back. Fails when the cookie is missing or stored with other attributes. The returned cookie has its value redacted.",
+		Name: "set_cookie", Description: "Set a cookie and verify it by reading it back. Without a path the cookie gets path /. Fails when the cookie is missing or stored with other attributes. The returned cookie has its value redacted.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SetCookieInput) (*mcp.CallToolResult, any, error) {
 		c, err := getClient(ctx)
 		if err != nil {
 			return nil, SetCookieOutput{}, err
 		}
+		// "/" as "cookies set" and the CLI's set-cookie default it: WebKit
+		// stores the path as given and the read-back compares it exactly.
+		path := input.Path
+		if path == "" {
+			path = "/"
+		}
 		cookie := webkit.Cookie{
 			Name:   input.Name,
 			Value:  input.Value,
 			Domain: input.Domain,
-			Path:   input.Path,
+			Path:   path,
 			// The input is in seconds; WebKit's Page.Cookie.expires is in milliseconds.
 			Expires:  input.Expires * 1000,
 			Session:  input.Expires == 0,

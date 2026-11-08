@@ -291,9 +291,10 @@ func TestSetCookieVerifiedReadsBack(t *testing.T) {
 			Cookie webkit.Cookie `json:"cookie"`
 		}
 		_ = json.Unmarshal(params, &p)
-		c := p.Cookie
-		c.Domain = "." + c.Domain // WebKit stores domain cookies with a leading dot
-		stored = append(stored, c)
+		// Page.setCookie stores the domain as given: "example.com" is a
+		// host-only cookie, ".example.com" a domain cookie
+		// (TestDevtoolsCookieIdentityIsStoredAsSet on WebKitGTK).
+		stored = append(stored, p.Cookie)
 		return map[string]interface{}{}, nil
 	})
 	mock.Handle("Page.getCookies", func(_ string, _ json.RawMessage) (interface{}, error) {
@@ -306,8 +307,75 @@ func TestSetCookieVerifiedReadsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetCookieVerified: %v", err)
 	}
-	if got.SameSite != "Strict" || !got.Secure || !got.HTTPOnly {
+	if got.SameSite != "Strict" || !got.Secure || !got.HTTPOnly || got.Domain != "example.com" {
 		t.Errorf("read-back cookie = %+v", got)
+	}
+}
+
+// The read-back confirms the identity that was set: name, path and domain,
+// whose leading dot is the cookie's kind (host-only without it, domain
+// cookie with it). Page.setCookie can answer success and store nothing
+// (WebKit-7615.3.12.11.5: the IPC to the network process is asynchronous
+// and NSHTTPCookie creation can fail without an error), so a namesake of
+// the other kind, or of another path, with the same value and flags is no
+// proof: it must be reported as not found. Reproduction of the flakes
+// review F1 (/home/devkit/.pi/artifacts/reviewer/flakes-review-20261108-085334.md).
+func TestSetCookieVerifiedRefusesAnotherIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		want, namesake   string // domains
+		wantP, namesakeP string // paths
+	}{
+		{"host-only requested, domain cookie stored", "example.com", ".example.com", "/", "/"},
+		{"domain cookie requested, host-only stored", ".example.com", "example.com", "/", "/"},
+		{"empty domain requested", "", "example.com", "/", "/"},
+		{"empty path requested", "example.com", "example.com", "", "/"},
+		{"other path stored", "example.com", "example.com", "/", "/app"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, client := setup(t)
+			mock.HandleFunc("Page.setCookie", map[string]interface{}{})
+			mock.HandleFunc("Page.getCookies", map[string]interface{}{"cookies": []webkit.Cookie{
+				{Name: "sid", Value: "v", Domain: tc.namesake, Path: tc.namesakeP, SameSite: "Lax", Session: true},
+			}})
+			got, err := tools.SetCookieVerified(context.Background(), client, webkit.Cookie{
+				Name: "sid", Value: "v", Domain: tc.want, Path: tc.wantP, SameSite: "Lax", Session: true,
+			})
+			if err == nil || !strings.Contains(err.Error(), "was not found") {
+				t.Fatalf("requested domain %q path %q is absent, but got %+v, %v; want a not-found error", tc.want, tc.wantP, got, err)
+			}
+		})
+	}
+}
+
+// A host-only cookie (domain "example.com") and a domain cookie (domain
+// ".example.com") of the same name and path are two cookies in WebKit's
+// jar: libsoup keys its jar by the exact domain string and replaces only a
+// cookie of the same name and path under that key (soup-cookie-jar.c,
+// soup_cookie_jar_add_cookie_full), CFNetwork replaces a cookie "with the
+// same name, domain, and path" (HTTPCookieStorage.setCookie) where the
+// leading dot is what marks a domain cookie (HTTPCookie.domain), and RFC
+// 6265bis section 5.7 counts the host-only flag in a cookie's identity.
+// The read-back checks the cookie that was set, not its namesake of the
+// other kind.
+func TestSetCookieVerifiedTellsHostOnlyFromDomainCookie(t *testing.T) {
+	for _, tc := range []struct{ requested, other string }{
+		{"example.com", ".example.com"},
+		{".example.com", "example.com"},
+	} {
+		mock, client := setup(t)
+		mock.HandleFunc("Page.setCookie", map[string]interface{}{})
+		mock.HandleFunc("Page.getCookies", map[string]interface{}{"cookies": []webkit.Cookie{
+			{Name: "sid", Value: "other", Domain: tc.other, Path: "/", SameSite: "None", Secure: true, Session: true},
+			{Name: "sid", Value: "v", Domain: tc.requested, Path: "/", SameSite: "Lax", Session: true},
+		}})
+		got, err := tools.SetCookieVerified(context.Background(), client, webkit.Cookie{Name: "sid", Value: "v", Domain: tc.requested, Path: "/", SameSite: "Lax", Session: true})
+		if err != nil {
+			t.Fatalf("set sid of %s beside sid of %s: %v", tc.requested, tc.other, err)
+		}
+		if got.Domain != tc.requested || got.Value != "v" {
+			t.Fatalf("set sid of %s: read back the cookie of %s", tc.requested, got.Domain)
+		}
 	}
 }
 
@@ -450,8 +518,9 @@ func TestSetCookieVerifiedChecksSessionAndExpiry(t *testing.T) {
 
 // TestSetCookieVerifiedReportsEachMismatch pins the rest of the read-back
 // contract (SetCookieVerified doc): each differing attribute is named,
-// cookies with another name, domain or path are skipped, an empty requested
-// domain matches any domain, and no error contains the cookie value.
+// cookies with another name, domain or path are skipped, a requested
+// domain matches a stored one without regard to case, and no error
+// contains the cookie value.
 func TestSetCookieVerifiedReportsEachMismatch(t *testing.T) {
 	const value = "s3cr3t-value"
 	want := webkit.Cookie{Name: "sid", Value: value, Domain: "example.com", Path: "/", SameSite: "Lax", Session: true, Secure: true, HTTPOnly: true}
@@ -475,7 +544,8 @@ func TestSetCookieVerifiedReportsEachMismatch(t *testing.T) {
 			other(func(c *webkit.Cookie) { c.Path = "/app"; c.Secure = false }),
 			want,
 		}, ""},
-		{"empty domain matches any", other(func(c *webkit.Cookie) { c.Domain = "" }), []webkit.Cookie{other(func(c *webkit.Cookie) { c.Domain = ".example.net" })}, ""},
+		{"other kind skipped", want, []webkit.Cookie{other(func(c *webkit.Cookie) { c.Domain = ".example.com"; c.Secure = false }), want}, ""},
+		{"domain case ignored", other(func(c *webkit.Cookie) { c.Domain = "Example.COM" }), []webkit.Cookie{want}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mock, client := setup(t)
