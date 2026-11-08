@@ -106,6 +106,12 @@ func (d *DesiredState) refusedLocked() bool {
 // of the release set when it failed on the committed target
 // (cleanupFailedLocked).
 func (d *DesiredState) forgetSession(session string, live bool, failed []string) (pending bool) {
+	return d.forgetOwners(func(o Owner) bool { return strings.HasSuffix(string(o), ":"+session) }, live, failed)
+}
+
+// forgetOwners is forgetSession for the owners that match selects, for
+// example one CDP attachment's owner (Manager.ReleaseOwner).
+func (d *DesiredState) forgetOwners(match func(Owner) bool, live bool, failed []string) (pending bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.markSeq++
@@ -120,7 +126,7 @@ func (d *DesiredState) forgetSession(session string, live bool, failed []string)
 		pending = true
 	}
 	for _, o := range d.allOwnersLocked() {
-		if !strings.HasSuffix(string(o), ":"+session) {
+		if !match(o) {
 			continue
 		}
 		od := d.dropOwnerLocked(o, "")

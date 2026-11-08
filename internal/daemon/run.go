@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
@@ -56,6 +57,11 @@ type RunOptions struct {
 	// Reservations, DaemonID and Logf.
 	Manager core.ManagerOptions
 	Log     io.Writer // daemon log; nil = stderr
+	// CDPPort starts the CDP endpoint on 127.0.0.1:CDPPort at daemon start
+	// (daemon flag --cdp-port, design 5.1) and is the port of a later start
+	// that names none. 0: the endpoint starts only on request, on
+	// cdp.DefaultPort (decision D3).
+	CDPPort int
 }
 
 // Run is "daemon run": it checks the socket directory (design 2.2), serves
@@ -123,6 +129,16 @@ func Run(ctx context.Context, o RunOptions) error {
 	}
 	m, srv, tr := newCore(o, logf)
 	defer tr.close()
+	if o.CDPPort != 0 {
+		if _, err := srv.cdp.Start(o.CDPPort, nil); err != nil {
+			_ = l.Close()
+			_ = os.Remove(sock)
+			cctx, cancel := context.WithTimeout(context.Background(), ShutdownBudget)
+			_ = m.Close(cctx)
+			cancel()
+			return fmt.Errorf("daemon --cdp-port %d: %w", o.CDPPort, err)
+		}
+	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
 	go func() { served <- hs.Serve(l) }()
@@ -184,7 +200,9 @@ func newCore(o RunOptions, logf func(string, ...any)) (*core.Manager, *Server, *
 	mo := o.Manager
 	mo.Transport, mo.Reservations, mo.Logf, mo.DaemonID = tr.get, res, logf, newDaemonID()
 	m := core.NewManager(mo)
-	return m, NewServer(m, res, o.Version, logf), tr
+	srv := NewServer(m, res, o.Version, logf)
+	srv.cdp = cdp.New(cdp.Options{Manager: m, Reservations: res, Version: o.Version, Logf: logf, Enter: srv.enter, Port: o.CDPPort})
+	return m, srv, tr
 }
 
 // runLock holds an exclusive flock on path for the daemon's life, so only

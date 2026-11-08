@@ -83,6 +83,18 @@ func (d *ListedDevice) AddPage(title, url, wsURL string) *ListedPage {
 	return p
 }
 
+// RemovePage drops p from the device's page list (a closed tab).
+func (d *ListedDevice) RemovePage(p *ListedPage) {
+	d.l.mu.Lock()
+	defer d.l.mu.Unlock()
+	for i, q := range d.pages {
+		if q == p {
+			d.pages = append(d.pages[:i:i], d.pages[i+1:]...)
+			return
+		}
+	}
+}
+
 // SetBusy marks p as held (or not) by another WebSocket client.
 func (d *ListedDevice) SetBusy(p *ListedPage, busy bool) {
 	d.l.mu.Lock()

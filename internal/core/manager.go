@@ -201,6 +201,9 @@ type Manager struct {
 	// lease grant, connection install (reattach, recover), and release
 	// begin and end.
 	lifecycleHook func(ev lifecycleEvent)
+	// installChecked, when set (tests only), runs in a background recovery
+	// under pg.mu after the install check passed and before the swap.
+	installChecked func(pg *Page)
 
 	// epochs counts the lease grants of every page. Epochs only grow
 	// within one DaemonID (design 3.1): the page runtime refuses an owner
@@ -836,40 +839,56 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		fail(err)
 		return
 	}
-	c, gen, err := m.openConn(ctx, pg, t, pg.PS.State, false)
-	if err != nil {
-		if networkDisableWritten(err) {
-			pg.reportNetworkGap()
+	for {
+		c, gen, err := m.openConn(ctx, pg, t, pg.PS.State, false)
+		if err != nil {
+			if networkDisableWritten(err) {
+				pg.reportNetworkGap()
+			}
+			fail(err)
+			return
 		}
-		fail(err)
-		return
-	}
-	// The new connection's setup continued every held request, also when
-	// the connection is not installed below.
-	pg.reportNetworkGap()
-	if err := probeCaller(ctx, c); err != nil {
+		// The new connection's setup continued every held request, also
+		// when the connection is not installed below.
+		pg.reportNetworkGap()
+		if err := probeCaller(ctx, c); err != nil {
+			closeCaller(c)
+			fail(fmt.Errorf("the new connection does not answer either: %w", err))
+			return
+		}
+		// The install rule of reattach (release_lifecycle.go): a changed
+		// release generation means the snapshot may hold removed state, so
+		// the connection is not installed. A release of the lease ends l
+		// (it holds the page no more, or releasing is set), and the
+		// recovery stops. Otherwise only an owner's state was removed under
+		// the same lease (a CDP attachment's release, ForgetOwner; the
+		// barrier excludes ReleaseOwner inside an operation), and the page
+		// is set up again with the current state until the budget ends. An
+		// owner removal takes pg.mu too (Manager.forgetOwner), so it comes
+		// before this check or after the swap.
+		pg.mu.Lock()
+		held := pg.lease == l && !pg.releasing && pg.conn.State() == ConnStalled
+		install := held && pg.PS.State.ReleaseGen() == gen
+		if install {
+			if m.installChecked != nil {
+				m.installChecked(pg)
+			}
+			pg.conn.swap(c)
+			pg.gapFrom = time.Time{}
+			m.lifecycle("install", pg, nil)
+		}
+		pg.mu.Unlock()
+		if install {
+			m.o.Logf("page %s: background recovery reconnected", t.title)
+			return
+		}
 		closeCaller(c)
-		fail(fmt.Errorf("the new connection does not answer either: %w", err))
-		return
+		if !held {
+			fail(errLeaseChanged)
+			return
+		}
+		m.o.Logf("page %s: background recovery: the page state changed during the reconnect; connecting again", t.title)
 	}
-	// A release that removes owners releases the page's lease, so while l
-	// still holds the page and no release runs, the release generation is
-	// that of the snapshot. The check keeps the install rule of reattach
-	// (release_lifecycle.go) explicit here too.
-	pg.mu.Lock()
-	install := pg.lease == l && !pg.releasing && pg.conn.State() == ConnStalled && pg.PS.State.ReleaseGen() == gen
-	if install {
-		pg.conn.swap(c)
-		pg.gapFrom = time.Time{}
-		m.lifecycle("install", pg, nil)
-	}
-	pg.mu.Unlock()
-	if !install {
-		closeCaller(c)
-		fail(errLeaseChanged)
-		return
-	}
-	m.o.Logf("page %s: background recovery reconnected", t.title)
 }
 
 // errLeaseChanged: the lease that a recovery started under ended or was
@@ -1194,6 +1213,13 @@ func (m *Manager) Raw(ctx context.Context, id, method string, params json.RawMes
 	if err != nil {
 		return nil, err
 	}
+	return m.RawAs(ctx, mo, SessionOwner("legacy", mo.Session), method, params)
+}
+
+// RawAs is Raw inside operation mo with owner as the desired-state owner
+// of the call, for example a CDP attachment (design 5.2), whose state is
+// released alone when it detaches.
+func (m *Manager) RawAs(ctx context.Context, mo *ManagedOp, owner Owner, method string, params json.RawMessage) (json.RawMessage, error) {
 	pg := mo.Page
 	if webkit.HangsThroughTarget(method) && pg.conn.IsTargetRouted() {
 		return nil, notSent{fmt.Errorf("%s: %w", method, webkit.ErrHangsThroughTarget)}
@@ -1205,7 +1231,7 @@ func (m *Manager) Raw(ctx context.Context, id, method string, params json.RawMes
 	if dl, ok := ctx.Deadline(); ok {
 		ctx = webkit.WithCallBudget(ctx, time.Until(dl))
 	}
-	res, err := legacyCall(ctx, pg.PS, SessionOwner("legacy", mo.Session), mo.Op.Caller(), method, params)
+	res, err := legacyCall(ctx, pg.PS, owner, mo.Op.Caller(), method, params)
 	if err != nil && (errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(context.Cause(mo.Op.Context()), ErrDeadline)) {
 		// The command deadline ended the call (design 2.6; exit 124, decision D9).
 		return nil, &CodedError{Code: CodeTimeout, Err: fmt.Errorf("%w: %w", err, context.DeadlineExceeded)}

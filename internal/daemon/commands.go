@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -41,6 +42,7 @@ func init() {
 	transportFlags := []commands.Flag{
 		{Name: "addr", Type: commands.FlagString, Help: "listing or inspector address of the --transport (webkitgtk: the WEBKIT_INSPECTOR_HTTP_SERVER address)"},
 		{Name: "idle", Type: commands.FlagDuration, Help: "exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m)"},
+		{Name: "cdp-port", Type: commands.FlagInt, Help: "start the CDP endpoint on 127.0.0.1:<port> with the daemon, and use the port for later starts (default: the endpoint starts only on 'cdp start' or 'get cdp-url', on port 9230)"},
 	}
 	commands.Register(&commands.Command{
 		Name: "daemon run", Local: true, Flags: transportFlags,
@@ -75,6 +77,9 @@ func init() {
 			}
 			if d, ok := in.Flags["idle"].(time.Duration); ok {
 				o.Args = append(o.Args, "--idle", d.String())
+			}
+			if p, ok := in.Flags["cdp-port"].(int); ok {
+				o.Args = append(o.Args, "--cdp-port", strconv.Itoa(p))
 			}
 			c, err := Connect(ctx, o)
 			if err != nil {
@@ -162,6 +167,9 @@ func runOptions(ro RunOptions, in commands.Input) RunOptions {
 	if d, ok := in.Flags["idle"].(time.Duration); ok {
 		ro.Idle = d
 	}
+	if p, ok := in.Flags["cdp-port"].(int); ok {
+		ro.CDPPort = p
+	}
 	return ro
 }
 
@@ -197,6 +205,11 @@ func statusText(c *Client, st Status) string {
 	}
 	if st.ReservationsError != "" {
 		fmt.Fprintf(&b, "  (reservations unreadable: %s)\n", st.ReservationsError)
+	}
+	if st.CDP.Listening {
+		fmt.Fprintf(&b, "CDP endpoint: listening on %s, %d endpoint record(s), %d connection(s)\n", st.CDP.Addr, len(st.CDP.Endpoints), st.CDP.Connections)
+	} else {
+		b.WriteString("CDP endpoint: not running\n")
 	}
 	return b.String()
 }

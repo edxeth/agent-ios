@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -41,6 +42,8 @@ type Server struct {
 
 	stopping chan struct{} // closed by Stop when the daemon shuts down
 	stopOnce sync.Once
+
+	cdp *cdp.Server // the CDP endpoint (design 5.1); set by newCore
 }
 
 // NewServer returns the API server of m.
@@ -53,8 +56,17 @@ func NewServer(m *core.Manager, res *core.Reservations, version string, logf fun
 
 // Stop starts the shutdown of the API (design 2.6): every event stream
 // sends a final "closed" item that names the shutdown and ends, so clients
-// see the end of their page instead of a dropped connection.
-func (s *Server) Stop() { s.stopOnce.Do(func() { close(s.stopping) }) }
+// see the end of their page instead of a dropped connection. The CDP
+// endpoint stops too: its connections release their state while the
+// manager still runs, and its URLs are revoked.
+func (s *Server) Stop() {
+	s.stopOnce.Do(func() {
+		close(s.stopping)
+		if s.cdp != nil {
+			s.cdp.Stop()
+		}
+	})
+}
 
 // Shutdown is signalled by POST /v1/shutdown.
 func (s *Server) Shutdown() <-chan bool { return s.shutdown }
@@ -155,6 +167,9 @@ func (s *Server) helloValue() Hello {
 
 func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	out := Status{Daemon: s.helloValue(), Pages: s.m.Status()}
+	if s.cdp != nil {
+		out.CDP = s.cdp.Status()
+	}
 	if s.res != nil {
 		if rs, err := s.res.List(); err == nil {
 			out.Reservations = rs
@@ -552,6 +567,10 @@ func (e *runEnv) Manager() *core.Manager { return e.s.m }
 
 // Reservations are the daemon's device reservations (design 2.5).
 func (e *runEnv) Reservations() *core.Reservations { return e.s.res }
+
+// CDP is the daemon's CDP endpoint (design 5.1; the cdp and get cdp-url
+// commands).
+func (e *runEnv) CDP() *cdp.Server { return e.s.cdp }
 
 func (e *runEnv) Emit(line string) { _ = e.st.send(Item{Type: "line", Text: line}) }
 

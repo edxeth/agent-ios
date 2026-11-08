@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 )
 
@@ -347,6 +348,7 @@ type Status struct {
 	Pages             []core.PageStatus  `json:"pages"`
 	Reservations      []core.Reservation `json:"reservations,omitempty"`
 	ReservationsError string             `json:"reservationsError,omitempty"`
+	CDP               cdp.Status         `json:"cdp"` // the CDP listener, without its token (design 2.2, 5.1)
 }
 
 // Status returns the daemon's pages, leases and reservations.

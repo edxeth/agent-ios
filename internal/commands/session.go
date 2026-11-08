@@ -68,12 +68,15 @@ func init() {
 }
 
 // closeSession releases every lease of the caller's session with its
-// cleanup (design 2.5); other sessions are never touched.
+// cleanup (design 2.5); other sessions are never touched. The session's
+// CDP endpoint records are revoked first (design 5.2), so their URLs get
+// 404 and no CDP connection acts for the session during the release.
 func closeSession(ctx context.Context, env Env, in Input) (Result, error) {
 	m, err := managerOf(env)
 	if err != nil {
 		return Result{}, err
 	}
+	revokeCDP(env, in.Global.Session)
 	n, err := m.ReleaseSession(ctx, in.Global.Session)
 	if err != nil {
 		return Result{}, fmt.Errorf("releasing session %q: %w", in.Global.Session, err)
