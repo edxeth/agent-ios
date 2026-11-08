@@ -62,13 +62,17 @@ func ScriptProfilerEntry(key string, owner Owner, onRelease func()) Entry {
 	}
 }
 
-// scriptProfilerHolder returns the entry that holds the page's run.
-func (d *DesiredState) scriptProfilerHolder() (Entry, bool) {
+// DomainEntry returns the entry of domain whose key sorts first. A
+// recording that a page runs once, such as the ScriptProfiler run or a
+// Timeline recording (W4's "trace start", CDP's Tracing.start), is one
+// entry of its agent's domain, so this entry names the recording that
+// holds the agent.
+func (d *DesiredState) DomainEntry(domain string) (Entry, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var keys []string
 	for k, e := range d.entries {
-		if e.Domain == scriptProfilerDomain {
+		if e.Domain == domain {
 			keys = append(keys, k)
 		}
 	}
@@ -77,6 +81,11 @@ func (d *DesiredState) scriptProfilerHolder() (Entry, bool) {
 	}
 	sort.Strings(keys)
 	return d.entries[keys[0]], true
+}
+
+// scriptProfilerHolder returns the entry that holds the page's run.
+func (d *DesiredState) scriptProfilerHolder() (Entry, bool) {
+	return d.DomainEntry(scriptProfilerDomain)
 }
 
 // activeCaller is the caller that a change's caller c sends through: the

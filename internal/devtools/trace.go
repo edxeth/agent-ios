@@ -306,10 +306,16 @@ func (p *Page) StartTrace(ctx context.Context, c webkit.Caller, session string, 
 	// tracking, the page's ScriptProfiler lifecycle, core.StartScriptProfiler,
 	// which also refuses the start while another recording holds the run).
 	// The script tracking starts first, so that such a refusal starts
-	// nothing.
+	// nothing. Another recording's Timeline entry (a CDP client's
+	// Tracing.start of the same session) refuses the start before anything
+	// is sent: WebKit runs one Timeline recording per page, so this trace
+	// would record into it, and its Timeline.stop would end the other one.
 	entered, timeline, scripts := false, false, false
 	err := p.ps.State.Change(ctx, c, func(cc webkit.Caller) error {
 		entered = true
+		if h, held := p.ps.State.DomainEntry("Timeline"); held {
+			return timelineBusy(h.Owner)
+		}
 		if script {
 			var err error
 			_, scripts, err = core.StartScriptProfiler(ctx, p.ps, cc, traceScriptEntry(session, o), map[string]any{"includeSamples": false}, t.armScript)

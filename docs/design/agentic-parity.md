@@ -592,7 +592,7 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 | **Cookies and storage** | | | | |
 | `cookies`, `cookies get` | `cookies [--show-values] [--name n]` (redacted by default, W0) | `get_cookies` | `Page.getCookies`; `Storage.getCookies` on iOS 27.3+ | W0 base, W4 |
 | `cookies set`, `cookies set --curl` | `cookies set <name> <value> [--same-site] [--expires] ...`, `cookies set --curl <file>`, `--json <file>` | `set_cookie` | `Page.setCookie` with read-back (W0) | W0 base, W4 import |
-| `cookies clear` | `cookies clear [--domain d]` | `clear_cookies` | `Page.deleteCookie` per cookie; scope is the frame resource URLs (MAP 1.8) | W4 |
+| `cookies clear` | `cookies clear [--domain d]` | `clear_cookies` | `Page.setCookie` of each cookie with an expiry in the past (exact identity, W5c-1b), read back; scope is the frame resource URLs (MAP 1.8) | W4 |
 | `storage local\|session` | `storage local [key]`, `storage local set <k> <v>`, `storage local clear` (same for session) | existing storage tools + `storage` | JS `localStorage` (no storage id needed) | W4 |
 | `state save/load`, `--state` | `state save <path>`, `state load <path>` | `state_save`, `state_load` | cookies + storage of the current origin, JSON | W4 |
 | **Sessions and diagnostics** | | | | |

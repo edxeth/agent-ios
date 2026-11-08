@@ -250,15 +250,38 @@ func scriptProfilerBusy(op string, err error) error {
 		return err
 	}
 	var what string
-	switch kind, session, _ := strings.Cut(strings.TrimPrefix(string(busy.Owner), "devtools:"), ":"); kind {
-	case "profiler":
+	kind, session, _ := strings.Cut(strings.TrimPrefix(string(busy.Owner), "devtools:"), ":")
+	switch {
+	case kind == "profiler":
 		what = fmt.Sprintf("the profiler of session %q uses it; run 'profiler stop' first", session)
-	case "trace":
+	case kind == "trace":
 		what = fmt.Sprintf("the trace of session %q records JavaScript with it; run 'trace stop' first", session)
+	case cdpKind(kind):
+		what = cdpHolder(kind, session, "Profiler.stop or Tracing.end")
 	default:
 		what = fmt.Sprintf("a legacy recording of %s uses it; stop that recording first", busy.Owner)
 	}
 	return fmt.Errorf("%s: %w: %s, or start the trace with '--categories timeline'", op, err, what)
+}
+
+// cdpKind reports whether an owner kind is a CDP attachment's (internal/cdp
+// names an attachment's owner core.SessionOwner("cdp-"+id, session)).
+func cdpKind(kind string) bool { return strings.HasPrefix(kind, "cdp-") }
+
+// cdpHolder says which CDP attachment holds an agent and how its client
+// gives it up: stop, its stop command, or the detach.
+func cdpHolder(kind, session, stop string) string {
+	return fmt.Sprintf("a CDP client of session %q (attachment %s) records with it; stop that recording first (%s, or detach the attachment)", session, strings.TrimPrefix(kind, "cdp-"), stop)
+}
+
+// timelineBusy refuses a trace start while the recording of owner holds
+// the page's Timeline.
+func timelineBusy(owner core.Owner) error {
+	what := "stop that recording first"
+	if kind, session, _ := strings.Cut(string(owner), ":"); cdpKind(kind) {
+		what = cdpHolder(kind, session, "Tracing.end")
+	}
+	return fmt.Errorf("trace start: the page's Timeline runs one recording at a time, and %s holds it: %s", owner, what)
 }
 
 // keepRecording puts a recording back (put, under p.mu) after a stop that

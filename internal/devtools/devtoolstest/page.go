@@ -24,9 +24,13 @@ import (
 // the storage function of internal/devtools (Runtime.evaluate of
 // "(function iwdpStorage(a) {...})(args)"); "location.hostname" evaluates
 // to the origin's host. The jar follows WebKit: setCookie replaces the
-// cookie of the same name, domain and path; deleteCookie(name, url)
-// removes the cookies of that name that the jar would send to url (RFC
-// 6265 domain and path match; a secure cookie only to https).
+// cookie of the same name, domain and path, and a cookie that expired
+// (not a session cookie, expires not after jarNow) only removes that cookie
+// (RFC 6265 section 5.3 steps 11 and 12 and its eviction of expired
+// cookies; libsoup soup_cookie_jar_add_cookie_full, seen on WebKitGTK);
+// deleteCookie(name, url) removes the cookies of that name that the jar
+// would send to url (RFC 6265 domain and path match; a secure cookie only
+// to https), as iOS does (NetworkStorageSessionCocoa deleteCookie).
 //
 // Lock Mu to read or change the fields while the page is in use.
 type Page struct {
@@ -62,6 +66,11 @@ type Page struct {
 	QuotaBytes int
 	Peak       map[string]int
 	applies    int
+	// BeforeCookieWrite, when set, runs with Mu held before a
+	// Page.setCookie or Page.deleteCookie changes the jar: a page script or
+	// a server response that changes cookies while a command runs. It may
+	// change Cookies and BeforeCookieWrite.
+	BeforeCookieWrite func(p *Page)
 
 	Server *fakewebkit.Server
 	Conn   *webkit.Session // a session to the page
@@ -156,6 +165,13 @@ func New(t testing.TB, origin string) *Page {
 	return p
 }
 
+// jarNow is the time of the jar's clock, which decides whether a cookie
+// that Page.setCookie gets has expired. It is fixed, so that the expiries
+// that the tests set (2023 and later) stay in the future on any day the
+// tests run; a delete by expiry uses an earlier time (1970 in
+// devtools.DeleteCookies, Puppeteer's expires 1).
+var jarNow = time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+
 func key(c webkit.Cookie) [3]string { return [3]string{c.Name, strings.ToLower(c.Domain), c.Path} }
 
 func (p *Page) getCookies(fakewebkit.Call) (any, *fakewebkit.Error) {
@@ -171,13 +187,18 @@ func (p *Page) setCookie(c fakewebkit.Call) (any, *fakewebkit.Error) {
 	}
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
+	if p.BeforeCookieWrite != nil {
+		p.BeforeCookieWrite(p)
+	}
 	for i, old := range p.Cookies {
 		if key(old) == key(v.Cookie) {
 			p.Cookies = append(p.Cookies[:i], p.Cookies[i+1:]...)
 			break
 		}
 	}
-	p.Cookies = append(p.Cookies, v.Cookie)
+	if v.Cookie.Session || v.Cookie.Expires > float64(jarNow) {
+		p.Cookies = append(p.Cookies, v.Cookie)
+	}
 	return nil, nil
 }
 
@@ -190,6 +211,9 @@ func (p *Page) deleteCookie(c fakewebkit.Call) (any, *fakewebkit.Error) {
 	}
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
+	if p.BeforeCookieWrite != nil {
+		p.BeforeCookieWrite(p)
+	}
 	kept := p.Cookies[:0]
 	for _, ck := range p.Cookies {
 		sent := domainMatch(u.Hostname(), ck.Domain) && pathMatch(u.Path, ck.Path) && (!ck.Secure || u.Scheme == "https")

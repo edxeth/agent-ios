@@ -378,8 +378,7 @@ func ansiC(r []rune, i int, b *strings.Builder) (int, error) {
 }
 
 // CookieURL is a URL to which the browser sends c: its domain without the
-// leading dot, its path, and https for a secure cookie. Page.deleteCookie
-// deletes the cookies of a name that the jar would send to a URL.
+// leading dot, its path, and https for a secure cookie.
 func CookieURL(c webkit.Cookie) string {
 	scheme := "http"
 	if c.Secure {
@@ -411,14 +410,47 @@ func keyOf(c webkit.Cookie) cookieKey {
 	return cookieKey{c.Name, strings.ToLower(c.Domain), c.Path}
 }
 
-// DeleteCookies deletes cookies with Page.deleteCookie and reads the jar
-// back. It fails, naming the cookies, when any of them is still there.
+// expiredCookieMs is the expiry that DeleteCookies sets: one second after
+// the Unix epoch, in milliseconds. Any past time deletes; 0 would make a
+// session cookie (tools.SetCookie).
+const expiredCookieMs = 1000
+
+// DeleteCookies deletes exactly the cookies, each by its identity (name,
+// domain with its leading dot, path), and reads the jar back. It fails,
+// naming the cookies without their values, when any of them is still
+// there.
+//
+// Each cookie gets one Page.setCookie of itself with an expiry in the
+// past: a new cookie replaces the cookie of its name, domain and path, and
+// an expired one is then evicted (RFC 6265 section 5.3), so no other
+// cookie changes. WebKitGTK does so (libsoup soup_cookie_jar_add_cookie_full
+// deletes the cookie of that domain, name and path; e2e/webkitgtk
+// TestCDPCookiesStorageTracingProfilerOnWebKitGTK). iOS passes the cookie to
+// NSHTTPCookieStorage setCookie (WebKit NetworkStorageSessionCocoa), which
+// replaces the cookie of the same name, domain and path; that the expired
+// cookie is not kept there is closed source and a device check
+// (docs/notes/w5.md "W5c-1b"). Page.deleteCookie(name, url) is not used:
+// on iOS it deletes every cookie of the name that the url gets (also a
+// parent domain's or a shorter path's namesake), on WebKitGTK the first of
+// them in libsoup's order, which can be a namesake.
+//
+// The expired cookie has sameSite Lax: sameSite is not part of the
+// identity, and libsoup refuses a SameSite=None cookie without Secure
+// before it looks for the cookie to replace.
 func DeleteCookies(ctx context.Context, c webkit.Caller, cookies []webkit.Cookie) error {
 	for _, ck := range cookies {
-		if err := tools.DeleteCookie(ctx, c, ck.Name, CookieURL(ck)); err != nil {
-			return fmt.Errorf("Page.deleteCookie %s (%s): %w", ck.Name, CookieURL(ck), err)
+		expired := ck
+		expired.Session, expired.Expires, expired.SameSite = false, expiredCookieMs, tools.DefaultSameSite
+		if err := tools.SetCookie(ctx, c, expired); err != nil {
+			return fmt.Errorf("deleting the cookie %s with Page.setCookie of an expired cookie: %w", cookieLabel(ck), err)
 		}
 	}
+	return CheckCookiesGone(ctx, c, cookies)
+}
+
+// CheckCookiesGone reads the jar and fails, naming the cookies without
+// their values, when a cookie of the identity of one of cookies is there.
+func CheckCookiesGone(ctx context.Context, c webkit.Caller, cookies []webkit.Cookie) error {
 	after, err := tools.GetCookies(ctx, c)
 	if err != nil {
 		return fmt.Errorf("reading the cookies back: %w", err)
@@ -430,13 +462,18 @@ func DeleteCookies(ctx context.Context, c webkit.Caller, cookies []webkit.Cookie
 	var left []string
 	for _, ck := range after {
 		if gone[keyOf(ck)] {
-			left = append(left, fmt.Sprintf("%s (domain %s, path %s)", ck.Name, ck.Domain, ck.Path))
+			left = append(left, cookieLabel(ck))
 		}
 	}
 	if len(left) > 0 {
-		return fmt.Errorf("WebKit kept %d cookie(s) after Page.deleteCookie: %s", len(left), strings.Join(left, ", "))
+		return fmt.Errorf("WebKit kept %d cookie(s) after Page.setCookie with an expiry in the past: %s; the page may have set them again, or this WebKit does not delete a cookie that way: list the cookies and run the command again", len(left), strings.Join(left, ", "))
 	}
 	return nil
+}
+
+// cookieLabel names a cookie by its identity, never its value.
+func cookieLabel(c webkit.Cookie) string {
+	return fmt.Sprintf("%s (domain %s, path %s)", c.Name, c.Domain, c.Path)
 }
 
 // ClearCookies deletes the page's cookies (Page.getCookies: the cookies of
