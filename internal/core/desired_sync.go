@@ -46,7 +46,9 @@ import (
 //     pending for the target (cleanupFailedLocked): its domain becomes
 //     unknown (d.unknown) once the target is the active one. A cleanup send
 //     that is still in flight or queued when its target commits keeps its
-//     domain unknown until it succeeds (markUnsentCleanupLocked).
+//     domain unknown until it succeeds (markUnsentCleanupLocked), and so
+//     does one queued for a target that committed already
+//     (markActiveCleanupLocked).
 //   - Changes run one at a time (d.chg) but wait for their items after
 //     releasing d.chg; setups never wait for a change, because a change can
 //     wait for a setup (the gate of webkit.Session).
@@ -78,7 +80,8 @@ type queued struct {
 	// cleanup is the domain of a cleanup send (asCleanup; "" for other
 	// sends): its failure keeps that cleanup pending (cleanupFailedLocked).
 	// mark is the unknown mark of cleanup that the item's success removes
-	// (0 for none; enqueueLocked, swapped; markUnsentCleanupLocked).
+	// (0 for none; markActiveCleanupLocked, markUnsentCleanupLocked,
+	// endMarkLocked).
 	cleanup   string
 	mark      uint64
 	completed bool
@@ -127,7 +130,9 @@ func (d *DesiredState) settleLocked(q *queued) {
 // then, and a failure of any of them marks the domain again
 // (cleanupFailedLocked). A domain that is unknown already keeps its mark:
 // that obligation may be older than these sends, so their success does
-// not end it. The caller holds d.mu.
+// not end it. When the reset that serves that mark ends it first, the mark
+// passes to the last of these sends (endMarkLocked). The caller holds
+// d.mu.
 func (d *DesiredState) markUnsentCleanupLocked(ts *targetSync) {
 	last := map[string]*queued{}
 	for _, q := range append([]*queued{ts.sending}, ts.queue...) {
@@ -140,6 +145,59 @@ func (d *DesiredState) markUnsentCleanupLocked(ts *targetSync) {
 			d.markUnknownLocked(dom)
 			last[dom].mark = d.markSeq
 		}
+	}
+}
+
+// markActiveCleanupLocked applies the rule of markUnsentCleanupLocked to
+// q, a cleanup send queued for ts, the record of the target that is active
+// already. A change forwards a call after its own target answered, outside
+// d.mu, so that target can commit before the enqueue: after a successful
+// reply, after a refusal because the agent is not enabled, or when the
+// commit cut the call off (ErrTargetSwapped; changeSender.Send). The
+// commit then saw nothing on its way, and q is the only record of the
+// cleanup the target is owed. q is the last cleanup send of its domain in
+// ts's queue, so it carries a new mark, which its success removes (pump),
+// unless the domain is unknown with a mark that none of ts's unsent sends
+// carries: that obligation may be older than q, so q's success does not
+// end it. The caller holds d.mu and appends q to ts.queue.
+func (d *DesiredState) markActiveCleanupLocked(ts *targetSync, q *queued) {
+	cur := d.unknown[q.cleanup]
+	if cur != 0 && !slices.ContainsFunc(append([]*queued{ts.sending}, ts.queue...), func(p *queued) bool {
+		return p != nil && p.cleanup == q.cleanup && p.mark == cur
+	}) {
+		return
+	}
+	d.markUnknownLocked(q.cleanup)
+	q.mark = d.markSeq
+}
+
+// endMarkLocked removes dom's unknown mark when it is still mark, the mark
+// that a reset read before it took the state it sent (resetAgent). A
+// cleanup send of dom that is still on its way to the active target, in
+// flight or queued, keeps dom pending: that send's target may have
+// committed after the reset's own target answered, and it may hold the
+// state the send removes (markUnsentCleanupLocked and
+// markActiveCleanupLocked leave such a send without a mark while the
+// reset's mark exists). The last of these sends carries a new mark, which
+// its success removes (pump). The caller holds d.mu.
+func (d *DesiredState) endMarkLocked(dom string, mark uint64) {
+	if mark == 0 || d.unknown[dom] != mark {
+		return
+	}
+	delete(d.unknown, dom)
+	ts := d.syncs[d.active]
+	if ts == nil {
+		return
+	}
+	var last *queued
+	for _, q := range append([]*queued{ts.sending}, ts.queue...) {
+		if q != nil && q.cleanup == dom {
+			last = q
+		}
+	}
+	if last != nil {
+		d.markUnknownLocked(dom)
+		last.mark = d.markSeq
 	}
 }
 
@@ -170,16 +228,17 @@ type pendingItem struct {
 // the change's. cleanup is the domain of a cleanup send ("" for other
 // sends).
 //
-// swapped reports a cleanup send that a commit cut off on the change's
-// target (ErrTargetSwapped): the item for the target that is active now is
-// that target's cleanup, so its domain becomes unknown with a new mark
-// that the item carries until it succeeds (pump). A reset that sent the
-// call (resetAgent) therefore keeps the mark, and the release reports the
-// cleanup pending, while the item is unanswered; a failure marks the
-// domain again (cleanupFailedLocked). No item for the active target means
-// its setup snapshot is newer than the change, or its setup failed and
-// ReapplySetup sends the whole state. The caller holds d.mu.
-func (c *changeSender) enqueueLocked(v uint64, cleanup string, swapped bool, f func(context.Context, Sender) error) {
+// An item for the target that is active now, a target that committed
+// after the change began, is that target's cleanup, so it keeps the
+// cleanup pending until it succeeds (markActiveCleanupLocked), whether the
+// change's own target answered the call or the commit cut it off. The
+// release therefore reports the cleanup pending while the item is
+// unanswered, and a reset that sent the call (resetAgent) passes its mark
+// on to it (endMarkLocked); a failure marks the domain again
+// (cleanupFailedLocked). No item for the active target means its setup
+// snapshot is newer than the change, or its setup failed and ReapplySetup
+// sends the whole state. The caller holds d.mu.
+func (c *changeSender) enqueueLocked(v uint64, cleanup string, f func(context.Context, Sender) error) {
 	targets := make([]string, 0, len(c.d.syncs))
 	for t := range c.d.syncs {
 		targets = append(targets, t)
@@ -189,9 +248,8 @@ func (c *changeSender) enqueueLocked(v uint64, cleanup string, swapped bool, f f
 		ts := c.d.syncs[t]
 		if t != c.target && !ts.failed && ts.snapV < v {
 			q := &queued{send: f, cleanup: cleanup, done: make(chan struct{})}
-			if swapped && cleanup != "" && t == c.d.active {
-				c.d.markUnknownLocked(cleanup)
-				q.mark = c.d.markSeq
+			if cleanup != "" && t == c.d.active {
+				c.d.markActiveCleanupLocked(ts, q)
 			}
 			ts.queue = append(ts.queue, q)
 			c.pending = append(c.pending, pendingItem{t, ts, q})
@@ -417,7 +475,9 @@ var needsReply = map[string]bool{"Debugger.setBreakpointByUrl": true, "Debugger.
 //
 // A cleanup send (asCleanup) that a commit cut off this way did not clean
 // the target that is active now, which may hold the released state; its
-// forwarded send to that target is the cleanup (enqueueLocked, swapped).
+// forwarded send to that target is the cleanup (enqueueLocked). So is the
+// forwarded send of a cleanup send that the old target answered when the
+// commit came before the enqueue below.
 //
 // A cleanup send or a disable that the change's target refuses because
 // its agent is not enabled (webkit.NotEnabled) is forwarded too, and the
@@ -437,7 +497,6 @@ func (c *changeSender) Send(ctx context.Context, method string, params any) (jso
 		sctx = webkit.WithTarget(ctx, c.target)
 	}
 	res, err := c.Caller.Send(sctx, method, params)
-	swapped := false
 	switch {
 	case err == nil:
 	case errors.Is(err, webkit.ErrTargetSwapped):
@@ -448,7 +507,6 @@ func (c *changeSender) Send(ctx context.Context, method string, params any) (jso
 			return c.Send(ctx, method, params)
 		}
 		res, err = json.RawMessage("{}"), nil
-		swapped = true
 	case notEnabled(err) && removes:
 	default:
 		return res, err
@@ -465,7 +523,7 @@ func (c *changeSender) Send(ctx context.Context, method string, params any) (jso
 			// whole script, so a repeat is harmless.
 			d.ver++
 		}
-		c.enqueueLocked(d.ver, cleanup, swapped, call)
+		c.enqueueLocked(d.ver, cleanup, call)
 		d.mu.Unlock()
 	}
 	return res, err
@@ -502,7 +560,7 @@ func (c *changeSender) put(e Entry, f func(context.Context, Sender) error) {
 	d.ver++
 	d.entries[e.Key] = e
 	if f != nil {
-		c.enqueueLocked(d.ver, "", false, f)
+		c.enqueueLocked(d.ver, "", f)
 	}
 }
 

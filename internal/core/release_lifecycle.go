@@ -65,8 +65,10 @@ import (
 //     that target and marks its domain when the target commits, or at once
 //     when it committed already (cleanupFailedLocked); a target destroyed
 //     before commit takes the state with it. A cleanup send that a commit
-//     cut off (ErrTargetSwapped) marks its domain until its forwarded send
-//     to the target that is active now succeeds (enqueueLocked).
+//     cut off (ErrTargetSwapped), or that its target answered before the
+//     commit but forwarded after it, marks its domain until its forwarded
+//     send to the target that is active now succeeds (enqueueLocked,
+//     markActiveCleanupLocked, core-events round 9a).
 //   - A forwarded cleanup send that is still on its way to a provisional
 //     target (in flight or queued) when that target commits marks its
 //     domain until it succeeds (markUnsentCleanupLocked, core-events round
@@ -282,7 +284,9 @@ func (d *DesiredState) applyResetting(ctx context.Context, s Sender, target stri
 //
 // It removes only the mark it read before it took the state it sends: a
 // release that marked dom again meanwhile removed more state, which this
-// reset may have sent, so that mark stays for the next reset. Its sends
+// reset may have sent, so that mark stays for the next reset. A forwarded
+// send of the reset that is still on its way to a target that committed
+// meanwhile keeps the cleanup pending instead (endMarkLocked). Its sends
 // are cleanup sends (asCleanup): a forwarded one that fails keeps the
 // cleanup pending for its target.
 func resetAgent(ctx context.Context, ps *PageSession, c Sender, dom string) error {
@@ -307,9 +311,7 @@ func resetAgent(ctx context.Context, ps *PageSession, c Sender, dom string) erro
 		return fmt.Errorf("resetting %s after a release without cleanup: %w", dom, err)
 	}
 	d.mu.Lock()
-	if d.unknown[dom] == mark {
-		delete(d.unknown, dom)
-	}
+	d.endMarkLocked(dom, mark)
 	d.mu.Unlock()
 	return nil
 }
