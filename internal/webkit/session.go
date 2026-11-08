@@ -665,7 +665,9 @@ func (s *Session) InterruptWrites() {
 }
 
 // Close resumes every target still paused on start, then closes the
-// connection. Pending calls fail with ErrSessionClosed.
+// connection. Pending calls fail with ErrSessionClosed. A session that a
+// failed write ended (retireOn) writes nothing more: its resumes are
+// refused before they write, so Close does not wait on the socket.
 func (s *Session) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), closeResumeBudget)
 	for _, id := range s.PausedTargets() {
@@ -917,11 +919,27 @@ func (s *Session) write(ctx, callCtx context.Context, target, method string, raw
 	s.mu.Unlock()
 
 	if err := s.conn.Write(callCtx, wire); err != nil {
+		s.retireOn(err)
 		err = writeErr(method, deadlineCaused(ctx, err))
 		s.finish(in, err)
 		return nil, err
 	}
 	return in, nil
+}
+
+// retireOn ends the session when err, the error of a write, says that the
+// connection cannot be written again (a failed WebSocket write,
+// cutConn.failed): Done closes and Err wraps ErrWriteFailed and the
+// failure's category (ErrWriteTimeout or ErrWriteBroken), which decides
+// whether the daemon connects again (core pageConn.writeFailed) or loses
+// the page. The failed call keeps its own
+// error (a passed deadline stays the deadline, decision D9); the calls
+// written before it fail as on a lost connection, and every later call is
+// refused before it writes anything (ErrNotSent). shutdown writes nothing.
+func (s *Session) retireOn(err error) {
+	if cause := retiredBy(err); cause != nil {
+		s.shutdown(cause)
+	}
 }
 
 // finish removes a call's registration and records its outcome.
@@ -958,17 +976,37 @@ func (s *Session) await(ctx, callCtx context.Context, start time.Time, in *infli
 			return r.result, nil
 		case <-nudge:
 			nudge = nil
-			s.sendNudge(callCtx, in.target)
-		case <-callCtx.Done():
-			elapsed := time.Since(start).Round(time.Millisecond)
-			if ctx.Err() == nil {
-				return nil, fmt.Errorf("%s: no reply after %s: %w", in.method, elapsed, ErrCallTimeout)
+			if err := s.sendNudge(callCtx, in.target); err != nil && passed(callCtx) {
+				// callCtx's deadline cut off the nudge's write, which can
+				// have retired the session: the call ended at its deadline,
+				// not with the session (decision D9).
+				<-callCtx.Done()
+				return nil, expired(ctx, start, in.method)
 			}
-			return nil, fmt.Errorf("%s: no response after %s: %w", in.method, elapsed, ctxErr(ctx))
+		case <-callCtx.Done():
+			return nil, expired(ctx, start, in.method)
 		case <-s.done:
 			return nil, fmt.Errorf("%s: %w", in.method, s.Err())
 		}
 	}
+}
+
+// expired is the error of a call to method, started at start, whose call
+// context ended: ErrCallTimeout when only the call budget passed, else
+// ctx's end.
+func expired(ctx context.Context, start time.Time, method string) error {
+	elapsed := time.Since(start).Round(time.Millisecond)
+	if ctx.Err() == nil {
+		return fmt.Errorf("%s: no reply after %s: %w", method, elapsed, ErrCallTimeout)
+	}
+	return fmt.Errorf("%s: no response after %s: %w", method, elapsed, ctxErr(ctx))
+}
+
+// passed reports whether ctx's deadline has passed; ctx's timer can end it
+// a moment later.
+func passed(ctx context.Context) bool {
+	dl, ok := ctx.Deadline()
+	return ok && !time.Now().Before(dl)
 }
 
 // pipeline writes calls to target in order without waiting between them,
@@ -1138,12 +1176,15 @@ func setupState(t *targetState) (running bool, err error) {
 }
 
 // sendNudge writes Runtime.evaluate "0" to target without waiting; its reply
-// has no pending entry and is dropped.
-func (s *Session) sendNudge(ctx context.Context, target string) {
+// has no pending entry and is dropped. It returns the write's error; a
+// failed write retires the session (retireOn).
+func (s *Session) sendNudge(ctx context.Context, target string) error {
 	inner, _ := json.Marshal(Message{ID: s.nextID.Add(1), Method: "Runtime.evaluate", Params: json.RawMessage(`{"expression":"0"}`)})
 	outerParams, _ := json.Marshal(map[string]string{"targetId": target, "message": string(inner)})
 	wire, _ := json.Marshal(Message{ID: s.nextID.Add(1), Method: "Target.sendMessageToTarget", Params: outerParams})
-	_ = s.conn.Write(ctx, wire)
+	err := s.conn.Write(ctx, wire)
+	s.retireOn(err)
+	return err
 }
 
 // sendOuter sends an unwrapped command on the outer connection (Target domain).
@@ -1177,6 +1218,7 @@ func (s *Session) sendOuter(ctx context.Context, method string, params any) (jso
 		s.mu.Unlock()
 	}()
 	if err := s.conn.Write(callCtx, wire); err != nil {
+		s.retireOn(err)
 		return nil, writeErr(method, deadlineCaused(ctx, err))
 	}
 	select {

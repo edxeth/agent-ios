@@ -38,6 +38,7 @@ type Client struct {
 
 	done      chan struct{}
 	closeOnce sync.Once
+	closeErr  error // why the connection ended (Err); set before done closes
 
 	// Target-based routing (used by ios-webkit-debug-proxy)
 	targetID    string
@@ -145,15 +146,41 @@ func (c *Client) InterruptWrites() { interruptInProgress(c.writeSem, c.wire) }
 
 // Close closes the WebSocket connection.
 // Pending Send calls detect closure via the done channel and return an error.
-func (c *Client) Close() error {
+func (c *Client) Close() error { return c.end(ErrSessionClosed) }
+
+// end closes the connection once, with cause as the reason that Err
+// returns. It writes nothing to the socket.
+func (c *Client) end(cause error) error {
 	var err error
 	c.closeOnce.Do(func() {
+		c.closeErr = cause
 		close(c.done)
 		if c.conn != nil {
 			err = c.conn.Close()
 		}
 	})
 	return err
+}
+
+// Err returns why the connection ended, or nil while it is open. After a
+// failed socket write its chain holds ErrWriteFailed (retireOn); else it is
+// ErrSessionClosed.
+func (c *Client) Err() error {
+	select {
+	case <-c.done:
+		return c.closeErr
+	default:
+		return nil
+	}
+}
+
+// retireOn closes the connection when err, the error of a write, says that
+// it cannot be written again (a failed WebSocket write, cutConn.failed), so
+// Done closes and Err holds the failure's category (retiredBy).
+func (c *Client) retireOn(err error) {
+	if cause := retiredBy(err); cause != nil {
+		_ = c.end(cause)
+	}
 }
 
 // IsTargetRouted returns true if this connection uses iwdp Target-based routing.
@@ -170,6 +197,9 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 	// Early check: if already closed, fail fast.
 	select {
 	case <-c.done:
+		if err := c.Err(); errors.Is(err, ErrWriteFailed) {
+			return nil, notSent(fmt.Errorf("%s: not sent: %w", method, err))
+		}
 		return nil, notSent(fmt.Errorf("connection closed"))
 	default:
 	}
@@ -275,8 +305,12 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		return nil, notSent(fmt.Errorf("%s: writing message: %w", method, deadlineCaused(ctx, err)))
 	}
 	err := c.conn.WriteMessage(websocket.TextMessage, wireData)
+	if err != nil {
+		err = c.wire.failed(err) // before the next writer takes the slot
+	}
 	<-c.writeSem
 	if err != nil {
+		c.retireOn(err)
 		return nil, fmt.Errorf("%s: writing message: %w", method, deadlineCaused(ctx, err))
 	}
 
@@ -355,6 +389,7 @@ func (c *Client) readLoop() {
 		if err != nil {
 			// Connection closed or error — stop reading
 			c.closeOnce.Do(func() {
+				c.closeErr = ErrSessionClosed
 				close(c.done)
 			})
 			return

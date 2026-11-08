@@ -79,7 +79,10 @@ func (w *wsConn) Write(ctx context.Context, msg []byte) error {
 	if err := w.conn.SetWriteDeadline(deadline); err != nil {
 		return fmt.Errorf("%w: setting the write deadline: %w", transport.ErrNotWritten, err)
 	}
-	return w.conn.WriteMessage(websocket.TextMessage, msg)
+	if err := w.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+		return w.wire.failed(err)
+	}
+	return nil
 }
 
 // Read returns the next message. Ending ctx ends the connection, because a
@@ -116,8 +119,67 @@ func (w *wsConn) Close() error {
 	return w.closeErr
 }
 
-// errWritesCut fails the writes of a connection after InterruptWrites.
-var errWritesCut = errors.New("the connection's writes were interrupted because it stopped answering; it is being replaced")
+// errWritesCut fails the writes of a connection after InterruptWrites or
+// after a failed write (cutConn.failed).
+var errWritesCut = errors.New("the connection takes no more writes: an earlier write was interrupted because the page stopped answering, or it failed")
+
+// ErrWriteFailed is in the chain of Session.Err and Client.Err when the
+// connection ended because a socket write failed. gorilla/websocket keeps
+// the first write error of a connection and returns it for every later
+// write, so such a connection is closed. The chain also holds the
+// category of the failure: ErrWriteTimeout or ErrWriteBroken.
+var ErrWriteFailed = errors.New("a write to the page failed, and a WebSocket connection takes no write after a failed one")
+
+// ErrWriteTimeout is the category of a failed write that its deadline or
+// call budget ended (a net.Error with Timeout): the far side was still
+// connected but did not take the data in time. It is the only failed write
+// after which the daemon reconnects by itself (core pageConn.writeFailed),
+// as after a failed liveness probe.
+var ErrWriteTimeout = errors.New("the write timed out: the page did not take the data before the write's deadline")
+
+// ErrWriteBroken is the category of every other failed write: the peer or
+// the network ended the connection (EPIPE, ECONNRESET, a closed connection)
+// or the failure is not known to be local. The daemon treats it as an
+// unexpected disconnect: the page is lost (design 2.5 rule 3).
+var ErrWriteBroken = errors.New("the write failed because the peer or the network ended the connection")
+
+// retiringError is a write error after which the connection must end
+// (cutConn.failed); it keeps the text and chain of err. local is the
+// category: true for a timeout (localWriteFailure).
+type retiringError struct {
+	err   error
+	local bool
+}
+
+func (e retiringError) Error() string { return e.err.Error() }
+func (e retiringError) Unwrap() error { return e.err }
+
+// localWriteFailure reports whether err, a failed socket write, was ended
+// by its own deadline or call budget: a net.Error with Timeout (the socket's
+// os.ErrDeadlineExceeded, or context.DeadlineExceeded). Anything else is a
+// peer or network failure; when in doubt the page is lost.
+func localWriteFailure(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// retiredBy returns the cause with which the owner of a connection ends it
+// after err, or nil when err does not retire the connection (retiringError).
+// The cause holds ErrSessionClosed, ErrWriteFailed and the category
+// (ErrWriteTimeout or ErrWriteBroken), and only the text of err: its
+// deadline or socket timeout belongs to the call whose write failed, not to
+// the calls that the end of the connection fails.
+func retiredBy(err error) error {
+	var re retiringError
+	if !errors.As(err, &re) {
+		return nil
+	}
+	category := ErrWriteBroken
+	if re.local {
+		category = ErrWriteTimeout
+	}
+	return fmt.Errorf("%w: %w: %w (%v)", ErrSessionClosed, ErrWriteFailed, category, err)
+}
 
 // cutConn is the network connection under a WebSocket connection, with a
 // way to interrupt its writes: once interrupt ran, the write in progress
@@ -126,8 +188,8 @@ var errWritesCut = errors.New("the connection's writes were interrupted because 
 // write deadline set from outside alone would not do: gorilla/websocket
 // sets the deadline it was given again before each frame, so the next frame
 // of a large message would wait again. A gorilla connection whose write
-// failed fails every later write too, so the connection cannot be written
-// again either way; the daemon replaces it.
+// failed fails every later write too, so a failed write sets cut as well
+// (failed), and its owner ends the connection; the daemon replaces it.
 type cutConn struct {
 	net.Conn
 	cut atomic.Bool
@@ -152,6 +214,22 @@ func (c *cutConn) SetWriteDeadline(t time.Time) error {
 		t = pastDeadline
 	}
 	return c.Conn.SetWriteDeadline(t)
+}
+
+// failed handles err, the error of a WebSocket write on c. gorilla/websocket
+// fails every later write of the connection with the first write error, so
+// failed sets cut: every later write is refused before it writes anything.
+// When the cut was not set before, this failure retires the connection, and
+// err is returned as a retiringError with its category: its owner ends the
+// connection (Session.retireOn, Client.retireOn). A write that interrupt ended is
+// returned unchanged: the liveness probe declared the stall, the daemon
+// replaces the connection, and the connection still reads (core-events
+// r6).
+func (c *cutConn) failed(err error) error {
+	if c.cut.CompareAndSwap(false, true) {
+		return retiringError{err: err, local: localWriteFailure(err)}
+	}
+	return err
 }
 
 func (c *cutConn) interrupt() {

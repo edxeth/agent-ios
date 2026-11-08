@@ -69,16 +69,23 @@ func newPageConn(c webkit.Caller, onStall func(), background func(func(ctx conte
 	return p
 }
 
-// watch marks the page lost when c ends without a request from the daemon.
+// watch marks the page lost when c ends without a request from the daemon,
+// unless a socket write that timed out ended it (writeFailed).
 func (p *pageConn) watch(c webkit.Caller) {
 	go func() {
 		<-c.Done()
 		p.mu.Lock()
-		defer p.mu.Unlock()
 		if p.expected[c] {
 			delete(p.expected, c)
+			p.mu.Unlock()
 			return
 		}
+		p.mu.Unlock()
+		if p.writeFailed(c) {
+			return
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		if p.cur != c || p.state == ConnClosed || p.state == ConnLost {
 			return
 		}
@@ -86,6 +93,54 @@ func (p *pageConn) watch(c webkit.Caller) {
 		p.logf("page connection closed unexpectedly; the lease is lost")
 		close(p.done)
 	}()
+}
+
+// writeFailed reports whether c ended because one of its socket writes
+// timed out (webkit.ErrWriteTimeout in the chain of c's Err): the write's
+// deadline or call budget ended it, so the far side was still connected
+// but did not take the data in time, the case of a failed liveness probe
+// (design 2.6). A WebSocket connection cannot be written after a failed
+// write, so c closed itself. When c is the attached connection and the
+// page is still attached, the page becomes stalled with c's error, and the
+// background recovery connects again while the lease is valid (recover);
+// without a lease the next command reopens the page (ensureAttached). The
+// stall context does not end: the calls on c already ended with c, and a
+// call whose deadline cut off the write keeps its timeout (exit 124,
+// decision D9). Any other end is not handled here: a write that the peer or
+// the network broke (webkit.ErrWriteBroken: another inspector may have
+// taken the page) is an unexpected disconnect, and watch marks the page
+// lost; only --takeover connects it again (design 2.5 rule 3). The first
+// published cause of c's end decides (Session and Client keep it), and a
+// page already lost or stalled is never changed here. send calls it as
+// soon as a call fails, so the next command finds the page stalled; watch
+// calls it for the writes that send does not make.
+func (p *pageConn) writeFailed(c webkit.Caller) bool {
+	select {
+	case <-c.Done():
+	default:
+		return false
+	}
+	ce, ok := c.(interface{ Err() error })
+	if !ok {
+		return false
+	}
+	err := ce.Err()
+	if !errors.Is(err, webkit.ErrWriteTimeout) {
+		return false
+	}
+	p.mu.Lock()
+	stall := p.cur == c && p.state == ConnOK && !p.expected[c]
+	if stall {
+		p.state, p.stallErr = ConnStalled, err
+	}
+	p.mu.Unlock()
+	if stall {
+		p.logf("page connection closed after a write timed out: %v; reconnecting", err)
+		if p.onStall != nil {
+			p.onStall() // starts the recovery in the background
+		}
+	}
+	return true
 }
 
 // State returns the connection state.
@@ -153,7 +208,11 @@ func (p *pageConn) swap(c webkit.Caller) {
 func (p *pageConn) retire() {
 	p.mu.Lock()
 	c := p.cur
-	p.expected[c] = true
+	select {
+	case <-c.Done(): // gone already (writeFailed); watch has seen it end
+	default:
+		p.expected[c] = true
+	}
 	p.mu.Unlock()
 	closeCaller(c)
 }
@@ -359,6 +418,7 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 	if err == nil {
 		return res, nil
 	}
+	p.writeFailed(c)
 	if cut := b.cut(method, err); cut != err {
 		return nil, cut
 	}
@@ -466,10 +526,14 @@ func (p *pageConn) probeNow(ctx context.Context) error {
 	return p.probe(ctx, c)
 }
 
-// probe runs the liveness probe on c, one at a time. A failure marks the
+// probe runs the liveness probe on c, one at a time. A failure on a
+// connection that is still open, or that a write timeout ended, marks the
 // page stalled and starts background recovery once. A probe that its
 // owner canceled marks nothing and returns an error wrapping
-// errProbeCanceled.
+// errProbeCanceled. A failure on a connection that ended for any other
+// cause (endedByPeer: another inspector may have taken the page) marks
+// nothing either: watch marks the page lost, and only --takeover connects
+// it again (design 2.5 rule 3); the error wraps ErrLost.
 func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 	p.mu.Lock()
 	if p.probing || p.cur != c || p.state != ConnOK {
@@ -482,9 +546,12 @@ func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 	if err != nil && canceledByOwner(ctx, err) {
 		err = fmt.Errorf("%w: %w", errProbeCanceled, err)
 	}
+	if err != nil && !errors.Is(err, errProbeCanceled) && endedByPeer(c) {
+		err = fmt.Errorf("%w: %w", ErrLost, err)
+	}
 	p.mu.Lock()
 	p.probing = false
-	stall := err != nil && !errors.Is(err, errProbeCanceled) && p.cur == c && p.state == ConnOK
+	stall := err != nil && !errors.Is(err, errProbeCanceled) && !errors.Is(err, ErrLost) && p.cur == c && p.state == ConnOK
 	if stall {
 		p.state = ConnStalled
 		p.stallErr = fmt.Errorf("%w (%v)", webkit.ErrSessionStalled, err)
@@ -506,6 +573,20 @@ func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 		}
 	}
 	return err
+}
+
+// endedByPeer reports whether c has ended for a cause other than a write
+// timeout (webkit.ErrWriteTimeout): a peer or network failure, a read
+// error, or a cause that c does not report (no Err). When in doubt, the
+// page is lost, never stalled (core-events r9c, r9d).
+func endedByPeer(c webkit.Caller) bool {
+	select {
+	case <-c.Done():
+	default:
+		return false
+	}
+	ce, ok := c.(interface{ Err() error })
+	return !ok || !errors.Is(ce.Err(), webkit.ErrWriteTimeout)
 }
 
 // writeInterrupter is a connection whose socket writes in progress can be
