@@ -528,6 +528,12 @@ func (c *conn) attach(ctx context.Context, parent *session, kind string, t targe
 		case <-s.gone:
 		}
 	}()
+	if s.page != nil {
+		if err := s.installPageShims(ctx); err != nil {
+			c.detach(id, false)
+			return nil, fmt.Errorf("installing the page compatibility shims (docs/cdp.md): %w", err)
+		}
+	}
 	return s, nil
 }
 

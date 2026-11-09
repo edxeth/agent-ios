@@ -43,6 +43,13 @@ import (
 // tag an explicit choice ("make test-cdpcompat" sets it).
 const gateEnv = "IWDP_CDP_COMPAT"
 
+// v8CoverageVar is the driver option that turns on V8 coverage of the
+// Node client scripts (README.md, "How to run"): an
+// absolute directory, which the driver passes to each script as
+// NODE_V8_COVERAGE. A NODE_V8_COVERAGE of the user's environment never
+// reaches a client (userSetting).
+const v8CoverageVar = "CDPCOMPAT_V8_COVERAGE"
+
 // proxyListingVar is the link-time seam of internal/proxy (W1c T01): the
 // iwdp listing address of a binary.
 const proxyListingVar = "github.com/nnemirovsky/iwdp-mcp/internal/proxy.listingAddr"
@@ -76,6 +83,10 @@ var (
 	cliBin string
 	// logDir keeps the logs of a run: CDPCOMPAT_LOG_DIR, else a temp dir.
 	logDir string
+	// v8CoverageDir, when not empty, is where the Node client scripts
+	// write their V8 coverage (NODE_V8_COVERAGE): the driver option
+	// v8CoverageVar.
+	v8CoverageDir string
 	// fakeBin holds the fake iwdp executables, first on PATH.
 	fakeBin string
 	// clientHome is the HOME, working directory and XDG base of every
@@ -178,6 +189,14 @@ func isolate(tmp string) error {
 	}
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return err
+	}
+	if v8CoverageDir = os.Getenv(v8CoverageVar); v8CoverageDir != "" {
+		if !filepath.IsAbs(v8CoverageDir) {
+			return fmt.Errorf("%s=%q: want an absolute directory (each client runs in its own working directory)", v8CoverageVar, v8CoverageDir)
+		}
+		if err := os.MkdirAll(v8CoverageDir, 0o755); err != nil {
+			return err
+		}
 	}
 	cliBin = filepath.Join(tmp, "iwdp-cli")
 	if _, err := runBounded(buildTimeout, "", nil, "go", "build", "-ldflags", "-X "+proxyListingVar+"="+dead, "-o", cliBin, "../../cmd/iwdp-cli"); err != nil {

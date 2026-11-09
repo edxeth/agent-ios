@@ -3,6 +3,10 @@
 `breakpoint.html` and `breakpoint.js` are the page of the debugger test
 e2e/webkitgtk/debugger_test.go (W1b); they have no expected snapshot.
 
+`checkvisibility.html` holds the cases of the differential test of the CDP
+endpoint's checkVisibility shim, e2e/webkitgtk/page_shims_test.go; its
+expected values are WebKitGTK's native `Element.prototype.checkVisibility`.
+
 `cdp.html` is the page of the CDP domain test e2e/webkitgtk/cdp_w5b2_test.go
 (W5b-2); its expected values are hand-written in that test.
 

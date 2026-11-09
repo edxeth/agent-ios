@@ -27,6 +27,9 @@ const (
 	puppeteerPin    = "25.16.0"
 	devtoolsMCPPin  = "1.12.0"
 	agentBrowserPin = "0.41.2"
+	// c8Pin is the coverage reporter of the Node client scripts
+	// (devDependencies; README.md, "Pins").
+	c8Pin = "12.0.0"
 	// npmRegistry is where every locked package comes from.
 	npmRegistry = "https://registry.npmjs.org/"
 )
@@ -93,10 +96,25 @@ func requireNode(t *testing.T) {
 // nodePins are the exact dependencies of package.json.
 var nodePins = map[string]string{"agent-browser": agentBrowserPin, "chrome-devtools-mcp": devtoolsMCPPin, "playwright-core": playwrightPin, "puppeteer-core": puppeteerPin}
 
-// package.json pins exactly the four clients, and the lockfile resolves
-// them, and every other package, from registry.npmjs.org.
+// mergePins returns the pins of a and b in one map.
+func mergePins(a, b map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range []map[string]string{a, b} {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// devPins are the exact devDependencies of package.json.
+var devPins = map[string]string{"c8": c8Pin}
+
+// package.json pins exactly the four clients and the coverage reporter,
+// and the lockfile resolves them, and every other package, from
+// registry.npmjs.org.
 func TestNodeProjectPins(t *testing.T) {
-	var pkg struct{ Dependencies map[string]string }
+	var pkg struct{ Dependencies, DevDependencies map[string]string }
 	data, err := os.ReadFile("package.json")
 	if err == nil {
 		err = json.Unmarshal(data, &pkg)
@@ -106,6 +124,9 @@ func TestNodeProjectPins(t *testing.T) {
 	}
 	if fmt.Sprint(pkg.Dependencies) != fmt.Sprint(nodePins) {
 		t.Fatalf("package.json dependencies %v, want exactly %v", pkg.Dependencies, nodePins)
+	}
+	if fmt.Sprint(pkg.DevDependencies) != fmt.Sprint(devPins) {
+		t.Fatalf("package.json devDependencies %v, want exactly %v", pkg.DevDependencies, devPins)
 	}
 	var lock struct {
 		Packages map[string]struct {
@@ -121,7 +142,7 @@ func TestNodeProjectPins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, v := range nodePins {
+	for name, v := range mergePins(nodePins, devPins) {
 		if got := lock.Packages["node_modules/"+name].Version; got != v {
 			t.Errorf("package-lock.json locks %s %q, want %s", name, got, v)
 		}
@@ -141,6 +162,17 @@ var nodeScripts = map[string]string{
 	"chrome-devtools-mcp": "clients/chrome-devtools-mcp.mjs",
 	"playwright-core":     "clients/playwright.mjs",
 	"puppeteer-core":      "clients/puppeteer.mjs",
+}
+
+// nodeClientEnv is the extra environment of client's script: nodeEnv,
+// and NODE_V8_COVERAGE when the driver option v8CoverageVar asks for V8
+// coverage (clientEnv drops an inherited NODE_V8_COVERAGE).
+func nodeClientEnv(client string) []string {
+	env := nodeEnv[client]
+	if v8CoverageDir != "" {
+		env = append(append([]string(nil), env...), "NODE_V8_COVERAGE="+v8CoverageDir)
+	}
+	return env
 }
 
 // nodeEnv is the extra environment of a client script. Playwright's method
@@ -211,7 +243,7 @@ func (e *endpoint) execNode(t *testing.T, logName, client, scenario, url string,
 	args = append(append(args, nodeScripts[client], scenario, url, file), o.args...)
 	var code int
 	if o.checkpoint == nil {
-		code, _ = e.runLogged(t, logName+".log", nodeDir, clientTimeout, nodeEnv[client], "node", args...)
+		code, _ = e.runLogged(t, logName+".log", nodeDir, clientTimeout, nodeClientEnv(client), "node", args...)
 	} else {
 		code = e.runInteractive(t, logName+".log", client, o.checkpoint, args)
 	}
@@ -246,7 +278,7 @@ func (e *endpoint) runInteractive(t *testing.T, logName, client string, checkpoi
 	go func() {
 		defer close(done)
 		defer func() { _ = r.Close() }()
-		code, _ = e.runLoggedIO(t, logName, nodeDir, clientTimeout, nodeEnv[client], clientIO{stdin: r, line: func(l string) {
+		code, _ = e.runLoggedIO(t, logName, nodeDir, clientTimeout, nodeClientEnv(client), clientIO{stdin: r, line: func(l string) {
 			if name, ok := strings.CutPrefix(l, checkpointMark); ok {
 				select {
 				case names <- name:

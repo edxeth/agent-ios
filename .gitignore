@@ -6,6 +6,7 @@ bin/
 # Coverage
 coverage.out
 coverage.html
+coverage-js.lcov
 
 # goreleaser
 dist/

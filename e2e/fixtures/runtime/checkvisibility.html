@@ -1,0 +1,62 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>checkVisibility cases</title>
+<style>
+  .box { width: 40px; height: 10px; }
+  .abs { position: absolute; left: -9999px; top: 0; width: 20px; height: 20px; }
+</style></head>
+<body>
+<!-- Cases of the checkVisibility shim's differential oracle
+     (e2e/webkitgtk/page_shims_test.go). Every element whose id starts with
+     "cv-" is a case; the test adds the shadow-DOM cases and detached
+     elements. The expected value of each case and option combination is
+     the native Element.prototype.checkVisibility of WebKitGTK. -->
+<div id="cv-plain" class="box">plain</div>
+<div id="cv-none" style="display: none">display none</div>
+<div style="display: none"><span id="cv-none-ancestor">child of display none</span></div>
+<div id="cv-hidden-attr" hidden>hidden attribute</div>
+<div id="cv-visibility-hidden" style="visibility: hidden">visibility hidden</div>
+<div id="cv-visibility-collapse" style="visibility: collapse">visibility collapse</div>
+<div style="visibility: hidden"><span id="cv-visibility-inherited">inherits hidden</span></div>
+<div style="visibility: hidden"><span id="cv-visibility-reset" style="visibility: visible">visible again</span></div>
+<table><tr id="cv-row-collapse" style="visibility: collapse"><td id="cv-cell-in-collapsed-row">cell</td></tr></table>
+<div id="cv-opacity" style="opacity: 0">opacity 0</div>
+<div style="opacity: 0"><span id="cv-opacity-ancestor">child of opacity 0</span></div>
+<div style="opacity: 0"><div><span id="cv-opacity-grandparent">grandchild of opacity 0</span></div></div>
+<div id="cv-opacity-half" style="opacity: 0.5">opacity 0.5</div>
+<div id="cv-opacity-small" style="opacity: 0.001">opacity 0.001</div>
+<div style="opacity: 0; visibility: hidden"><span id="cv-opacity-and-hidden">both</span></div>
+<details id="cv-details-closed"><summary id="cv-summary-closed">closed summary</summary><span id="cv-details-content">closed content</span><div><b id="cv-details-deep">deep closed content</b></div></details>
+<details open><summary id="cv-summary-open">open summary</summary><span id="cv-details-open-content">open content</span></details>
+<div id="cv-contents" style="display: contents"><span id="cv-contents-child">child of display contents</span></div>
+<div id="cv-contents-empty" style="display: contents"></div>
+<div style="display: contents; opacity: 0"><span id="cv-contents-opacity-child">child of a display-contents opacity 0</span></div>
+<div id="cv-zero" style="width: 0; height: 0; overflow: hidden">zero size</div>
+<div id="cv-empty"></div>
+<div id="cv-offscreen" class="abs">off-screen</div>
+<div id="cv-fixed" style="position: fixed; right: 0; bottom: 0">fixed</div>
+<div style="display: none"><div id="cv-fixed-in-none" style="position: fixed">fixed in display none</div></div>
+<p>text <span id="cv-inline">inline</span> and <span id="cv-inline-empty"></span><br id="cv-br"> more</p>
+<span id="cv-inline-opacity" style="opacity: 0">inline opacity 0</span>
+<svg id="cv-svg" width="40" height="20"><rect id="cv-svg-rect" width="10" height="10"></rect><g id="cv-svg-g"><circle id="cv-svg-circle" r="3" cx="5" cy="5"></circle></g><defs><rect id="cv-svg-defs-rect" width="5" height="5"></rect></defs><rect id="cv-svg-hidden" visibility="hidden" width="5" height="5"></rect><rect id="cv-svg-none" display="none" width="5" height="5"></rect></svg>
+<select id="cv-select"><option id="cv-option">option</option></select>
+<select multiple id="cv-listbox"><option id="cv-listbox-option">listbox option</option><optgroup id="cv-listbox-optgroup" label="group"><option id="cv-listbox-group-option">grouped option</option></optgroup></select>
+<div><option id="cv-option-outside-select">option outside a select</option></div>
+<details id="cv-details-no-summary"><span id="cv-details-no-summary-content">content without a summary</span></details>
+<details><span id="cv-details-before-summary">content before the summary</span><summary id="cv-summary-late">late summary</summary><summary id="cv-summary-second">second summary</summary></details>
+<input id="cv-input" value="input">
+<input id="cv-input-hidden" type="hidden">
+<div id="host"><span id="cv-slotted">slotted</span><span id="cv-unslotted" slot="nowhere">not slotted</span></div>
+<div id="host-transparent" style="opacity: 0"><span id="cv-slotted-in-transparent-host">slotted in transparent host</span></div>
+<div id="host-plain"></div>
+<script>
+  // Shadow-DOM cases: a shadow child, a child under a transparent slot,
+  // and a slotted element whose slot is in a transparent wrapper.
+  var root = document.getElementById("host").attachShadow({ mode: "open" });
+  root.innerHTML = '<span id="cv-shadow-child">shadow child</span><div style="opacity: 0"><slot></slot></div>';
+  var root2 = document.getElementById("host-transparent").attachShadow({ mode: "open" });
+  root2.innerHTML = '<slot></slot><span id="cv-shadow-in-transparent-host">shadow child of a transparent host</span>';
+  var root3 = document.getElementById("host-plain").attachShadow({ mode: "closed" });
+  root3.innerHTML = '<span id="cv-shadow-closed-root">closed root child</span><span id="cv-shadow-hidden" style="visibility: hidden">hidden in shadow</span>';
+  window.cvShadowRoots = [root, root2, root3];
+</script>
+</body></html>

@@ -147,6 +147,39 @@ func TestClientEnvDropsCodeLoadingSettings(t *testing.T) {
 	}
 }
 
+// V8 coverage of the client scripts comes only from the driver option
+// (v8CoverageVar): an inherited NODE_V8_COVERAGE is dropped, and the
+// option adds NODE_V8_COVERAGE to every Node client's environment.
+func TestNodeV8CoverageOnlyFromTheDriverOption(t *testing.T) {
+	t.Setenv("NODE_V8_COVERAGE", "/hostile")
+	saved := v8CoverageDir
+	t.Cleanup(func() { v8CoverageDir = saved })
+	coverage := func(client string) []string {
+		var out []string
+		for _, kv := range clientEnv(nodeClientEnv(client)) {
+			if strings.HasPrefix(kv, "NODE_V8_COVERAGE=") {
+				out = append(out, kv)
+			}
+		}
+		return out
+	}
+	v8CoverageDir = ""
+	for client := range nodeScripts {
+		if got := coverage(client); len(got) != 0 {
+			t.Errorf("%s without the driver option: %q, want no NODE_V8_COVERAGE", client, got)
+		}
+	}
+	v8CoverageDir = "/cov/dir"
+	for client := range nodeScripts {
+		if got := coverage(client); !slices.Equal(got, []string{"NODE_V8_COVERAGE=/cov/dir"}) {
+			t.Errorf("%s with the driver option: %q, want only NODE_V8_COVERAGE=/cov/dir", client, got)
+		}
+	}
+	if got := nodeEnv["playwright-core"]; slices.ContainsFunc(got, func(kv string) bool { return strings.HasPrefix(kv, "NODE_V8_COVERAGE=") }) {
+		t.Errorf("the option changed the shared nodeEnv table: %q", got)
+	}
+}
+
 // treeOf lists the files below dir with their sizes and modes.
 func treeOf(t *testing.T, dir string) string {
 	t.Helper()

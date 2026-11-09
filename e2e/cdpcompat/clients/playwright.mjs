@@ -8,6 +8,11 @@
 //     getByRole().click(), fill, a locator read through the utility world,
 //     screenshot, ariaSnapshot.
 //   fetch <origin> (test 12): an awaited fetch that page.route fulfills.
+//   noCheckVisibility <origin> (docs/cdp.md "Page compatibility shims"):
+//     on form-no-checkvisibility.html, which removed its native
+//     Element.prototype.checkVisibility before the connect, and without a
+//     navigation: the endpoint's shim is there, then getByRole().click(),
+//     fill and ariaSnapshot.
 // Method recording: Playwright logs every CDP message it sends to its
 // "pw:protocol" debug logger ("SEND ► <message>"); this script turns that
 // logger on and reads its lines from stderr.
@@ -172,6 +177,42 @@ const scenarios = {
       return size;
     });
     await observe(out, 'ariaSnapshot', async () => {
+      const snap = await page.locator('body').ariaSnapshot();
+      for (const want of ['- heading "Sign up" [level=1]', '- button "Clicked 1"', '- textbox "Name": Grace', '- paragraph: late element']) {
+        if (!snap.split('\n').some((l) => l.trim() === want)) {
+          throw new Error(`ariaSnapshot has no line ${JSON.stringify(want)}:\n${snap}`);
+        }
+      }
+      return snap;
+    });
+    await step(out, 'close', () => browser.close());
+    return allPassed(out);
+  },
+
+  async noCheckVisibility() {
+    const { browser, page } = await connectPage();
+    if (!page) {
+      return false;
+    }
+    page.setDefaultTimeout(10_000);
+    await observe(out, 'checkVisibility shim', async () => {
+      expect('url', page.url(), origin() + '/form-no-checkvisibility.html');
+      const kind = await page.evaluate(() => {
+        const f = Element.prototype.checkVisibility;
+        return typeof f !== 'function' ? typeof f : f.__iwdpShim === true ? 'shim' : 'native';
+      });
+      return expect('Element.prototype.checkVisibility', kind, 'shim');
+    });
+    await observe(out, 'getByRole().click()', async () => {
+      await page.getByRole('button', { name: 'Press me' }).click();
+      return expect('button text after the click', await page.evaluate(() => document.getElementById('change').textContent), 'Clicked 1');
+    });
+    await observe(out, 'fill', async () => {
+      await page.getByLabel('Name').fill('Grace');
+      return expect('#status after fill', await page.evaluate(() => document.getElementById('status').textContent), 'name: Grace');
+    });
+    await observe(out, 'ariaSnapshot', async () => {
+      await page.locator('#late').waitFor();
       const snap = await page.locator('body').ariaSnapshot();
       for (const want of ['- heading "Sign up" [level=1]', '- button "Clicked 1"', '- textbox "Name": Grace', '- paragraph: late element']) {
         if (!snap.split('\n').some((l) => l.trim() === want)) {

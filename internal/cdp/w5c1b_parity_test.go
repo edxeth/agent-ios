@@ -429,9 +429,15 @@ func TestCDPAndCLITracesOnOnePage(t *testing.T) {
 			if e := cdpFail(t, c, page, "Tracing.start", cats); e.Message != errTracingStarted {
 				t.Fatalf("Tracing.start %v beside a CLI trace: %+v", cats, e)
 			}
-			detachAndWait(t, c, tab, page)
 			if got := sinceMark(f, mark); len(got) != 0 {
-				t.Fatalf("the refused Tracing.start and the detach sent %v", got)
+				t.Fatalf("the refused Tracing.start sent %v", got)
+			}
+			mark = len(f.Received())
+			detachAndWait(t, c, tab, page)
+			// The detach releases only the attachment's own state: its page
+			// compatibility shims (docs/cdp.md).
+			if recs := f.Received()[mark:]; len(recs) != 1 || recs[0].Method != "Page.setBootstrapScript" || strings.Contains(string(recs[0].Params), "__iwdpShim") {
+				t.Fatalf("the detach sent %v, want only the bootstrap script without the attachment's page shims", sinceMark(f, mark))
 			}
 			st := r.pageStateOf(t, "One")
 			if !st.HasEntry("devtools:trace:s1") || !st.HasEntry("devtools:trace-script:s1") || !f.Tracking(f.ActiveTarget()) {
