@@ -44,7 +44,7 @@ Pages opened by an explicit `ws://` URL (legacy commands with a ws-url argument,
 
 - **Pause-on-start is best effort.** "Runs before page scripts" (dialog override, init scripts, error hooks, JavaScript routes, the CDP page compatibility shims) is partial when WebKit refuses pause-on-start or does not answer within 1 s. On iOS 16.7 through iwdp it probably works (device check 3, an inference: see "Open device questions").
 - **document.cookie keeps deleted cookies.** In an open page, `document.cookie` still returns a cookie that WebKit deleted (an expired `Page.setCookie`, `cookies clear`), also after a reload and after a cross-site round trip, while the server and `Page.getCookies` no longer see it (device check 3, iOS 16.7). A non-expired `Page.setCookie` of the same cookie does update `document.cookie`. Inference: the web content process keeps a cookie cache that is not told about the deletion. Workaround: a page-side `document.cookie = "<name>=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=<path>"`.
-- **Playwright locators on Safari below 17.4.** Playwright's locator actions, `getByRole` and `ariaSnapshot` call `Element.prototype.checkVisibility`, which Safari 16.6 (iOS 16.7) lacks; the CDP endpoint installs a shim for it, and Playwright's popover and `getHTML` features still fail ([cdp.md](cdp.md#page-compatibility-shims)). A device re-check with the shim is pending.
+- **Playwright locators on Safari below 17.4.** Playwright's locator actions, `getByRole` and `ariaSnapshot` call `Element.prototype.checkVisibility`, which Safari 16.6 (iOS 16.7) lacks; the CDP endpoint installs a shim for it, and Playwright's popover and `getHTML` features still fail ([cdp.md](cdp.md#page-compatibility-shims)). With the shim, device check 4 (iOS 16.7, code a8aec70) passed Playwright's `getByRole` click, `getByLabel` fill, a locator read and `ariaSnapshot`.
 - **One ScriptProfiler recording per page.** `profiler start`, `trace start` with the `script` category (the default categories are `timeline,script`) and a legacy `ScriptProfiler.startTracking` all use WebKit's one ScriptProfiler run of the page. While one of them records, a second start is refused and names what to do: stop the recording that holds the run (`profiler stop`, `trace stop`), or start the trace with `--categories timeline`. To trace and profile at the same time, record a Timeline-only trace (`trace start --categories timeline`) beside the profiler. Reason: WebKit runs at most one ScriptProfiler run per page, and a second `ScriptProfiler.startTracking` starts nothing, so the second recording would silently share the first one's samples.
 - **CSS through iwdp.** `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` hang through iwdp and are refused; `hover --css` therefore fails there.
 - **Not verified on a device:** see [Open device questions](#open-device-questions).
@@ -68,7 +68,7 @@ Confirmed on iOS 16.7:
 - **`cookies set`, `cookies clear` and `state load`.**
 - **Touch events** (synthetic): `tap` and `swipe`.
 - **Pause-on-start, probably** (an inference): across about 15 attaches the daemon logged no refusal or timeout of `Target.setPauseOnStart`, and an init script ran at `readyState` "loading" before any page script after two cross-site navigations.
-- **CDP clients.** agent-browser (both builds), Puppeteer and chrome-devtools-mcp pass their scenarios. Playwright's goto, evaluate, screenshot and `page.route` pass; its locator actions failed without the `checkVisibility` shim ("Playwright locators on Safari below 17.4").
+- **CDP clients.** agent-browser (both builds), Puppeteer and chrome-devtools-mcp pass their scenarios. Playwright's goto, evaluate, screenshot and `page.route` pass; its locator actions failed without the `checkVisibility` shim ("Playwright locators on Safari below 17.4"). Device check 4 (code a8aec70) ran Playwright's scenario with the shim: all 15 steps passed, the locator steps included.
 
 Found:
 
@@ -76,7 +76,6 @@ Found:
 
 Still open:
 
-- **Playwright locators with the shim** on iOS 16.7 (a re-check of the device check's Playwright scenario).
 - **Listing.** Whether a CDP client can work on an iwdp with the broken slot.
 - **Pause-on-start.** Whether iwdp relays the reply of `Target.setPauseOnStart` on iOS 26, which may hold it; the inline `confirm()` of a new document was not run.
 - **Oversized sources.** iwdp's upper limit to Safari (64 MiB as configured, not probed); the direct transport's (go-ios frame limit 16 MiB) with Playwright's injected script; and whether a staged evaluate works on iOS 16.7 on a page whose Content-Security-Policy forbids eval.

@@ -7,7 +7,7 @@ The daemon can serve the Chrome DevTools Protocol (CDP) for the pages it owns, s
 This release serves every domain and method in the table below. The method table in the code (internal/cdp, one `register` call per domain file) is the complete list: `/json/protocol` is generated from it, and nothing outside it reaches WebKit.
 
 - The four pinned clients pass their scenarios on WebKitGTK (see "Compatibility suite").
-- Device check 3 (iPhone X, iOS 16.7, Safari 16.6, iwdp 1.9.2) passed agent-browser (pinned and PATH builds), Puppeteer, chrome-devtools-mcp and the awaited intercepted fetch of Puppeteer and Playwright. Playwright's goto, evaluate, screenshot and `page.route` passed; its locator actions failed with `TypeError: element.checkVisibility is not a function`, which the endpoint now fixes with a page shim (see "Page compatibility shims"; a device re-check is pending). The remaining open device questions are in [known-limits.md](known-limits.md#open-device-questions).
+- Device check 3 (iPhone X, iOS 16.7, Safari 16.6, iwdp 1.9.2) passed agent-browser (pinned and PATH builds), Puppeteer, chrome-devtools-mcp and the awaited intercepted fetch of Puppeteer and Playwright. Playwright's goto, evaluate, screenshot and `page.route` passed; its locator actions failed with `TypeError: element.checkVisibility is not a function`, which the endpoint now fixes with a page shim (see "Page compatibility shims"). Device check 4 (the same iPhone, code a8aec70) ran Playwright 1.65.0 with the shim: all 15 steps of its scenario passed (connectOverCDP, goto, evaluate, a `getByRole` click, a `getByLabel` fill, a locator read, a screenshot, `ariaSnapshot`, and an awaited fetch that `page.route` fulfilled), with no `checkVisibility` error. The remaining open device questions are in [known-limits.md](known-limits.md#open-device-questions).
 
 A method that the endpoint does not translate is never forwarded. It gets `{"code": -32601, "message": "'<Domain.method>' wasn't found"}`, the same answer as Chrome, so clients that probe optional features continue. `iwdp-cli cdp log` counts the unknown methods per client session.
 
@@ -181,7 +181,7 @@ CDP clients believe that they drive Chromium, so their page scripts call newer W
     - The shim does not intercept `attachShadow` to find closed roots: a root that existed before the install would still be missed, and the interception would change a page API. The differential test keeps these cases as expected differences.
   - A child frame whose document existed at the attach has no shim until it loads a new document.
   - A new document gets the shim from the bootstrap script, which is best effort after a cross-site navigation, as for every bootstrap part (pause-on-start, [known-limits.md](known-limits.md#features-and-platforms)). A document that missed it has no shim until the next attach or navigation.
-  - The shim was proved on WebKitGTK with the native method removed. A device re-check on iOS 16.7 is pending.
+  - The shim was proved on WebKitGTK with the native method removed, and on iOS 16.7 by device check 4: Playwright's `getByRole` click, `getByLabel` fill, locator read and `ariaSnapshot` passed (see "Status").
 
 ## Limits per domain
 
@@ -300,4 +300,4 @@ What it proves, on WebKitGTK:
 - Page compatibility shims: on a page that removed its native `checkVisibility` before the client attached, Playwright's `getByRole().click()`, `getByLabel().fill()` and `ariaSnapshot` pass through the shim; without the shim they fail with the device's TypeError.
 - Every unknown method that a client sends must be on its expected-missing list, with the client code, the reason the client continues and the feature it loses.
 
-Not proved: the suite runs only against WebKitGTK. Device check 3 ran the client scenarios on iOS 16.7 by hand (see "Status"); a device run of the Playwright locator scenario with the shim is still pending.
+Not proved: the suite runs only against WebKitGTK. Device check 3 ran the client scenarios on iOS 16.7 by hand, and device check 4 ran the Playwright scenario with the shim there (see "Status").

@@ -38,7 +38,7 @@ import (
 // the login URL).
 var skipRules = map[string]string{
 	"device": "needs a USB-connected iPhone or iPad and ios_webkit_debug_proxy",
-	"w5b":    "needs the CDP domains of W5b (docs/notes/w5.md), which are not in this tree yet",
+	"w5b":    "runs agent-browser, which this test does not install; e2e/cdpcompat TestClientScenarios runs the agent-browser --cdp form",
 }
 
 const exampleOrigin = "https://example.com"

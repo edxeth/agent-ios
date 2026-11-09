@@ -70,7 +70,13 @@ WebKit cannot answer a dialog after it opens, so arm the answer first with `dial
 
 ## CDP endpoint
 
-`get_cdp_url` (devtools profile) returns a `ws://127.0.0.1:9230/...` URL for the session's page, for agent-browser (`--cdp`), Puppeteer (`browserWSEndpoint`, with `defaultViewport: null`), Playwright (`connectOverCDP`) and chrome-devtools-mcp (`--wsEndpoint`). The URL holds a secret token: never print it or write it to a file. A CDP client acts for the session of the MCP server. Today the endpoint answers the Browser and Target domains and `Runtime.evaluate`; the Page, DOM, Accessibility, Input, Network, Fetch, Storage and Tracing domains: W5b/W5c, see docs/notes/w5.md.
+Prefer the MCP tools of this skill. Use the CDP endpoint only when the task needs a CDP client, such as an existing Puppeteer or Playwright script.
+
+`get_cdp_url` (devtools profile) returns a `ws://127.0.0.1:9230/...` URL, for agent-browser (`--cdp`), Puppeteer (`browserWSEndpoint`, with `defaultViewport: null`), Playwright (`connectOverCDP`, then `browser.contexts()[0]`) and chrome-devtools-mcp (`--wsEndpoint`; call its own `list_pages` tool first). Playwright locators work on iOS below 17.4 through the endpoint's `checkVisibility` shim (passed on an iPhone with iOS 16.7); `locator.highlight()` and the `mask` option of screenshots fail. The URL holds a secret token: never print it or write it to a file. A CDP client acts for the session of the MCP server.
+
+- The URL is for the page that the session's other tools use: the page of `select_page` or `tab_select`.
+- The endpoint serves only the methods of the method table in docs/cdp.md, with the limits there; any other method gets "wasn't found". Input through CDP is synthetic, and CDP output is not masked.
+- iwdp 1.9.2 can get one broken file-descriptor slot. Then it stops answering the page list while a page is connected. Tools on the page you already use still work, but `tab_list`, the tab tools for another page and CDP clients fail with "iwdp did not answer the page list". A restart of iwdp clears the fault, but the device is shared: do not restart iwdp (safety rule 7) and do not stop the daemon, which ends every session's page connections. Report it.
 
 ## End a run
 

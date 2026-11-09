@@ -202,17 +202,23 @@ rm -f -- "$EVIDENCE/state-before.json"
 
 ## CDP endpoint
 
-`get cdp-url` starts the CDP endpoint on 127.0.0.1 (port 9230) and prints a WebSocket URL for your session's page. The URL holds a secret token: keep it in a variable, never print it or write it to a file. Use it exactly as printed. A CDP client acts for your session: it shares your lease, refs and dialog answers, and `close` revokes the URL.
+Prefer the `iwdp-cli` commands of this skill. Use the CDP endpoint only when the task needs a CDP client: an existing Puppeteer or Playwright script, or a client feature that has no command here. The commands have refs that survive reconnects, actionability checks, masking and deadlines; a CDP client has none of these from iwdp-cli.
 
-<!-- doc-test: skip w5b: agent-browser needs the CDP Page, DOM, Accessibility and Input domains of W5b (docs/notes/w5.md) -->
+`get cdp-url` starts the CDP endpoint on 127.0.0.1 (port 9230) and prints a WebSocket URL (the ws form). The URL holds a secret token: keep it in a variable, never print it or write it to a file. Use it exactly as printed. A CDP client acts for your session: it shares your lease, refs and dialog answers, and `close` revokes the URL.
+
+<!-- doc-test: skip w5b: runs agent-browser, which the skill doc test does not install; e2e/cdpcompat TestClientScenarios runs this form -->
 ```bash
 CDP="$(iwdp-cli get cdp-url)"
 agent-browser --cdp "$CDP" snapshot -i
 ```
 
-- Puppeteer: `puppeteer.connect({browserWSEndpoint: CDP, defaultViewport: null})`. Playwright: `chromium.connectOverCDP(CDP)`, then `browser.contexts()[0]`; new contexts fail. chrome-devtools-mcp: `--wsEndpoint`.
+- The URL is for the page your other commands use: the tab you chose with `tab`, or `--page t2` for another tab.
+- agent-browser: `agent-browser --cdp "$CDP" <command>`, ws form only. Its refs are its own, not iwdp-cli's.
+- Puppeteer: `puppeteer.connect({browserWSEndpoint: CDP, defaultViewport: null})`; without `defaultViewport: null` it fails, because the viewport is fixed.
+- Playwright: `chromium.connectOverCDP(CDP)`, then `browser.contexts()[0]`; new contexts fail. For `page.route` use a full-URL glob such as `'**/api/*'`. On iOS below 17.4 (Safari 16), locator actions, `getByRole` and `ariaSnapshot` work through the endpoint's `checkVisibility` shim (passed on an iPhone with iOS 16.7), but `locator.highlight()` and the `mask` option of screenshots fail, because Safari 16 has no popover API.
+- chrome-devtools-mcp: `--wsEndpoint "$CDP"`; call `list_pages` first and pass the page id to the page tools. `get_css_styles` and source-mapped console stacks do not work.
 - `get cdp-url --form http` prints the discovery base for Playwright and Puppeteer `browserURL`. `cdp status` shows the endpoint without the token; `cdp stop` revokes every URL.
-- The endpoint answers the Browser and Target domains and `Runtime.evaluate` today. Page, DOM, Accessibility, Input, Network, Fetch, Storage and Tracing: W5b/W5c, see docs/notes/w5.md. Input through CDP is synthetic too.
+- The endpoint serves only the methods of the method table in docs/cdp.md, with the limits there. Any other method gets "wasn't found". Input through CDP is synthetic too, and CDP output is not masked.
 
 ## End a run
 
@@ -249,7 +255,8 @@ timeout 5 curl -fsS --max-time 3 http://127.0.0.1:9221/json | python3 -c 'import
 iwdp-cli --timeout 10s tab list
 ```
 
-- The device listing is empty or 9221 does not answer: iwdp is down or stale. Do not restart it yourself (safety rule 7): report it, with the failed check.
+- The device listing is empty or 9221 does not answer: iwdp is down or stale. Do not restart it yourself (safety rule 7): report it, with the failed check. While the daemon holds a page connection, an empty reply (curl: "Empty reply from server") can also be the listing fault of the next item.
+- "iwdp did not answer the page list while the daemon has ... open" (exit 5): iwdp 1.9.2 can get one broken file-descriptor slot. Then it closes every page-list request without an answer while a page connection is open. Commands on a page that the daemon already holds still work: keep working in your session without `--page`, or name that page by its tab id or `ws://` URL. These fail on such an iwdp: `tab list`, `tab new`, `tab close`, `tab <id>` or `--page` for a page that is not attached, `--page` with a title, another session's first command, and CDP clients (their target list and attach). A restart of iwdp clears the fault, and the message names it and `iwdp-cli daemon stop` as remedies; both belong to the device owner. Do not restart iwdp yourself (safety rule 7) and do not run `iwdp-cli daemon stop`: it ends every session's page connections, also other agents'. Report it, and mark the checks that need another tab NOT RUN.
 - The device is listed but `tab list` shows no tab: ask the user to open the page in Safari.
 - A passcode or Trust prompt needs the user; it does not mean iwdp is down.
 
