@@ -53,9 +53,10 @@ func wantListingAdvice(t *testing.T, what string, err error) {
 
 // Requests for the attached page resolve without the listing: the
 // session's request without a page (its default page), the page's key,
-// and CDP's ResolvePage of the key. Requests that need the listing get the
-// advice: another session without a default page, a title, ResolvePage
-// without a page, ListPages and Tabs.
+// and CDP's ResolvePage of the key and of the session's request without a
+// page. Requests that need the listing get the advice: another session
+// without a default page, a title, ResolvePage without a page for another
+// session, ListPages and Tabs.
 func TestAttachedPageResolvesWithoutTheListing(t *testing.T) {
 	r, pg := silentRig(t)
 	ctx := ctxFor(t, 10*time.Second)
@@ -68,9 +69,16 @@ func TestAttachedPageResolvesWithoutTheListing(t *testing.T) {
 	if again, _, err := r.m.Touch(ctx, byKey, agent); err != nil || again != pg {
 		t.Fatalf("Touch of the page key = %v, %v; want the attached page", again, err)
 	}
-	lp, err := r.m.ResolvePage(ctx, byKey)
+	lp, _, err := r.m.ResolvePage(ctx, agent.Session, byKey)
 	if err != nil || lp.Key != pg.Key || lp.Title != "Fixture" {
 		t.Fatalf("ResolvePage of the page key = %+v, %v; want the attached page", lp, err)
+	}
+	lp, listing, err := r.m.ResolvePage(ctx, agent.Session, r.req)
+	if err != nil || lp.Key != pg.Key {
+		t.Fatalf("ResolvePage without a page for the session of the attach = %+v, %v; want its default page, the attached one", lp, err)
+	}
+	if want := (PageRequest{Transport: r.req.Transport, Addr: r.req.Addr}); listing != want {
+		t.Fatalf("ResolvePage's listing = %+v, want the request's transport and address %+v", listing, want)
 	}
 	if n := r.f.ConnectionCount(); n != 1 {
 		t.Fatalf("page connections: %d, want 1", n)
@@ -82,8 +90,8 @@ func TestAttachedPageResolvesWithoutTheListing(t *testing.T) {
 	byTitle.Page = "Fixture"
 	_, _, err = r.m.Touch(ctx, byTitle, agent)
 	wantListingAdvice(t, "a page selected by title", err)
-	_, err = r.m.ResolvePage(ctx, r.req)
-	wantListingAdvice(t, "ResolvePage without a page", err)
+	_, _, err = r.m.ResolvePage(ctx, "s2", r.req)
+	wantListingAdvice(t, "ResolvePage without a page for another session", err)
 	_, err = r.m.ListPages(ctx, r.req)
 	wantListingAdvice(t, "ListPages", err)
 	_, _, err = r.m.Tabs(ctx, r.req, agent)

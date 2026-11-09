@@ -339,7 +339,7 @@ func (s *Server) Issue(ctx context.Context, r IssueRequest) (Endpoint, error) {
 	if !s.Running() {
 		return Endpoint{}, errors.New("the CDP endpoint is not running; run 'iwdp-cli cdp start'")
 	}
-	lp, err := s.o.Manager.ResolvePage(ctx, r.Page)
+	lp, listing, err := s.o.Manager.ResolvePage(ctx, r.Session, r.Page)
 	if err != nil {
 		return Endpoint{}, err
 	}
@@ -358,7 +358,7 @@ func (s *Server) Issue(ctx context.Context, r IssueRequest) (Endpoint, error) {
 	if rec == nil {
 		rec = &record{
 			s: s, id: randomHex(16), session: r.Session, scope: r.Scope,
-			listing: core.PageRequest{Transport: r.Page.Transport, Addr: r.Page.Addr}, selected: lp,
+			listing: listing, selected: lp,
 		}
 		rec.ctx, rec.cancel = context.WithCancel(context.Background())
 		s.records[rec.id] = rec

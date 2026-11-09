@@ -30,7 +30,7 @@ type record struct {
 	id       string
 	session  string
 	scope    string
-	listing  core.PageRequest // transport and listing address (Page unused)
+	listing  core.PageRequest // transport and listing address that resolved the selected page (Page unused)
 	selected core.ListedPage
 
 	// ctx ends when the record is revoked (RevokeSession, Stop) and

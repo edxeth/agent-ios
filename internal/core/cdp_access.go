@@ -31,16 +31,29 @@ func listedOf(t pageTarget) ListedPage {
 	return ListedPage{Key: t.key, Title: t.title, URL: t.url, Device: t.device, Page: t.page}
 }
 
-// ResolvePage resolves req as the page of a command (design 5.2,
-// selectedPage) without attaching it and without a lease, so it also
-// resolves a page that another session holds. An explicit ws:// URL gives
-// the record of that URL.
-func (m *Manager) ResolvePage(ctx context.Context, req PageRequest) (ListedPage, error) {
-	t, err := m.resolve(ctx, req)
+// ResolvePage resolves req as the page of a command of session (design
+// 5.2, selectedPage) without attaching it and without a lease, so it also
+// resolves a page that another session holds. It applies the session's
+// page choice as every command does (sessionPage): a tab id in req.Page,
+// else the page chosen with "tab <id>", else the session's default page
+// while it is attached (without a listing read), else the listing's first
+// page. An explicit ws:// URL gives the record of that URL. Unlike a
+// command, it records no default page: issuing a URL does not act on the
+// page.
+//
+// listing is the transport and listing address that the resolved page
+// was found through (Page empty), taken from the page itself: the
+// session's tab, or an attached page named by a tab id, label, key or
+// ws:// URL, can be on another transport than req, and resolve returns an
+// attached page without reading its listing. A caller that lists or
+// attaches the page later (a CDP endpoint record) must use listing, not
+// req.
+func (m *Manager) ResolvePage(ctx context.Context, session string, req PageRequest) (lp ListedPage, listing PageRequest, err error) {
+	t, err := m.resolve(ctx, m.sessionPage(session, req))
 	if err != nil {
-		return ListedPage{}, err
+		return ListedPage{}, PageRequest{}, err
 	}
-	return listedOf(t), nil
+	return listedOf(t), t.listing, nil
 }
 
 // ListPages lists every page of req's transport (req.Page is ignored),

@@ -111,6 +111,12 @@ type pageTarget struct {
 	device   transport.Device
 	page     transport.Page
 	physical bool
+	// listing is the transport and listing address the page was found
+	// through (Page empty): the request of the listing that listed it, or
+	// for a local URL the request that classified it. An attached page
+	// keeps it, so a resolution that returns the attached page without a
+	// listing read (attachedTarget, resolveURL) still knows it.
+	listing PageRequest
 	// open opens a connection whose provisional targets get state (Apply)
 	// and whose context replay runs as a change of state (replayContexts).
 	open func(ctx context.Context, state *DesiredState) (webkit.Caller, error)
@@ -412,6 +418,7 @@ func (m *Manager) findListed(ctx context.Context, req PageRequest, match func(ke
 				},
 				key: key, title: p.Title, url: p.URL, device: d, page: p,
 				physical: physicalDevice(t.Kind(), d.ID),
+				listing:  PageRequest{Transport: req.Transport, Addr: req.Addr},
 				open: func(ctx context.Context, state *DesiredState) (webkit.Caller, error) {
 					o := m.o.Session
 					o.Setup = func(ctx context.Context, tc webkit.TargetCaller) error { return state.Apply(ctx, tc) }
@@ -462,7 +469,7 @@ func (m *Manager) resolveURL(ctx context.Context, req PageRequest) (pageTarget, 
 			return pageTarget{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: iwdp does not list %s; list the pages again and use a current URL", ErrNoPage, redactURL(u))}
 		}
 	}
-	return m.urlTarget(u), nil
+	return m.urlTarget(u, req), nil
 }
 
 // urlListing reports whether the listing of req's effective transport can
@@ -506,8 +513,12 @@ func (m *Manager) attachedPage(id string) *Page {
 	return nil
 }
 
-func (m *Manager) urlTarget(u string) pageTarget {
-	t := pageTarget{key: "url|" + u, title: redactURL(u), url: u, page: transport.Page{ID: u, Debuggable: true}}
+// urlTarget is the local endpoint u, classified as one by the request req.
+func (m *Manager) urlTarget(u string, req PageRequest) pageTarget {
+	t := pageTarget{
+		key: "url|" + u, title: redactURL(u), url: u, page: transport.Page{ID: u, Debuggable: true},
+		listing: PageRequest{Transport: req.Transport, Addr: req.Addr},
+	}
 	t.open = func(ctx context.Context, _ *DesiredState) (webkit.Caller, error) {
 		return m.o.OpenURL(ctx, u)
 	}
