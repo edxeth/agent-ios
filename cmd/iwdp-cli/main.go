@@ -796,6 +796,9 @@ func cmdConsole(ctx context.Context, args []string) {
 		if err := json.Unmarshal(params, &envelope); err != nil {
 			return
 		}
+		if reg.IsRuntimeMessage(envelope.Message.Text) {
+			return // the injected runtime's own message, not the page's
+		}
 		count.Add(1)
 		m := envelope.Message
 		loc := ""

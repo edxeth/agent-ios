@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 )
 
 // The Target domain (design 5.2 and 5.3): each page in the record's scope
@@ -321,7 +323,7 @@ func (c *conn) autoAttachLocked(ctx context.Context, ts []target) {
 			continue
 		}
 		if leased && holder != c.rec.session {
-			c.s.o.Logf("cdp: %s: not attaching %q: session %q holds its lease", c.name, t.title, holder)
+			c.s.o.Logf("cdp: %s: not attaching page %s: session %q holds its lease", logsafe.ID(c.name), logsafe.ID(t.pageID), logsafe.ID(holder))
 			continue
 		}
 		for _, kind := range kinds {
@@ -330,7 +332,7 @@ func (c *conn) autoAttachLocked(ctx context.Context, ts []target) {
 			}
 			s, err := c.attach(ctx, nil, kind, t, true)
 			if err != nil {
-				c.s.o.Logf("cdp: %s: auto-attach of %q: %v", c.name, t.title, err)
+				c.s.o.Logf("cdp: %s: auto-attach of page %s: %s", logsafe.ID(c.name), logsafe.ID(t.pageID), logsafe.Error(err))
 				break
 			}
 			c.announceAttached(s)
@@ -478,7 +480,7 @@ func (c *conn) refresh(ctx context.Context) {
 	ts, err := c.rec.targets(ctx)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
-			c.s.o.Logf("cdp: %s: listing the pages: %v", c.name, err)
+			c.s.o.Logf("cdp: %s: listing the pages: %v", logsafe.ID(c.name), logsafe.Error(err))
 		}
 		return
 	}

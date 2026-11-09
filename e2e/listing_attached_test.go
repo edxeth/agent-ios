@@ -96,7 +96,7 @@ func TestCLI_LegacyListingCommandsOnAHealthyListing(t *testing.T) {
 	}{
 		{[]string{"devices"}, []string{e2eDeviceName, e2eDeviceID, "(pages on " + device.Addr() + ")"}},
 		{[]string{"pages", port(t, device.Addr())}, []string{e2ePageTitle, e2ePageURL, e2ePageWSURL}},
-		{[]string{"status"}, []string{"ios_webkit_debug_proxy is running"}},
+		{[]string{"status"}, []string{"ios_webkit_debug_proxy is running", "iwdp log of an iwdp that iwdp-mcp starts: "}},
 	} {
 		before := listing.hits.Load()
 		output, code := runBin(t, bin, c.args...)

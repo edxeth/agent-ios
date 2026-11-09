@@ -20,6 +20,7 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/direct"
@@ -162,12 +163,13 @@ func Run(ctx context.Context, o RunOptions) error {
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
 	go func() { served <- hs.Serve(l) }()
-	logf("iwdp daemon %s (protocol %d) pid %d listening on %s (transport %s, idle exit %s)", o.Version, Protocol, os.Getpid(), sock, o.Transport, o.Idle)
+	logf("iwdp daemon %s (protocol %d) pid %d listening on %s (transport %s, idle exit %s)", logsafe.ID(o.Version), Protocol, os.Getpid(), logsafe.ID(sock), logsafe.ID(o.Transport), o.Idle)
 
 	tick := min(o.Idle/4, time.Second)
 	t := time.NewTicker(tick)
 	defer t.Stop()
-	var reason string
+	var reason logsafe.Label
+	var failed error // the listener's error
 loop:
 	for {
 		select {
@@ -178,11 +180,11 @@ loop:
 			reason = "shutdown request"
 			break loop
 		case err := <-served:
-			reason = fmt.Sprintf("the listener failed: %v", err)
+			reason, failed = "the listener failed", err
 			break loop
 		case now := <-t.C:
 			if srv.Idle(now) >= o.Idle && m.ActiveLeases() == 0 {
-				reason = fmt.Sprintf("idle for %s", o.Idle)
+				reason = "idle"
 				break loop
 			}
 			if fi, err := os.Lstat(sock); err != nil || !os.SameFile(fi, sockInfo) {
@@ -191,12 +193,19 @@ loop:
 			}
 		}
 	}
-	logf("shutting down: %s", reason)
+	switch {
+	case failed != nil:
+		logf("shutting down: %s: %v", reason, logsafe.Error(failed))
+	case reason == "idle":
+		logf("shutting down: idle for %s", o.Idle)
+	default:
+		logf("shutting down: %s", reason)
+	}
 	srv.Stop() // event streams send their final item first
 	cctx, cancel := context.WithTimeout(context.Background(), ShutdownBudget)
 	defer cancel()
 	if err := m.Close(cctx); err != nil {
-		logf("cleanup: %v", err)
+		logf("cleanup: %v", logsafe.Error(err))
 	}
 	// Let the handlers write their last items (streams end on Stop, holds
 	// with their leases) before the connections close.
@@ -311,6 +320,16 @@ func (ts *transports) get(ctx context.Context, kind, addr string) (transport.Tra
 	return t, nil
 }
 
+const (
+	// startedPagesWait bounds the wait for a device page after the daemon
+	// started iwdp: iwdp lists a device's pages a moment after it starts
+	// (upstream issue #5; device check 3 listed none 0.8 s after the
+	// start, and two pages 9 s later).
+	startedPagesWait = 3 * time.Second
+	// startedPagesPoll is the interval of the page list reads of that wait.
+	startedPagesPoll = 250 * time.Millisecond
+)
+
 // ensureIWDP checks that iwdp's device list answers and, for the default
 // address, starts iwdp when nothing listens there (D10). While a process
 // owns the listing port, slow or silent, it never starts a second iwdp.
@@ -332,7 +351,47 @@ func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault 
 	if err := ts.o.StartIWDP(ctx); err != nil {
 		return fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", err)
 	}
+	ts.awaitPages(ctx, listing)
 	return nil
+}
+
+// awaitPages waits, after the daemon started iwdp on listing, until a
+// device of the listing lists a page, at most startedPagesWait and not past
+// ctx's deadline, so that the first listing after the start does not miss
+// the pages that iwdp lists a moment later. A listing that stays empty or
+// fails is left to the listing read that follows, which reports it as
+// without the wait.
+func (ts *transports) awaitPages(ctx context.Context, listing string) {
+	wctx, cancel := context.WithTimeout(ctx, startedPagesWait)
+	defer cancel()
+	t := iwdp.New(iwdp.Options{ListingAddr: listing})
+	tick := time.NewTicker(startedPagesPoll)
+	defer tick.Stop()
+	for {
+		if listsAPage(wctx, t) {
+			return
+		}
+		select {
+		case <-wctx.Done():
+			ts.logf("the started ios_webkit_debug_proxy lists no page after %s; listing as it is", startedPagesWait)
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// listsAPage reports whether a device of t lists at least one page.
+func listsAPage(ctx context.Context, t *iwdp.Transport) bool {
+	devices, err := t.Devices(ctx)
+	if err != nil {
+		return false
+	}
+	for _, d := range devices {
+		if pages, err := t.Pages(ctx, d.ID); err == nil && len(pages) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // listingError marks err, a failed check of a listing that a process owns,

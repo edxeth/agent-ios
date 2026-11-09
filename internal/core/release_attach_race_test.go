@@ -492,7 +492,12 @@ func TestTargetReadsRaceWithAttach(t *testing.T) {
 	t.Run("release without cleanup and idle close of a lost page", func(t *testing.T) {
 		// A lost page's release logs the title, and so does the sweeper
 		// when it closes the page without a lease. Touch refuses the lost
-		// page after writing the target, so it takes no lease.
+		// page after writing the target, so it takes no lease. The first
+		// sweep runs while the attaches write the target; it leaves the
+		// page to the next sweep when it meets an attach of the page
+		// (closeIdle), so a sweep after the attaches ended closes it
+		// (review devfix-R1 F4; TestIdleCloseAndAConcurrentTouch pins the
+		// interleavings).
 		for range raceRepeats {
 			r, pg := attachedRig(t, fakewebkit.Options{Steal: true}, ManagerOptions{SweepEvery: time.Hour})
 			stealPage(t, r.f)
@@ -501,6 +506,7 @@ func TestTargetReadsRaceWithAttach(t *testing.T) {
 			err := r.m.Break(ctxFor(t, 5*time.Second), pg.Key)
 			r.m.Sweep(time.Now().Add(2 * DefaultIdleClose))
 			stop()
+			r.m.Sweep(time.Now().Add(2 * DefaultIdleClose))
 			if err != nil {
 				t.Fatalf("Break: %v", err)
 			}

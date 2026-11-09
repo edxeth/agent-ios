@@ -59,22 +59,30 @@ const (
 	fakeFail     = "fail"     // exits 1
 	fakeHang     = "hang"     // starts a child, writes its pid to child.pid, never serves
 	fakeStubborn = "stubborn" // like hang, but it and its child ignore SIGTERM
+	// fakeChatty writes "fake-stderr-line" to stderr and, through sed (a
+	// stdio program, block-buffered when its stdout is a file, as iwdp's
+	// stdout is), "fake-stdout-line" to stdout, then serves as fakeServe.
+	// sed ends when the fake has exited.
+	fakeChatty = "chatty"
 )
 
 // installFakeIWDP writes the fake iwdp of mode for the listing addr and an
 // idevice_id that exits 1 (DeviceUDIDs must not reach usbmuxd), and puts
 // them first on PATH for this test.
 //
-// It also gives the test its own XDG_RUNTIME_DIR, so the iwdp records and
-// start locks of this test are its own. Records are named by the listing
-// address, and addresses repeat between the tests of one package run
-// (freeAddr picks at random), so a shared directory hands one test the
-// record that another test left: for example the group-writable record of
+// It also gives the test its own XDG_STATE_HOME, so a started fake writes
+// its log (LogPath) there and never in the user's state directory, and its
+// own XDG_RUNTIME_DIR, so the iwdp records and start locks of this test are
+// its own. Records are named by the listing address, and addresses repeat
+// between the tests of one package run (freeAddr picks at random), so a
+// shared directory hands one test the record that another test left: for
+// example the group-writable record of
 // TestRestartRefusesAnUnsafeRecordStore, which os.WriteFile keeps
 // group-writable when a later test rewrites it.
 func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 	t.Helper()
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 	var body string
@@ -85,6 +93,14 @@ func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 			t.Fatal(err)
 		}
 		body = "exec env " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
+	case fakeChatty:
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = "printf 'fake-stderr-line\\n' >&2\nme=$$\n" +
+			"(printf 'fake-stdout-line\\n'; while kill -0 $me 2>/dev/null; do sleep 0.2; done) | sed -n p &\n" +
+			"exec env " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
 	case fakeFail:
 		body = "exit 1\n"
 	case fakeHang:

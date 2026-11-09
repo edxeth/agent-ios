@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
@@ -141,7 +142,7 @@ func storageClearDataForOrigin(ctx context.Context, call *Call) (any, Later, err
 		return nil, nil, serverError("Storage.clearDataForOrigin: the pages of %s navigated to another origin before their storage was cleared; nothing was cleared", origin)
 	}
 	if len(other) > 0 {
-		rec.s.o.Logf("cdp: %s: Storage.clearDataForOrigin cleared local_storage only; iOS WebKit cannot clear %s", call.conn.name, strings.Join(other, ","))
+		rec.s.o.Logf("cdp: %s: Storage.clearDataForOrigin cleared local_storage only; iOS WebKit cannot clear %s", logsafe.ID(call.conn.name), logsafe.ID(strings.Join(other, ",")))
 	}
 	return map[string]any{}, nil, nil
 }

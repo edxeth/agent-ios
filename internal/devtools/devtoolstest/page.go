@@ -156,13 +156,29 @@ func New(t testing.TB, origin string) *Page {
 	defer cancel()
 	s, err := webkit.Dial(ctx, func(ctx context.Context) (transport.MessageConn, error) {
 		return webkit.DialWebSocket(ctx, f.URL, transport.Limits{Routed: true, MaxOutgoing: transport.WebKitGTKMaxOutgoing})
-	}, webkit.SessionOptions{})
+	}, webkit.SessionOptions{CallTimeout: untilDeadline(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	p.Conn = s
 	return p
+}
+
+// untilDeadline is the call budget of the page's session: the time left
+// until the test's own deadline (go test -timeout). The fake answers every
+// call, so the budget only turns a hang into a failure, and a fixed budget
+// does not fit: a call that carries megabytes of storage took more than
+// webkit.DefaultCallTimeout under -race and a host load of 70 (devfix R3).
+// Without a deadline (go test -timeout 0, or a benchmark) it is 0, which
+// the session takes as webkit.DefaultCallTimeout.
+func untilDeadline(t testing.TB) time.Duration {
+	if dt, ok := t.(interface{ Deadline() (time.Time, bool) }); ok {
+		if d, ok := dt.Deadline(); ok {
+			return time.Until(d)
+		}
+	}
+	return 0
 }
 
 // jarNow is the time of the jar's clock, which decides whether a cookie

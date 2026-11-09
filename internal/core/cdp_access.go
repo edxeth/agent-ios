@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
@@ -207,7 +208,7 @@ func (m *Manager) forgetOwner(pg *Page, owner Owner, failed []string) {
 	pending := pg.PS.State.forgetOwners(func(o Owner) bool { return o == owner }, live, failed)
 	pg.mu.Unlock()
 	if pending {
-		m.o.Logf("page %s: the state of %s was released; its page-side cleanup was not sent or failed and is pending", pg.Title(), owner)
+		m.pageLogf(pg.targetNow(), "the state of %s was released; its page-side cleanup was not sent or failed and is pending", logsafe.ID(owner))
 		m.resetUnknownAgents(pg)
 	}
 }

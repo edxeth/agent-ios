@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 )
 
@@ -90,7 +91,7 @@ func (m *Manager) pageListFailed(tr transport.Transport, d transport.Device, err
 			}
 		}
 	}
-	m.o.Logf("listing pages of %s: %v", d.Label, err)
+	m.o.Logf("listing pages of %s: %v", logsafe.ID(d.Label), logsafe.Error(err))
 	return nil
 }
 

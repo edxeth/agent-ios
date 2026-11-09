@@ -586,12 +586,39 @@ func TestSafetyNetLogIsRateLimitedPerRule(t *testing.T) {
 func TestJSRouteWithAnUnknownInstallIsClearedOnRelease(t *testing.T) {
 	r := newRig(t)
 	p := r.page(t)
-	r.f.DelayReplies("Runtime.evaluate", 500*time.Millisecond)
+	// The install's Runtime.evaluate is written; when the page gets it, the
+	// call's context ends, and the page reads the call, and answers it, only
+	// after AddRoute returned: a late install reply whatever the scheduling.
+	// (A 100 ms deadline ended the call before Page.setBootstrapScript was
+	// written under -race and a host load of 70, devfix R3.)
+	const body = "js-route-marker"
+	cancels := make(chan context.CancelFunc, 1)
+	returned := make(chan struct{})
+	var installed sync.Once
+	r.f.BeforeRecord("Target.sendMessageToTarget", func(params json.RawMessage) {
+		var outer struct{ Message string }
+		_ = json.Unmarshal(params, &outer)
+		var inner struct {
+			Method string
+			Params struct{ Expression string }
+		}
+		_ = json.Unmarshal([]byte(outer.Message), &inner)
+		if inner.Method != "Runtime.evaluate" || !strings.Contains(inner.Params.Expression, body) {
+			return
+		}
+		installed.Do(func() {
+			(<-cancels)()
+			<-returned
+		})
+	})
+	t.Cleanup(func() { r.f.BeforeRecord("Target.sendMessageToTarget", nil) })
 	err := r.do(t, func(ctx context.Context, p *Page, c webkit.Caller) error {
-		short, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		short, cancel := context.WithCancel(ctx)
 		defer cancel()
-		body := "js-route-marker"
-		_, err := p.AddRoute(short, c, "s1", Route{Pattern: "**/mocked", Body: &body, Mode: ModeJS})
+		cancels <- cancel
+		defer close(returned)
+		b := body
+		_, err := p.AddRoute(short, c, "s1", Route{Pattern: "**/mocked", Body: &b, Mode: ModeJS})
 		return err
 	})
 	if err == nil || !strings.Contains(err.Error(), "stays active") {
@@ -600,7 +627,6 @@ func TestJSRouteWithAnUnknownInstallIsClearedOnRelease(t *testing.T) {
 	if n := len(p.Routes("s1")); n != 1 {
 		t.Fatalf("%d JS routes after an unknown install, want 1", n)
 	}
-	r.f.DelayReplies("Runtime.evaluate", 0)
 	before := len(received(r.f, "Runtime.evaluate"))
 	r.release(t)
 	for _, rec := range received(r.f, "Runtime.evaluate")[before:] {

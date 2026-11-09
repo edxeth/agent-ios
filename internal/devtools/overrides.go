@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 	"github.com/nnemirovsky/iwdp-mcp/internal/wip"
 )
@@ -189,7 +190,7 @@ func (p *Page) keepResetEntry(ctx context.Context, c webkit.Caller, e core.Entry
 		return nil
 	})
 	if err != nil {
-		p.logf("keeping the reset of %s for the release: %v", e.Key, err)
+		p.logf("keeping the reset of %s for the release: %v", logsafe.ID(e.Key), logsafe.Error(err))
 	}
 }
 

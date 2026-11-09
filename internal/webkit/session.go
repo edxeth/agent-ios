@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 )
 
@@ -53,6 +54,32 @@ func (e notSentError) Is(target error) bool { return target == ErrNotSent }
 // notSent wraps err as a failure before the write; a write refused by the
 // connection (transport.ErrNotWritten) counts as one.
 func notSent(err error) error { return notSentError{err} }
+
+// CallError is the failure of a call that this program sent: Method is the
+// method of the request, not text of the reply, so a log may name it
+// (internal/logsafe).
+type CallError struct {
+	Method string
+	Err    error
+}
+
+func (e *CallError) Error() string { return e.Method + ": " + e.Err.Error() }
+func (e *CallError) Unwrap() error { return e.Err }
+
+// resetError is the failure of the agent reset before an enable
+// (sendWithReset). Its text names every failure. errors.Is and errors.As
+// see only cause, the first failure without WebKit's answer (nil when each
+// failure has one), so the other failures do not change how a caller
+// classifies the enable. LogCauses gives internal/logsafe the others.
+type resetError struct {
+	text   string
+	cause  error
+	others []error // the failed reset calls, then the enable's error
+}
+
+func (e *resetError) Error() string      { return e.text }
+func (e *resetError) Unwrap() error      { return e.cause }
+func (e *resetError) LogCauses() []error { return e.others }
 
 // SetupError reports that the desired-state setup of a provisional target
 // failed (design 2.7). The target was still resumed and may be active; it
@@ -383,7 +410,7 @@ func Dial(ctx context.Context, open func(context.Context) (transport.MessageConn
 			case <-gap.C:
 			case <-ctx.Done():
 				gap.Stop()
-				return nil, fmt.Errorf("waiting to retry the connection after %d attempts (%v): %w", attempt-1, firstErr, ctxErr(ctx))
+				return nil, logcause.Errorf("waiting to retry the connection after %d attempts (%v): %w", attempt-1, firstErr, ctxErr(ctx))
 			}
 		}
 		conn, err := open(ctx)
@@ -472,12 +499,20 @@ func (s *Session) enablePauseOnStart(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("%w: %w", err, ctxErr(ctx))
 	}
-	reason := fmt.Sprintf("the endpoint refused it (%v)", err)
-	if errors.Is(err, context.DeadlineExceeded) {
-		reason = fmt.Sprintf("Target.setPauseOnStart got no reply within %s", min(pauseOnStartWait, s.opts.CallTimeout))
+	if s.opts.Logf == nil {
+		return nil
 	}
-	if s.opts.Logf != nil {
-		s.opts.Logf("page connection: pause on start is off: %s; a new document's first scripts can run before the bootstrap script (agent runtime, dialog override, init scripts), so early install is partial", reason)
+	// The daemon log holds no text of an error (internal/logsafe, which
+	// this package cannot use): a refusal is named by its protocol code.
+	const partial = "; a new document's first scripts can run before the bootstrap script (agent runtime, dialog override, init scripts), so early install is partial"
+	pe := (*ErrorData)(nil)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		s.opts.Logf("page connection: pause on start is off: Target.setPauseOnStart got no reply within %s"+partial, min(pauseOnStartWait, s.opts.CallTimeout))
+	case errors.As(err, &pe):
+		s.opts.Logf("page connection: pause on start is off: the endpoint refused it (WebKit protocol error %d)"+partial, pe.Code)
+	default:
+		s.opts.Logf("page connection: pause on start is off: Target.setPauseOnStart failed without a protocol error" + partial)
 	}
 	return nil
 }
@@ -925,7 +960,7 @@ func (s *Session) dispatch(target, method string, params json.RawMessage) {
 // (sendWithReset).
 func (s *Session) sendTo(ctx context.Context, target string, gate bool, method string, params any) (json.RawMessage, error) {
 	if hangsThroughTarget[method] && !s.conn.Limits().CSSDomain {
-		return nil, notSent(fmt.Errorf("%s: %w", method, ErrHangsThroughTarget))
+		return nil, notSent(&CallError{Method: method, Err: ErrHangsThroughTarget})
 	}
 	callCtx, cancel := s.callContext(ctx)
 	defer cancel()
@@ -976,7 +1011,7 @@ func (s *Session) resolve(ctx, callCtx context.Context, target string, gate bool
 	defer s.mu.Unlock()
 	for {
 		if s.closeErr != nil {
-			return "", false, notSent(fmt.Errorf("%s: %w", method, s.closeErr))
+			return "", false, notSent(&CallError{Method: method, Err: s.closeErr})
 		}
 		dest = target
 		if dest == "" {
@@ -1000,7 +1035,7 @@ func (s *Session) resolve(ctx, callCtx context.Context, target string, gate bool
 				case <-callCtx.Done():
 					werr = notSent(fmt.Errorf("%s: waiting for the setup of page target %s: %w", method, dest, callCtx.Err()))
 				case <-s.done:
-					werr = notSent(fmt.Errorf("%s: %w", method, s.Err()))
+					werr = notSent(&CallError{Method: method, Err: s.Err()})
 				}
 				s.mu.Lock()
 				if werr != nil {
@@ -1109,7 +1144,7 @@ func (s *Session) await(ctx, callCtx context.Context, start time.Time, in *infli
 		select {
 		case r := <-in.call.ch:
 			if r.err != nil {
-				return nil, fmt.Errorf("%s: %w", in.method, r.err)
+				return nil, &CallError{Method: in.method, Err: r.err}
 			}
 			return r.result, nil
 		case <-nudge:
@@ -1124,7 +1159,7 @@ func (s *Session) await(ctx, callCtx context.Context, start time.Time, in *infli
 		case <-callCtx.Done():
 			return nil, expired(ctx, start, in.method)
 		case <-s.done:
-			return nil, fmt.Errorf("%s: %w", in.method, s.Err())
+			return nil, &CallError{Method: in.method, Err: s.Err()}
 		}
 	}
 }
@@ -1235,7 +1270,7 @@ func (s *Session) sendWithReset(ctx, callCtx context.Context, start time.Time, t
 	calls = append(calls[:len(calls):len(calls)], enable)
 	res, errs := s.pipeline(ctx, callCtx, start, target, calls)
 	last := len(calls) - 1
-	var failed []string
+	var failed []error
 	var cause error // the first failure without WebKit's answer
 	for _, err := range errs[:last] {
 		if err != nil && !NotEnabled(err) {
@@ -1244,24 +1279,41 @@ func (s *Session) sendWithReset(ctx, callCtx context.Context, start time.Time, t
 				cause = err
 				continue
 			}
-			failed = append(failed, err.Error())
+			failed = append(failed, err)
 		}
 	}
 	switch {
 	case cause != nil:
-		others := ""
-		if len(failed) > 0 {
-			others = "; " + strings.Join(failed, "; ")
-		}
-		return nil, fmt.Errorf("%s: resetting the %s agent, whose state this session did not know, failed: %w%s (the enable: %v)", method, dom, cause, others, errs[last])
+		return nil, resetFailed(method, dom, cause, failed, errs[last])
 	case len(failed) == 0:
 		return res[last], errs[last]
 	case errors.Is(errs[0], ErrNotSent):
 		// Nothing of the batch reached the page.
 		return nil, fmt.Errorf("%s: resetting the %s agent first: %w", method, dom, errs[0])
 	default:
-		return nil, fmt.Errorf("%s: resetting the %s agent, whose state this session did not know, failed: %s (the enable: %v)", method, dom, strings.Join(failed, "; "), errs[last])
+		return nil, resetFailed(method, dom, nil, failed, errs[last])
 	}
+}
+
+// resetFailed is the error of an enable whose agent reset failed (a
+// resetError): cause, the other failed reset calls, and the enable's own
+// result (nil when WebKit accepted it).
+func resetFailed(method, dom string, cause error, failed []error, enable error) error {
+	texts := make([]string, 0, len(failed)+1)
+	if cause != nil {
+		texts = append(texts, cause.Error())
+	}
+	for _, err := range failed {
+		texts = append(texts, err.Error())
+	}
+	enableText := "<nil>"
+	others := failed
+	if enable != nil {
+		enableText = enable.Error()
+		others = append(others[:len(others):len(others)], enable)
+	}
+	text := method + ": resetting the " + dom + " agent, whose state this session did not know, failed: " + strings.Join(texts, "; ") + " (the enable: " + enableText + ")"
+	return &resetError{text: text, cause: cause, others: others}
 }
 
 // agentReset returns the reset calls of dom's agent.
@@ -1346,7 +1398,7 @@ func (s *Session) sendOuter(ctx context.Context, method string, params any) (jso
 	if s.closeErr != nil {
 		err := s.closeErr
 		s.mu.Unlock()
-		return nil, notSent(fmt.Errorf("%s: %w", method, err))
+		return nil, notSent(&CallError{Method: method, Err: err})
 	}
 	s.pending[id] = call
 	s.mu.Unlock()
@@ -1362,13 +1414,13 @@ func (s *Session) sendOuter(ctx context.Context, method string, params any) (jso
 	select {
 	case r := <-call.ch:
 		if r.err != nil {
-			return nil, fmt.Errorf("%s: %w", method, r.err)
+			return nil, &CallError{Method: method, Err: r.err}
 		}
 		return r.result, nil
 	case <-callCtx.Done():
 		return nil, fmt.Errorf("%s: no reply: %w", method, callCtx.Err())
 	case <-s.done:
-		return nil, fmt.Errorf("%s: %w", method, s.Err())
+		return nil, &CallError{Method: method, Err: s.Err()}
 	}
 }
 

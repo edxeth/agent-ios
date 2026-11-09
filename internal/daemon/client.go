@@ -19,6 +19,7 @@ import (
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
 )
 
 // Auto-start timing (design 2.3): poll the socket every 20 ms for up to 3 s.
@@ -168,13 +169,13 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 		}
 		select {
 		case werr := <-exited:
-			return nil, fmt.Errorf("the iwdp daemon exited at start (%v); see %s", werr, logPath)
+			return nil, logcause.Errorf("the iwdp daemon exited at start (%v); see %s", werr, logPath)
 		case <-ctx.Done():
 			return nil, fmt.Errorf("starting the iwdp daemon: %w", ctx.Err())
 		case <-time.After(startPoll):
 		}
 		if time.Since(start) > StartTimeout {
-			return nil, fmt.Errorf("the iwdp daemon did not answer within %s of its start (last error: %v); see %s", StartTimeout, err, logPath)
+			return nil, logcause.Errorf("the iwdp daemon did not answer within %s of its start (last error: %v); see %s", StartTimeout, err, logPath)
 		}
 	}
 }
@@ -331,7 +332,7 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 // recognized as one (exit 124, D9).
 func wrapCtx(ctx context.Context, err error) error {
 	if cerr := ctx.Err(); cerr != nil && !errors.Is(err, cerr) {
-		return fmt.Errorf("%w (%v)", cerr, err)
+		return logcause.Errorf("%w (%v)", cerr, err)
 	}
 	return err
 }

@@ -53,7 +53,7 @@ func init() {
 			{Name: "curl", Type: FlagPath, Help: "import the cookies of this file: a JSON list of {name, value, ...}, a cURL command (DevTools Copy as cURL) or a Cookie header"},
 			{Name: "domain", Type: FlagString, Help: "the domain of cookies that have none (default: the cURL URL's host, else the page's host)"},
 			{Name: "path", Type: FlagString, Help: "the cookie path (default /)"},
-			{Name: "expires", Type: FlagString, Help: "expiry as Unix seconds (decimals allowed) or RFC 3339 time; 0 or none: a session cookie"},
+			{Name: "expires", Type: FlagString, Help: "expiry as Unix seconds (decimals allowed) or RFC 3339 time; 0 or none: a session cookie; a time in the past deletes the cookie of this name, domain and path"},
 			{Name: "http-only", Type: FlagBool, Help: "set HttpOnly"},
 			{Name: "secure", Type: FlagBool, Help: "set Secure"},
 			{Name: "same-site", Type: FlagString, Help: "Lax, Strict or None (default Lax)"},
@@ -170,6 +170,21 @@ func runCookiesSet(ctx context.Context, env Env, in Input) (Result, error) {
 		if ck.Domain == "" {
 			return Result{}, fmt.Errorf("the page has no host (about:blank?); pass --domain")
 		}
+	}
+	if !ck.Session && ck.Expires <= float64(time.Now().UnixMilli()) {
+		// A cookie that expired when it is set deletes the cookie of its
+		// name, domain and path (RFC 6265 section 5.3), as the CDP
+		// endpoint's Network.setCookie does; WebKit stores nothing, so
+		// SetCookieVerified would report a missing cookie.
+		// devtools.DeleteCookies makes that exact delete and reads the jar
+		// back.
+		if err := devtools.DeleteCookies(ctx, c, []webkit.Cookie{ck}); err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Text: fmt.Sprintf("Cookie %s has an expiry in the past, so it was deleted (domain %s, path %s); the read-back shows no cookie of that name, domain and path.", ck.Name, ck.Domain, ck.Path),
+			Data: map[string]any{"ok": true, "deleted": true, "cookie": map[string]string{"name": ck.Name, "domain": ck.Domain, "path": ck.Path}},
+		}, nil
 	}
 	stored, err := tools.SetCookieVerified(ctx, c, ck)
 	if err != nil {

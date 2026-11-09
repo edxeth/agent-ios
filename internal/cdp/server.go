@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 )
 
 // DefaultPort is the default listener port (decision D3): 9221 to 9229
@@ -202,7 +203,7 @@ func (s *Server) start(port int, allowOrigins []string) (string, error) {
 		},
 	}
 	go func(hs *http.Server) { _ = hs.Serve(l) }(s.hs)
-	s.o.Logf("cdp: listening on %s (allowed origins: %d)", s.addrLocked(), len(s.allow))
+	s.o.Logf("cdp: listening on %s (allowed origins: %d)", logsafe.ID(s.addrLocked()), len(s.allow))
 	return s.addrLocked(), nil
 }
 
@@ -363,7 +364,8 @@ func (s *Server) Issue(ctx context.Context, r IssueRequest) (Endpoint, error) {
 		rec.ctx, rec.cancel = context.WithCancel(context.Background())
 		s.records[rec.id] = rec
 		s.knownChangedLocked()
-		s.o.Logf("cdp: issued an endpoint for session %q, page %q, scope %s", rec.session, lp.Title, rec.scope)
+		// The page by its target id, never its title (device check 3, P2-C).
+		s.o.Logf("cdp: issued an endpoint for session %q, page %s, scope %s", logsafe.ID(rec.session), logsafe.ID(stableID("page", lp.Device.ID, lp.Page.ID)), logsafe.ID(rec.scope))
 	}
 	rec.setOwner(r.Reservation)
 	return Endpoint{WS: s.wsBrowserLocked(rec), HTTP: s.httpBaseLocked(rec), Scope: rec.scope, Page: lp.Title}, nil
@@ -402,7 +404,7 @@ func (s *Server) RevokeSession(session string) int {
 	closeAll(cs)
 	s.drain(gone)
 	if len(gone) > 0 {
-		s.o.Logf("cdp: revoked %d endpoint record(s) of session %q", len(gone), session)
+		s.o.Logf("cdp: revoked %d endpoint record(s) of session %q", len(gone), logsafe.ID(session))
 	}
 	return len(gone)
 }
@@ -482,7 +484,7 @@ func (s *Server) noteUnknown(sessionKey, method string) {
 	s.seen[sessionKey+" "+method] = true
 	s.mu.Unlock()
 	if first {
-		s.o.Logf("cdp: unknown method %s on %s (answered \"wasn't found\", not forwarded)", method, sessionKey)
+		s.o.Logf("cdp: unknown method %s on %s (answered \"wasn't found\", not forwarded)", logsafe.ID(method), logsafe.ID(sessionKey))
 	}
 }
 

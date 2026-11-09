@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 	"github.com/nnemirovsky/iwdp-mcp/internal/wip"
@@ -124,7 +125,7 @@ type interceptor struct {
 	tombs    map[string]core.InterceptRule
 	nextTomb int
 	// unclaimed rate-limits the log line of the safety net per rule.
-	unclaimed map[string]*unclaimedLog
+	unclaimed map[logsafe.ID]*unclaimedLog
 	// ruleIDs numbers the interception rules that the daemon log names
 	// (ruleName), in the order the log first names them.
 	ruleIDs map[core.InterceptRule]int
@@ -158,7 +159,7 @@ func (p *Page) interceptorLocked() *interceptor {
 	if p.icpt == nil {
 		ic := &interceptor{
 			p: p, offline: map[string]bool{}, creds: map[string][]credential{}, held: map[reqKey]*heldReq{},
-			tombs: map[string]core.InterceptRule{}, unclaimed: map[string]*unclaimedLog{}, ruleIDs: map[core.InterceptRule]int{},
+			tombs: map[string]core.InterceptRule{}, unclaimed: map[logsafe.ID]*unclaimedLog{}, ruleIDs: map[core.InterceptRule]int{},
 		}
 		ic.unsub = ic.subscribe(p.ps.Caller)
 		p.icpt = ic
@@ -413,7 +414,7 @@ func ruleMatches(r core.InterceptRule, stage, rawURL string) (match, known bool)
 func (ic *interceptor) continueUnclaimed(target, requestID, stage string) {
 	err := ic.p.ps.Sched.ContinueUnclaimed(context.Background(), target, requestID, stage)
 	if err != nil && !errors.Is(err, core.ErrControlRefused) {
-		ic.p.logf("continuing unclaimed intercepted request %s of page target %q (%s stage): %v", requestID, target, stage, err)
+		ic.p.logf("continuing unclaimed intercepted request %s of page target %q (%s stage): %v", logsafe.ID(requestID), logsafe.ID(target), logsafe.ID(stage), logsafe.Error(err))
 	}
 }
 
@@ -432,7 +433,7 @@ type unclaimedLog struct {
 // it names it, and the stage. It never holds the rule's URL pattern: an
 // exact rule can be a whole URL with a token or a password in it (W4 lib
 // round-4 review, P1). The number is the same in every line about r.
-func (ic *interceptor) ruleName(r core.InterceptRule) string {
+func (ic *interceptor) ruleName(r core.InterceptRule) logsafe.ID {
 	ic.mu.Lock()
 	id, ok := ic.ruleIDs[r]
 	if !ok {
@@ -440,7 +441,7 @@ func (ic *interceptor) ruleName(r core.InterceptRule) string {
 		ic.ruleIDs[r] = id
 	}
 	ic.mu.Unlock()
-	return fmt.Sprintf("interception rule #%d (%s stage)", id, r.Stage)
+	return logsafe.ID(fmt.Sprintf("interception rule #%d (%s stage)", id, r.Stage))
 }
 
 // noteUnclaimed logs that a rule paused a request that no handler claims,
@@ -450,7 +451,7 @@ func (ic *interceptor) ruleName(r core.InterceptRule) string {
 // The line names the rule by ruleName, never by its URL pattern, and never
 // names the request's URL: both can carry secrets.
 func (ic *interceptor) noteUnclaimed(stage, rawURL string) {
-	rule := "a rule that the daemon does not hold"
+	var rule logsafe.ID = "a rule that the daemon does not hold"
 	var candidates []core.InterceptRule
 	ic.mu.Lock()
 	for _, r := range ic.tombs {
@@ -546,7 +547,7 @@ func (ic *interceptor) complete(session, target, requestID, method string, param
 		Session: session, Epoch: epoch, RequestID: requestID, TargetID: target, Method: method, Params: params,
 	})
 	if err != nil && !errors.Is(err, core.ErrControlRefused) {
-		ic.p.logf("completing intercepted request %s of page target %q with %s: %v", requestID, target, method, err)
+		ic.p.logf("completing intercepted request %s of page target %q with %s: %v", logsafe.ID(requestID), logsafe.ID(target), logsafe.ID(method), logsafe.Error(err))
 	}
 }
 

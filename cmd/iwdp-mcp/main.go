@@ -585,17 +585,28 @@ func registerTools(server *mcp.Server) {
 		autoStart := input.AutoStart == nil || *input.AutoStart
 		// One listing check decides both steps (L06).
 		started, err := iwdpStatus(ctx, autoStart)
+		var out map[string]any
 		switch {
 		case err == nil && started:
-			return nil, map[string]any{"running": true, "started": true, "message": "ios-webkit-debug-proxy was not running — started it automatically"}, nil
+			out = map[string]any{"running": true, "started": true, "message": "ios-webkit-debug-proxy was not running — started it automatically"}
 		case err == nil:
-			return nil, map[string]any{"running": true, "message": "ios-webkit-debug-proxy is running on port 9221"}, nil
+			out = map[string]any{"running": true, "message": "ios-webkit-debug-proxy is running on port 9221"}
 		case errors.Is(err, proxy.ErrNotListening):
-			return nil, map[string]any{"running": false, "message": "ios-webkit-debug-proxy is not running. Start it with: ios_webkit_debug_proxy --no-frontend"}, nil
-		case autoStart:
-			return nil, map[string]any{"running": false, "message": fmt.Sprintf("failed to start iwdp: %v", err)}, nil
+			out = map[string]any{"running": false, "message": "ios-webkit-debug-proxy is not running. Start it with: ios_webkit_debug_proxy --no-frontend"}
+		case errors.As(err, new(*proxy.StartError)):
+			out = map[string]any{"running": false, "message": fmt.Sprintf("failed to start iwdp: %v", err)}
+		default:
+			// A process owns the listing port but its listing is unusable;
+			// no start was attempted. err carries CheckListing's advice.
+			out = map[string]any{"running": false, "message": fmt.Sprintf("ios-webkit-debug-proxy does not answer: %v", err)}
 		}
-		return nil, map[string]any{"running": false, "message": fmt.Sprintf("ios-webkit-debug-proxy does not answer: %v", err)}, nil
+		// The log of an iwdp that iwdp-mcp starts (its stdout and stderr).
+		if p, err := proxy.LogPath(); err == nil {
+			out["iwdp_log"] = p
+		} else {
+			out["iwdp_log_error"] = err.Error()
+		}
+		return nil, out, nil
 	})
 
 	addTool(server, &mcp.Tool{
@@ -1467,7 +1478,7 @@ func registerTools(server *mcp.Server) {
 		if cc == nil {
 			return nil, RawOutput{Result: []any{}}, nil
 		}
-		out := RawOutput{Result: cc.GetMessages()}
+		out := RawOutput{Result: commands.PageConsoleMessages(cc.GetMessages())}
 		if fileResult, err := largeResultToFile(out, "console"); err == nil && fileResult != nil {
 			return fileResult, nil, nil
 		}

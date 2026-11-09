@@ -251,7 +251,8 @@ func TestPauseOnStartRefusalKeepsTheConnection(t *testing.T) {
 	if s.PausesOnStart() {
 		t.Fatal("PausesOnStart() = true after a refusal")
 	}
-	wantOneLog(t, r.logs, "refused")
+	// The protocol error's code, not its message (review devfix-R1 F1).
+	wantOneLog(t, r.logs, "the endpoint refused it (WebKit protocol error -32601)")
 	r.wantUsable(t, s, "page-2")
 	if n := len(r.f.ReceivedMethod("Target.resume")); n != 0 {
 		t.Fatalf("%d Target.resume sent for an unpaused target", n)

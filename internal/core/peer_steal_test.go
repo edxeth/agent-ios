@@ -80,7 +80,16 @@ func TestReviewPeerStealBeforeWriteFailureStaysLost(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("fixture: stolen connection did not receive a read error")
 	}
-	_, err = c.Send(ctxFor(t, 3*time.Second), "Runtime.evaluate", map[string]string{"expression": strings.Repeat("x", 4<<20)})
+	// Only the test's own deadline bounds the send: building the 4 MiB
+	// message took more than 3 s under -race and a host load of 70 (devfix
+	// R3), and its write fails at once on the closed socket.
+	sendCtx := context.Background()
+	if d, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		sendCtx, cancel = context.WithDeadline(sendCtx, d)
+		defer cancel()
+	}
+	_, err = c.Send(sendCtx, "Runtime.evaluate", map[string]string{"expression": strings.Repeat("x", 4<<20)})
 	releaseRead() // reader resumes now; retirement has already fixed the close cause.
 	var ne net.Error
 	if !errors.As(err, &ne) || errors.Is(err, context.DeadlineExceeded) {

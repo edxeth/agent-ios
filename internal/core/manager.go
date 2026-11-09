@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/refs"
 	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
@@ -179,6 +181,10 @@ type Page struct {
 	// recoveryDone is closed when the latest one ends (waitRecovery).
 	recoveryRuns uint64
 	recoveryDone chan struct{}
+	// removed: the sweeper closed the page and removed the record from
+	// the manager (closeIdle). Set under attachMu and mu; an attach or an
+	// acquisition that finds it set returns errPageRemoved.
+	removed bool
 }
 
 // ctxMutex is a mutex whose Lock gives up when ctx ends, so that a command
@@ -205,6 +211,16 @@ func (l *ctxMutex) Lock(ctx context.Context) error {
 }
 
 func (l *ctxMutex) Unlock() { <-l.slot() }
+
+// TryLock locks l when no one holds it and reports whether it did.
+func (l *ctxMutex) TryLock() bool {
+	select {
+	case l.slot() <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
 
 // ManagedOp is an operation that a client opened (design 2.10).
 type ManagedOp struct {
@@ -460,7 +476,7 @@ func (m *Manager) resolveURL(ctx context.Context, req PageRequest) (pageTarget, 
 			return t, nil
 		}
 		if err != nil {
-			m.o.Logf("resolving %s: the listing did not answer, so it is a local endpoint: %v", redactURL(u), err)
+			m.o.Logf("resolving a page URL: the listing did not answer, so it is a local endpoint: %v", logsafe.Error(err))
 		}
 		if iwdpPort {
 			if err != nil {
@@ -489,7 +505,7 @@ func (m *Manager) urlListing(ctx context.Context, req PageRequest, iwdpPort bool
 	}
 	tr, err := m.o.Transport(ctx, kind, req.Addr)
 	if err != nil {
-		m.o.Logf("resolving a page URL: transport %s: %v", kind, err)
+		m.o.Logf("resolving a page URL: transport %s: %v", logsafe.ID(kind), logsafe.Error(err))
 		return iwdpPort
 	}
 	switch tr.Kind() {
@@ -724,7 +740,7 @@ func (m *Manager) commitLeftCleanup(pg *Page) {
 	attached, hold := pg.PS != nil, m.commitResetHold
 	m.mu.Unlock()
 	if attached {
-		m.o.Logf("page %s: a commit left a cleanup pending; resetting its agents in the background", pg.Title())
+		m.pageLogf(pg.targetNow(), "a commit left a cleanup pending; resetting its agents in the background")
 		m.resetUnknownLater(pg, hold)
 	}
 }
@@ -803,6 +819,10 @@ func (m *Manager) attach(ctx context.Context, pg *Page, t pageTarget, ao Acquire
 	}
 	defer pg.attachMu.Unlock()
 	pg.mu.Lock()
+	if pg.removed {
+		pg.mu.Unlock()
+		return errPageRemoved
+	}
 	pg.target.title, pg.target.url, pg.target.page.Ownership = t.title, t.url, t.page.Ownership
 	recovering, waited := pg.recovering, pg.recoveryRuns > runs
 	pg.mu.Unlock()
@@ -831,7 +851,7 @@ func (m *Manager) attach(ctx context.Context, pg *Page, t pageTarget, ao Acquire
 			return err
 		}
 		pc := newPageConn(c, func() { m.goBackground(func(ctx context.Context) { m.recover(ctx, pg) }) }, m.goBackground,
-			func(f string, a ...any) { m.o.Logf("page %s: "+f, append([]any{t.title}, a...)...) })
+			func(f string, a ...any) { m.pageLogf(t, f, a...) })
 		pc.Subscribe(messageDroppedEvent, func(string, json.RawMessage) { pc.markDropped() })
 		// One runtime and one ref table per page record (design 3.3): the
 		// page keeps one set of ref maps per document, held by one lease
@@ -934,7 +954,7 @@ func (m *Manager) attach(ctx context.Context, pg *Page, t pageTarget, ao Acquire
 // under pg.mu at the swap (release_lifecycle.go). Then the new connection
 // is closed, and after the release the page is connected again with the
 // state that remains, until ctx ends (exit 124).
-func (m *Manager) reattach(ctx context.Context, pg *Page, t pageTarget, ao AcquireOptions, why string) error {
+func (m *Manager) reattach(ctx context.Context, pg *Page, t pageTarget, ao AcquireOptions, why logsafe.Label) error {
 	pg.retireConn()
 	for {
 		c, gen, err := m.openConn(ctx, pg, t, pg.PS.State, true)
@@ -962,7 +982,7 @@ func (m *Manager) reattach(ctx context.Context, pg *Page, t pageTarget, ao Acqui
 			if err := pg.waitReleased(ctx); err != nil {
 				return err
 			}
-			m.o.Logf("page %s: %s: a release ran during the connect; connecting again", t.title, why)
+			m.pageLogf(t, "%s: a release ran during the connect; connecting again", why)
 			continue
 		}
 		if err := pg.conn.swap(c); err != nil {
@@ -976,7 +996,7 @@ func (m *Manager) reattach(ctx context.Context, pg *Page, t pageTarget, ao Acqui
 			pg.grantLocked(ao, time.Now())
 		}
 		pg.mu.Unlock()
-		m.o.Logf("page %s: %s: reattached", t.title, why)
+		m.pageLogf(t, "%s: reattached", why)
 		return nil
 	}
 }
@@ -1036,10 +1056,10 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		if bg.Err() != nil {
 			// Close canceled the recovery: no failure of the page, and
 			// Close closes the connection next.
-			m.o.Logf("page %s: background recovery canceled by the manager's shutdown: %v", t.title, err)
+			m.pageLogf(t, "background recovery canceled by the manager's shutdown: %v", logsafe.Error(err))
 			return
 		}
-		m.o.Logf("page %s: background recovery failed: %v", t.title, err)
+		m.pageLogf(t, "background recovery failed: %v", logsafe.Error(err))
 		pg.conn.mu.Lock()
 		switch pg.conn.state {
 		case ConnStalled:
@@ -1136,7 +1156,7 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 		}
 		pg.mu.Unlock()
 		if install && serr == nil {
-			m.o.Logf("page %s: background recovery reconnected", t.title)
+			m.pageLogf(t, "background recovery reconnected")
 			return
 		}
 		pg.dropConn(c)
@@ -1152,7 +1172,7 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 			fail(errLeaseChanged)
 			return
 		}
-		m.o.Logf("page %s: background recovery: the page state changed during the reconnect; connecting again", t.title)
+		m.pageLogf(t, "background recovery: the page state changed during the reconnect; connecting again")
 	}
 }
 
@@ -1295,6 +1315,10 @@ func (m *Manager) acquire(ctx context.Context, pg *Page, ao AcquireOptions, op b
 	for {
 		now := time.Now()
 		pg.mu.Lock()
+		if pg.removed {
+			pg.mu.Unlock()
+			return 0, time.Time{}, errPageRemoved
+		}
 		if pg.releasing {
 			freed, title := pg.freed, pg.target.title
 			pg.mu.Unlock()
@@ -1385,20 +1409,32 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 	if sreq.Page == "" {
 		m.setDefaultPage(ao.Session, sreq, t.key)
 	}
-	pg, err := m.page(t)
-	if err != nil {
-		return nil, 0, time.Time{}, err
+	for {
+		pg, err := m.page(t)
+		if err != nil {
+			return nil, 0, time.Time{}, err
+		}
+		err = m.ensureAttached(ctx, pg, t, ao)
+		var epoch uint64
+		var prev time.Time
+		if err == nil {
+			epoch, prev, err = m.acquire(ctx, pg, ao, op)
+		}
+		if errors.Is(err, errPageRemoved) {
+			continue // the sweeper closed the record meanwhile: look the page up again
+		}
+		if err != nil {
+			return nil, 0, time.Time{}, err
+		}
+		m.leaseStarted(ctx, pg, ao.Session, epoch)
+		return pg, epoch, prev, nil
 	}
-	if err := m.ensureAttached(ctx, pg, t, ao); err != nil {
-		return nil, 0, time.Time{}, err
-	}
-	epoch, prev, err := m.acquire(ctx, pg, ao, op)
-	if err != nil {
-		return nil, 0, time.Time{}, err
-	}
-	m.leaseStarted(ctx, pg, ao.Session, epoch)
-	return pg, epoch, prev, nil
 }
+
+// errPageRemoved: the sweeper closed the page record and removed it from
+// the manager (closeIdle) after the command found it; the command looks
+// the page up again (touch).
+var errPageRemoved = errors.New("the idle page record was closed")
 
 // LeaseEnded returns a channel that is closed when the lease of session
 // with epoch on pg ends: release, lease break, idle expiry or takeover. It
@@ -1441,7 +1477,7 @@ func (m *Manager) Begin(ctx context.Context, req PageRequest, ao AcquireOptions,
 				// is lost, not stalled, and no reconnect runs (probe).
 				return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: the connection ended during the liveness probe after %s idle, so %s was not sent: %w", pg.Title(), idle.Round(time.Second), name, perr)}
 			}
-			return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: page %q did not answer the liveness probe after %s idle, so %s was not sent (%v)", webkit.ErrSessionStalled, pg.Title(), idle.Round(time.Second), name, perr)}
+			return nil, &CodedError{Code: CodeBusy, Err: logcause.Errorf("%w: page %q did not answer the liveness probe after %s idle, so %s was not sent (%v)", webkit.ErrSessionStalled, pg.Title(), idle.Round(time.Second), name, perr)}
 		}
 	}
 	if err := m.recoverSetup(ctx, pg); err != nil {
@@ -1786,7 +1822,7 @@ func (m *Manager) releasePage(ctx context.Context, pg *Page, l *lease) error {
 		// again: the next one's setup resets every agent it does not know
 		// (resetCalls). The scheduler lease still ends.
 		_ = pg.PS.Sched.Release(ctx, nil)
-		m.o.Logf("page %s: lease of %q released without page-side cleanup (pending); the connection is %s", pg.Title(), l.session, pg.conn.State())
+		m.pageLogf(pg.targetNow(), "lease of %q released without page-side cleanup (pending); the connection is %s", logsafe.ID(l.session), pg.conn.State())
 	}
 	// The session's owners leave the desired state before the lease ends,
 	// whatever happened above (a cleanup that could not take the change
@@ -1795,7 +1831,7 @@ func (m *Manager) releasePage(ctx context.Context, pg *Page, l *lease) error {
 	// replay) applies them again (release_lifecycle.go). A cleanup that
 	// was not sent or failed stays pending until a reset succeeds.
 	if pg.PS.State.forgetSession(l.session, live, failed) {
-		m.o.Logf("page %s: lease of %q released; its page-side cleanup was not sent or failed (%v) and is pending", pg.Title(), l.session, err)
+		m.pageLogf(pg.targetNow(), "lease of %q released; its page-side cleanup was not sent or failed (%v) and is pending", logsafe.ID(l.session), logsafe.Error(err))
 		m.resetUnknownAgents(pg)
 	}
 	if live {
@@ -1870,18 +1906,18 @@ func (m *Manager) releaseRuntime(ctx context.Context, pg *Page, l *lease, c webk
 		budget = min(budget, time.Until(dl)-runtimeReleaseReserve)
 	}
 	if budget < runtimeReleaseMin {
-		m.o.Logf("page %s: page-side runtime release of %q (epoch %d) skipped: %v left for it; the next owner resets the page maps",
-			pg.Title(), l.session, l.epoch, max(budget, 0))
+		m.pageLogf(pg.targetNow(), "page-side runtime release of %q (epoch %d) skipped: %v left for it; the next owner resets the page maps",
+			logsafe.ID(l.session), l.epoch, max(budget, 0))
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	if err := pg.PS.Runtime.Release(ctx, c, l.epoch); err != nil {
-		m.o.Logf("page %s: page-side runtime release of %q (epoch %d): %v", pg.Title(), l.session, l.epoch, err)
+		m.pageLogf(pg.targetNow(), "page-side runtime release of %q (epoch %d): %v", logsafe.ID(l.session), l.epoch, logsafe.Error(err))
 	}
 	release := func(ctx context.Context, c webkit.Caller) error { return pg.PS.Runtime.Release(ctx, c, l.epoch) }
 	if err := pg.PS.ReleaseFrameContexts(ctx, l.epoch, l.session, c, release); err != nil {
-		m.o.Logf("page %s: page-side runtime release of %q (epoch %d) in frames: %v", pg.target.title, l.session, l.epoch, err)
+		m.pageLogf(pg.targetNow(), "page-side runtime release of %q (epoch %d) in frames: %v", logsafe.ID(l.session), l.epoch, logsafe.Error(err))
 	}
 }
 
@@ -1936,7 +1972,7 @@ func (m *Manager) resetUnknownLater(pg *Page, hold func(ctx context.Context)) {
 			hold(ctx)
 		}
 		if err := resetUnknown(ctx, pg); err != nil {
-			m.o.Logf("page %s: resetting the agents whose cleanup is pending: %v", pg.Title(), err)
+			m.pageLogf(pg.targetNow(), "resetting the agents whose cleanup is pending: %v", logsafe.Error(err))
 		}
 	})
 }
@@ -1972,7 +2008,7 @@ func (m *Manager) recoverSetup(ctx context.Context, pg *Page) (err error) {
 	if err := pg.conn.ReapplySetup(ctx); err != nil {
 		return setupRecoveryError(pg, err)
 	}
-	m.o.Logf("page %s: the page state was applied again after a failed setup", pg.Title())
+	m.pageLogf(pg.targetNow(), "the page state was applied again after a failed setup")
 	return nil
 }
 
@@ -2003,7 +2039,7 @@ func (m *Manager) recoverSetupLater(pg *Page) {
 		ctx, cancel := context.WithTimeout(bg, forwardBudget)
 		defer cancel()
 		if err := m.recoverSetup(ctx, pg); err != nil {
-			m.o.Logf("page %s: %v", pg.Title(), err)
+			m.pageLogf(pg.targetNow(), "%v", logsafe.Error(err))
 		}
 	})
 }
@@ -2152,30 +2188,57 @@ func (m *Manager) Sweep(now time.Time) {
 		case expire:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := m.releasePage(ctx, pg, l); err != nil {
-				m.o.Logf("page %s: idle lease release: %v", t.title, err)
+				m.pageLogf(t, "idle lease release: %v", logsafe.Error(err))
 			}
 			cancel()
-			m.o.Logf("page %s: lease of %q expired after %s idle", t.title, l.session, m.o.LeaseTTL)
+			m.pageLogf(t, "lease of %q expired after %s idle", logsafe.ID(l.session), m.o.LeaseTTL)
 		case l != nil:
 			if t.physical && pg.conn.State() != ConnLost {
 				renew[resOwner] = true
 			}
 		case running == 0 && now.Sub(last) >= m.o.IdleClose:
-			m.mu.Lock()
-			delete(m.pages, pg.Key)
-			m.mu.Unlock()
-			pg.PS.Sched.Close()
-			pg.conn.close()
-			m.o.Logf("page %s: closed after %s without a lease", t.title, m.o.IdleClose)
+			if m.closeIdle(pg, now) {
+				m.pageLogf(t, "closed after %s without a lease", m.o.IdleClose)
+			}
 		}
 	}
 	if m.o.Reservations != nil {
 		for owner := range renew {
 			if err := m.o.Reservations.Renew(owner); err != nil {
-				m.o.Logf("renewing the reservation of %q: %v", owner, err)
+				m.o.Logf("renewing the reservation of %q: %v", logsafe.ID(owner), logsafe.Error(err))
 			}
 		}
 	}
+}
+
+// closeIdle closes pg, a page without a lease that was idle for IdleClose
+// at now, and removes its record from the manager. It reports whether it
+// did. A command can hold the record that it found before the close: its
+// attach or acquisition must not install a connection or a lease on a
+// record that the manager no longer lists (review devfix-R1 F4). So
+// closeIdle takes attachMu, without waiting: while an attach or a
+// recovery of pg runs, pg is in use and a later sweep looks again. Under
+// mu it checks again that pg has no lease, operation or release and was
+// idle, and marks pg removed; an attach or acquisition that comes later
+// returns errPageRemoved, and the command looks the page up again.
+func (m *Manager) closeIdle(pg *Page, now time.Time) bool {
+	if !pg.attachMu.TryLock() {
+		return false
+	}
+	defer pg.attachMu.Unlock()
+	pg.mu.Lock()
+	idle := pg.lease == nil && pg.running == 0 && !pg.releasing && now.Sub(pg.lastUsed) >= m.o.IdleClose
+	pg.removed = idle
+	pg.mu.Unlock()
+	if !idle {
+		return false
+	}
+	m.mu.Lock()
+	delete(m.pages, pg.Key)
+	m.mu.Unlock()
+	pg.PS.Sched.Close()
+	pg.conn.close()
+	return true
 }
 
 // Close releases every lease with cleanup within ctx (design 2.3: 5 s in
@@ -2238,6 +2301,19 @@ func (m *Manager) DaemonID() string { return m.o.DaemonID }
 
 // LookupPage returns the attached page key, or nil.
 func (m *Manager) LookupPage(key string) *Page { return m.lookup(key) }
+
+// logName names the page of t in the daemon log: its page id (the iwdp
+// WebSocket URL, a direct-transport application and page id) without a
+// query. The log is a file on disk, so it never holds the page's title or
+// URL, which can be private (device check 3, P2-C).
+func (t pageTarget) logName() logsafe.ID { return logsafe.ID(redactURL(t.page.ID)) }
+
+// pageLogf logs a line about the page of t as "page <logName>: <line>".
+// An error in a is rendered by logsafe.Error, which leaves out the page
+// text that errors carry (core's errors name a page by its quoted title).
+func (m *Manager) pageLogf(t pageTarget, format string, a ...any) {
+	m.o.Logf("page %s: %s", t.logName(), fmt.Sprintf(format, a...))
+}
 
 // Title is the page title from the listing (or the URL without query).
 func (pg *Page) Title() string {

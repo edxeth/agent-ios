@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -268,7 +270,7 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, fmt.Errorf("tab new: window.open: %w", err)
 	}
 	if opened, err := evalValue[bool](raw); err != nil || !opened {
-		return Result{}, fmt.Errorf("tab new: window.open(%s) returned no window; the browser blocked the popup (%v)", expr, err)
+		return Result{}, logcause.Errorf("tab new: window.open(%s) returned no window; the browser blocked the popup (%v)", expr, err)
 	}
 	end := time.Now().Add(tabNewWait)
 	for {
@@ -299,6 +301,13 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 			return Result{}, ctx.Err()
 		}
 	}
+}
+
+// closedPageGone reports whether err, a failed release of a tab that is
+// no longer listed, comes from the end of the tab's page connection: the
+// page is gone with the tab. Any other release failure is a warning.
+func closedPageGone(err error) bool {
+	return errors.Is(err, webkit.ErrSessionClosed) || errors.Is(err, webkit.ErrPageClosed)
 }
 
 func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
@@ -354,7 +363,19 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 		lines[0] = "closed tab " + id
 	}
 	if err := m.Release(ctx, in.Global.Session, key); err != nil {
-		lines = append(lines, "warning: releasing the lease of the closed tab: "+err.Error())
+		if !closedPageGone(err) {
+			lines = append(lines, "warning: releasing the lease of the closed tab: "+err.Error())
+		} else {
+			// The tab is no longer listed, and on iwdp its page connection
+			// ends with it (close 1001, "Page 9224/0 not found"), so the
+			// page-side cleanup of the release cannot be sent. Nothing of
+			// the session is left on a page that is gone: a log line only.
+			label := id
+			if label == "" {
+				label = "(the current page)"
+			}
+			m.Logf("tab close: closed tab %s: the lease was released, but its page-side cleanup was not sent because the page is gone: %v", logsafe.ID(label), logsafe.Error(err))
+		}
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"closed": key}}, nil
 }

@@ -12,11 +12,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -131,7 +133,7 @@ func ReadFailure(ctx context.Context, addr string, err error) error {
 	// running?", ListDevices and ListPages), which is dropped.
 	var ue *url.Error
 	if !errors.As(err, &ue) {
-		return fmt.Errorf("ios_webkit_debug_proxy on %s answered GET /json, but its answer is not a usable list (%v). A process owns the port, so no second iwdp is started", addr, err)
+		return logcause.Errorf("ios_webkit_debug_proxy on %s answered GET /json, but its answer is not a usable list (%v). A process owns the port, so no second iwdp is started", addr, err)
 	}
 	err = ue
 	var limit time.Duration
@@ -151,7 +153,7 @@ func ownerFailure(addr string, err, bindErr error, limit time.Duration) error {
 		return fmt.Errorf("the process on %s answers GET /json with HTTP %d, which is not ios_webkit_debug_proxy's device list; no second iwdp is started while it owns the port", addr, int(status))
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return fmt.Errorf("%s refuses connections but cannot be bound (%v): another process holds the port without listening, or the address is not local; no second iwdp is started", addr, bindErr)
+		return logcause.Errorf("%s refuses connections but cannot be bound (%v): another process holds the port without listening, or the address is not local; no second iwdp is started", addr, bindErr)
 	}
 	const owned = "A process owns the port, so no second iwdp is started"
 	const restart = "The restart_iwdp tool and 'iwdp-cli restart-iwdp' restart it only when iwdp-mcp started it; they refuse another program's iwdp"
@@ -159,13 +161,13 @@ func ownerFailure(addr string, err, bindErr error, limit time.Duration) error {
 	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET):
 		// The second device check saw this from an iwdp while a page
 		// WebSocket was open (docs/known-limits.md); the cause is unknown.
-		return fmt.Errorf("ios_webkit_debug_proxy on %s closed the connection without an answer to GET /json (an empty reply: %v). An iwdp has been seen to do this while a WebSocket to one of its pages is open, for example the iwdp-cli daemon's: run 'iwdp-cli daemon stop' to close the daemon's page connections, or restart that iwdp. %s. %s",
+		return logcause.Errorf("ios_webkit_debug_proxy on %s closed the connection without an answer to GET /json (an empty reply: %v). An iwdp has been seen to do this while a WebSocket to one of its pages is open, for example the iwdp-cli daemon's: run 'iwdp-cli daemon stop' to close the daemon's page connections, or restart that iwdp. %s. %s",
 			addr, err, owned, restart)
 	case limit > 0:
-		return fmt.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json within %s (%v): it is busy or stuck. %s; wait and try again. %s",
+		return logcause.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json within %s (%v): it is busy or stuck. %s; wait and try again. %s",
 			addr, limit, err, owned, restart)
 	}
-	return fmt.Errorf("GET /json on %s failed (%v), so ios_webkit_debug_proxy does not answer there. %s. %s", addr, err, owned, restart)
+	return logcause.Errorf("GET /json on %s failed (%v), so ios_webkit_debug_proxy does not answer there. %s. %s", addr, err, owned, restart)
 }
 
 // statusError is a listing answer other than 200.
@@ -282,17 +284,91 @@ func (s *Starter) startLocked(ctx context.Context, fresh bool) error {
 	return err
 }
 
+// maxIWDPLog is the size at which a start keeps the iwdp log as
+// iwdp.log.1 and begins a new one, so the logs take at most about twice
+// this plus one run's output.
+const maxIWDPLog = 1 << 20
+
+// LogPath is the log of an iwdp that iwdp-mcp starts:
+// $XDG_STATE_HOME/iwdp-mcp/iwdp.log, else ~/.local/state/iwdp-mcp/iwdp.log.
+// It is iwdp-mcp's own file: the user's iwdpctl writes and truncates
+// ~/.local/state/iwdp/iwdp.log.
+func LogPath() (string, error) {
+	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+		return filepath.Join(d, "iwdp-mcp", "iwdp.log"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("the iwdp log: no XDG_STATE_HOME and no home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "state", "iwdp-mcp", "iwdp.log"), nil
+}
+
+// openIWDPLog opens the iwdp log (LogPath) for appending, with mode 0600
+// in a directory of mode 0700. A log of maxIWDPLog bytes or more is kept
+// as iwdp.log.1 first, replacing an older one.
+func openIWDPLog() (*os.File, error) {
+	path, err := LogPath()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("creating the directory of the iwdp log: %w", err)
+	}
+	if fi, err := os.Stat(path); err == nil && fi.Size() >= maxIWDPLog {
+		if err := os.Rename(path, path+".1"); err != nil {
+			return nil, fmt.Errorf("keeping the previous iwdp log: %w", err)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening the iwdp log: %w", err)
+	}
+	return f, nil
+}
+
+// iwdpCommand is the command that runs ios_webkit_debug_proxy with args.
+// iwdp writes its stdout ("Listing devices", "Connected :9224 to ...")
+// through C stdio, which buffers a file in blocks: those lines would reach
+// the log only when iwdp exits (device check 3). GNU stdbuf -oL makes
+// that stdout line-buffered (through an LD_PRELOAD library, so for a
+// dynamically linked iwdp only), so iwdp runs under stdbuf when it is on
+// PATH. Without stdbuf (macOS has none by default) the stdout lines appear
+// at exit; stderr is unbuffered either way. stdbuf execs iwdp, so the
+// started process keeps its pid, process group and environment.
+func iwdpCommand(args ...string) (*exec.Cmd, error) {
+	bin, err := exec.LookPath("ios_webkit_debug_proxy")
+	if err != nil {
+		return nil, err
+	}
+	if sb, err := exec.LookPath("stdbuf"); err == nil {
+		return exec.Command(sb, append([]string{"-oL", bin}, args...)...), nil
+	}
+	return exec.Command(bin, args...), nil
+}
+
 // launch runs one ios_webkit_debug_proxy, waits for its listing and
-// records it.
+// records it. The started iwdp appends its stdout and stderr to the iwdp
+// log (LogPath); it writes to the file itself, so the log goes on after
+// the starting process exits.
 func (s *Starter) launch(ctx context.Context) error {
-	cmd := exec.Command("ios_webkit_debug_proxy", "-F", "-c", BuildConfig(DeviceUDIDs()))
+	cmd, err := iwdpCommand("-F", "-c", BuildConfig(DeviceUDIDs()))
+	if err != nil {
+		return fmt.Errorf("starting ios_webkit_debug_proxy: %w\nMake sure it is installed: brew install ios-webkit-debug-proxy", err)
+	}
+	log, err := openIWDPLog()
+	if err != nil {
+		return fmt.Errorf("starting ios_webkit_debug_proxy: %w; no ios_webkit_debug_proxy was started", err)
+	}
+	defer func() { _ = log.Close() }() // the started process has its own copy
+	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	token := newToken()
 	cmd.Env = append(os.Environ(), tokenEnv+"="+token)
 	// Device discovery can take a while; ownership is checked again right
 	// before the spawn. The readiness check covers the rest of the window.
 	if err := portFree(ctx, s.addr); err != nil {
-		return fmt.Errorf("%w: %s is no longer free (%v); no ios_webkit_debug_proxy was started", errPortTaken, s.addr, err)
+		return logcause.Errorf("%w: %s is no longer free (%v); no ios_webkit_debug_proxy was started", errPortTaken, s.addr, err)
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting ios_webkit_debug_proxy: %w\nMake sure it is installed: brew install ios-webkit-debug-proxy", err)
@@ -313,7 +389,7 @@ func (s *Starter) launch(ctx context.Context) error {
 		select {
 		case <-exited:
 			stopGroup(cmd.Process.Pid, exited)
-			return fmt.Errorf("ios_webkit_debug_proxy exited during its start (%v); run 'ios_webkit_debug_proxy --no-frontend' to see why", waitErr)
+			return logcause.Errorf("ios_webkit_debug_proxy exited during its start (%v); run 'ios_webkit_debug_proxy --no-frontend' to see why", waitErr)
 		case <-ctx.Done():
 			stopGroup(cmd.Process.Pid, exited)
 			return fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
@@ -392,6 +468,15 @@ func stopGroup(pgid int, exited <-chan struct{}) {
 	}
 }
 
+// StartError is an error of Status that comes from a start of iwdp: the
+// listing address was free and Status started iwdp, which failed. Every
+// other error of Status comes from its listing check, and then no start
+// was attempted.
+type StartError struct{ Err error }
+
+func (e *StartError) Error() string { return e.Err.Error() }
+func (e *StartError) Unwrap() error { return e.Err }
+
 // Status reports on iwdp at the default listing address and starts it
 // when asked (Starter.Status); the iwdp_status tool uses it.
 func Status(ctx context.Context, autoStart bool) (started bool, err error) {
@@ -401,17 +486,17 @@ func Status(ctx context.Context, autoStart bool) (started bool, err error) {
 // Status checks once whether iwdp answers on the listing address
 // (CheckListing) and returns false and nil when it does. When nothing owns
 // the address, it returns the ErrNotListening error, or with autoStart it
-// starts iwdp (Start) and returns true. Otherwise it returns the check's
-// error and starts nothing. The one check serves both steps, so an owner
-// that does not answer costs one ProbeBudget; Start's own check of the
-// free address is a bind.
+// starts iwdp (Start) and returns true, or the failed start's error as a
+// *StartError. Otherwise it returns the check's error and starts nothing.
+// The one check serves both steps, so an owner that does not answer costs
+// one ProbeBudget; Start's own check of the free address is a bind.
 func (s *Starter) Status(ctx context.Context, autoStart bool) (started bool, err error) {
 	err = CheckListing(ctx, s.addr)
 	if !autoStart || !errors.Is(err, ErrNotListening) {
 		return false, err
 	}
 	if err := s.Start(ctx); err != nil {
-		return false, err
+		return false, &StartError{Err: err}
 	}
 	return true, nil
 }

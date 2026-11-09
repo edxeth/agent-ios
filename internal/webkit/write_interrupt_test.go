@@ -88,23 +88,29 @@ func newBlockedPeer(t *testing.T) *blockedPeer {
 	return p
 }
 
-// startLargeWrite arms the peer, starts send with a 4 MiB parameter and a
-// 5 s deadline, and waits until its socket write blocks: it began, and no
-// byte was written for blockedFor.
+// startLargeWrite arms the peer, starts send with a 4 MiB parameter and
+// the test's own deadline, and waits until its socket write blocks: it
+// began, and no byte was written for blockedFor. Only the test's deadline
+// bounds the send and the wait for its write: building the message took
+// more than 5 s under -race and a host load of 70 (devfix R3). Closing the
+// connection at the end of the test ends a write that still blocks.
 func (p *blockedPeer) startLargeWrite(t *testing.T, send func(context.Context, string, any) (json.RawMessage, error)) <-chan error {
 	t.Helper()
 	p.armed.Store(true)
 	done := make(chan error, 1)
+	ctx, cancel := context.Background(), context.CancelFunc(func() {})
+	if d, ok := t.Deadline(); ok {
+		ctx, cancel = context.WithDeadline(ctx, d)
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, err := send(ctx, "Test.large", map[string]string{"payload": strings.Repeat("x", 4<<20)})
 		done <- err
 	}()
 	select {
 	case <-p.entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("fixture: the large socket write did not begin")
+	case err := <-done:
+		t.Fatalf("fixture: the large send ended before its socket write began: %v", err)
 	}
 	const blockedFor = 100 * time.Millisecond
 	for last, still := p.written.Load(), time.Now(); time.Since(still) < blockedFor; {
@@ -130,7 +136,7 @@ func checkInterrupted(t *testing.T, done <-chan error) {
 			t.Errorf("interrupted write = %v, want a write error without ErrNotSent (part of the message was written)", err)
 		}
 	case <-time.After(interruptPromptly):
-		t.Errorf("InterruptWrites ran, but the socket write still waits for its 5 s deadline")
+		t.Errorf("InterruptWrites ran, but the socket write still waits for its deadline")
 	}
 }
 

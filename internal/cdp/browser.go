@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 )
 
 // The Browser domain (design 5.3).
@@ -54,7 +55,7 @@ func (c *conn) userAgent(ctx context.Context) string {
 	defer m.End(mo.ID)
 	raw, err := mo.Op.Caller().Send(mo.Op.Context(), "Runtime.evaluate", map[string]any{"expression": "navigator.userAgent", "returnByValue": true})
 	if err != nil {
-		c.s.o.Logf("cdp: %s: reading navigator.userAgent: %v", c.name, err)
+		c.s.o.Logf("cdp: %s: reading navigator.userAgent: %v", logsafe.ID(c.name), logsafe.Error(err))
 		return ""
 	}
 	ua, _ := evalValue(raw).(string)

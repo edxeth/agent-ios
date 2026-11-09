@@ -11,6 +11,7 @@ import (
 	"weak"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/refs"
 	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -361,7 +362,7 @@ func releaseEarlierFrames(ctx context.Context, env Env, ps *core.PageSession, op
 		if err != nil {
 			ps.Sched.ForgetFailedExecutionContexts(e)
 			if m, merr := managerOf(env); merr == nil {
-				m.Logf("frame: page-side runtime release of lease epoch %d in frames at an owner change: %v", e, err)
+				m.Logf("frame: page-side runtime release of lease epoch %d in frames at an owner change: %v", e, logsafe.Error(err))
 			}
 		}
 	}

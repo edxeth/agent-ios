@@ -19,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
 )
 
 // tokenEnv carries the start token of an iwdp that Starter starts in that
@@ -115,7 +117,7 @@ func psStart(pid int) (string, error) {
 	out, err := cmd.Output()
 	start := strings.Join(strings.Fields(string(out)), " ")
 	if err != nil || start == "" {
-		return "", fmt.Errorf("ps found no process %d (%v)", pid, err)
+		return "", logcause.Errorf("ps found no process %d (%v)", pid, err)
 	}
 	return start, nil
 }
@@ -412,14 +414,14 @@ func (s *Starter) stopOwn(ctx context.Context, ep netip.AddrPort) (bool, error) 
 func (s *Starter) owns(ctx context.Context, rec *record, ep netip.AddrPort) error {
 	id, err := s.identify(rec.PID)
 	if err != nil {
-		return fmt.Errorf("the recorded iwdp, pid %d, cannot be identified: %v", rec.PID, err)
+		return logcause.Errorf("the recorded iwdp, pid %d, cannot be identified: %v", rec.PID, err)
 	}
 	if !rec.matches(id) {
 		return fmt.Errorf("pid %d is not the recorded iwdp: its start time or start token differs (a reused pid)", rec.PID)
 	}
 	owner, err := s.listens(ctx, rec.PGID, ep)
 	if err != nil {
-		return fmt.Errorf("checking which process listens on %s: %v", ep, err)
+		return logcause.Errorf("checking which process listens on %s: %v", ep, err)
 	}
 	if owner != listenerOwn {
 		return fmt.Errorf("the recorded iwdp, pid %d, no longer owns it", rec.PID)
@@ -475,7 +477,7 @@ func (s *Starter) stopRecorded(ctx context.Context, rec *record, ep netip.AddrPo
 		return nil
 	}
 	if err := s.owns(ctx, rec, ep); err != nil {
-		return fmt.Errorf("%w: ios_webkit_debug_proxy (process group %d) did not exit after SIGTERM, and no SIGKILL was sent: %v", ErrStopFailed, rec.PGID, err)
+		return logcause.Errorf("%w: ios_webkit_debug_proxy (process group %d) did not exit after SIGTERM, and no SIGKILL was sent: %v", ErrStopFailed, rec.PGID, err)
 	}
 	if err := s.kill(-rec.PGID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("%w: ios_webkit_debug_proxy (process group %d) did not exit after SIGTERM, and SIGKILL failed: %w", ErrStopFailed, rec.PGID, err)

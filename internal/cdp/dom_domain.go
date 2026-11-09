@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
 	"github.com/nnemirovsky/iwdp-mcp/internal/upload"
 )
@@ -264,7 +266,7 @@ func (p *pageCall) objectOf(nodeID int64) (string, error) {
 // release releases a remote object that the client never saw.
 func (p *pageCall) release(obj string) {
 	if _, err := p.send("Runtime.releaseObject", map[string]any{"objectId": obj}); err != nil {
-		p.s.c.s.o.Logf("cdp: %s: releasing a node object of %s session %s: %v", p.s.c.name, p.s.kind, shortID(p.s.id), err)
+		p.s.c.s.o.Logf("cdp: %s: releasing a node object of %s session %s: %v", logsafe.ID(p.s.c.name), logsafe.ID(p.s.kind), logsafe.ID(shortID(p.s.id)), logsafe.Error(err))
 	}
 }
 
@@ -401,7 +403,7 @@ func domGetDocument(ctx context.Context, call *Call) (any, Later, error) {
 		Root map[string]any `json:"root"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil || res.Root == nil {
-		return nil, nil, fmt.Errorf("decoding the WIP DOM.getDocument reply %s: %v", raw, err)
+		return nil, nil, logcause.Errorf("decoding the WIP DOM.getDocument reply %s: %v", raw, err)
 	}
 	return map[string]any{"root": toCDPNode(res.Root)}, nil, nil
 }
@@ -630,7 +632,7 @@ func (p *pageCall) frameTree() (*frameTree, error) {
 		FrameTree *frameTree `json:"frameTree"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil || res.FrameTree == nil {
-		return nil, fmt.Errorf("decoding the WIP Page.getResourceTree reply: %v", err)
+		return nil, logcause.Errorf("decoding the WIP Page.getResourceTree reply: %v", err)
 	}
 	// The main frame's CDP id is the page target id, as the Page domain
 	// names it (pageState.frameID); child frames keep their WIP ids.

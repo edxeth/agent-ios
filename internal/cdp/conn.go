@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 )
 
 // Kinds of attached targets.
@@ -27,6 +27,11 @@ const (
 const sessionQueue = 1024
 
 var errConnClosed = errors.New("the CDP connection closed")
+
+// The daemon log names the endpoint's sentinel errors.
+func init() {
+	logsafe.Register(map[string]error{"cdp.errConnClosed": errConnClosed, "cdp.errMissing": errMissing})
+}
 
 // conn is one CDP client connection (a browser or a page WebSocket).
 // Every message is handed to its CDP session's queue at once, so one
@@ -125,7 +130,7 @@ func (c *conn) run(ws *websocket.Conn) {
 	c.ws = ws
 	closing := c.closing
 	c.mu.Unlock()
-	c.s.o.Logf("cdp: %s connected (session %q)", c.name, c.rec.session)
+	c.s.o.Logf("cdp: %s connected (session %q)", logsafe.ID(c.name), logsafe.ID(c.rec.session))
 	for !closing {
 		_, data, err := ws.ReadMessage()
 		if err != nil {
@@ -171,7 +176,7 @@ func (c *conn) finalize() {
 		c.detachAll()
 		c.watchers.Wait()
 		c.s.dropConn(c)
-		c.s.o.Logf("cdp: %s closed", c.name)
+		c.s.o.Logf("cdp: %s closed", logsafe.ID(c.name))
 		close(c.done)
 	})
 }
@@ -213,7 +218,7 @@ func (c *conn) enqueue(call *Call) bool {
 	case q <- call:
 		return true
 	default:
-		c.s.o.Logf("cdp: %s: more than %d messages wait on one CDP session; disconnecting the client", c.name, sessionQueue)
+		c.s.o.Logf("cdp: %s: more than %d messages wait on one CDP session; disconnecting the client", logsafe.ID(c.name), sessionQueue)
 		return false
 	}
 }
@@ -281,7 +286,7 @@ func (c *conn) dispatch(call *Call) {
 func (c *conn) handle(call *Call, run func() (any, Later, error)) (res any, later Later, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			c.s.o.Logf("cdp: %s: %s panicked: %v\n%s", c.name, call.Method, p, debug.Stack())
+			c.s.o.Logf("cdp: %s: %s panicked: %s\n%s", logsafe.ID(c.name), logsafe.ID(call.Method), logsafe.Panic(p), logsafe.Stack())
 			res, later, err = nil, nil, serverError("%s failed with an internal error in the bridge (%v); the daemon log has the details", call.Method, p)
 		}
 	}()
@@ -327,7 +332,7 @@ func (c *conn) event(sessionID, method string, params any) {
 func (c *conn) write(v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
-		c.s.o.Logf("cdp: %s: encoding a message: %v", c.name, err)
+		c.s.o.Logf("cdp: %s: encoding a message: %v", logsafe.ID(c.name), logsafe.Error(err))
 		return
 	}
 	c.mu.Lock()
@@ -523,7 +528,7 @@ func (c *conn) attach(ctx context.Context, parent *session, kind string, t targe
 		defer c.watchers.Done()
 		select {
 		case <-ended:
-			c.s.o.Logf("cdp: %s: the lease of session %q on %q ended; detaching %s session %s", c.name, c.rec.session, t.title, kind, shortID(id))
+			c.s.o.Logf("cdp: %s: the lease of session %q on page %s ended; detaching %s session %s", logsafe.ID(c.name), logsafe.ID(c.rec.session), logsafe.ID(t.pageID), logsafe.ID(kind), logsafe.ID(shortID(id)))
 			c.detach(id, true)
 		case <-s.gone:
 		}
@@ -669,7 +674,7 @@ func (c *conn) cleanup(s *session) {
 		}
 	}
 	if err != nil && !errors.Is(err, core.ErrLeased) {
-		c.s.o.Logf("cdp: %s: releasing the state of %s session %s on %q: %v", c.name, s.kind, shortID(s.id), s.t.title, err)
+		c.s.o.Logf("cdp: %s: releasing the state of %s session %s on page %s: %s", logsafe.ID(c.name), logsafe.ID(s.kind), logsafe.ID(shortID(s.id)), logsafe.ID(s.t.pageID), logsafe.Error(err))
 	}
 }
 

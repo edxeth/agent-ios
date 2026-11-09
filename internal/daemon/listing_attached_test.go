@@ -31,6 +31,12 @@ func TestEnsureIWDPNeverStartsOnAnEmptyReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
+	// Dial returns after the handshake, before the fake counts the
+	// connection; the fake announces the page target only after it counted
+	// it, so the announcement shows that the listing now sees it open.
+	if _, msg, err := c.ReadMessage(); err != nil || !strings.Contains(string(msg), "Target.targetCreated") {
+		t.Fatalf("fixture: the page announced %q, %v; want its Target.targetCreated", msg, err)
+	}
 	var starts atomic.Int32
 	ts := &transports{o: RunOptions{Transport: "iwdp", StartIWDP: countingStarts(&starts)}, logf: t.Logf}
 	err = ts.ensureIWDP(ctxFor(t, 10*time.Second), l.Addr(), true)

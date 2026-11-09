@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -161,7 +162,7 @@ func (ic *interceptor) removeTombstoneRule(ctx context.Context, s core.Sender, r
 		}
 	}
 	if _, err := s.Send(core.Unforwarded(ctx), "Network.removeInterception", r); err != nil && !missingRule(err) {
-		return fmt.Errorf("removing the %s that a page target kept after a refused removal: %w", ic.ruleName(r), err)
+		return logsafe.Errorf("removing the %s that a page target kept after a refused removal: %w", ic.ruleName(r), err)
 	}
 	return nil
 }
@@ -197,7 +198,7 @@ func (ic *interceptor) applyTombstones(target string) {
 				continue // dropped meanwhile: its removal succeeded, or the lease ended
 			}
 			if err := ic.removeTombstoneRule(ctx, c, r); err != nil {
-				ic.p.logf("commit of a provisional target: %v; the lease release tries again", err)
+				ic.p.logf("commit of a provisional target: %v; the lease release tries again", logsafe.Error(err))
 				continue
 			}
 			ic.dropTombstones([]string{k})
@@ -205,6 +206,6 @@ func (ic *interceptor) applyTombstones(target string) {
 		return nil
 	})
 	if err != nil {
-		ic.p.logf("commit of a provisional target: applying the interception tombstones: %v", err)
+		ic.p.logf("commit of a provisional target: applying the interception tombstones: %v", logsafe.Error(err))
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -347,6 +348,6 @@ func (k stageSink) drop(st staged) {
 	id, _ := json.Marshal(st.id) // a string
 	if _, err := k.run(fmt.Sprintf("%s(%s)", stageDropJS, id)); err != nil {
 		s := k.b.s
-		s.c.s.o.Logf("cdp: %s: removing the staged source %s of %s session %s: %v", s.c.name, st.id, s.kind, shortID(s.id), err)
+		s.c.s.o.Logf("cdp: %s: removing the staged source %s of %s session %s: %v", logsafe.ID(s.c.name), logsafe.ID(st.id), logsafe.ID(s.kind), logsafe.ID(shortID(s.id)), logsafe.Error(err))
 	}
 }

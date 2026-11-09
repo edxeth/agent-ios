@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 )
 
 // statusRecorder keeps the status of a response for Options.Observe, and
@@ -40,7 +42,7 @@ func (w *statusRecorder) begin(code int) {
 		w.started()
 	}
 	if err := http.NewResponseController(w.ResponseWriter).SetWriteDeadline(time.Now().Add(w.writeFor)); err != nil {
-		w.logf("cdp: setting the write deadline of a response: %v", err)
+		w.logf("cdp: setting the write deadline of a response: %v", logsafe.Error(err))
 	}
 }
 
@@ -99,12 +101,12 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p := strconv.Itoa(port)
 	if r.Host != "127.0.0.1:"+p && r.Host != "localhost:"+p {
-		s.o.Logf("cdp: refused %s %s: Host header %s is not 127.0.0.1:%s or localhost:%s", logMethod(r.Method), logPath(r.URL.Path), clientValue(r.Host), p, p)
+		s.o.Logf("cdp: refused %s %s: Host header %s is not 127.0.0.1:%s or localhost:%s", logsafe.ID(logMethod(r.Method)), logsafe.ID(logPath(r.URL.Path)), logsafe.ID(clientValue(r.Host)), logsafe.ID(p), logsafe.ID(p))
 		http.Error(rec, "Host header is not 127.0.0.1 or localhost with the endpoint's port", http.StatusForbidden)
 		return
 	}
 	if _, has := r.Header["Origin"]; has && !allowed {
-		s.o.Logf("cdp: refused %s %s: Origin header %s is not allowed (cdp start --allow-origin)", logMethod(r.Method), logPath(r.URL.Path), clientValue(r.Header.Get("Origin")))
+		s.o.Logf("cdp: refused %s %s: Origin header %s is not allowed (cdp start --allow-origin)", logsafe.ID(logMethod(r.Method)), logsafe.ID(logPath(r.URL.Path)), logsafe.ID(clientValue(r.Header.Get("Origin"))))
 		http.Error(rec, "Rejected an incoming request with an Origin header; allow the origin with 'iwdp-cli cdp start --allow-origin'", http.StatusForbidden)
 		return
 	}
@@ -298,7 +300,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, rec *record, pa
 	ws, err := up.Upgrade(w, r, nil)
 	if err != nil {
 		c.close()
-		s.o.Logf("cdp: WebSocket upgrade of %s failed: %v", r.URL.Path, err)
+		s.o.Logf("cdp: WebSocket upgrade of %s failed: %v", logsafe.ID(logPath(r.URL.Path)), logsafe.Error(err))
 		return
 	}
 	c.run(ws)

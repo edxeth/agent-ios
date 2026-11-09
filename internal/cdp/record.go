@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 )
 
@@ -138,7 +139,7 @@ func (rec *record) reservedDevices() func(device string) bool {
 	}
 	rs, err := rec.s.o.Reservations.List()
 	if err != nil {
-		rec.s.o.Logf("cdp: reading the device reservations: %v", err)
+		rec.s.o.Logf("cdp: reading the device reservations: %v", logsafe.Error(err))
 		return func(string) bool { return false }
 	}
 	now, owner := time.Now(), rec.owner()

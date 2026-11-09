@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 )
 
@@ -178,7 +179,7 @@ func retiredBy(err error) error {
 	if re.local {
 		category = ErrWriteTimeout
 	}
-	return fmt.Errorf("%w: %w: %w (%v)", ErrSessionClosed, ErrWriteFailed, category, err)
+	return logcause.Errorf("%w: %w: %w (%v)", ErrSessionClosed, ErrWriteFailed, category, err)
 }
 
 // cutConn is the network connection under a WebSocket connection, with a

@@ -273,8 +273,11 @@ func TestHandlerPanicBecomesError(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), method) || !strings.Contains(err.Error(), tc.name+" bug") {
 				t.Fatalf("%s reply: %v, want the internal error", method, err)
 			}
-			if log := r.log.text(); !strings.Contains(log, method+" panicked: "+tc.name+" bug") || !strings.Contains(log, "goroutine ") {
-				t.Fatalf("daemon log without the panic and its stack:\n%s", log)
+			// The log names the panic by the type of its value, never by
+			// the value, which can hold page text (logsafe.Panic, review
+			// devfix-R2 F5); the stack locates it.
+			if log := r.log.text(); !strings.Contains(log, method+" panicked: a panic value of type string") || !strings.Contains(log, "goroutine ") || strings.Contains(log, tc.name+" bug") {
+				t.Fatalf("daemon log without the panic and its stack, or with the panic's message:\n%s", log)
 			}
 			call(t, c, sid, "Page.getFrameTree", nil)
 		})

@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"sync"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 )
 
 // LeaseHook runs when a session's lease on a page starts: a new grant or a
@@ -82,11 +84,11 @@ func (m *Manager) leaseStarted(ctx context.Context, pg *Page, session string, ep
 	// again before it queues an operation (recoverSetup). Do that here
 	// too, so that the session refuses none of the hooks' sends.
 	if err := m.recoverSetup(ctx, pg); err != nil {
-		m.o.Logf("page %s: lease start of session %q (epoch %d): %v", pg.Title(), session, epoch, err)
+		m.pageLogf(pg.targetNow(), "lease start of session %q (epoch %d): %v", logsafe.ID(session), epoch, logsafe.Error(err))
 	}
 	for _, h := range hooks {
 		if err := h(ctx, pg.PS, session, epoch); err != nil {
-			m.o.Logf("page %s: lease start of session %q (epoch %d): %v", pg.Title(), session, epoch, err)
+			m.pageLogf(pg.targetNow(), "lease start of session %q (epoch %d): %v", logsafe.ID(session), epoch, logsafe.Error(err))
 		}
 	}
 }

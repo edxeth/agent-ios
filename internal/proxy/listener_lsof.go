@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
 )
 
 const (
@@ -97,7 +99,7 @@ func lsofListening(ctx context.Context, port uint16, format ...string) ([]byte, 
 	var exit *exec.ExitError
 	noMatch := errors.As(err, &exit) && exit.ExitCode() == 1 && stderr.Len() == 0
 	if err != nil && !noMatch {
-		return nil, fmt.Errorf("lsof for the listener on port %d: %v %s", port, err, bytes.TrimSpace(stderr.Bytes()))
+		return nil, logcause.Errorf("lsof for the listener on port %d: %v %s", port, err, bytes.TrimSpace(stderr.Bytes()))
 	}
 	return out, nil
 }

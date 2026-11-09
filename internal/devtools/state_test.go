@@ -9,15 +9,23 @@ import (
 	"strings"
 	"testing"
 	"testing/quick"
-	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/devtools/devtoolstest"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
 )
 
+// bg is the context of a test's calls to a fake page, which answers every
+// call: only the test's own deadline (go test -timeout) bounds it, to turn
+// a hang into a failure. A fixed bound does not fit: a state load or save
+// of megabytes, and a property's run of 60 of them on one context, took
+// more than 10 s under -race and a host load of 70 (devfix R3).
 func bg(t *testing.T) context.Context {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	d, ok := t.Deadline()
+	if !ok {
+		return context.Background()
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), d)
 	t.Cleanup(cancel)
 	return ctx
 }

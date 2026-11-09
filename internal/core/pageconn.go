@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -164,7 +166,7 @@ func (p *pageConn) writeFailed(c webkit.Caller) bool {
 	}
 	p.mu.Unlock()
 	if stall {
-		p.logf("page connection closed after a write timed out: %v; reconnecting", err)
+		p.logf("page connection closed after a write timed out: %v; reconnecting", logsafe.Error(err))
 		if p.onStall != nil {
 			p.onStall() // starts the recovery in the background
 		}
@@ -1076,7 +1078,10 @@ func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 	stall := err != nil && !errors.Is(err, errProbeCanceled) && !errors.Is(err, ErrLost) && p.cur == c && p.state == ConnOK
 	if stall {
 		p.state = ConnStalled
-		p.stallErr = fmt.Errorf("%w (%v)", webkit.ErrSessionStalled, err)
+		// The probe's error explains the stall but is no part of its
+		// chain: a probe deadline is no command deadline. It stays a log
+		// cause (logcause).
+		p.stallErr = logcause.Errorf("%w (%v)", webkit.ErrSessionStalled, err)
 		p.stallFired(p.stallErr) // ends every call that waits on c (bound)
 	}
 	p.mu.Unlock()
@@ -1089,7 +1094,7 @@ func (p *pageConn) probe(ctx context.Context, c webkit.Caller) error {
 		if iw, ok := c.(writeInterrupter); ok {
 			iw.InterruptWrites()
 		}
-		p.logf("liveness probe failed: %v; the page is stalled", err)
+		p.logf("liveness probe failed: %v; the page is stalled", logsafe.Error(err))
 		if p.onStall != nil {
 			p.onStall() // starts the recovery in the background
 		}

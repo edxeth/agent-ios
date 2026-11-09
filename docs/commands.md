@@ -330,7 +330,7 @@ Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a
 | `--curl` | file path | import the cookies of this file: a JSON list of {name, value, ...}, a cURL command (DevTools Copy as cURL) or a Cookie header |
 | `--domain` | text | the domain of cookies that have none (default: the cURL URL's host, else the page's host) |
 | `--path` | text | the cookie path (default /) |
-| `--expires` | text | expiry as Unix seconds (decimals allowed) or RFC 3339 time; 0 or none: a session cookie |
+| `--expires` | text | expiry as Unix seconds (decimals allowed) or RFC 3339 time; 0 or none: a session cookie; a time in the past deletes the cookie of this name, domain and path |
 | `--http-only` | none | set HttpOnly |
 | `--secure` | none | set Secure |
 | `--same-site` | text | Lax, Strict or None (default Lax) |

@@ -16,6 +16,7 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/devtools/devtoolstest"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
 )
 
 // legacySetCookieParams are the parameters of the W0 MCP tool set_cookie
@@ -193,5 +194,48 @@ func TestCookieExpiresProperty(t *testing.T) {
 	}
 	if session, ms, err := cookieExpiry("2030-01-02T03:04:05Z"); err != nil || session || ms != 1893553445000 {
 		t.Fatalf("RFC 3339: %v, %v, %v", session, ms, err)
+	}
+}
+
+// Device check 3, P3-F: "cookies set" with an expiry in the past is the
+// exact delete that a browser makes of it (RFC 6265 section 5.3; the CDP
+// endpoint's Network.setCookie does the same, internal/cdp
+// cookies_domain.go setCookie). It deletes only the cookie of that name,
+// domain and path, reports the deletion and succeeds; the read-back that
+// the cookie is gone stays.
+func TestSetCookieWithAPastExpiryDeletesThatCookie(t *testing.T) {
+	p := devtoolstest.New(t, "https://app.test")
+	p.Mu.Lock()
+	p.Cookies = []webkit.Cookie{
+		{Name: "gone", Value: "v-path", Domain: "app.test", Path: "/anything", Session: true, SameSite: "Lax"},
+		{Name: "gone", Value: "v-root", Domain: "app.test", Path: "/", Session: true, SameSite: "Lax"},
+	}
+	p.Mu.Unlock()
+	cs := setCookieMCP(t, p, t.TempDir())
+	res, text := callSetCookie(t, cs, map[string]any{"name": "gone", "value": "x", "domain": "app.test", "path": "/anything", "expires": 1})
+	if res.IsError {
+		t.Fatalf("set_cookie with an expiry in the past failed: %s", text)
+	}
+	for _, want := range []string{"gone", "/anything", "deleted"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("set_cookie with an expiry in the past = %q, want it to report the deletion (%q)", text, want)
+		}
+	}
+	structured, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(structured), `"ok":true`) || !strings.Contains(string(structured), `"deleted":true`) {
+		t.Errorf("structured %s, want ok and deleted", structured)
+	}
+	p.Mu.Lock()
+	left := append([]webkit.Cookie(nil), p.Cookies...)
+	p.Mu.Unlock()
+	if len(left) != 1 || left[0].Path != "/" || left[0].Value != "v-root" {
+		t.Fatalf("the jar holds %+v; want only the namesake of path /", left)
+	}
+
+	// A WebKit that keeps the cookie fails the read-back, as before.
+	p.Server.Handle("Page.setCookie", func(fakewebkit.Call) (any, *fakewebkit.Error) { return nil, nil })
+	res, text = callSetCookie(t, cs, map[string]any{"name": "gone", "value": "x", "domain": "app.test", "path": "/", "expires": "2001-01-01T00:00:00Z"})
+	if !res.IsError || !strings.Contains(text, "kept") {
+		t.Fatalf("set_cookie with a past expiry that WebKit ignores: IsError %v, %q; want the read-back failure", res.IsError, text)
 	}
 }

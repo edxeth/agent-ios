@@ -281,3 +281,74 @@ func TestTabListLeavesOutUnreservedDevicePages(t *testing.T) {
 		t.Fatalf("tab list of an unreserved device:\n%s\n%v\nwant:\n%s", r.Text, r.Data, want)
 	}
 }
+
+// Device check 3, P3-G: on iwdp, a closed tab's page connection ends with
+// the tab ("websocket: close 1001 (going away)"), so the release after
+// "tab close" cannot send its page-side cleanup (here Console.disable of
+// the console capture). That is expected for a page that is gone: tab
+// close prints no warning for it, and the daemon log keeps a line. A
+// cleanup that fails otherwise is still a warning.
+func TestTabCloseReportsOnlyACleanupFailureOfALivePage(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		disable     func(s *fakewebkit.Server) fakewebkit.Handler
+		wantWarning bool
+	}{
+		{"connection gone", func(s *fakewebkit.Server) fakewebkit.Handler {
+			return func(fakewebkit.Call) (any, *fakewebkit.Error) {
+				s.CloseConnections() // the tab is gone: no reply
+				return nil, nil
+			}
+		}, false},
+		{"page answers an error", func(*fakewebkit.Server) fakewebkit.Handler {
+			return func(fakewebkit.Call) (any, *fakewebkit.Error) {
+				return nil, &fakewebkit.Error{Code: -32000, Message: "Console.disable refused"}
+			}
+		}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &tabFake{t: t}
+			var mu sync.Mutex
+			var log []string
+			m := core.NewManager(core.ManagerOptions{
+				Transport: func(context.Context, string, string) (transport.Transport, error) { return f, nil },
+				Session:   webkit.SessionOptions{TargetWait: time.Second},
+				Logf: func(format string, a ...any) {
+					mu.Lock()
+					log = append(log, fmt.Sprintf(format, a...))
+					mu.Unlock()
+				},
+			})
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = m.Close(ctx)
+			})
+			f.add("One", "http://one.test/")
+			mustIn(t, m, "a", "tab", "new", "--label", "docs", "http://docs.test/")
+			mustIn(t, m, "a", "console") // starts the console capture of the new tab
+			f.mu.Lock()
+			s := f.servers["page-2"]
+			f.mu.Unlock()
+			s.Handle("Console.disable", c.disable(s))
+			out := mustIn(t, m, "a", "tab", "close", "docs")
+			if got := strings.Contains(out, "warning"); got != c.wantWarning {
+				t.Fatalf("tab close docs = %q; want a warning: %v", out, c.wantWarning)
+			}
+			if !strings.HasPrefix(out, "closed tab docs") {
+				t.Fatalf("tab close docs = %q, want it to report the closed tab", out)
+			}
+			if c.wantWarning {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, line := range log {
+				if strings.Contains(line, "closed tab") && strings.Contains(line, "Console.disable") {
+					return
+				}
+			}
+			t.Fatalf("the daemon log has no line about the failed cleanup of the closed tab: %q", log)
+		})
+	}
+}

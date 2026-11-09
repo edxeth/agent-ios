@@ -26,6 +26,12 @@ func TestStatusSpendsOneProbeBudget(t *testing.T) {
 	if n := len(f.starts()); n != 0 {
 		t.Errorf("ios_webkit_debug_proxy ran %d times, want 0", n)
 	}
+	// No start was attempted, so the error is the listing check's, not a
+	// StartError (iwdp_status reports it as an unusable listing).
+	var se *StartError
+	if errors.As(err, &se) {
+		t.Errorf("Status against a stuck iwdp returned a StartError (%v), but it started nothing", err)
+	}
 }
 
 // L06: the other Status outcomes: a running iwdp, a free port without and
@@ -59,6 +65,9 @@ func TestStatusReportsAFailedStart(t *testing.T) {
 	started, err := Status(context.Background(), true)
 	if started || err == nil || !strings.Contains(err.Error(), "exited during its start") {
 		t.Fatalf("Status with an iwdp that exits = %v, %v; want the start error", started, err)
+	}
+	if se := (*StartError)(nil); !errors.As(err, &se) {
+		t.Errorf("Status with an iwdp that exits = %v (%T); want a *StartError, because a start was attempted", err, err)
 	}
 	if n := len(f.starts()); n != 1 {
 		t.Fatalf("ios_webkit_debug_proxy ran %d times, want 1", n)

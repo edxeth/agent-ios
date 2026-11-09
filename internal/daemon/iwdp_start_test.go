@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
+	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
 )
 
 // Regression tests for the iwdp auto-start of the first device smoke test
@@ -178,6 +180,7 @@ func TestEnsureIWDPBacksOffAfterAFailedStart(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir()) // the started fake's log (proxy.LogPath)
 	ts := &transports{o: RunOptions{Transport: "iwdp", StartIWDP: proxy.NewStarter(addr).Start}, logf: t.Logf}
 	if err := ts.ensureIWDP(ctxFor(t, 30*time.Second), addr, true); err == nil {
 		t.Fatal("ensureIWDP passed with a fake iwdp that exits 1")
@@ -200,4 +203,106 @@ func TestEnsureIWDPBacksOffAfterAFailedStart(t *testing.T) {
 	if lines := strings.Split(strings.TrimSpace(string(data)), "\n"); len(lines) != 1 {
 		t.Fatalf("a failed start and %d calls ran ios_webkit_debug_proxy %d times (%q), want 1", quick, len(lines), lines)
 	}
+}
+
+// Device check 3, P3-E: the first "tab list" right after the daemon
+// started iwdp printed "No tabs.", and 9 s later the device's pages were
+// listed: iwdp lists a device's pages a moment after it starts (upstream
+// issue #5). After its own start, ensureIWDP waits a bounded time
+// (startedPagesWait) for a device page list that is not empty.
+
+// startedListing is the iwdp that start (a RunOptions.StartIWDP) brings up
+// on addr: a device list with one device whose page list is empty for the
+// first emptyFor requests and then lists one page. emptyFor < 0: always
+// empty. pageReads counts the page list requests.
+func startedListing(t *testing.T, addr string, emptyFor int32, pageReads *atomic.Int32) func(context.Context) error {
+	t.Helper()
+	pages := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if n := pageReads.Add(1); emptyFor < 0 || n <= emptyFor {
+			_, _ = w.Write([]byte("[]"))
+			return
+		}
+		_, _ = w.Write([]byte(`[{"title":"Fixture","url":"https://fixture.example/","webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/page/1"}]`))
+	}))
+	t.Cleanup(pages.Close)
+	devices := `[{"deviceId":"dev1","deviceName":"iPhone","url":"` + strings.TrimPrefix(pages.URL, "http://") + `"}]`
+	return func(context.Context) error {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			return err
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(devices)) }), ReadHeaderTimeout: time.Second}
+		go func() { _ = srv.Serve(l) }()
+		t.Cleanup(func() { _ = srv.Close() })
+		return nil
+	}
+}
+
+func TestEnsureIWDPWaitsForThePagesOfAStartedIWDP(t *testing.T) {
+	addr := deadListing(t)
+	var reads atomic.Int32
+	ts := &transports{o: RunOptions{Transport: "iwdp", StartIWDP: startedListing(t, addr, 3, &reads)}, logf: t.Logf}
+	if err := ts.ensureIWDP(ctxFor(t, 30*time.Second), addr, true); err != nil {
+		t.Fatal(err)
+	}
+	pages, err := iwdp.New(iwdp.Options{ListingAddr: addr}).Pages(ctxFor(t, 5*time.Second), "dev1")
+	if err != nil || len(pages) != 1 {
+		t.Fatalf("the first page list after the start = %v, %v; want the device's page (%d page list reads)", pages, err, reads.Load())
+	}
+}
+
+// A device page list that stays empty is reported as before, after the
+// bounded wait; an iwdp that was already running is not waited for.
+func TestEnsureIWDPBoundsTheWaitForPages(t *testing.T) {
+	addr := deadListing(t)
+	var reads atomic.Int32
+	var log syncLog
+	ts := &transports{o: RunOptions{Transport: "iwdp", StartIWDP: startedListing(t, addr, -1, &reads)}, logf: log.logf}
+	begin := time.Now()
+	if err := ts.ensureIWDP(ctxFor(t, 30*time.Second), addr, true); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(begin); d < startedPagesWait || d > startedPagesWait+2*time.Second {
+		t.Errorf("ensureIWDP with an empty page list took %s, want the bounded wait of %s", d, startedPagesWait)
+	}
+	if n := reads.Load(); n < 2 {
+		t.Errorf("the page list was read %d times during the wait, want a poll", n)
+	}
+	if !strings.Contains(log.String(), "lists no page") {
+		t.Errorf("daemon log %q, want a line that the started iwdp lists no page", log.String())
+	}
+	before := reads.Load()
+	begin = time.Now()
+	if err := ts.ensureIWDP(ctxFor(t, 30*time.Second), addr, true); err != nil {
+		t.Fatal(err)
+	}
+	if d, n := time.Since(begin), reads.Load()-before; d > time.Second || n != 0 {
+		t.Errorf("ensureIWDP with iwdp running took %s and read the page list %d times, want no wait", d, n)
+	}
+	// The wait ends with the command's deadline.
+	addr2 := deadListing(t)
+	ts2 := &transports{o: RunOptions{Transport: "iwdp", StartIWDP: startedListing(t, addr2, -1, new(atomic.Int32))}, logf: t.Logf}
+	begin = time.Now()
+	_ = ts2.ensureIWDP(ctxFor(t, time.Second), addr2, true)
+	if d := time.Since(begin); d > 2*time.Second {
+		t.Errorf("ensureIWDP under a 1 s deadline took %s", d)
+	}
+}
+
+// syncLog collects log lines (a transports.logf) safely across goroutines.
+type syncLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *syncLog) logf(format string, a ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, a...))
+}
+
+func (l *syncLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.lines, "\n")
 }

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -339,7 +341,7 @@ func (p *PageCaller) OnEvent(method string, h webkit.EventHandler) { p.Subscribe
 func (p *PageCaller) Subscribe(method string, h webkit.EventHandler) func() {
 	s, err := p.c.events(p.o, method, h)
 	if err != nil {
-		p.c.logf("subscribing to %s: %v", method, err)
+		p.c.logf("subscribing to %s: %v", logsafe.ID(method), logsafe.Error(err))
 		p.finish()
 		return func() {}
 	}
@@ -497,7 +499,7 @@ func (c *Client) events(o PageOptions, method string, h webkit.EventHandler) (*e
 		if it.Error != nil {
 			return nil, &RemoteError{*it.Error}
 		}
-		return nil, fmt.Errorf("daemon /v1/events: the stream did not start (%v)", sc.Err())
+		return nil, logcause.Errorf("daemon /v1/events: the stream did not start (%v)", sc.Err())
 	}
 	s := &eventStream{cancel: cancel, ended: make(chan struct{})}
 	go func() {
@@ -509,7 +511,7 @@ func (c *Client) events(o PageOptions, method string, h webkit.EventHandler) (*e
 			// client (design 2.6).
 			if !s.lost && sctx.Err() == nil {
 				s.lost = true
-				s.err = fmt.Errorf("the connection to the iwdp daemon ended (%v); select the page again", errOrEOF(sc.Err()))
+				s.err = logcause.Errorf("the connection to the iwdp daemon ended (%v); select the page again", errOrEOF(sc.Err()))
 			}
 		}()
 		for sc.Scan() {

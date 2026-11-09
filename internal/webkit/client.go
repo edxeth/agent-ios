@@ -239,7 +239,7 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 	c.mu.Unlock()
 
 	if tid != "" && hangsThroughTarget[method] {
-		return nil, notSent(fmt.Errorf("%s: %w", method, ErrHangsThroughTarget))
+		return nil, notSent(&CallError{Method: method, Err: ErrHangsThroughTarget})
 	}
 	// A call addressed to a target (WithTarget, for example one that
 	// carries an execution context id of that target) never goes to the

@@ -253,7 +253,9 @@ func TestFrameReleaseWaitIsBounded(t *testing.T) {
 		if en, dis := fr.onSecond("Runtime.enable"), fr.onSecond("Runtime.disable"); en != 1 || dis != 1 {
 			t.Fatalf("second connection: Runtime.enable %d, Runtime.disable %d; want 1 and 1 (the temporary owner)", en, dis)
 		}
-		if l := fr.log(); !strings.Contains(l, "frame kid") || !strings.Contains(l, "counted as released") {
+		// The log names the frame by its id and the outcome by the name
+		// of core's sentinel (logsafe.Errorf, logsafe.Error).
+		if l := fr.log(); !strings.Contains(l, "frame kid: core.errFrameGone") {
 			t.Fatalf("log %q does not report the frame kid as gone", l)
 		}
 		if e := fr.ps.Sched.ContextEpochsBefore(fr.epoch + 1); len(e) != 0 {

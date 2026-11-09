@@ -517,3 +517,40 @@ func TestDevtoolsMCPToolNames(t *testing.T) {
 		t.Fatalf("MCP tools missing from the devtools profile: %v", missing)
 	}
 }
+
+// Device check 3, P3-H: the runtime's own console.debug messages (the
+// dialog override's "__iwdp_dialog__ {...}" records, 80-dialogs.js, and the
+// "__iwdp_nav__ " and "__iwdp_bind__ " hooks of the CDP page script) are
+// internal; "console" (CLI) and get_console_messages (MCP, the Data) leave
+// them out, as the CDP endpoint does (internal/cdp consoleMessage). A user
+// message that only contains the marker text stays.
+func TestConsoleLeavesOutTheRuntimesMarkers(t *testing.T) {
+	h := newDTHarness(t)
+	h.mustRun(t, "set", "media", "light")
+	for i, text := range []string{
+		"before",
+		`__iwdp_dialog__ {"id":"d1","type":"confirm","message":"Sure?","result":true}`,
+		`__iwdp_nav__ {"u":"https://fixture.example/#a","t":"fragment"}`,
+		`__iwdp_bind__ {"n":"f","k":"k1","p":"x"}`,
+		"user text with __iwdp_dialog__ inside",
+		"after",
+	} {
+		h.f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{"source": "console-api", "level": "debug", "text": text, "timestamp": float64(i)}})
+	}
+	var out string
+	waitFor(t, "the last message", func() bool { out = h.mustRun(t, "console"); return strings.Contains(out, "after") })
+	for _, want := range []string{"before", "user text with __iwdp_dialog__ inside", "after"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("console = %q, want the page's message %q", out, want)
+		}
+	}
+	for _, marker := range []string{"[debug] __iwdp_dialog__", "__iwdp_nav__", "__iwdp_bind__"} {
+		if strings.Contains(out, marker) {
+			t.Errorf("console = %q, want no runtime marker message %q", out, marker)
+		}
+	}
+	_, js, _ := h.run("console", "--json")
+	if strings.Contains(js, `"text":"__iwdp_`) || !strings.Contains(js, "user text with __iwdp_dialog__ inside") {
+		t.Errorf("console --json = %s, want the page's messages without the runtime's markers", js)
+	}
+}

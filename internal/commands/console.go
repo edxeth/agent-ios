@@ -100,7 +100,13 @@ func runConsole(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	since, _ := in.Flags["since"].(int)
-	msgs, dropped := k.Messages(devtools.ConsoleFilter{Level: flagString(in, "level"), Since: since})
+	all, dropped := k.Messages(devtools.ConsoleFilter{Level: flagString(in, "level"), Since: since})
+	var msgs []devtools.Message
+	for _, m := range all {
+		if !IsRuntimeMessage(m.Text) {
+			msgs = append(msgs, m)
+		}
+	}
 	var b strings.Builder
 	if dropped > 0 {
 		fmt.Fprintf(&b, "(%d older messages were dropped; the buffer keeps the last %d)\n", dropped, devtools.DefaultMaxMessages)
@@ -121,6 +127,31 @@ func runConsole(ctx context.Context, env Env, in Input) (Result, error) {
 		msgs = []devtools.Message{}
 	}
 	return Result{Text: strings.TrimRight(b.String(), "\n"), Data: map[string]any{"messages": msgs, "dropped": dropped}}, nil
+}
+
+// runtimeMarker starts the text of the injected runtime's own
+// console.debug messages: the dialog override's "__iwdp_dialog__ {...}"
+// records (internal/runtime 80-dialogs.js) and the CDP page hooks
+// "__iwdp_nav__ " and "__iwdp_bind__ ". The CDP endpoint drops the same
+// prefix (internal/cdp consoleMessage).
+const runtimeMarker = "__iwdp_"
+
+// IsRuntimeMessage reports whether a console message text is one of the
+// runtime's own messages, which the console commands leave out.
+func IsRuntimeMessage(text string) bool { return strings.HasPrefix(text, runtimeMarker) }
+
+// PageConsoleMessages returns msgs without the runtime's own messages
+// (IsRuntimeMessage), in order, for the legacy console outputs that read a
+// tools.ConsoleCollector (iwdp-cli console-messages, the legacy MCP
+// get_console_messages). It is never nil, so an empty result encodes as [].
+func PageConsoleMessages(msgs []webkit.ConsoleMessage) []webkit.ConsoleMessage {
+	out := make([]webkit.ConsoleMessage, 0, len(msgs))
+	for _, m := range msgs {
+		if !IsRuntimeMessage(m.Text) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // formatConsoleMessage renders one message as "#id [level] text (url:line)"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,14 +169,29 @@ func TestQueueOverflowResets(t *testing.T) {
 	pos := core.EventPosition{Conn: conn, ActiveTarget: "wk-0"}
 	ps.onWire(pos, "next", "Page.frameNavigated", navigatedTo("next"))
 	settle(t, ps)
-	ps.mu.Lock() // the goroutine waits, after it took at most one batch: the queue fills
+	// The goroutine takes the first event's batch and waits in testApply
+	// before it applies it, so it takes nothing more while the read loop
+	// pushes: the queue fills.
+	taken, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	ps.mu.Lock()
+	ps.testApply = func(wipEvent) {
+		once.Do(func() {
+			close(taken)
+			<-resume
+		})
+	}
+	ps.mu.Unlock()
+	console := json.RawMessage(`{"message":{"source":"console-api","text":"x"}}`)
+	ps.onWire(pos, "wk-0", "Console.messageAdded", console)
+	<-taken
 	for range 2 * maxQueuedEvents {
-		ps.onWire(pos, "wk-0", "Console.messageAdded", json.RawMessage(`{"message":{"source":"console-api","text":"x"}}`))
+		ps.onWire(pos, "wk-0", "Console.messageAdded", console)
 	}
 	ps.q.mu.Lock()
 	queued, dropped := len(ps.q.items), ps.q.dropped
 	ps.q.mu.Unlock()
-	ps.mu.Unlock()
+	close(resume)
 	if queued != maxQueuedEvents || dropped == 0 {
 		t.Fatalf("queue holds %d events and dropped %d, want %d and some dropped", queued, dropped, maxQueuedEvents)
 	}

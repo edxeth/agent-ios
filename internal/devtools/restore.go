@@ -11,6 +11,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
@@ -357,7 +358,7 @@ func restoreStorage(ctx context.Context, c webkit.Caller, o StateOrigin, before 
 		return fmt.Errorf("%w; the storage and the cookies were not changed", err)
 	}
 	if uerr := undoApplies(ctx, c, o.Origin, before, calls[:kept]); uerr != nil {
-		return fmt.Errorf("%w; putting the earlier storage values back failed too (%v), so the storage may be partly loaded; the cookies were not changed", err, uerr)
+		return logcause.Errorf("%w; putting the earlier storage values back failed too (%v), so the storage may be partly loaded; the cookies were not changed", err, uerr)
 	}
 	return fmt.Errorf("%w; the earlier storage values were put back (other documents of the origin may have seen storage events) and the cookies were not changed", err)
 }

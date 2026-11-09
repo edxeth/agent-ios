@@ -19,16 +19,33 @@ func cmdRestartIWDP(ctx context.Context) {
 	fmt.Println("ios_webkit_debug_proxy restarted")
 }
 
+// iwdpLogLine names the log of an iwdp that iwdp-mcp starts (its stdout
+// and stderr, proxy.LogPath).
+func iwdpLogLine() string {
+	p, err := proxy.LogPath()
+	if err != nil {
+		return "iwdp log of an iwdp that iwdp-mcp starts: unknown (" + err.Error() + ")"
+	}
+	return "iwdp log of an iwdp that iwdp-mcp starts: " + p
+}
+
 func cmdStatus(ctx context.Context) {
 	err := proxy.CheckListing(ctx, proxy.ListingAddr())
+	notListening := errors.Is(err, proxy.ErrNotListening)
 	switch {
 	case err == nil:
 		fmt.Println("ios_webkit_debug_proxy is running")
-	case errors.Is(err, proxy.ErrNotListening):
+	case notListening:
 		fmt.Println("ios_webkit_debug_proxy is NOT running")
+	}
+	// Every outcome names the log, before any exit: a broken listing is
+	// when the user needs it most.
+	fmt.Println(iwdpLogLine())
+	switch {
+	case notListening:
 		fmt.Fprintln(os.Stderr, "Start it with: ios_webkit_debug_proxy --no-frontend")
 		os.Exit(1)
-	default:
+	case err != nil:
 		// A process owns the listing port but does not answer as iwdp.
 		fatal(err)
 	}

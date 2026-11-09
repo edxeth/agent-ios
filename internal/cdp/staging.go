@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -394,7 +395,7 @@ func (ps *pageState) applyLocked(ev wipEvent) {
 	if ev.conn != nil && ev.conn != ps.conn {
 		ps.conn = ev.conn
 		ps.forgetStagedLocked()
-		ps.logf("cdp: page %s: events of a new connection; the document is reset", ps.target)
+		ps.logf("cdp: page %s: events of a new connection; the document is reset", logsafe.ID(ps.target))
 		ps.netResetLocked(true)
 		ps.resetLocked()
 	}
@@ -510,7 +511,7 @@ func (ps *pageState) commitLocked(old, target string) {
 	ps.netTargetGoneLocked(old)
 	ps.resetOnCommit = false
 	if lost {
-		ps.logf("cdp: page %s: the events of the committed target %s are incomplete; the document is reset", ps.target, target)
+		ps.logf("cdp: page %s: the events of the committed target %s are incomplete; the document is reset", logsafe.ID(ps.target), logsafe.ID(target))
 		ps.resetLocked()
 		return
 	}
@@ -523,7 +524,7 @@ func (ps *pageState) commitLocked(old, target string) {
 		// their own (target, loader) keys (2.7), and its staged events
 		// may have given this document its id already (the document
 		// request, events.go).
-		ps.logf("cdp: page %s: the committed target %s reported no document to this attachment; the document is reset", ps.target, target)
+		ps.logf("cdp: page %s: the committed target %s reported no document to this attachment; the document is reset", logsafe.ID(ps.target), logsafe.ID(target))
 		ps.clearDocumentLocked()
 	}
 }
@@ -574,7 +575,7 @@ func (ps *pageState) stageLocked(ev wipEvent) {
 	if ps.stagedEvents+1 > maxStagedEvents || ps.stagedBytes+n > maxStagedBytes {
 		ps.dropStagedEventsLocked(t)
 		ps.overflowed[t] = true
-		ps.logf("cdp: page %s: provisional target %s exceeded the staging bounds (%d events, %d bytes); its commit resets the document", ps.target, t, maxStagedEvents, maxStagedBytes)
+		ps.logf("cdp: page %s: provisional target %s exceeded the staging bounds (%d events, %d bytes); its commit resets the document", logsafe.ID(ps.target), logsafe.ID(t), maxStagedEvents, maxStagedBytes)
 		return
 	}
 	ps.staged[t] = append(ps.staged[t], ev)
@@ -644,7 +645,7 @@ func (ps *pageState) forgetStagedLocked() {
 func (ps *pageState) eventsLostLocked() {
 	ps.forgetStagedLocked()
 	ps.resetOnCommit = true
-	ps.logf("cdp: page %s: events were dropped (more than %d events or %d bytes queued); the document is reset", ps.target, maxQueuedEvents, maxQueuedBytes)
+	ps.logf("cdp: page %s: events were dropped (more than %d events or %d bytes queued); the document is reset", logsafe.ID(ps.target), maxQueuedEvents, maxQueuedBytes)
 	ps.resetLocked()
 }
 
@@ -704,7 +705,7 @@ func (ps *pageState) refreshAfterReset() {
 	ctx, cancel := context.WithTimeout(ps.life, resetReadBudget)
 	defer cancel()
 	if _, err := ps.refresh(ctx); err != nil && ps.life.Err() == nil {
-		ps.logf("cdp: page %s: reading the frame tree after a reset: %v", ps.target, err)
+		ps.logf("cdp: page %s: reading the frame tree after a reset: %v", logsafe.ID(ps.target), logsafe.Error(err))
 	}
 }
 

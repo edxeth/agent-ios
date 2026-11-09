@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 )
 
@@ -78,7 +79,7 @@ func CloseInProcess(ctx context.Context) error {
 	srv.Stop()
 	err := m.Close(ctx)
 	if err != nil {
-		logf("cleanup: %v", err)
+		logf("cleanup: %v", logsafe.Error(err))
 	}
 	sctx, cancel := context.WithTimeout(ctx, streamDrain)
 	_ = hs.Shutdown(sctx)

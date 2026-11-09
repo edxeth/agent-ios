@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/refs"
 	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
@@ -219,7 +221,7 @@ func snapshotArea(ctx context.Context, c webkit.Caller, a captureArea) (string, 
 		DataURL string `json:"dataURL"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil || !strings.HasPrefix(res.DataURL, "data:image/png;base64,") {
-		return "", fmt.Errorf("Page.snapshotRect: the reply has no PNG data URL (%v)", err)
+		return "", logcause.Errorf("Page.snapshotRect: the reply has no PNG data URL (%v)", err)
 	}
 	return res.DataURL, nil
 }
@@ -245,7 +247,7 @@ func (w *w3bPage) removeOverlay(ctx context.Context, env Env) error {
 	if err := w.op.Finally(overlayCleanupBudget, func(ctx context.Context, c webkit.Caller) {
 		clearOverlay(ctx, w.ps.Runtime.Via(c), logf)
 	}); err != nil {
-		logf("screenshot --annotate: the overlay stays until the next owner's first runtime call: %v", err)
+		logf("screenshot --annotate: the overlay stays until the next owner's first runtime call: %v", logsafe.Error(err))
 	}
 	return nil
 }
@@ -266,7 +268,7 @@ func (w *w3bPage) ended(ctx context.Context) error {
 // operation ended; rt sends through the operation's lease-fenced caller.
 func clearOverlay(ctx context.Context, rt *runtime.Runtime, logf func(string, ...any)) {
 	if err := rt.Call(ctx, "overlayClear", nil, nil); err != nil {
-		logf("screenshot --annotate: removing the overlay after the command ended: %v", err)
+		logf("screenshot --annotate: removing the overlay after the command ended: %v", logsafe.Error(err))
 	}
 }
 

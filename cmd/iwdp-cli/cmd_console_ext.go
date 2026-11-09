@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 )
 
@@ -28,7 +29,7 @@ func cmdConsoleMessages(ctx context.Context, args []string) {
 	if err := collector.Stop(ctx, client); err != nil {
 		fatal(err)
 	}
-	msgs := collector.GetMessages()
+	msgs := reg.PageConsoleMessages(collector.GetMessages())
 	out, _ := json.MarshalIndent(msgs, "", "  ")
 	fmt.Println(string(out))
 }

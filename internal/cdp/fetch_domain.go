@@ -16,6 +16,7 @@ import (
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -618,7 +619,7 @@ func (ps *pageState) continueNow(target, id, stage string) {
 	defer cancel()
 	err := ps.s.pg.PS.Sched.ContinueUnclaimed(ctx, target, id, stage)
 	if err != nil && !errors.Is(err, core.ErrControlRefused) {
-		ps.logf("cdp: page %s: continuing intercepted request %s of target %q: %v", ps.target, id, target, err)
+		ps.logf("cdp: page %s: continuing intercepted request %s of target %q: %v", logsafe.ID(ps.target), logsafe.ID(id), logsafe.ID(target), logsafe.Error(err))
 	}
 }
 

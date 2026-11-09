@@ -1,6 +1,10 @@
 package core
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
+)
 
 // Exit codes that core errors choose (design 2.10); they equal the
 // commands package's ExitTimeout, ExitBusy, ExitNoPage and ExitReservation.
@@ -22,6 +26,37 @@ func (e *CodedError) Unwrap() error { return e.Err }
 
 // ExitCode lets commands.ExitCodeOf pick the exit code.
 func (e *CodedError) ExitCode() int { return e.Code }
+
+// The daemon log names core's sentinel errors (logsafe).
+func init() {
+	logsafe.Register(map[string]error{
+		"core.ErrLost":               ErrLost,
+		"core.ErrLeased":             ErrLeased,
+		"core.ErrPageBusy":           ErrPageBusy,
+		"core.ErrNoReservation":      ErrNoReservation,
+		"core.ErrNoPage":             ErrNoPage,
+		"core.ErrRecoveryFailed":     ErrRecoveryFailed,
+		"core.ErrStaleEpoch":         ErrStaleEpoch,
+		"core.ErrLeaseEnded":         ErrLeaseEnded,
+		"core.ErrOpEnded":            ErrOpEnded,
+		"core.ErrNoDeadline":         ErrNoDeadline,
+		"core.ErrControlRefused":     ErrControlRefused,
+		"core.ErrAttemptClosed":      ErrAttemptClosed,
+		"core.ErrOutcomeUnknown":     ErrOutcomeUnknown,
+		"core.ErrReplyLost":          ErrReplyLost,
+		"core.ErrClockUncertain":     ErrClockUncertain,
+		"core.ErrDocumentChanged":    ErrDocumentChanged,
+		"core.ErrReserved":           ErrReserved,
+		"core.ErrRequestReset":       ErrRequestReset,
+		"core.errContextNotReported": errContextNotReported,
+		"core.errFrameGone":          errFrameGone,
+		"core.errResumeUnknown":      errResumeUnknown,
+		"core.errProbeCanceled":      errProbeCanceled,
+		"core.errShuttingDown":       errShuttingDown,
+		"core.errLeaseChanged":       errLeaseChanged,
+		"core.errChangeRefused":      errChangeRefused,
+	})
+}
 
 // Errors of page ownership and leases (design 2.5).
 var (

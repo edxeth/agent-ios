@@ -27,6 +27,13 @@ One daemon per user owns every page connection. `iwdp-cli`, `iwdp-mcp` and CDP c
 
 The daemon may start iwdp when it is not running (as `iwdp_status` does). It never stops or restarts an iwdp that it did not start. See [device-runbook.md](device-runbook.md).
 
+- An iwdp that iwdp-mcp starts appends its stdout and stderr to `$XDG_STATE_HOME/iwdp-mcp/iwdp.log` (fallback `~/.local/state/iwdp-mcp/iwdp.log`, mode 0600). `iwdp-cli status` and `iwdp_status` name the path (or why it is unknown) for every outcome, also when the listing port is owned but does not answer. A start that finds the log at 1 MiB or more keeps it as `iwdp.log.1` (replacing an older one) and begins a new one. iwdp's stdout is block-buffered in a file, so its "Connected ..." lines appear only when it exits; when GNU `stdbuf` is on `PATH` (Linux), iwdp runs under `stdbuf -oL` and they appear at once. stderr is unbuffered either way.
+- iwdp lists a device's pages a moment after it starts. After the daemon started iwdp, it waits up to 3 s (within the command's deadline) until a device lists a page; a list that stays empty is reported as before ("No tabs.").
+- The daemon log holds no page-supplied text: no page title, no page URL, no message or exception of a page, and no text of an error.
+  - **What it keeps:** the operation, in the fixed text of each log line; ids: the page id (the transport's page id, for iwdp its WebSocket debugger URL without query; a CDP target id), target, request and session ids, the session name, the device label; numbers, durations and connection states; the configured addresses (the daemon socket, the CDP listen address); the method names of a CDP client's requests and hashes of the other values it sent (Host, Origin, path segments).
+  - **What it keeps of an error:** only what the error's type says. That is the name of a known error (for example `webkit.ErrPageClosed`, `context.DeadlineExceeded`, `core.ErrLost`), the method of the request that failed (`Console.disable`), a WebKit protocol error code (`WebKit protocol error -32000`), a runtime or ref error code that iwdp-mcp defines (`runtime error stale_owner`), a WebSocket close code, a system error (`errno 111 (connection refused)`), the operation of a network error (`net dial`), a JSON error's offset or Go type, and `Go runtime error`. Several errors are listed as `[a; b]`, an error's added cause as `(also: ...)`.
+  - **What it withholds:** the text of every error. An error that iwdp-mcp cannot classify by its type is written as `unclassified` (with its Go type for a typed error); a runtime error code that iwdp-mcp does not define is left out; the address of a network error is left out; a recovered panic value is written like an error when it is one, else by its type only, with the stack.
+
 ## Deadlines and exit codes
 
 Every command runs under one deadline: 30 s by default, `--timeout <duration>` or `IWDP_TIMEOUT`. Some commands have their own default (actions 5 s, `wait` 25 s; the reference lists them). The deadline covers the start of the daemon, the wait for a lease, the connection, the calls and any retry. When it expires, the command returns at once.
@@ -157,6 +164,8 @@ The registry also has DevTools commands. Captures start with the session's lease
 | Storage | `cookies set`, `cookies clear`, `storage`, `state save`, `state load` |
 | Performance | `trace start`, `trace stop`, `profiler start`, `profiler stop`, `vitals` |
 
+- `cookies set` with an expiry in the past (`--expires 1`, a past RFC 3339 time) deletes the cookie of that name, domain and path, as a browser does, checks that it is gone and reports the deletion (exit 0). Other cookies of the name (another path or domain) stay.
+- `console` (and `get_console_messages`, also in the `legacy` MCP profile, and the legacy `console-messages`, `console -d` and `console --follow`) leaves out the runtime's own console messages, whose text starts with `__iwdp_` (for example the dialog records `__iwdp_dialog__ {...}`), as the CDP endpoint does.
 - Secrets are masked by default: header values of `Cookie`, `Set-Cookie` and `Authorization`, secret query and body fields, and cookie values. `--show-secrets` or `--show-values` shows them.
 - HAR, trace, profile and state files are written with mode 0600. A state file holds cookies and storage in clear text: delete it after use.
 - `set credentials --origin <origin> <user>` reads the password from the first line of standard input, never from the command line. It works only on the WebKitGTK transport until it is verified on a device.

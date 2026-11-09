@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -417,25 +418,25 @@ func (s *Scheduler) ReleaseExecutionContexts(ctx context.Context, epoch uint64, 
 	// ended reports a ctx that has ended: nothing more is sent and no
 	// record changes, because whether a send would reach its context is
 	// not known any more.
-	ended := func(what string) bool {
+	ended := func(kind logsafe.Label, id any) bool {
 		if ctx.Err() == nil {
 			return false
 		}
-		errs = append(errs, fmt.Errorf("%s: %w: %w", what, webkit.ErrNotSent, context.Cause(ctx)))
+		errs = append(errs, logsafe.Errorf("%s %v: %w: %w", kind, id, webkit.ErrNotSent, context.Cause(ctx)))
 		return true
 	}
 	for _, frame := range stale {
-		if ended("frame " + frame) {
+		if ended("frame", logsafe.ID(frame)) {
 			continue
 		}
 		fc := s.FrameContext(frame)
 		if fc.ID == 0 {
-			errs = append(errs, fmt.Errorf("frame %s: %w", frame, errContextNotReported))
+			errs = append(errs, logsafe.Errorf("frame %s: %w", logsafe.ID(frame), errContextNotReported))
 			continue
 		}
 		written := new(atomic.Bool)
 		if err := release(ctx, contextCaller{Caller: c, ec: fc, written: written}); err != nil && !contextGone(err) {
-			errs = append(errs, fmt.Errorf("frame %s (execution context %d): %w", frame, fc.ID, err))
+			errs = append(errs, logsafe.Errorf("frame %s (execution context %d): %w", logsafe.ID(frame), fc.ID, err))
 			b.forget(epoch, func(ec *epochContexts) {
 				switch {
 				case !ec.stale[frame]:
@@ -450,7 +451,7 @@ func (s *Scheduler) ReleaseExecutionContexts(ctx context.Context, epoch uint64, 
 		b.forget(epoch, func(ec *epochContexts) { delete(ec.stale, frame); delete(ec.reached, frame) })
 	}
 	for _, rec := range recs {
-		if ended(fmt.Sprintf("execution context %d", rec.ID)) {
+		if ended("execution context", rec.ID) {
 			continue
 		}
 		written := new(atomic.Bool)
@@ -600,7 +601,7 @@ func (ps *PageSession) ReleaseFrameContexts(ctx context.Context, epoch uint64, s
 		}
 	} else if ran {
 		for _, frame := range s.awaitReports(ctx, epoch) {
-			errs = append(errs, fmt.Errorf("frame %s: %w", frame, errFrameGone))
+			errs = append(errs, logsafe.Errorf("frame %s: %w", logsafe.ID(frame), errFrameGone))
 		}
 	}
 	errs = append(errs, s.ReleaseExecutionContexts(ctx, epoch, c, release))

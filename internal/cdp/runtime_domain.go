@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
@@ -345,10 +346,10 @@ func cmpOr(a, b string) string {
 
 // release releases a remote object the client never saw; what names it
 // for the log.
-func (b *boundOp) release(objectID any, what string) {
+func (b *boundOp) release(objectID any, what logsafe.Label) {
 	if _, err := b.send("Runtime.releaseObject", map[string]any{"objectId": objectID}); err != nil {
 		s := b.s
-		s.c.s.o.Logf("cdp: %s: releasing %s of %s session %s: %v", s.c.name, what, s.kind, shortID(s.id), err)
+		s.c.s.o.Logf("cdp: %s: releasing %s of %s session %s: %v", logsafe.ID(s.c.name), what, logsafe.ID(s.kind), logsafe.ID(shortID(s.id)), logsafe.Error(err))
 	}
 }
 
