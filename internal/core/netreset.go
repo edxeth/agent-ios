@@ -97,8 +97,8 @@ func (s *Scheduler) disabledOn(c webkit.Caller, target string) {
 // "Missing pending intercept ..." (requestGone), or completed it first.
 func (s *Scheduler) forgetHolds(match func(holdKey) bool) []string {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	var ids []string
+	var forgot []holdKey
 	for k := range s.intercepted {
 		if !match(k) {
 			continue
@@ -109,7 +109,10 @@ func (s *Scheduler) forgetHolds(match func(holdKey) bool) []string {
 		s.resetReqs[k] = true
 		delete(s.intercepted, k)
 		ids = append(ids, k.id)
+		forgot = append(forgot, k)
 	}
+	s.mu.Unlock()
+	s.reportForgotten(forgot)
 	slices.Sort(ids)
 	return ids
 }

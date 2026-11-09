@@ -64,8 +64,17 @@ const (
 // installFakeIWDP writes the fake iwdp of mode for the listing addr and an
 // idevice_id that exits 1 (DeviceUDIDs must not reach usbmuxd), and puts
 // them first on PATH for this test.
+//
+// It also gives the test its own XDG_RUNTIME_DIR, so the iwdp records and
+// start locks of this test are its own. Records are named by the listing
+// address, and addresses repeat between the tests of one package run
+// (freeAddr picks at random), so a shared directory hands one test the
+// record that another test left: for example the group-writable record of
+// TestRestartRefusesAnUnsafeRecordStore, which os.WriteFile keeps
+// group-writable when a later test rewrites it.
 func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 	t.Helper()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	dir := t.TempDir()
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 	var body string
@@ -508,26 +517,35 @@ func TestStartReportsAMissingBinaryAndBacksOff(t *testing.T) {
 // boundAddr binds a private loopback address without listening on it, as
 // a process does between bind(2) and listen(2). Connections to it are
 // refused, yet the address is owned.
+//
+// The bind itself picks the address: a port in use is skipped. A port that
+// freeAddr reports free can still refuse this bind, because freeAddr's
+// listener sets SO_REUSEADDR and this socket does not: a TIME_WAIT
+// connection that an earlier test left on the port (for example
+// TestPortFreeIgnoresTimeWait, or a stopped fake iwdp) blocks only this
+// bind, for up to a minute.
 func boundAddr(t *testing.T) string {
 	t.Helper()
-	addr := freeAddr(t)
-	_, ps, err := net.SplitHostPort(addr)
-	if err != nil {
-		t.Fatal(err)
+	for range 100 {
+		port := freePortMin + rand.IntN(freePortCount)
+		fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}, Port: port})
+		if errors.Is(err, syscall.EADDRINUSE) {
+			_ = syscall.Close(fd)
+			continue
+		}
+		if err != nil {
+			_ = syscall.Close(fd)
+			t.Fatalf("binding 127.0.0.1:%d: %v", port, err)
+		}
+		t.Cleanup(func() { _ = syscall.Close(fd) })
+		return fmt.Sprintf("127.0.0.1:%d", port)
 	}
-	port, err := strconv.Atoi(ps)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = syscall.Close(fd) })
-	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}, Port: port}); err != nil {
-		t.Fatal(err)
-	}
-	return addr
+	t.Fatalf("no unbound loopback port in %d-%d", freePortMin, freePortMin+freePortCount-1)
+	return ""
 }
 
 // Review round 1, F1: a socket that is bound but does not listen owns the

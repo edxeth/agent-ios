@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"testing/quick"
+	"testing/synctest"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -404,7 +406,23 @@ const (
 	betweenReconnect        // a reconnect replaces the connection
 )
 
+// TestFrameContextsProperty runs the property in a synctest bubble: the
+// scheduler's waits and timers, the deadlines and the measured durations
+// use the bubble's clock, which moves only when every goroutine of the
+// bubble waits. The release's share of its budget is then the time that
+// the release waited, not that time plus the host's scheduling delays,
+// which once pushed a correct release of a loaded host past
+// budget/2+slack. The inputs are random on every run, as before: the
+// generator's source is seeded outside the bubble, whose clock starts at
+// the same instant every time.
 func TestFrameContextsProperty(t *testing.T) {
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	synctest.Test(t, func(t *testing.T) { frameContextsProperty(t, rnd) })
+}
+
+// frameContextsProperty is TestFrameContextsProperty with the generator's
+// source rnd.
+func frameContextsProperty(t *testing.T, rnd *rand.Rand) {
 	const (
 		frameOwner = Owner("frame:s1")
 		otherOwner = Owner("legacy:s2")
@@ -736,7 +754,7 @@ func TestFrameContextsProperty(t *testing.T) {
 		}
 		return true
 	}
-	if err := quick.Check(prop, &quick.Config{MaxCount: 300}); err != nil {
+	if err := quick.Check(prop, &quick.Config{MaxCount: 300, Rand: rnd}); err != nil {
 		t.Fatal(err)
 	}
 	if reach.gone == 0 || reach.waited == 0 || reach.expired == 0 || reach.early == 0 || reach.late == 0 || reach.resolved == 0 ||

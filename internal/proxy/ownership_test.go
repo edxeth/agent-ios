@@ -387,22 +387,27 @@ func fakeLsof(t *testing.T, f *fakeIWDP) (entered, release string) {
 // Review round 2, F5: a stalled lsof (darwin's check) does not hold Start
 // past the caller's context: Start returns the context's error and its
 // started group is gone.
+//
+// The context ends once lsof runs, not after a fixed time: the spawn and
+// the readiness wait before the check take a time that depends on the
+// host's load, and a context that ends before lsof runs tests nothing of
+// the check.
 func TestStartHonorsTheContextDuringTheOwnershipCheck(t *testing.T) {
 	addr := freeAddr(t)
 	f := installFakeIWDP(t, fakeServe, addr)
 	entered, _ := fakeLsof(t, f)
 	s := testStarter(addr, 20*time.Second)
 	s.listens = lsofGroupListens
-	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- s.Start(ctx) }()
 	waitFile(t, entered)
-	<-ctx.Done()
+	cancel()
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("Start after its context ended = %v, want context.DeadlineExceeded", err)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start after its context ended = %v, want context.Canceled", err)
 		}
 	case <-time.After(stopGrace + stopReap + time.Second):
 		t.Fatal("Start is still blocked in lsof after its context ended")

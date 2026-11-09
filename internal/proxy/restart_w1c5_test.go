@@ -26,8 +26,9 @@ import (
 // loopback address; the tests run inside unshare -rn.
 
 // recordPath is where Starter records the iwdp it started for addr: a
-// file in the private directory iwdp-mcp of XDG_RUNTIME_DIR (TestMain makes
-// it private), named like the start lock. It creates the directory.
+// file in the private directory iwdp-mcp of XDG_RUNTIME_DIR (private to the
+// test after installFakeIWDP, else TestMain's), named like the start lock.
+// It creates the directory.
 func recordPath(addr string) string {
 	dir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "iwdp-mcp")
 	_ = os.Mkdir(dir, 0o700)
@@ -200,6 +201,35 @@ func TestRestartRestartsTheIWDPThisProgramStarted(t *testing.T) {
 	restart("the Starter that started it, without the record file", 4)
 	if calls := pkillCalls(t); len(calls) != 0 {
 		t.Errorf("Restart ran pkill: %q", calls)
+	}
+}
+
+// The record of a start replaces a record file left at the same path, mode
+// included (saveRecord: a new 0600 file, renamed over the old one). A
+// group-writable file left behind (by hand, or by an older program) would
+// otherwise stay group-writable, and every later restart would refuse it.
+func TestStartReplacesARecordLeftWithAnotherMode(t *testing.T) {
+	addr := freeAddr(t)
+	f := installFakeIWDP(t, fakeServe, addr)
+	if err := os.WriteFile(recordPath(addr), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(recordPath(addr), 0o620); err != nil {
+		t.Fatal(err)
+	}
+	useStd(t, testStarter(addr, 10*time.Second))
+	if err := Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	fi, err := os.Lstat(recordPath(addr))
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the record after Start: %v, %v; want mode 0600", fi, err)
+	}
+	if err := Restart(context.Background()); err != nil {
+		t.Fatalf("Restart of the iwdp that Start recorded: %v", err)
+	}
+	if n := len(f.starts()); n != 2 {
+		t.Errorf("ios_webkit_debug_proxy ran %d times, want 2 (the start and the restart)", n)
 	}
 }
 

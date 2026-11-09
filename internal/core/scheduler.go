@@ -157,6 +157,10 @@ type Scheduler struct {
 	// holdClosed, when set (tests only), is called with the key of a hold
 	// that a completion closed, after the critical section that closed it.
 	holdClosed func(holdKey)
+	// holdForgotten, when set (tests only), is called with the key of a
+	// hold that the scheduler forgot without a completion (forgetHolds,
+	// dropHolds), after the critical section that forgot it.
+	holdForgotten func(holdKey)
 
 	sem   chan struct{}
 	unsub []func()
@@ -286,15 +290,28 @@ func subscribeItems(c webkit.Caller, method string, h webkit.TargetEventHandler)
 // dropHolds forgets every hold of target, and its pause.
 func (s *Scheduler) dropHolds(target string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var forgot []holdKey
 	for k := range s.intercepted {
 		if k.target == target {
 			delete(s.intercepted, k)
+			forgot = append(forgot, k)
 		}
 	}
 	delete(s.pauses, target)
 	close(s.changed) // a barrier may wait for one of them
 	s.changed = make(chan struct{})
+	s.mu.Unlock()
+	s.reportForgotten(forgot)
+}
+
+// reportForgotten calls holdForgotten (tests only) with each forgotten
+// hold.
+func (s *Scheduler) reportForgotten(forgot []holdKey) {
+	if s.holdForgotten != nil {
+		for _, k := range forgot {
+			s.holdForgotten(k)
+		}
+	}
 }
 
 // holdTarget is the target that a control message names: target, or the

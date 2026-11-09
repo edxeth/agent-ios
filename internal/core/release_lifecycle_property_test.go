@@ -151,6 +151,9 @@ type lifecycleRun struct {
 	installed int
 	seq       int  // names of provisional targets and held requests
 	disturbed bool // a stall or lost step ran: the final command may find no usable connection
+	// holdsMoved wakes checkHolds when the scheduler forgets or closes a
+	// hold (watchHolds).
+	holdsMoved chan struct{}
 
 	// The backend model, kept by the fake's handlers (installBackend),
 	// by "<conn>|<target>"; fmu guards it and refusing (method -> end).
@@ -296,9 +299,35 @@ func (lr *lifecycleRun) checkBackendLocked(pg *Page, when string) {
 	}
 }
 
+// holdsGuard bounds checkHolds' wait for the scheduler to drop a held
+// request that the backend no longer holds. It only guards against a hang:
+// the property is that such a request leaves the scheduler's list, after
+// the reply that tells the scheduler (a Network.disable that the fake ran)
+// was handled, however long the loaded host takes to handle it.
+const holdsGuard = 10 * time.Second
+
+// watchHolds makes the scheduler's hold hooks (holdForgotten, holdClosed)
+// wake checkHolds.
+func (lr *lifecycleRun) watchHolds() {
+	lr.holdsMoved = make(chan struct{}, 1)
+	wake := func(holdKey) {
+		select {
+		case lr.holdsMoved <- struct{}{}:
+		default: // a wake is pending; checkHolds reads the list again
+		}
+	}
+	s := lr.pg.PS.Sched
+	s.mu.Lock()
+	s.holdForgotten, s.holdClosed = wake, wake
+	s.mu.Unlock()
+}
+
 // checkHolds: every request the scheduler lists is held by the backend.
-// A pair counts only when it is found in two checks 200 ms apart, so a
-// reply on its way (a Network.disable that the fake ran) is no violation.
+// A request that the backend no longer holds (a stray pair) counts only
+// when it stays in the scheduler's list: checkHolds waits until each
+// stray pair of its first look leaves the list, woken when the scheduler
+// forgets or closes a hold, so a reply on its way is no violation. A pair
+// still listed after holdsGuard is a violation.
 func (lr *lifecycleRun) checkHolds(when string) {
 	stray := func() map[HeldRequest]bool {
 		out := map[HeldRequest]bool{}
@@ -316,10 +345,28 @@ func (lr *lifecycleRun) checkHolds(when string) {
 	if len(first) == 0 {
 		return
 	}
-	time.Sleep(200 * time.Millisecond)
-	for h := range stray() {
-		if first[h] {
-			lr.violation("at %s: the scheduler lists held request %s of target %s, which the backend no longer holds: a reset continued it without recording it", when, h.RequestID, h.Target)
+	guard := time.NewTimer(holdsGuard)
+	defer guard.Stop()
+	for expired := false; ; {
+		var left []HeldRequest
+		for h := range stray() {
+			if first[h] {
+				left = append(left, h)
+			}
+		}
+		if len(left) == 0 {
+			return
+		}
+		if expired {
+			for _, h := range left {
+				lr.violation("at %s: the scheduler lists held request %s of target %s, which the backend no longer holds: a reset continued it without recording it", when, h.RequestID, h.Target)
+			}
+			return
+		}
+		select {
+		case <-lr.holdsMoved:
+		case <-guard.C:
+			expired = true
 		}
 	}
 }
@@ -607,6 +654,7 @@ func runLifecyclePlan(t *testing.T, p lifecyclePlan) []string {
 		t.Fatalf("setup Begin: %v", err)
 	}
 	lr.pg = mo.Page
+	lr.watchHolds()
 	p0, _ := json.Marshal(map[string]any{"headers": map[string]string{"X-Sess-s1": strconv.FormatUint(mo.Epoch, 10)}})
 	if _, err := r.m.Raw(ctx, mo.ID, "Network.setExtraHTTPHeaders", p0); err != nil {
 		t.Fatalf("setup header: %v", err)
@@ -729,6 +777,17 @@ var reviewerPlans = map[string]lifecyclePlan{
 		{Kind: stepStall, StartMS: 400, DeadMS: 60, Param: 58},
 		{Kind: stepRelease, StartMS: 657, DeadMS: 1000, Param: 347},
 		{Kind: stepUse, StartMS: 653, DeadMS: 60, Param: 548},
+	}},
+	// Load flakes, part 2: the takeover's new connection resets Network,
+	// which continues the request that the target held; the scheduler must
+	// forget that hold when the connection is installed
+	// (forgetHeldRequests), so the holds check finds no stray request. A
+	// scheduler that never forgets a hold fails here.
+	"takeover after a lost connection forgets the held request": {Steps: []lifecycleStep{
+		{Kind: stepIntercept, StartMS: 0},
+		{Kind: stepLost, StartMS: 100},
+		{Kind: stepTakeover, StartMS: 300, DeadMS: 3000},
+		{Kind: stepHolds, StartMS: 1500},
 	}},
 	// Round 5: the release's continue of a held request waits on a
 	// connection that the liveness probe declares stalled about 1 s before
