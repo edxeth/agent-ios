@@ -29,8 +29,10 @@ func TestSnapshotFixtures(t *testing.T) {
 		{page: "aria.html", expected: "aria.snapshot.txt"},
 		{page: "shadow.html", expected: "shadow.snapshot.txt"},
 		{page: "hidden.html", expected: "hidden.snapshot.txt"},
-		{page: "iframe.html", expected: "iframe.snapshot.txt",
-			wait: "document.getElementById('child').contentDocument && document.getElementById('child').contentDocument.readyState === 'complete' && !!document.getElementById('child').contentDocument.querySelector('button')"},
+		{
+			page: "iframe.html", expected: "iframe.snapshot.txt",
+			wait: "document.getElementById('child').contentDocument && document.getElementById('child').contentDocument.readyState === 'complete' && !!document.getElementById('child').contentDocument.querySelector('button')",
+		},
 	} {
 		t.Run(c.expected, func(t *testing.T) {
 			navigate(t, c.page, c.wait)
@@ -442,8 +444,10 @@ func TestOwnerResetMakesOldRefsUnknown(t *testing.T) {
 	ref2 := refNamed(t, mustRun(t, ps, "snapshot", "-i"), `button "Sign In"`)
 	ps.Runtime.SetOwner(iwdpruntime.Owner{Daemon: "d1", Session: "S", Epoch: 4})
 	var got string
-	err := ps.Runtime.Call(ctx, "get", map[string]any{"what": "text",
-		"target": map[string]any{"ref": ref2, "role": "button", "name": "Sign In", "unique": true}}, &got)
+	err := ps.Runtime.Call(ctx, "get", map[string]any{
+		"what":   "text",
+		"target": map[string]any{"ref": ref2, "role": "button", "name": "Sign In", "unique": true},
+	}, &got)
 	var rerr *iwdpruntime.Error
 	if !errors.As(err, &rerr) || rerr.Code != "unknown_ref" || !strings.Contains(rerr.Message, "the lease of this page changed") {
 		t.Fatalf("page resolve of an epoch-3 ref under epoch 4 = %q, %v; want unknown_ref", got, err)
@@ -585,8 +589,10 @@ func TestAttemptContextClosesWhenTheCallSettles(t *testing.T) {
 		{"reject", true, "dispatch rejected"},
 		{"throw", false, "dispatch failed"},
 	} {
-		a := core.AttemptArgs{OpID: "settle-" + c.mode, Epoch: 1, Doc: clock.Doc, Step: 1, Steps: 1,
-			AttemptEnd: clock.Now + 60000, Deadline: clock.Now + 60000, Args: map[string]string{"mode": c.mode}}
+		a := core.AttemptArgs{
+			OpID: "settle-" + c.mode, Epoch: 1, Doc: clock.Doc, Step: 1, Steps: 1,
+			AttemptEnd: clock.Now + 60000, Deadline: clock.Now + 60000, Args: map[string]string{"mode": c.mode},
+		}
 		var r core.AttemptReply
 		call := ps.Runtime.Call
 		if c.async {

@@ -96,8 +96,10 @@ func TestDiffLinesFallbackStaysCorrect(t *testing.T) {
 // after" on the same inputs (cases with one shortest script).
 func TestUnifiedMatchesGNUDiff(t *testing.T) {
 	for _, c := range []struct{ a, b, want string }{
-		{"l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12", "l1 X l3 l4 l5 l6 l7 l8 l9 l10 Y l12",
-			"--- before\n+++ after\n@@ -1,5 +1,5 @@\n l1\n-l2\n+X\n l3\n l4\n l5\n@@ -8,5 +8,5 @@\n l8\n l9\n l10\n-l11\n+Y\n l12\n"},
+		{
+			"l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12", "l1 X l3 l4 l5 l6 l7 l8 l9 l10 Y l12",
+			"--- before\n+++ after\n@@ -1,5 +1,5 @@\n l1\n-l2\n+X\n l3\n l4\n l5\n@@ -8,5 +8,5 @@\n l8\n l9\n l10\n-l11\n+Y\n l12\n",
+		},
 		{"x", "x y", "--- before\n+++ after\n@@ -1 +1,2 @@\n x\n+y\n"},
 		{"x y", "y", "--- before\n+++ after\n@@ -1,2 +1 @@\n-x\n y\n"},
 		{"a", "b", "--- before\n+++ after\n@@ -1 +1 @@\n-a\n+b\n"},

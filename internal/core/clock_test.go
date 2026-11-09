@@ -358,9 +358,11 @@ func TestClockUncertaintyRefreshThenFailClosed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clock := NewManualClock(0)
-			p := &simPage{clock: clock, rt: fakewebkit.NewPageRuntime(), rtts: tc.rtts,
+			p := &simPage{
+				clock: clock, rt: fakewebkit.NewPageRuntime(), rtts: tc.rtts,
 				page:      func(d time.Duration) time.Duration { return d },
-				readAfter: func(rtt time.Duration) time.Duration { return rtt / 2 }}
+				readAfter: func(rtt time.Duration) time.Duration { return rtt / 2 },
+			}
 			s := NewScheduler(nopCaller{}, SchedulerOptions{Clock: clock, Runtime: p.call})
 			defer s.Close()
 			s.SetLease(testSession, 1)

@@ -42,8 +42,10 @@ func wireBytes(t *testing.T, method string, params any) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outer, err := json.Marshal(map[string]any{"id": 1, "method": "Target.sendMessageToTarget",
-		"params": map[string]string{"targetId": "page-1", "message": string(inner)}})
+	outer, err := json.Marshal(map[string]any{
+		"id": 1, "method": "Target.sendMessageToTarget",
+		"params": map[string]string{"targetId": "page-1", "message": string(inner)},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

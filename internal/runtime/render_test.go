@@ -160,14 +160,18 @@ func TestRenderGolden(t *testing.T) {
 			// suffix follows the attributes; with -i the name falls back to
 			// the element text (lines 1267-1276, 1327-1334).
 			name: "cursor interactive",
-			nodes: []Node{{Role: "generic", Ref: "e5", Cursor: &Cursor{Kind: "focusable", Hints: []string{"tabindex"}, Text: "Menu"},
-				Children: []Node{{Role: "StaticText", Name: "Menu"}}}},
+			nodes: []Node{{
+				Role: "generic", Ref: "e5", Cursor: &Cursor{Kind: "focusable", Hints: []string{"tabindex"}, Text: "Menu"},
+				Children: []Node{{Role: "StaticText", Name: "Menu"}},
+			}},
 			want: "- generic [ref=e5] focusable [tabindex]\n  - StaticText \"Menu\"",
 		},
 		{
 			name: "cursor interactive -i",
-			nodes: []Node{{Role: "generic", Ref: "e5", Cursor: &Cursor{Kind: "editable", Hints: []string{"contenteditable"}, Text: "Menu"},
-				Children: []Node{{Role: "StaticText", Name: "Menu"}}}},
+			nodes: []Node{{
+				Role: "generic", Ref: "e5", Cursor: &Cursor{Kind: "editable", Hints: []string{"contenteditable"}, Text: "Menu"},
+				Children: []Node{{Role: "StaticText", Name: "Menu"}},
+			}},
 			opts: RenderOptions{Interactive: true},
 			want: "- generic \"Menu\" [ref=e5] editable [contenteditable]",
 		},

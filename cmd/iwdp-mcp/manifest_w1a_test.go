@@ -33,11 +33,13 @@ func TestRegistrationManifestHasNoDuplicateToolName(t *testing.T) {
 // name. registerTools must register the replacement, not only skip the
 // legacy tool.
 func TestRegistryCommandReplacesLegacyTool(t *testing.T) {
-	c := &commands.Command{Name: "fixture list devices", MCPName: "list_devices", Profile: commands.ProfileCore,
+	c := &commands.Command{
+		Name: "fixture list devices", MCPName: "list_devices", Profile: commands.ProfileCore,
 		Summary: "Registry replacement of list_devices.",
 		Run: func(context.Context, commands.Env, commands.Input) (commands.Result, error) {
 			return commands.Result{Text: "registry handler ran"}, nil
-		}}
+		},
+	}
 	commands.Register(c)
 	t.Cleanup(func() { commands.Unregister(c) })
 	server := mcp.NewServer(&mcp.Implementation{Name: "iwdp-mcp", Version: "test"}, nil)
