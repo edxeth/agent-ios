@@ -57,6 +57,13 @@ type rig struct {
 // starts.
 func newRig(t *testing.T, opts ...func(*Options)) *rig {
 	t.Helper()
+	return newRigWrapped(t, nil, opts...)
+}
+
+// newRigWrapped builds the rig with wrap (when not nil) around the
+// manager's transport.
+func newRigWrapped(t *testing.T, wrap func(transport.Transport) transport.Transport, opts ...func(*Options)) *rig {
+	t.Helper()
 	r := &rig{l: fakewebkit.NewListing(false), fake: map[string]*fakewebkit.Server{}, listed: map[string]*fakewebkit.ListedPage{}, log: &logBuf{}}
 	t.Cleanup(r.l.Close)
 	r.devA = r.l.AddDevice("00008020-00000000000000A1", "iPhone A", "16.7.10")
@@ -70,7 +77,11 @@ func newRig(t *testing.T, opts ...func(*Options)) *rig {
 	}
 	r.m = core.NewManager(core.ManagerOptions{
 		Transport: func(_ context.Context, kind, addr string) (transport.Transport, error) {
-			return iwdp.New(iwdp.Options{ListingAddr: addr}), nil
+			var tr transport.Transport = iwdp.New(iwdp.Options{ListingAddr: addr})
+			if wrap != nil {
+				tr = wrap(tr)
+			}
+			return tr, nil
 		},
 		Reservations: r.res,
 		Session:      webkit.SessionOptions{TargetWait: time.Second},

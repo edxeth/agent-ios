@@ -683,6 +683,7 @@ Tier 1 is required for the four named clients (agent-browser method list taken f
 | Fetch | enable{patterns}, disable, requestPaused, continueRequest, fulfillRequest, failRequest (WIP interception through the control lane of 2.10; unverified on device, MAP 1.8); continueWithAuth (error) | WIP | 2 |
 | Storage | getCookies, setCookies, clearCookies, clearDataForOrigin (JS storage only) | WIP + runtime | 2 |
 | Performance | enable (required on attach, 5.2), getMetrics (navigation timing, DOM node count, JS heap from `Memory` where present) | runtime | 1 |
+| Audits | enable (no effect, success: Puppeteer 25.16.0 sends it on every attach and fails the attach when it is unknown, P2 item 3); no `issueAdded` events | bridge | 1 |
 | Tracing | start, end; dataCollected, tracingComplete (Timeline events converted, W4) | WIP | 2 |
 | Profiler | enable, start, stop (ScriptProfiler converted, W4) | WIP | 3 |
 | Debugger, HeapProfiler, Overlay, CSS, Security | not in v1, except `Security.setIgnoreCertificateErrors` (error) and `Overlay.highlightNode` (`DOM.highlightNode`, tier 3) | | 3 |

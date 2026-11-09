@@ -764,6 +764,9 @@ func addScriptToEvaluateOnNewDocument(ctx context.Context, call *Call) (any, Lat
 	}
 	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
 		if err := ps.installBoot(ctx, mo); err != nil {
+			if wl := wireLimit(err); wl != nil {
+				return ps.refuseScript(ctx, mo, id, len(p.Source), wl)
+			}
 			return err
 		}
 		if p.RunImmediately {
@@ -776,6 +779,27 @@ func addScriptToEvaluateOnNewDocument(ctx context.Context, call *Call) (any, Lat
 		return nil, nil, err
 	}
 	return map[string]any{"identifier": id}, nil, nil
+}
+
+// refuseScript removes the new-document script id of size bytes, which
+// made the page's bootstrap script larger than the transport sends (wl),
+// and installs the attachment's part again without it: core keeps a part
+// whose send failed, and every later send of the bootstrap script would
+// fail too. Unlike Runtime.evaluate (large_source.go), such a script
+// cannot be staged in the page: it must be there before the page's
+// scripts of a new document run, and a new document starts without the
+// staged parts.
+func (ps *pageState) refuseScript(ctx context.Context, mo *core.ManagedOp, id string, size int, wl *webkit.WireLimitError) error {
+	ps.mu.Lock()
+	ps.scripts = slices.DeleteFunc(ps.scripts, func(sc initScript) bool { return sc.id == id })
+	ps.mu.Unlock()
+	msg := fmt.Sprintf("Page.addScriptToEvaluateOnNewDocument: with this %d-byte source the page's bootstrap script is %d bytes on the wire, "+
+		"above this page connection's limit of %d bytes. A new-document script cannot be staged in the page as a large Runtime.evaluate is, "+
+		"because a new document starts without the staged parts; use a smaller script", size, wl.Size, wl.Limit)
+	if err := ps.installBoot(ctx, mo); err != nil {
+		return fmt.Errorf("%s. Installing the bootstrap script again without it failed: %w", msg, err)
+	}
+	return serverError("%s", msg)
 }
 
 func removeScriptToEvaluateOnNewDocument(ctx context.Context, call *Call) (any, Later, error) {

@@ -132,7 +132,9 @@ func (b *boundOp) send(method string, params any) (json.RawMessage, error) {
 		b.ctx = pinActive(b.mo.Op.Context(), b.s.pg)
 		raw, err = b.mo.Op.Caller().Send(b.ctx, method, params)
 	}
-	b.sent = true
+	// A message above the transport's limit was refused before it was
+	// written, so the staged sends that follow it count as the first.
+	b.sent = b.sent || wireLimit(err) == nil
 	return raw, err
 }
 
@@ -301,6 +303,10 @@ func callFunctionOn(ctx context.Context, call *Call) (any, Later, error) {
 	if this == "" {
 		ev := map[string]any{"expression": "(" + decl + ")", "objectGroup": cmpOr(p.ObjectGroup, "iwdp-cdp-call")}
 		fr, err := b.call("Runtime.evaluate", ev)
+		if wl := wireLimit(err); wl != nil {
+			// Above the transport's message limit: staged (large_source.go).
+			fr, err = stageSink{b: b}.evaluate(call.Method, "function declaration", decl, wl, ev, staged.fnExpr)
+		}
 		if err != nil || fr.WasThrown {
 			defer end()
 			if err != nil {
@@ -315,11 +321,15 @@ func callFunctionOn(ctx context.Context, call *Call) (any, Later, error) {
 		}
 		decl = applyFunction
 	}
-	r, err := b.call("Runtime.callFunctionOn", map[string]any{
+	cf := map[string]any{
 		"objectId": this, "functionDeclaration": decl, "arguments": args,
 		"returnByValue": p.ReturnByValue && !p.AwaitPromise, "emulateUserGesture": p.UserGesture,
 		"doNotPauseOnExceptionsAndMuteConsole": p.Silent,
-	})
+	}
+	r, err := b.call("Runtime.callFunctionOn", cf)
+	if wl := wireLimit(err); wl != nil && p.ObjectID != "" {
+		r, err = stageCall(b, call.Method, decl, wl, cf)
+	}
 	if p.ObjectID == "" {
 		b.release(this, "a function object") // the one made from the declaration
 	}

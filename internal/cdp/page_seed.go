@@ -11,8 +11,9 @@ import (
 // (design 7.8 item 11: a client evaluates in the page; detaching removes
 // the extra header the attachment set). W5b-1 added execution contexts
 // (contextId and uniqueContextId, worlds.go) to Runtime.evaluate; the rest
-// of the Runtime domain is in runtime_domain.go. Oversized sources (P2
-// item 2) and the Network domain are W5c's.
+// of the Runtime domain is in runtime_domain.go. W5c-2b stages expressions
+// above the transport's message limit (P2 item 2, large_source.go); the
+// Network domain is W5c's.
 
 func init() {
 	register(
@@ -95,6 +96,10 @@ func runtimeEvaluate(ctx context.Context, call *Call) (any, Later, error) {
 		wip["objectGroup"] = p.ObjectGroup
 	}
 	r, err := b.call("Runtime.evaluate", wip)
+	if wl := wireLimit(err); wl != nil {
+		// Above the transport's message limit: staged (large_source.go).
+		r, err = stageSink{b: b}.evaluate(call.Method, "expression", p.Expression, wl, wip, staged.evalExpr)
+	}
 	return b.finish(end, r, boundErr(err), p.ReturnByValue, p.AwaitPromise)
 }
 
