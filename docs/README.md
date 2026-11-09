@@ -7,7 +7,7 @@ User documentation:
 | [guide.md](guide.md) | How the product works: the daemon, the agentic loop (snapshot, refs, actions, waits, dialogs), tabs and frames, DevTools extras, MCP profiles, transports, output and exit codes |
 | [sessions.md](sessions.md) | Sessions, page leases and device reservations: the rules for agents |
 | [synthetic-input.md](synthetic-input.md) | The synthetic-input statement and the features that iOS WebKit cannot support |
-| [cdp.md](cdp.md) | The CDP endpoint: start it, get a tokenized URL, connect agent-browser, Puppeteer, Playwright or chrome-devtools-mcp |
+| [cdp.md](cdp.md) | The CDP endpoint: get a tokenized URL, connect agent-browser, Puppeteer, Playwright or chrome-devtools-mcp, the method table, the limits per domain and the compatibility suite |
 | [device-runbook.md](device-runbook.md) | Work on a physical iPhone: reserve and release, iwdp ownership, restart_iwdp, a lost page, pause-on-start |
 | [migration.md](migration.md) | From the legacy commands and MCP tools to the registry commands |
 | [known-limits.md](known-limits.md) | Every accepted limit with its reason |

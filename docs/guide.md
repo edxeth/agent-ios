@@ -165,6 +165,25 @@ The registry also has DevTools commands. Captures start with the session's lease
 
 The legacy DevTools commands and tools (debugger, DOM by node id, CSS, heap, animation, canvas, layers, workers, audit, security) stay available; see [migration.md](migration.md).
 
+## Use a CDP client
+
+The daemon can also serve the Chrome DevTools Protocol, so that agent-browser, Puppeteer, Playwright and chrome-devtools-mcp drive the session's page. [cdp.md](cdp.md) has the method table, the limits and the notes per client.
+
+```bash
+export IWDP_SESSION=pw-run
+iwdp-cli open https://example.com
+CDP="$(iwdp-cli get cdp-url)"           # ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/browser/<endpoint>
+agent-browser --cdp "$CDP" snapshot -i
+iwdp-cli close                          # releases the lease and revokes the URL
+```
+
+- The URL holds a secret token. Give it to the client exactly as printed, and never print it or write it to a file.
+- Connect forms: agent-browser `--cdp <ws URL>`; Puppeteer `puppeteer.connect({browserWSEndpoint, defaultViewport: null})`; Playwright `chromium.connectOverCDP(url)`, then `browser.contexts()[0]`; chrome-devtools-mcp `--wsEndpoint <ws URL>`. `get cdp-url --form http` prints the discovery base for Puppeteer `browserURL` and Playwright.
+- A CDP client acts for the session that issued the URL: it shares its lease, refs and dialog answers.
+- `get cdp-url` selects the page that the session's other commands use: `--page` (also a tab id such as `t2`), else the `tab <id>` choice, else the session's default page while it is attached, else the listing's first debuggable page; with no page it exits 5. [cdp.md](cdp.md#how-to-connect) gives the details.
+- Prefer the registry commands when they do the job: they have refs that survive reconnects, actionability checks, masking and deadlines. Use a CDP client for an existing CDP script or for a client feature that the registry has no command for.
+- Input through CDP is synthetic too. Features that WebKit lacks fail with "wasn't found" or an error that names the reason.
+
 ## MCP profiles
 
 The MCP server is a client of the daemon. Its session is `IWDP_SESSION` (default `default`), its reservation owner `IWDP_DEVICE_RESERVATION` and its transport `IWDP_TRANSPORT`. Give each agent its own session name.
