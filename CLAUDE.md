@@ -24,6 +24,8 @@ make clean                        # Remove bin/ and coverage files
 
 Before committing, always run `make fmt` and `make lint` and fix any issues. Use golangci-lint v2.15 or later, built with Go 1.27: an older binary cannot read Go 1.27 export data and reports false type errors. After changing a registry command, run `make docs`; `internal/commands/refgen` tests fail on a stale docs/commands.md.
 
+- When a change touches `internal/cdp` or `e2e/cdpcompat`: also run `make test-cdpcompat` (requirements and variables: e2e/cdpcompat/README.md). For their JavaScript files, see `scripts/js-coverage.sh`.
+
 ## How ios-webkit-debug-proxy Works
 
 - **Port 9221** — listing port: `http://localhost:9221/json` returns connected devices
@@ -94,8 +96,7 @@ Two binaries, one shared `internal/` package tree:
   - `types.go` — Protocol type definitions for all domains (DOM, CSS, Network, Runtime, Debugger, etc.)
   - `domains.go` — Domain enable/disable helpers
   - `testutil/mock.go` — Mock WebSocket server for unit tests
-- `internal/tools/` — Tool implementations shared by MCP server and CLI
-  - One file per domain: page.go, runtime.go, dom.go, css.go, network.go, storage.go, console.go, debugger.go, timeline.go, memory.go, profiler.go, animation.go, canvas.go, layertree.go, worker.go, audit.go, security.go, interaction.go
+- `internal/tools/` — Tool implementations shared by MCP server and CLI, one file per domain
 - `internal/proxy/` — iwdp process detection and management
   - `IsRunning()` — checks port 9221 (listing port). Never use a device port for detection.
   - `ListDevices()` — HTTP GET on port 9221
@@ -116,6 +117,9 @@ Two binaries, one shared `internal/` package tree:
 - E2E simulator tests share a single WebSocket connection via `sync.Once` (`getSimClient` in `e2e/sim_helpers_test.go`) — never create multiple connections to the same page
 - Use `simOrigin()` helper to get the page's actual origin for storage tests — never hardcode origins
 - Almost never use `t.Skipf`/`t.Skip`. Use `t.Fatalf`/`t.Fatal` instead. The env-var check in `getSimClient` is the only legitimate `t.Skip` in e2e tests.
+- Bound a wait on an in-process test fixture (a fake page or session, a test hook) by an event or by the test's own deadline (`t.Deadline()`, as `untilDeadline` in internal/devtools/devtoolstest/page.go does): the suites run under `-race` on shared, loaded hosts. Fixed timeouts stay where the timeout is the behavior under test, and in the external-process start guard `browserStart` that e2e/webkitgtk/harness_w1c6_test.go enforces.
+- When many e2e/webkitgtk tests fail with "MiniBrowser did not list the page": check the host's free memory and swap before the code; a memory-starved host starts MiniBrowser too slowly.
+- When adding a daemon log line: follow the safe-argument policy and the stated limits of `TestLogCallsWriteOnlySafeKinds` in internal/logsafe/sinks_test.go. docs/guide.md states what the daemon log keeps.
 
 ## Git Conventions
 
@@ -157,11 +161,6 @@ git push
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
-
-## Key Dependencies
-
-- `github.com/modelcontextprotocol/go-sdk` v1.4.0 — official MCP Go SDK
-- `github.com/gorilla/websocket` — WebSocket client
 
 ## License
 
