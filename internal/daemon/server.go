@@ -460,18 +460,37 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-done:
-			_ = st.send(Item{Type: "closed", Error: toErrorReply(&core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf("page %q: %w", info.Title, core.ErrLost)})})
+			s.endStream(st, info.Title, core.ErrLost)
 			return
 		case <-leaseEnded:
-			_ = st.send(Item{Type: "closed", Error: toErrorReply(&core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf("page %q: the lease of session %q ended (release, lease break, idle expiry or takeover); the stream stops", info.Title, ow.Session)})})
+			s.endStream(st, info.Title, fmt.Errorf("the lease of session %q ended (release, lease break, idle expiry or takeover); the stream stops", ow.Session))
 			return
 		case <-s.stopping:
-			_ = st.send(Item{Type: "closed", Error: toErrorReply(&core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf("page %q: the iwdp daemon is shutting down; select the page again", info.Title)})})
+			s.endStream(st, info.Title, errShuttingDown)
 			return
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+// errShuttingDown is the reason of the final item of an event stream when
+// the daemon shuts down (design 2.6).
+var errShuttingDown = errors.New("the iwdp daemon is shutting down; select the page again")
+
+// endStream sends the final "closed" item of an event stream of the page
+// titled title, with the reason why the stream ends. A daemon that shuts
+// down closes s.stopping before it releases the leases and closes the page
+// connections (Run), so a page or lease end that the shutdown caused finds
+// s.stopping closed here: the item then names the shutdown, whichever of
+// its ready cases the stream's select picked.
+func (s *Server) endStream(st *stream, title string, reason error) {
+	select {
+	case <-s.stopping:
+		reason = errShuttingDown
+	default:
+	}
+	_ = st.send(Item{Type: "closed", Error: toErrorReply(&core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf("page %q: %w", title, reason)})})
 }
 
 // lease serves POST /v1/lease (design 2.5).

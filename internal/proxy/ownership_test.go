@@ -392,12 +392,29 @@ func fakeLsof(t *testing.T, f *fakeIWDP) (entered, release string) {
 // the readiness wait before the check take a time that depends on the
 // host's load, and a context that ends before lsof runs tests nothing of
 // the check.
+//
+// The caller's cancellation, not lsof's own bound (lsofTimeout), must end
+// lsof: the check's error wraps context.Canceled, never the
+// context.DeadlineExceeded of that bound. Start returns the caller's
+// context error in both cases, and the wait for Start's return leaves
+// room for the stop of the group (stopGrace + stopReap), which is longer
+// than lsofTimeout, so neither Start's error nor its duration shows an
+// lsof that ignores the caller's context.
 func TestStartHonorsTheContextDuringTheOwnershipCheck(t *testing.T) {
 	addr := freeAddr(t)
 	f := installFakeIWDP(t, fakeServe, addr)
 	entered, _ := fakeLsof(t, f)
 	s := testStarter(addr, 20*time.Second)
-	s.listens = lsofGroupListens
+	checks := make(chan error, 1)
+	s.listens = func(ctx context.Context, pgid int, ep netip.AddrPort) (listener, error) {
+		l, err := lsofGroupListens(ctx, pgid, ep)
+		select {
+		case checks <- err:
+		default:
+			t.Errorf("a second ownership check ran (%v); the stalled lsof blocks the first one until the context ends", err)
+		}
+		return l, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -413,6 +430,14 @@ func TestStartHonorsTheContextDuringTheOwnershipCheck(t *testing.T) {
 		t.Fatal("Start is still blocked in lsof after its context ended")
 	}
 	assertGone(t, f)
+	select {
+	case err := <-checks:
+		if !errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("the ownership check ended with %v; want the caller's context.Canceled, not lsof's own %s bound", err, lsofTimeout)
+		}
+	default:
+		t.Fatal("Start returned before its ownership check did")
+	}
 }
 
 // F5: lsof itself is bounded: a stalled lsof fails the check after

@@ -223,10 +223,13 @@ func acquireDomain(ctx context.Context, ps *core.PageSession, c webkit.Caller, o
 }
 
 // releaseDomain removes o from domain's owners and sends domain.disable
-// when o was the last one (design 2.4 reference count).
+// when o was the last one (design 2.4 reference count). When the disable
+// fails, the domain stays enabled in the page, so o keeps it: a later
+// release of o (a retry, or the lease release) sends the disable again.
 func releaseDomain(ctx context.Context, ps *core.PageSession, c webkit.Caller, o core.Owner, domain string) error {
 	if ps.State.ReleaseDomain(o, domain) {
 		if _, err := c.Send(ctx, domain+".disable", nil); err != nil {
+			ps.State.Acquire(o, domain)
 			return fmt.Errorf("%s.disable: %w", domain, err)
 		}
 	}

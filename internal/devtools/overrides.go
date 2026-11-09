@@ -237,8 +237,14 @@ func (p *Page) setHeaders(ctx context.Context, c webkit.Caller, session string, 
 		ch := p.ps.State.SetHeaders(o, nil)
 		switch {
 		case last:
-			_, err := c.Send(ctx, "Network.disable", nil)
-			return false, err
+			// A failed disable keeps the owner's Network domain, as in
+			// releaseDomain, so that a retry or the release sends the
+			// disable again.
+			if _, err := c.Send(ctx, "Network.disable", nil); err != nil {
+				p.ps.State.Acquire(o, "Network")
+				return false, err
+			}
+			return false, nil
 		case ch.NeedsNetworkReset:
 			return true, core.NetworkReset(ctx, p.ps.Sched, c, p.ps.State)
 		}
