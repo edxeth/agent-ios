@@ -11,6 +11,10 @@ var cdpResourceTypes = map[string]string{
 	"WebSocket": "WebSocket", "Other": "Other",
 }
 
+// CDPResourceType is the CDP Network.ResourceType of the WIP resource
+// type t ("Other" for an unknown one).
+func CDPResourceType(t string) string { return cdpType(t) }
+
 func cdpType(t string) string {
 	if c, ok := cdpResourceTypes[t]; ok {
 		return c

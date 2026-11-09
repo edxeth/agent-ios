@@ -192,7 +192,8 @@ func (ps *pageState) startTreeRead() *treeRead {
 func (rd *treeRead) replied(pos core.EventPosition, target string, result json.RawMessage) {
 	ev := eventAt(pos, target, evTreeReply, result)
 	ev.tree = rd
-	rd.at.Store(rd.ps.q.push(ev))
+	n, _ := rd.ps.q.push(ev)
+	rd.at.Store(n)
 }
 
 // applied waits until the attachment has handled the reply's item, so

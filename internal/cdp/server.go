@@ -104,6 +104,10 @@ type Server struct {
 	unknown map[string]int
 	seen    map[string]bool
 
+	// claims holds the Fetch patterns of the CDP attachments of each page
+	// (fetch_domain.go).
+	claims fetchClaims
+
 	// known replaces the current token and endpoint ids in log lines. It
 	// is rebuilt under mu (knownChangedLocked) and read without it, so
 	// that lines logged under mu are redacted too.

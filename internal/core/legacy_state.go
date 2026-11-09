@@ -56,6 +56,20 @@ func (d *DesiredState) SetInterception(owner Owner, on bool) *bool {
 	return nil
 }
 
+// missingInterceptRuleError is WebKit's error text for
+// Network.removeInterception of a rule the target does not hold
+// (InspectorNetworkAgent::removeInterception; internal/devtools
+// tombstone.go missingRuleError has the sources).
+const missingInterceptRuleError = "Missing intercept for given url, given isRegex, and given stage"
+
+// MissingInterceptRule reports whether err is WebKit's refusal of a
+// Network.removeInterception because the target does not hold the rule:
+// the rule is absent, which is what the removal wants.
+func MissingInterceptRule(err error) bool {
+	var pe *webkit.ErrorData
+	return errors.As(err, &pe) && pe.Message == missingInterceptRuleError
+}
+
 // SetCachingDisabled records whether owner needs the resource cache
 // disabled (Network.setResourceCachingDisabled). It returns the value to
 // send when the effective setting changed, else nil.
@@ -458,7 +472,13 @@ func legacyStateCall(ctx context.Context, ps *PageSession, owner Owner, c webkit
 			return nil, true, err
 		}
 		if v := ps.State.SetInterception(owner, on); v != nil {
-			return send(map[string]bool{"enabled": *v})
+			r, err := c.Send(ctx, method, map[string]bool{"enabled": *v})
+			if err != nil && noEffect(err) {
+				// WebKit kept its setting: so does owner's record, and a
+				// retry sends the call again (W5c-1a review F9).
+				ps.State.SetInterception(owner, !on)
+			}
+			return r, true, err
 		}
 		return empty, true, nil
 	case "Network.setResourceCachingDisabled":

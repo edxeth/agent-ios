@@ -126,13 +126,14 @@ type pageState struct {
 	target string                          // the CDP page target id
 	send   func(method string, params any) // writes a CDP event on the attachment's session
 
-	mu      sync.Mutex
-	closed  bool
-	unsub   func()
-	staging // event order, provisional targets and their staged events (staging.go)
-	enabled map[string]bool
-	life    context.Context // ends at close; bounds the attachment's goroutines
-	endLife context.CancelFunc
+	mu        sync.Mutex
+	closed    bool
+	unsub     func()
+	unsubOnce sync.Once
+	staging   // event order, provisional targets and their staged events (staging.go)
+	enabled   map[string]bool
+	life      context.Context // ends at close; bounds the attachment's goroutines
+	endLife   context.CancelFunc
 
 	// Document generation (2.7) and frames.
 	gen     uint64 // 0 until the first document is known
@@ -155,6 +156,9 @@ type pageState struct {
 	idleReached uint64
 
 	worldState // execution contexts and aliases (worlds.go)
+
+	net   netState   // requests and their CDP ids (network_domain.go)
+	fetch fetchState // interception (fetch_domain.go)
 
 	// The attachment's bootstrap part (page_domain.go, runtime_domain.go).
 	scripts    []initScript
@@ -179,6 +183,7 @@ type loaderEntry struct {
 func newPageState(s *session) *pageState {
 	ps := newPageModel(s.targetID(), func(method string, params any) { s.c.event(s.id, method, params) })
 	ps.s = s
+	s.c.s.claims.join(s.pg) // before the first event (onWire)
 	ps.conn, ps.unsub = s.c.s.o.Manager.SubscribeOrdered(s.pg, webkit.AllEvents, ps.onWire)
 	go ps.run()
 	return ps
@@ -195,6 +200,8 @@ func newPageModel(target string, send func(method string, params any)) *pageStat
 	}
 	ps.init()
 	ps.initStaging()
+	ps.net.initNet()
+	ps.fetch.paused = map[string]pausedReq{}
 	return ps
 }
 
@@ -204,14 +211,47 @@ func reportedBy(f *frameInfo, target string) bool {
 	return target == "" || f.target == "" || f.target == target
 }
 
-// close ends the subscription; no event of the attachment is sent after
-// it returns.
+// close ends the attachment's events; no event of the attachment is sent
+// after it returns. The requests that it reported paused (Fetch) are
+// continued, and so are the interception events that it queued but will
+// not translate. When its Fetch rules may still pause requests, the
+// subscription stays until unsubscribe (after the detach released the
+// rules), and every interception event until then is continued unless
+// another owner's rule paused it (fetch_domain.go).
 func (ps *pageState) close() {
 	ps.mu.Lock()
 	ps.closed = true
+	ps.publishClaimLocked()
+	paused := ps.takePausedLocked()
+	used := ps.fetch.used
 	ps.mu.Unlock()
 	ps.endLife()
-	ps.unsub()
+	ps.unwatchNetworkReset()
+	queued := ps.q.close()
+	if !used {
+		ps.unsubscribe()
+	}
+	var wg sync.WaitGroup
+	for _, ev := range queued {
+		if used && interceptionEvent(ev.method) {
+			wg.Go(func() { ps.continueUnreported(ev) })
+		}
+	}
+	ps.continueAll(paused)
+	wg.Wait()
+}
+
+// unsubscribe ends the attachment's subscription (once), and with it its
+// place in the page's Fetch registry (fetchClaims). The claim goes first:
+// a claimant of an event gets that event (fetchClaims.decide).
+func (ps *pageState) unsubscribe() {
+	ps.unsubOnce.Do(func() {
+		ps.dropClaim()
+		ps.unsub()
+		if ps.s != nil {
+			ps.s.c.s.claims.leave(ps.s.pg)
+		}
+	})
 }
 
 // setEnabled turns the CDP events of domain on or off.

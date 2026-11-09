@@ -1242,6 +1242,23 @@ func (s *Scheduler) PendingRequests() []string {
 	return out
 }
 
+// OpenHold returns the stage and the generation of the hold of request id
+// on target while it is open: not completed and no completion in flight.
+// Each interception event of the request opens a new generation, which
+// the read loop records before the AllEvents subscriptions get the event
+// (webkit.Session dispatch order), so a subscriber that asks while it
+// handles the event learns the identity of the hold that the event
+// announced, and later asks whether exactly that hold is still open.
+func (s *Scheduler) OpenHold(target, id string) (stage string, gen uint64, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.intercepted[holdKey{target, id}]
+	if h == nil || h.inflight {
+		return "", 0, false
+	}
+	return h.stage, h.seq, true
+}
+
 // HeldRequest is a request that interception holds on a page target.
 type HeldRequest struct {
 	Target    string // source target of the interception event ("" on a connection without targets)

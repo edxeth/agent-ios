@@ -610,6 +610,9 @@ func (c *conn) detach(id string, notify bool) bool {
 		d.work.Wait()
 		close(d.gone)
 		c.cleanup(d)
+		if d.page != nil {
+			d.page.unsubscribe() // its Fetch rules are released (fetch_domain.go)
+		}
 		d.fmu.Lock()
 		if notify && d.announced {
 			c.event(d.parent, "Target.detachedFromTarget", map[string]any{"sessionId": d.id, "targetId": d.targetID()})
@@ -629,11 +632,17 @@ func (c *conn) detach(id string, notify bool) bool {
 // core.ForgetOwner).
 func (c *conn) cleanup(s *session) {
 	defer s.unhold()
-	owned := false
-	for _, o := range s.pg.PS.State.AllOwners() {
-		owned = owned || o == s.owner
+	mine := []core.Owner{s.owner}
+	if s.kind == kindPage {
+		mine = append(mine, s.fetchOwner()) // fetch_domain.go
 	}
-	if !owned {
+	var owned []core.Owner
+	for _, o := range s.pg.PS.State.AllOwners() {
+		if slices.Contains(mine, o) {
+			owned = append(owned, o)
+		}
+	}
+	if len(owned) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
@@ -642,10 +651,16 @@ func (c *conn) cleanup(s *session) {
 	mo, err := m.BeginLeased(ctx, s.pg, c.rec.session, s.epoch, "cdp detach", core.ClassExclusive)
 	switch {
 	case err == nil:
-		err = m.ReleaseOwner(mo.Op.Context(), mo, s.owner)
+		var errs []error
+		for _, o := range owned {
+			errs = append(errs, m.ReleaseOwner(mo.Op.Context(), mo, o))
+		}
+		err = errors.Join(errs...)
 		m.End(mo.ID)
 	case !errors.Is(err, core.ErrLeased):
-		m.ForgetOwner(s.pg, s.owner)
+		for _, o := range owned {
+			m.ForgetOwner(s.pg, o)
+		}
 	}
 	if err != nil && !errors.Is(err, core.ErrLeased) {
 		c.s.o.Logf("cdp: %s: releasing the state of %s session %s on %q: %v", c.name, s.kind, shortID(s.id), s.t.title, err)

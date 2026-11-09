@@ -129,10 +129,13 @@ const (
 type wipEvent struct {
 	target, method string
 	params         json.RawMessage
-	provisional    bool          // target was not the active target at the event's position
-	conn           webkit.Caller // the delivering connection; nil in a model
-	seq            uint64        // its position in conn's stream (core.EventPosition.Seq)
-	tree           *treeRead     // the read whose reply this is (method evTreeReply); nil for an event
+	provisional    bool           // target was not the active target at the event's position
+	conn           webkit.Caller  // the delivering connection; nil in a model
+	seq            uint64         // its position in conn's stream (core.EventPosition.Seq)
+	tree           *treeRead      // the read whose reply this is (method evTreeReply); nil for an event
+	at             float64        // arrival time (monotonic), the base of the Network clock offsets
+	claim          *claimDecision // an interception event's arbitration (fetchClaims); nil in a model
+	hold           uint64         // the generation of core's hold that an interception event announced (eventHold); 0 in a model
 }
 
 // size is what ev counts against maxQueuedBytes: its payload, or nothing
@@ -148,7 +151,7 @@ func (ev wipEvent) size() int {
 // eventAt is an event or a reply of target read at pos: its target is
 // provisional when it is not the active target at that position.
 func eventAt(pos core.EventPosition, target, method string, params json.RawMessage) wipEvent {
-	return wipEvent{target: target, method: method, params: params, provisional: target != "" && target != pos.ActiveTarget, conn: pos.Conn, seq: pos.Seq}
+	return wipEvent{target: target, method: method, params: params, provisional: target != "" && target != pos.ActiveTarget, conn: pos.Conn, seq: pos.Seq, at: monotonic()}
 }
 
 // eventQueue passes the classified events from the read loop to the
@@ -160,6 +163,7 @@ type eventQueue struct {
 	dropped uint64        // events dropped since the goroutine last took the queue
 	wire    uint64        // every event pushed, queued or dropped (pageState.caughtUp)
 	wake    chan struct{} // capacity 1
+	closed  bool          // the attachment closed: nothing is queued any more
 }
 
 // staging is the event part of pageState; ps.mu guards it (the queue has
@@ -200,27 +204,62 @@ func (ps *pageState) onWire(pos core.EventPosition, target, method string, param
 	if len(pageEventFns[method]) == 0 && method != evTargetCreated && method != evTargetCommitted && method != evTargetDestroyed {
 		return
 	}
-	ps.q.push(eventAt(pos, target, method, params))
+	ev := eventAt(pos, target, method, params)
+	// The page's Fetch arbitration (fetch_domain.go fetchClaims) learns a
+	// request's type here, so that every attachment knows it, and decides
+	// an interception event once for every attachment.
+	switch {
+	case method == "Network.requestWillBeSent":
+		ps.s.c.s.claims.noteType(ps.s.pg, target, params)
+	case interceptionEvent(method):
+		ev.claim = ps.s.c.s.claims.decide(ps.s.pg, pos, target, method, params)
+		stage := stageRequest
+		if method == evResponseIntercepted {
+			stage = stageResponse
+		}
+		ev.hold = ps.eventHold(netKey{target, requestIDOf(params)}, stage)
+	}
+	if _, queued := ps.q.push(ev); !queued && interceptionEvent(method) {
+		// A request paused for nobody that will translate it (the queue
+		// is full, or the attachment closed): fetch_domain.go.
+		go ps.continueUnreported(ev)
+	}
 }
 
-// push queues ev, or drops it when the queue is full, and returns its
-// place in the stream: the number of events pushed up to it (caughtUpTo).
-func (q *eventQueue) push(ev wipEvent) uint64 {
+// push queues ev, or drops it when the queue is full or closed, and
+// returns its place in the stream: the number of events pushed up to it
+// (caughtUpTo), and whether it was queued.
+func (q *eventQueue) push(ev wipEvent) (uint64, bool) {
 	q.mu.Lock()
 	q.wire++
 	n := q.wire
-	if q.dropped > 0 || len(q.items) >= maxQueuedEvents || q.bytes+ev.size() > maxQueuedBytes {
+	queued := false
+	switch {
+	case q.closed:
+	case q.dropped > 0 || len(q.items) >= maxQueuedEvents || q.bytes+ev.size() > maxQueuedBytes:
 		q.dropped++
-	} else {
+	default:
 		q.items = append(q.items, ev)
 		q.bytes += ev.size()
+		queued = true
 	}
 	q.mu.Unlock()
 	select {
 	case q.wake <- struct{}{}:
 	default:
 	}
-	return n
+	return n, queued
+}
+
+// close stops queueing and returns the events that were queued and not
+// taken.
+func (q *eventQueue) close() []wipEvent {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.closed = true
+	items := q.items
+	q.items, q.bytes = nil, 0
+	return items
 }
 
 // take returns the queued events and the number of events dropped after
@@ -272,6 +311,10 @@ func (ps *pageState) run() {
 
 func (ps *pageState) appliedLocked(n uint64) {
 	ps.applied += n
+	if at := ps.net.gapAt; at != 0 && ps.applied >= at {
+		ps.net.gapAt = 0
+		ps.netGapLocked() // a Network reset reported before the next events (netGap)
+	}
 	close(ps.appliedSig)
 	ps.appliedSig = make(chan struct{})
 }
@@ -323,7 +366,7 @@ func (ps *pageState) dispatch(target, method string, params json.RawMessage) {
 			delete(ps.modelProv, p.TargetID)
 		}
 	}
-	ps.applyLocked(wipEvent{target: target, method: method, params: params, provisional: target != "" && ps.modelProv[target]})
+	ps.applyLocked(wipEvent{target: target, method: method, params: params, provisional: target != "" && ps.modelProv[target], at: monotonic()})
 }
 
 // targetParams are the params of the WIP Target events.
@@ -343,12 +386,16 @@ type targetParams struct {
 // staged, and any other event goes to its translators.
 func (ps *pageState) applyLocked(ev wipEvent) {
 	if ps.closed {
+		if ps.fetch.used && interceptionEvent(ev.method) && ps.s != nil {
+			go ps.continueUnreported(ev)
+		}
 		return
 	}
 	if ev.conn != nil && ev.conn != ps.conn {
 		ps.conn = ev.conn
 		ps.forgetStagedLocked()
 		ps.logf("cdp: page %s: events of a new connection; the document is reset", ps.target)
+		ps.netResetLocked(true)
 		ps.resetLocked()
 	}
 	if ev.tree != nil {
@@ -371,14 +418,59 @@ func (ps *pageState) applyLocked(ev wipEvent) {
 		case evTargetDestroyed:
 			ps.unstageLocked(p.TargetID)
 			ps.dropLiveLocked(p.TargetID)
+			ps.netTargetGoneLocked(p.TargetID)
 		}
 		return
 	}
-	if ev.provisional && !ps.live[ev.target] {
+	if ev.provisional && !ps.live[ev.target] && !ps.publishEarlyLocked(ev) {
 		ps.stageLocked(ev)
 		return
 	}
 	ps.translateLocked(ev)
+}
+
+// publishEarlyLocked reports whether an event of a provisional target is
+// translated at once instead of at the commit (the staging rule of the
+// document request, fetch_domain.go): an interception event (WebKit
+// commits only after the paused request is answered), and the
+// requestWillBeSent of a request that interception paused before it
+// (a client handles requestPaused only after it). The request's other
+// events stay staged and are published at the commit, or the request
+// ends as aborted with an abandoned target (netTargetGoneLocked).
+func (ps *pageState) publishEarlyLocked(ev wipEvent) bool {
+	if interceptionEvent(ev.method) {
+		return true
+	}
+	if ev.method != "Network.requestWillBeSent" {
+		return false
+	}
+	r := ps.net.live[netKey{ev.target, requestIDOf(ev.params)}]
+	return r != nil && !r.started
+}
+
+// publishStagedRequestLocked translates the staged requestWillBeSent of
+// the request k of a provisional target now, and removes it from the
+// staged events.
+func (ps *pageState) publishStagedRequestLocked(k netKey) {
+	evs := ps.staged[k.target]
+	for i, ev := range evs {
+		if ev.method == "Network.requestWillBeSent" && requestIDOf(ev.params) == k.wip {
+			ps.staged[k.target] = append(evs[:i:i], evs[i+1:]...)
+			ps.stagedEvents--
+			ps.stagedBytes -= len(ev.params)
+			ps.translateLocked(ev)
+			return
+		}
+	}
+}
+
+// requestIDOf is the requestId of a WIP Network event, "" without one.
+func requestIDOf(params json.RawMessage) string {
+	var v struct {
+		RequestID string `json:"requestId"`
+	}
+	_ = json.Unmarshal(params, &v)
+	return v.RequestID
 }
 
 // treeLocked applies the reply of a tree read at its place in the stream
@@ -396,9 +488,11 @@ func (ps *pageState) treeLocked(ev wipEvent) {
 }
 
 func (ps *pageState) translateLocked(ev wipEvent) {
+	ps.net.at, ps.fetch.claim, ps.fetch.hold = ev.at, ev.claim, ev.hold
 	for _, fn := range pageEventFns[ev.method] {
 		fn(ps, ev.target, ev.params)
 	}
+	ps.fetch.claim, ps.fetch.hold = nil, 0
 }
 
 // commitLocked publishes the staged events of the committed target in
@@ -413,6 +507,7 @@ func (ps *pageState) commitLocked(old, target string) {
 	ps.unstageLocked(target)
 	ps.unstageLocked(old)
 	ps.dropLiveLocked(old)
+	ps.netTargetGoneLocked(old)
 	ps.resetOnCommit = false
 	if lost {
 		ps.logf("cdp: page %s: the events of the committed target %s are incomplete; the document is reset", ps.target, target)
@@ -558,11 +653,35 @@ func (ps *pageState) eventsLostLocked() {
 // page (refreshAfterReset), announced as a new document (seedLocked).
 // The remembered loader ids are dropped, so the announced document and
 // its frames get new bridge loader ids even when the page still shows the
-// same WIP document (F7).
+// same WIP document (F7). Only the loader id of a main-frame document
+// request that stays in flight across the reset (held paused,
+// netResetLocked) is kept, unless its document was announced already:
+// the document announced for that request has its loader id, so
+// requestId == loaderId holds (5.2; W5c-1a repair round 1, F3).
 func (ps *pageState) resetLocked() {
-	ps.loaders = nil
+	ps.netResetLocked(false)
+	ps.loaders = ps.pausedDocLoadersLocked()
 	clear(ps.lastConsole) // events may be missing since: a repeat would name another message
 	ps.clearDocumentLocked()
+}
+
+// pausedDocLoadersLocked returns the remembered loader ids that a reset
+// keeps (resetLocked): those of the main-frame document requests that the
+// attachment holds paused, except the announced document's.
+func (ps *pageState) pausedDocLoadersLocked() []loaderEntry {
+	var keep []loaderEntry
+	for k := range ps.fetchHeldKeysLocked() {
+		r := ps.net.live[k]
+		if r == nil || !r.doc || (ps.main != nil && ps.main.loader == r.loader) {
+			continue
+		}
+		for _, e := range ps.loaders {
+			if e.id == r.loader {
+				keep = append(keep, e)
+			}
+		}
+	}
+	return keep
 }
 
 // clearDocumentLocked is resetLocked without forgetting the loader ids. A

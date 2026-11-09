@@ -333,6 +333,17 @@ func (ic *interceptor) claim(target string, ev interceptedRequest) bool {
 // interceptor's handlers serve (claim).
 var devtoolsRuleKinds = map[string]bool{"route": true, "offline": true, "credentials": true}
 
+// IsHandlerOwner reports whether the interception rules of o are served by
+// the interceptor's handlers (a route, offline mode or credentials of a
+// session), which claim the requests those rules pause.
+func IsHandlerOwner(o core.Owner) bool { return isDevtoolsOwner(o) }
+
+// RuleMatches reports whether WebKit's rule r pauses a request for rawURL
+// at stage, and whether Go can decide it (see ruleMatches).
+func RuleMatches(r core.InterceptRule, stage, rawURL string) (match, known bool) {
+	return ruleMatches(r, stage, rawURL)
+}
+
 func isDevtoolsOwner(o core.Owner) bool {
 	kind, _, _ := strings.Cut(string(o), ":")
 	return devtoolsRuleKinds[kind]

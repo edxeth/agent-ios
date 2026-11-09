@@ -1587,10 +1587,30 @@ func legacyCallOn(ctx context.Context, ps *PageSession, owner Owner, c webkit.Ca
 				return nil, err
 			}
 			ps.State.AddInterception(owner, r)
-		} else {
+		}
+		// held: the removal takes away one copy of owner's rule r, which
+		// owner may not hold at all.
+		held := false
+		if method == "Network.removeInterception" {
+			held = slices.Contains(ps.State.InterceptRules()[owner], r)
 			ps.State.RemoveInterception(owner, r)
 		}
-		return c.Send(ctx, method, p)
+		res, err := c.Send(ctx, method, p)
+		if err != nil && noEffect(err) {
+			// WebKit's rules did not change: owner's record goes back to
+			// what it was, so that a retry sends the call again and a
+			// release still removes a rule whose removal failed (W5c-1a
+			// review F9, F13). A removal refused because the target does
+			// not hold the rule reached its goal: the record stays
+			// removed.
+			switch {
+			case method == "Network.addInterception":
+				ps.State.RemoveInterception(owner, r)
+			case held && !MissingInterceptRule(err):
+				ps.State.AddInterception(owner, r)
+			}
+		}
+		return res, err
 	case method == "Page.setBootstrapScript":
 		var v struct {
 			Source string `json:"source"`
