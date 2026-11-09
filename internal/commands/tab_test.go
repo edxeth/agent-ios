@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -138,12 +139,20 @@ func newTabManager(t *testing.T) (*core.Manager, *tabFake) {
 // runIn runs a command line as the daemon does (internal/daemon server.run).
 func runIn(t *testing.T, m *core.Manager, session string, argv ...string) (Result, error) {
 	t.Helper()
+	return runInCtx(t, context.Background(), m, session, argv...)
+}
+
+// runInCtx is runIn in a context derived from parent: with
+// core.WithLeaseHooks, a new lease starts the network and console captures
+// of its session, as for a registry command in the daemon.
+func runInCtx(t *testing.T, parent context.Context, m *core.Manager, session string, argv ...string) (Result, error) {
+	t.Helper()
 	inv, err := Parse(argv, func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("parse %v: %v", argv, err)
 	}
 	inv.Input.Global.Session = session
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 	defer cancel()
 	env := &mgrEnv{m: m}
 	if inv.Cmd.Page == NoPage {
@@ -350,5 +359,328 @@ func TestTabCloseReportsOnlyACleanupFailureOfALivePage(t *testing.T) {
 			}
 			t.Fatalf("the daemon log has no line about the failed cleanup of the closed tab: %q", log)
 		})
+	}
+}
+
+// Device check 4, P3-G residue: "tab close" closed the tab, then its page
+// listing failed (iwdp F1), so the closed tab's lease stayed. Here the tab
+// leaves the list without a tab close, which leaves the same state. The
+// next "tab <id>" releases that lease; on iwdp its page connection ended with the tab,
+// so the page-side cleanup cannot be sent. That is the case that tab
+// close already treats as expected (closedPageGone): no warning, and no
+// title of the closed tab in the output; the daemon log keeps a line. A
+// cleanup that fails otherwise is still a warning.
+func TestTabSelectReportsOnlyACleanupFailureOfALivePage(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		disable     func(s *fakewebkit.Server) fakewebkit.Handler
+		wantWarning bool
+	}{
+		{"connection gone", func(s *fakewebkit.Server) fakewebkit.Handler {
+			return func(fakewebkit.Call) (any, *fakewebkit.Error) {
+				s.CloseConnections() // the tab is gone: no reply
+				return nil, nil
+			}
+		}, false},
+		{"page answers an error", func(*fakewebkit.Server) fakewebkit.Handler {
+			return func(fakewebkit.Call) (any, *fakewebkit.Error) {
+				return nil, &fakewebkit.Error{Code: -32000, Message: "Console.disable refused"}
+			}
+		}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &tabFake{t: t}
+			var mu sync.Mutex
+			var log []string
+			m := core.NewManager(core.ManagerOptions{
+				Transport: func(context.Context, string, string) (transport.Transport, error) { return f, nil },
+				Session:   webkit.SessionOptions{TargetWait: time.Second},
+				Logf: func(format string, a ...any) {
+					mu.Lock()
+					log = append(log, fmt.Sprintf(format, a...))
+					mu.Unlock()
+				},
+			})
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = m.Close(ctx)
+			})
+			f.add("One", "http://one.test/")
+			mustIn(t, m, "a", "tab", "new", "--label", "docs", "http://docs.test/")
+			mustIn(t, m, "a", "console") // starts the console capture of the new tab
+			f.mu.Lock()
+			s := f.servers["page-2"]
+			f.pages = f.pages[:1] // the tab closed; its lease stays
+			f.mu.Unlock()
+			s.Handle("Console.disable", c.disable(s))
+			out := mustIn(t, m, "a", "tab", "t1")
+			if !strings.HasPrefix(out, "tab t1 is now the current page") {
+				t.Fatalf("tab t1 = %q, want the switch", out)
+			}
+			if got := strings.Contains(out, "warning"); got != c.wantWarning {
+				t.Fatalf("tab t1 = %q; want a warning: %v", out, c.wantWarning)
+			}
+			if c.wantWarning {
+				return
+			}
+			if strings.Contains(out, "Opened") {
+				t.Fatalf("tab t1 = %q; it names the closed tab by its title", out)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, line := range log {
+				if strings.Contains(line, "page-side cleanup was not sent") && strings.Contains(line, "Console.disable") {
+					return
+				}
+			}
+			t.Fatalf("the daemon log has no line about the cleanup that the gone page did not get: %q", log)
+		})
+	}
+}
+
+// Device check 4, rule checks: "tab new" runs window.open in the session's
+// current page, which in a new session is the device's first tab, the
+// user's own. After tab new that page keeps no lease of the session and no
+// capture: the lease that the lease hooks gave it (network log and console
+// capture, design 4.2) ends with its cleanup, as "tab <id>" ends the
+// session's other leases (design 3.8). Only the daemon's page connection
+// stays (docs/guide.md). When tab new fails, a lease that it took only to
+// run window.open ends too; a lease that the session held before stays.
+func TestTabNewLeavesNoLeaseOrCaptureOnTheOpener(t *testing.T) {
+	hooks := core.WithLeaseHooks(context.Background())
+	leaseOf := func(m *core.Manager, title string) string {
+		for _, p := range m.Status() {
+			if p.Title == title {
+				return p.Lease + " " + p.Session
+			}
+		}
+		return "not attached"
+	}
+	// stopped reports whether the page got a disable of domain after its
+	// last enable (the capture's cleanup).
+	stopped := func(s *fakewebkit.Server, domain string) bool {
+		last := map[string]int{}
+		for i, r := range s.Received() {
+			last[r.Method] = i + 1
+		}
+		return last[domain+".enable"] < last[domain+".disable"]
+	}
+	t.Run("success", func(t *testing.T) {
+		m, f := newTabManager(t)
+		user := f.add("User", "https://user.test/")
+		r, err := runInCtx(t, hooks, m, "a", "tab", "new", "http://docs.test/")
+		if err != nil || !strings.HasPrefix(r.Text, "opened tab t2") {
+			t.Fatalf("tab new: %q, %v", r.Text, err)
+		}
+		if strings.Contains(r.Text, "warning") {
+			t.Fatalf("tab new = %q, want no warning", r.Text)
+		}
+		if got := leaseOf(m, "User"); got != "none " {
+			t.Fatalf("the opener's lease after tab new: %q, want none", got)
+		}
+		if len(user.ReceivedMethod("Console.enable")) == 0 || len(user.ReceivedMethod("Network.enable")) == 0 {
+			t.Fatal("the lease hooks started no capture on the opener; the test does not run as the daemon does")
+		}
+		for _, d := range []string{"Console", "Network"} {
+			if !stopped(user, d) {
+				t.Errorf("the opener's %s capture of session a is still on after tab new", d)
+			}
+		}
+		if got := pageOf(t, m, "a"); got != "Opened" {
+			t.Fatalf("after tab new session a runs on %q, want the new tab", got)
+		}
+	})
+	for _, held := range []bool{false, true} {
+		t.Run(fmt.Sprintf("popup blocked, lease held before %v", held), func(t *testing.T) {
+			m, f := newTabManager(t)
+			user := f.add("User", "https://user.test/")
+			if held {
+				if _, err := runInCtx(t, hooks, m, "a", "console"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			user.Handle("Runtime.evaluate", func(fakewebkit.Call) (any, *fakewebkit.Error) {
+				return map[string]any{"result": map[string]any{"type": "boolean", "value": false}}, nil
+			})
+			if _, err := runInCtx(t, hooks, m, "a", "tab", "new", "http://docs.test/"); err == nil || !strings.Contains(err.Error(), "blocked the popup") {
+				t.Fatalf("tab new with a blocked popup: %v", err)
+			}
+			want := "none "
+			if held {
+				want = "active a"
+			}
+			if got := leaseOf(m, "User"); got != want {
+				t.Fatalf("the opener's lease after a failed tab new: %q, want %q", got, want)
+			}
+			if !held {
+				for _, d := range []string{"Console", "Network"} {
+					if !stopped(user, d) {
+						t.Errorf("the opener's %s capture of session a is still on after a failed tab new", d)
+					}
+				}
+			}
+		})
+	}
+	// A cleanup that the opener refuses joins the error of the failed tab
+	// new; the lease ends all the same.
+	t.Run("popup blocked, cleanup refused", func(t *testing.T) {
+		m, f := newTabManager(t)
+		user := f.add("User", "https://user.test/")
+		user.Handle("Runtime.evaluate", func(fakewebkit.Call) (any, *fakewebkit.Error) {
+			return map[string]any{"result": map[string]any{"type": "boolean", "value": false}}, nil
+		})
+		var disables atomic.Int32
+		user.Handle("Console.disable", func(fakewebkit.Call) (any, *fakewebkit.Error) {
+			if disables.Add(1) == 1 {
+				return nil, nil // the reset of the connection's setup
+			}
+			return nil, &fakewebkit.Error{Code: -32000, Message: "Console.disable refused"}
+		})
+		_, err := runInCtx(t, hooks, m, "a", "tab", "new", "http://docs.test/")
+		for _, want := range []string{"blocked the popup", "warning: releasing the lease of the page that ran window.open", "Console.disable refused"} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("tab new with a blocked popup and a refused cleanup: %v; want %q in it", err, want)
+			}
+		}
+		if got := leaseOf(m, "User"); got != "none " {
+			t.Fatalf("the opener's lease after a failed tab new: %q, want none", got)
+		}
+	})
+}
+
+// Review F2: the operation of tab new can fail after its lease on the
+// opener was granted and before the operation is admitted (here the
+// command is canceled when the lease starts). That lease, which tab new
+// took only to run window.open, ends too.
+//
+// Whether the canceled operation fails at its admission or in window.open
+// is a race in the scheduler, so the test repeats the case until it has
+// seen a failed admission (a few tries), and checks every try.
+func TestTabNewReleasesALeaseItGotBeforeAFailedAdmission(t *testing.T) {
+	const session = "tab-new-admission" // the hook below acts only for it
+	var mu sync.Mutex
+	var cancelNow context.CancelFunc // the current try's cancel
+	// Lease hooks are global and stay registered for the test binary.
+	core.OnLeaseStart(func(_ context.Context, _ *core.PageSession, s string, _ uint64) error {
+		if s == session {
+			mu.Lock()
+			cancelNow()
+			mu.Unlock()
+		}
+		return nil
+	})
+	const tries = 200
+	for try := 1; ; try++ {
+		m, f := newTabManager(t)
+		f.add("User", "https://user.test/")
+		parent, cancel := context.WithCancel(core.WithLeaseHooks(context.Background()))
+		mu.Lock()
+		cancelNow = cancel
+		mu.Unlock()
+		_, err := runInCtx(t, parent, m, session, "tab", "new", "https://new.test/")
+		cancel()
+		if err == nil {
+			t.Fatal("tab new succeeded; want the cancel")
+		}
+		for _, p := range m.Status() {
+			if p.Session == session {
+				t.Fatalf("try %d: a failed tab new (%v) kept the lease it took: %s %s on %q", try, err, p.Lease, p.Session, p.Title)
+			}
+		}
+		if strings.HasPrefix(err.Error(), "operation tab new") {
+			return // a failed admission was seen and checked
+		}
+		if try == tries {
+			t.Fatalf("no failed admission in %d tries; the last error: %v", tries, err)
+		}
+	}
+}
+
+// Review F4: a failed tab new ends only the opener lease that it was
+// granted. A lease that a concurrent command of the same session took on
+// another page meanwhile stays.
+func TestFailedTabNewKeepsAConcurrentLeaseOnAnotherPage(t *testing.T) {
+	m, f := newTabManager(t)
+	user := f.add("User", "https://user.test/")
+	f.add("Other", "https://other.test/")
+	entered, unblock := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(unblock) })
+	user.Handle("Runtime.evaluate", func(c fakewebkit.Call) (any, *fakewebkit.Error) {
+		var p struct{ Expression string }
+		_ = json.Unmarshal(c.Params, &p)
+		if strings.HasPrefix(p.Expression, "!!window.open(") {
+			close(entered)
+			<-unblock
+			return map[string]any{"result": map[string]any{"type": "boolean", "value": false}}, nil
+		}
+		return map[string]any{"result": map[string]any{"type": "number", "value": 1}}, nil
+	})
+	hooks := core.WithLeaseHooks(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := runInCtx(t, hooks, m, "concurrent", "tab", "new", "--page", "t1")
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatalf("tab new ended before window.open: %v", err)
+	}
+	if _, err := runInCtx(t, hooks, m, "concurrent", "console", "--page", "t2"); err != nil {
+		t.Fatal(err)
+	}
+	once.Do(func() { close(unblock) })
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "blocked the popup") {
+		t.Fatalf("tab new: %v; want the blocked popup", err)
+	}
+	got := map[string]string{}
+	for _, p := range m.Status() {
+		got[p.Title] = p.Lease + " " + p.Session
+	}
+	if got["Other"] != "active concurrent" || got["User"] != "none " {
+		t.Fatalf("leases after the failed tab new: %v; want Other kept by the concurrent command and User released", got)
+	}
+}
+
+// Review F4: Manager.ReleaseEpoch, which a failed tab new uses, ends a
+// lease only while it has the given epoch: a lease that ended and was
+// granted again stays.
+func TestReleaseEpochKeepsALeaseGrantedAgain(t *testing.T) {
+	m, f := newTabManager(t)
+	f.add("One", "http://one.test/")
+	lease := func() (string, uint64) {
+		for _, p := range m.Status() {
+			if p.Title == "One" {
+				return p.Key, map[bool]uint64{true: p.Epoch}[p.Lease == "active"]
+			}
+		}
+		t.Fatal("page One is not attached")
+		return "", 0
+	}
+	mustIn(t, m, "a", "console")
+	key, first := lease()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.Release(ctx, "a", key); err != nil {
+		t.Fatal(err)
+	}
+	mustIn(t, m, "a", "console")
+	if _, second := lease(); second == 0 || second == first {
+		t.Fatalf("epochs %d then %d; want a new lease", first, second)
+	}
+	if err := m.ReleaseEpoch(ctx, "a", key, first); err != nil {
+		t.Fatal(err)
+	}
+	_, now := lease()
+	if now == 0 {
+		t.Fatal("ReleaseEpoch of the ended epoch released the lease granted again")
+	}
+	if err := m.ReleaseEpoch(ctx, "a", key, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, after := lease(); after != 0 {
+		t.Fatalf("ReleaseEpoch of the current epoch left lease %d", after)
 	}
 }

@@ -445,8 +445,8 @@ func (s *Starter) refuse(ctx context.Context, ep netip.AddrPort, reason string) 
 		owner = "pid " + strings.Join(list, ", ")
 		kill = "kill " + strings.Join(list, " ")
 	}
-	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-mcp started (%s). It may be the iwdp of the user or another agent, so nothing was stopped. If it is yours, restart it by hand: %s, then run 'ios_webkit_debug_proxy --no-frontend'",
-		s.addr, owner, reason, kill)
+	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-mcp started (%s). It may be the iwdp of the user or another agent, so nothing was stopped. If it is yours, restart it by hand: %s, then run '%s'",
+		s.addr, owner, reason, kill, ManualCommand())
 }
 
 // ErrStopFailed marks a restart whose recorded iwdp did not stop: a signal

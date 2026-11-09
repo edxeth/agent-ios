@@ -102,7 +102,7 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`tab`](#tab) | `tab_select` | `core` | Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs. |
 | [`tab close`](#tab-close) | `tab_close` | `devtools` | Close a tab (default: the current one) with window.close(); works only for tabs that a script opened. |
 | [`tab list`](#tab-list) | `tab_list` | `core` | List the pages of the device as tabs t1, t2, ... with labels; \* marks this session's current tab. |
-| [`tab new`](#tab-new) | `tab_new` | `devtools` | Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab. |
+| [`tab new`](#tab-new) | `tab_new` | `devtools` | Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end. |
 | [`tap`](#tap) | `tap` | `core` | Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and touchend, then the click sequence with pointerType touch. |
 | [`trace start`](#trace-start) | `trace_start` | `devtools` | Start a WebKit Timeline recording of the page for a Chrome trace file (trace stop writes it). |
 | [`trace stop`](#trace-stop) | `trace_stop` | `devtools` | Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to path, or to a new file in the temp directory. |
@@ -1569,11 +1569,11 @@ List the pages of the device as tabs t1, t2, ... with labels; \* marks this sess
 iwdp-cli tab new [<url>] [flags]
 ```
 
-Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab.
+Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end.
 
 - MCP tool: `tab_new` (profile `devtools`)
 - Aliases: `window new`
-- Page: leases the session's page
+- Page: none
 
 | Argument | Required | Description |
 |---|---|---|

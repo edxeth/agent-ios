@@ -13,7 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -327,6 +329,47 @@ func openIWDPLog() (*os.File, error) {
 	return f, nil
 }
 
+// linuxSimulatorAddr is the SIMULATOR inspector address that a start on
+// Linux passes to iwdp (-s). iwdp 1.9.2 connects a SIMULATOR inspector to
+// localhost:27753 at start and tries each address of localhost in turn: a
+// refused 127.0.0.1 goes on to the next address, so where ::1 is one of
+// them and does not answer, that connect stays pending, whichever address
+// comes first. About 133 s later iwdp removes it and leaves its send queue
+// behind, so the next connection on that file-descriptor number gets an
+// empty reply until iwdp restarts (docs/known-limits.md). With the one
+// address 127.0.0.1 the connect is refused at once.
+// Linux runs no iOS Simulator, so nothing listens there anyway; macOS
+// keeps iwdp's default, which the simulator tests use.
+const linuxSimulatorAddr = "127.0.0.1:27753"
+
+// simulatorArgs are the iwdp arguments that set the SIMULATOR inspector
+// address on goos: -s linuxSimulatorAddr on Linux, none elsewhere.
+func simulatorArgs(goos string) []string {
+	if goos == "linux" {
+		return []string{"-s", linuxSimulatorAddr}
+	}
+	return nil
+}
+
+// iwdpArgs are the arguments of an iwdp start on goos with the device
+// configuration config: frontend off (-F), config (-c), and the SIMULATOR
+// address of simulatorArgs.
+func iwdpArgs(goos, config string) []string {
+	return append([]string{"-F", "-c", config}, simulatorArgs(goos)...)
+}
+
+// manualCommand is the iwdp command line that start and recovery advice on
+// goos tells a user to run: frontend off and the SIMULATOR address of
+// simulatorArgs, as an automatic start uses, with iwdp's default device
+// configuration.
+func manualCommand(goos string) string {
+	return strings.Join(append([]string{"ios_webkit_debug_proxy", "--no-frontend"}, simulatorArgs(goos)...), " ")
+}
+
+// ManualCommand is the iwdp command line that start and recovery advice on
+// this system tells a user to run (manualCommand).
+func ManualCommand() string { return manualCommand(runtime.GOOS) }
+
 // iwdpCommand is the command that runs ios_webkit_debug_proxy with args.
 // iwdp writes its stdout ("Listing devices", "Connected :9224 to ...")
 // through C stdio, which buffers a file in blocks: those lines would reach
@@ -352,7 +395,7 @@ func iwdpCommand(args ...string) (*exec.Cmd, error) {
 // log (LogPath); it writes to the file itself, so the log goes on after
 // the starting process exits.
 func (s *Starter) launch(ctx context.Context) error {
-	cmd, err := iwdpCommand("-F", "-c", BuildConfig(DeviceUDIDs()))
+	cmd, err := iwdpCommand(iwdpArgs(runtime.GOOS, BuildConfig(DeviceUDIDs()))...)
 	if err != nil {
 		return fmt.Errorf("starting ios_webkit_debug_proxy: %w\nMake sure it is installed: brew install ios-webkit-debug-proxy", err)
 	}
@@ -389,13 +432,13 @@ func (s *Starter) launch(ctx context.Context) error {
 		select {
 		case <-exited:
 			stopGroup(cmd.Process.Pid, exited)
-			return logcause.Errorf("ios_webkit_debug_proxy exited during its start (%v); run 'ios_webkit_debug_proxy --no-frontend' to see why", waitErr)
+			return logcause.Errorf("ios_webkit_debug_proxy exited during its start (%v); run '%s' to see why", waitErr, ManualCommand())
 		case <-ctx.Done():
 			stopGroup(cmd.Process.Pid, exited)
 			return fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
 		case <-deadline.C:
 			stopGroup(cmd.Process.Pid, exited)
-			return fmt.Errorf("the started ios_webkit_debug_proxy did not answer on %s within %s, so it was stopped; run 'ios_webkit_debug_proxy --no-frontend' to see why", s.addr, s.readyWait)
+			return fmt.Errorf("the started ios_webkit_debug_proxy did not answer on %s within %s, so it was stopped; run '%s' to see why", s.addr, s.readyWait, ManualCommand())
 		case <-poll.C:
 			ok, err := s.ready(ctx, readyBy, cmd.Process.Pid)
 			if err != nil {

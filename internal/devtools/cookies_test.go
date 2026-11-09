@@ -196,3 +196,37 @@ func TestCookieURLAndDomainMatch(t *testing.T) {
 		}
 	}
 }
+
+// RFC 6265 section 5.1.4 path matching: the same path, a path below a
+// cookie path that ends in "/", or a path below it at a "/" boundary.
+func TestPathMatch(t *testing.T) {
+	for _, m := range []struct {
+		req, cookie string
+		want        bool
+	}{
+		{"/dc4", "/dc4", true},
+		{"/dc4/x", "/dc4", true},
+		{"/dc4/x", "/dc4/", true},
+		{"/dc4x", "/dc4", false},
+		{"/", "/dc4", false},
+		{"/dc", "/dc4", false},
+		{"", "/", true},
+		{"/anything", "/", true},
+	} {
+		if got := PathMatch(m.req, m.cookie); got != m.want {
+			t.Errorf("PathMatch(%q, %q) = %v, want %v", m.req, m.cookie, got, m.want)
+		}
+	}
+	// For any segment a (not empty) and b without "/": "/a/b" is below the
+	// cookie path "/a", and "/ab" is a sibling of it unless b is empty. (The
+	// cookie path "/" is below no boundary: every path matches it.)
+	seg := func(s string) string { return strings.ReplaceAll(s, "/", "") }
+	f := func(a, b string) bool {
+		a, b = "x"+seg(a), seg(b)
+		p := "/" + a
+		return PathMatch(p+"/"+b, p) && PathMatch(p+b, p) == (b == "")
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 300}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -23,8 +23,9 @@ import (
 // setCookie and deleteCookie, and localStorage and sessionStorage behind
 // the storage function of internal/devtools (Runtime.evaluate of
 // "(function iwdpStorage(a) {...})(args)"); "location.hostname" evaluates
-// to the origin's host. The jar follows WebKit: setCookie replaces the
-// cookie of the same name, domain and path, and a cookie that expired
+// to the origin's host and "location.href" to the origin and URLPath. The
+// jar follows WebKit: setCookie replaces the cookie of the same name,
+// domain and path, and a cookie that expired
 // (not a session cookie, expires not after jarNow) only removes that cookie
 // (RFC 6265 section 5.3 steps 11 and 12 and its eviction of expired
 // cookies; libsoup soup_cookie_jar_add_cookie_full, seen on WebKitGTK);
@@ -34,8 +35,15 @@ import (
 //
 // Lock Mu to read or change the fields while the page is in use.
 type Page struct {
-	Mu             sync.Mutex
-	Origin         string
+	Mu     sync.Mutex
+	Origin string
+	// URLPath is the path of the page's URL, which location.href ends
+	// with ("/" when it is empty). When it is set, Page.getCookies lists
+	// only the cookies that the jar would send to Origin+URLPath, as
+	// WebKit lists the cookies of the page's document and resource URLs
+	// (InspectorPageAgent::getCookies); when it is empty, Page.getCookies
+	// lists the whole jar.
+	URLPath        string
 	Cookies        []webkit.Cookie
 	LocalStorage   map[string]string
 	SessionStorage map[string]string
@@ -193,7 +201,20 @@ func key(c webkit.Cookie) [3]string { return [3]string{c.Name, strings.ToLower(c
 func (p *Page) getCookies(fakewebkit.Call) (any, *fakewebkit.Error) {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
-	return map[string]any{"cookies": append([]webkit.Cookie{}, p.Cookies...)}, nil
+	if p.URLPath == "" {
+		return map[string]any{"cookies": append([]webkit.Cookie{}, p.Cookies...)}, nil
+	}
+	u, err := url.Parse(p.Origin)
+	if err != nil {
+		return nil, &fakewebkit.Error{Code: -32000, Message: err.Error()}
+	}
+	listed := []webkit.Cookie{}
+	for _, ck := range p.Cookies {
+		if sentTo(u.Scheme, u.Hostname(), p.URLPath, ck) {
+			listed = append(listed, ck)
+		}
+	}
+	return map[string]any{"cookies": listed}, nil
 }
 
 func (p *Page) setCookie(c fakewebkit.Call) (any, *fakewebkit.Error) {
@@ -232,13 +253,18 @@ func (p *Page) deleteCookie(c fakewebkit.Call) (any, *fakewebkit.Error) {
 	}
 	kept := p.Cookies[:0]
 	for _, ck := range p.Cookies {
-		sent := domainMatch(u.Hostname(), ck.Domain) && pathMatch(u.Path, ck.Path) && (!ck.Secure || u.Scheme == "https")
-		if !sent || ck.Name != v.CookieName {
+		if !sentTo(u.Scheme, u.Hostname(), u.Path, ck) || ck.Name != v.CookieName {
 			kept = append(kept, ck)
 		}
 	}
 	p.Cookies = kept
 	return nil, nil
+}
+
+// sentTo reports whether the jar sends ck to a URL of scheme, host and
+// path: RFC 6265 domain and path match, and a secure cookie only to https.
+func sentTo(scheme, host, path string, ck webkit.Cookie) bool {
+	return domainMatch(host, ck.Domain) && pathMatch(path, ck.Path) && (!ck.Secure || scheme == "https")
 }
 
 // domainMatch is RFC 6265 section 5.1.3 (a leading dot of the cookie
@@ -277,9 +303,16 @@ func (p *Page) evaluate(c fakewebkit.Call) (any, *fakewebkit.Error) {
 		u, _ := url.Parse(p.Origin)
 		return stringResult(u.Hostname()), nil
 	}
+	if v.Expression == "location.href" {
+		path := p.URLPath
+		if path == "" {
+			path = "/"
+		}
+		return stringResult(strings.TrimSuffix(p.Origin, "/") + path), nil
+	}
 	args, ok := storageCallArgs(v.Expression)
 	if !ok {
-		return nil, &fakewebkit.Error{Code: -32000, Message: "the fake page evaluates only the storage function and location.hostname"}
+		return nil, &fakewebkit.Error{Code: -32000, Message: "the fake page evaluates only the storage function, location.hostname and location.href"}
 	}
 	var a struct {
 		Op, Area, Key, Value, Origin, Token string

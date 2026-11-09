@@ -1,12 +1,14 @@
 package e2e_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -128,6 +130,12 @@ func TestCLI_LegacyListingCommandsOnAnUnownedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := buildCLIFor(t, addr)
+	// Review round 2, F5: the start advice is the command line of this
+	// system; on Linux it has -s 127.0.0.1:27753 (docs/known-limits.md).
+	start := "Start it with: ios_webkit_debug_proxy --no-frontend"
+	if runtime.GOOS == "linux" {
+		start += " -s 127.0.0.1:27753"
+	}
 	for _, c := range []struct {
 		args []string
 		want string
@@ -140,12 +148,97 @@ func TestCLI_LegacyListingCommandsOnAnUnownedPort(t *testing.T) {
 		if code != 1 {
 			t.Errorf("%v on an unowned port: exit %d, want 1; output %q", c.args, code, output)
 		}
-		for _, want := range []string{c.want, "Start it with: ios_webkit_debug_proxy --no-frontend"} {
+		for _, want := range []string{c.want, start + "\n"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("%v: output %q does not contain %q", c.args, output, want)
 			}
 		}
 	}
+}
+
+// runBinStreams runs bin with args and returns its stdout, its stderr and
+// its exit code.
+func runBinStreams(t *testing.T, bin string, args ...string) (string, string, int) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		return stdout.String(), stderr.String(), 0
+	case errors.As(err, &ee):
+		return stdout.String(), stderr.String(), ee.ExitCode()
+	}
+	t.Fatalf("running %s %v: %v", bin, args, err)
+	return "", "", 0
+}
+
+// Review round 2, F5: when no iwdp runs, the legacy commands tell how to
+// start one with the command line of this system. On Linux it has
+// -s 127.0.0.1:27753, as docs/known-limits.md tells a user who starts iwdp
+// by hand; macOS keeps iwdp's default. The binary reads a private listing
+// address that nothing owns (review round 3, F7: never 127.0.0.1:9221).
+func TestStartHintNamesTheManualCommandOfThisSystem(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	bin := buildCLIFor(t, addr)
+	want := "Start it with: ios_webkit_debug_proxy --no-frontend"
+	if runtime.GOOS == "linux" {
+		want += " -s 127.0.0.1:27753"
+	}
+	for _, args := range [][]string{{"status"}, {"devices"}} {
+		_, stderr, code := runBinStreams(t, bin, args...)
+		if code != 1 || !strings.Contains(stderr, want+"\n") {
+			t.Errorf("iwdp-cli %v without iwdp: exit %d, stderr %q; want exit 1 and %q", args, code, stderr, want)
+		}
+	}
+}
+
+// Review devfix-R1 F3 (device check 3, P3-D): status names the iwdp log
+// when an owned listing is broken, too. The broken listing is a private
+// loopback server (review round 3, F7: never 127.0.0.1:9221); the error
+// names its address, which shows that the binary read it.
+func TestReviewBrokenListingStatusLogPath(t *testing.T) {
+	listing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fixture broken", http.StatusServiceUnavailable)
+	}))
+	defer listing.Close()
+	addr := listing.Listener.Addr().String()
+	stdout, stderr, code := runBinStreams(t, buildCLIFor(t, addr), "status")
+	if code == 0 {
+		t.Fatal("broken listing unexpectedly healthy")
+	}
+	if !strings.Contains(stdout+stderr, "iwdp log of an iwdp that iwdp-mcp starts:") {
+		t.Fatalf("status omits log path on the listing failure: stdout %q, stderr %q", stdout, stderr)
+	}
+	if !strings.Contains(stderr, addr) {
+		t.Fatalf("status error %q does not name the private listing %s", stderr, addr)
+	}
+}
+
+// Review round 3, F7: the two tests above pass while another process owns
+// iwdp's default listing address 127.0.0.1:9221, as on a host where the
+// user's iwdp runs. This test owns that address itself when it is free;
+// when it is not, another process owns it already. Nothing here sends a
+// request there: a request to this listener, which never answers, would
+// hang until the command's deadline and fail the tests.
+func TestCLIHintTestsWithAnOccupiedDefaultListing(t *testing.T) {
+	const defaultListing = "127.0.0.1:9221"
+	if ln, err := net.Listen("tcp", defaultListing); err == nil {
+		defer func() { _ = ln.Close() }()
+	} else {
+		t.Logf("%s is owned already: %v", defaultListing, err)
+	}
+	t.Run("start-hint", TestStartHintNamesTheManualCommandOfThisSystem)
+	t.Run("broken-listing", TestReviewBrokenListingStatusLogPath)
 }
 
 // closeWithoutReply closes the connection of the request without a reply,

@@ -592,7 +592,7 @@ func registerTools(server *mcp.Server) {
 		case err == nil:
 			out = map[string]any{"running": true, "message": "ios-webkit-debug-proxy is running on port 9221"}
 		case errors.Is(err, proxy.ErrNotListening):
-			out = map[string]any{"running": false, "message": "ios-webkit-debug-proxy is not running. Start it with: ios_webkit_debug_proxy --no-frontend"}
+			out = map[string]any{"running": false, "message": "ios-webkit-debug-proxy is not running. Start it with: " + proxy.ManualCommand()}
 		case errors.As(err, new(*proxy.StartError)):
 			out = map[string]any{"running": false, "message": fmt.Sprintf("failed to start iwdp: %v", err)}
 		default:

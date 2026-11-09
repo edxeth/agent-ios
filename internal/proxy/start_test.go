@@ -26,6 +26,39 @@ import (
 // address it names.
 const fakeServeEnv = "IWDP_PROXY_TEST_FAKE_SERVE"
 
+// fakeParentEnv is the pid of the test process that starts a fake that
+// runs the test binary (fakeParent); the fake ends when that process ends
+// (exitWithParent).
+const fakeParentEnv = "IWDP_PROXY_TEST_FAKE_PARENT"
+
+// fakeParent is the fakeParentEnv entry of this test process.
+func fakeParent() string { return fakeParentEnv + "=" + strconv.Itoa(os.Getpid()) }
+
+// fakeParentPoll is how often a fake checks that its test process runs.
+const fakeParentPoll = 100 * time.Millisecond
+
+// exitWithParent ends this fake process, after stop, once its parent is no
+// longer the test process of fakeParentEnv: the fake runs in its own
+// process group, so a killed test binary does not take it along, and an
+// orphan gets another parent (init or a subreaper), on Linux and macOS
+// alike. The fake's parent is that test process: it runs the fake with
+// exec.Command, or a Starter runs the fake's script, which execs the test
+// binary. Without the variable the fake keeps running.
+func exitWithParent(stop func()) {
+	want, err := strconv.Atoi(os.Getenv(fakeParentEnv))
+	if err != nil {
+		return
+	}
+	go func() {
+		for os.Getppid() == want {
+			time.Sleep(fakeParentPoll)
+		}
+		stop()
+		fmt.Fprintln(os.Stderr, "fake iwdp: its test process ended")
+		os.Exit(3)
+	}()
+}
+
 // TestFakeIWDPProcess is the body of the "serve" fake iwdp, which runs the
 // test binary with -test.run of this name: it serves an empty device list
 // on the address of fakeServeEnv until it is stopped. Without the variable
@@ -35,6 +68,7 @@ func TestFakeIWDPProcess(t *testing.T) {
 	if addr == "" {
 		return
 	}
+	exitWithParent(func() {})
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fake iwdp:", err)
@@ -66,6 +100,15 @@ const (
 	fakeChatty = "chatty"
 )
 
+// shellExitWithParent is exitWithParent for a shell fake whose child's pid
+// is in $c: instead of waiting for the child, the shell polls its parent
+// pid (ps, on Linux and macOS) and, once it is no longer this test
+// process, kills the child and exits. A SIGKILL of the fake's process
+// group still ends both at once.
+func shellExitWithParent() string {
+	return "while [ \"$(ps -o ppid= -p $$ | tr -d ' ')\" = " + strconv.Itoa(os.Getpid()) + " ]; do sleep 0.1; done\nkill -9 $c 2>/dev/null\nexit 3\n"
+}
+
 // installFakeIWDP writes the fake iwdp of mode for the listing addr and an
 // idevice_id that exits 1 (DeviceUDIDs must not reach usbmuxd), and puts
 // them first on PATH for this test.
@@ -92,7 +135,7 @@ func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body = "exec env " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
+		body = "exec env " + fakeParent() + " " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
 	case fakeChatty:
 		exe, err := os.Executable()
 		if err != nil {
@@ -100,13 +143,13 @@ func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 		}
 		body = "printf 'fake-stderr-line\\n' >&2\nme=$$\n" +
 			"(printf 'fake-stdout-line\\n'; while kill -0 $me 2>/dev/null; do sleep 0.2; done) | sed -n p &\n" +
-			"exec env " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
+			"exec env " + fakeParent() + " " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
 	case fakeFail:
 		body = "exit 1\n"
 	case fakeHang:
-		body = "sleep 300 &\necho $! > " + q(filepath.Join(dir, "child.pid")) + "\nwait\n"
+		body = "sleep 300 &\nc=$!\necho $c > " + q(filepath.Join(dir, "child.pid")) + "\n" + shellExitWithParent()
 	case fakeStubborn:
-		body = "trap '' TERM\nsleep 300 &\necho $! > " + q(filepath.Join(dir, "child.pid")) + "\nwait\n"
+		body = "trap '' TERM\nsleep 300 &\nc=$!\necho $c > " + q(filepath.Join(dir, "child.pid")) + "\n" + shellExitWithParent()
 	default:
 		t.Fatalf("unknown fake mode %q", mode)
 	}
@@ -434,6 +477,9 @@ func TestStartStopsAnIWDPThatNeverAnswers(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "did not answer") {
 				t.Fatalf("Start of a fake that never answers = %v, want a readiness error", err)
 			}
+			if !strings.Contains(err.Error(), "run '"+wantManualIWDP()+"' to see why") {
+				t.Errorf("readiness error %q does not name %q", err, wantManualIWDP())
+			}
 			pids := f.pids()
 			if len(pids) != 2 {
 				t.Fatalf("recorded pids %v, want the fake and its child", pids)
@@ -483,6 +529,9 @@ func TestStartBacksOffAfterAFailedStart(t *testing.T) {
 	first := s.Start(context.Background())
 	if first == nil || !strings.Contains(first.Error(), "exited") {
 		t.Fatalf("Start of a fake that exits 1 = %v, want an exit error", first)
+	}
+	if !strings.Contains(first.Error(), "run '"+wantManualIWDP()+"' to see why") {
+		t.Errorf("exit error %q does not name %q", first, wantManualIWDP())
 	}
 	const quick = 5
 	begin := time.Now()

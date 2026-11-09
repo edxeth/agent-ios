@@ -75,7 +75,7 @@ make build
 ### CLI
 
 ```bash
-# Start the proxy
+# Start the proxy (on Linux add -s 127.0.0.1:27753, see docs/known-limits.md)
 ios_webkit_debug_proxy --no-frontend &
 
 # List connected devices (port 9221)

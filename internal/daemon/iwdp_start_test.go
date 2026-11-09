@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -121,8 +122,14 @@ func TestEnsureIWDPReportsAStoppedIWDP(t *testing.T) {
 	addr := deadListing(t)
 	ts := &transports{o: RunOptions{Transport: "iwdp"}, logf: t.Logf}
 	err := ts.ensureIWDP(ctxFor(t, 10*time.Second), addr, true)
-	if err == nil || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), "ios_webkit_debug_proxy --no-frontend") {
-		t.Fatalf("ensureIWDP without iwdp = %v, want how to start it on %s", err, addr)
+	// Review round 2, F5: the start advice is the command line of this
+	// system; on Linux it has -s 127.0.0.1:27753 (docs/known-limits.md).
+	start := "start it with: ios_webkit_debug_proxy --no-frontend"
+	if runtime.GOOS == "linux" {
+		start += " -s 127.0.0.1:27753"
+	}
+	if err == nil || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), start+" (install:") {
+		t.Fatalf("ensureIWDP without iwdp = %v, want how to start it on %s: %q", err, addr, start)
 	}
 }
 

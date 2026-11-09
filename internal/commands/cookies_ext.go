@@ -2,9 +2,11 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -176,15 +178,7 @@ func runCookiesSet(ctx context.Context, env Env, in Input) (Result, error) {
 		// name, domain and path (RFC 6265 section 5.3), as the CDP
 		// endpoint's Network.setCookie does; WebKit stores nothing, so
 		// SetCookieVerified would report a missing cookie.
-		// devtools.DeleteCookies makes that exact delete and reads the jar
-		// back.
-		if err := devtools.DeleteCookies(ctx, c, []webkit.Cookie{ck}); err != nil {
-			return Result{}, err
-		}
-		return Result{
-			Text: fmt.Sprintf("Cookie %s has an expiry in the past, so it was deleted (domain %s, path %s); the read-back shows no cookie of that name, domain and path.", ck.Name, ck.Domain, ck.Path),
-			Data: map[string]any{"ok": true, "deleted": true, "cookie": map[string]string{"name": ck.Name, "domain": ck.Domain, "path": ck.Path}},
-		}, nil
+		return deleteByPastExpiry(ctx, c, ck)
 	}
 	stored, err := tools.SetCookieVerified(ctx, c, ck)
 	if err != nil {
@@ -198,6 +192,88 @@ func runCookiesSet(ctx context.Context, env Env, in Input) (Result, error) {
 		Text: fmt.Sprintf("Cookie %s set and verified (domain %s, path %s).", stored.Name, stored.Domain, stored.Path),
 		Data: map[string]any{"ok": true, "cookie": redacted},
 	}, nil
+}
+
+// deleteByPastExpiry makes the exact delete of ck's name, domain and path
+// (devtools.DeleteListedCookie, which reads the jar back) and reports only
+// what the read-back can show. Page.getCookies lists only the cookies of
+// the page's URLs (device check 4, P3-F): "deleted" needs a cookie that was
+// listed before the delete; "the page had none" needs a page whose URL
+// would list such a cookie (cookieHiddenReason); otherwise the result is
+// not verified. Data: deleted (a listed cookie is gone) and verified (the
+// read-back could see a cookie of that identity).
+func deleteByPastExpiry(ctx context.Context, c webkit.Caller, ck webkit.Cookie) (Result, error) {
+	listed, err := devtools.DeleteListedCookie(ctx, c, ck)
+	if err != nil {
+		return Result{}, err
+	}
+	data := map[string]any{"ok": true, "deleted": listed, "verified": listed, "cookie": map[string]string{"name": ck.Name, "domain": ck.Domain, "path": ck.Path}}
+	head := fmt.Sprintf("Cookie %s has an expiry in the past", ck.Name)
+	if listed {
+		return Result{
+			Text: fmt.Sprintf("%s, so it was deleted (domain %s, path %s); the read-back shows no cookie of that name, domain and path.", head, ck.Domain, ck.Path),
+			Data: data,
+		}, nil
+	}
+	href, err := pageHref(ctx, c)
+	if err != nil {
+		return Result{}, fmt.Errorf("the delete was sent; %w", err)
+	}
+	hidden, err := cookieHiddenReason(href, ck)
+	if err != nil {
+		return Result{}, fmt.Errorf("the delete was sent; %w", err)
+	}
+	if hidden == "" {
+		data["verified"] = true
+		return Result{
+			Text: fmt.Sprintf("%s, so it deletes the cookie of its name, domain and path (domain %s, path %s), but the page had no cookie of that name, domain and path, so nothing was deleted; the read-back shows none.", head, ck.Domain, ck.Path),
+			Data: data,
+		}, nil
+	}
+	return Result{
+		Text: fmt.Sprintf("%s, so the delete was sent for the cookie of its name, domain and path (domain %s, path %s), but the read-back cannot verify the result: %s, so Page.getCookies does not list such a cookie. To check, list the cookies on a page of that domain and path.", head, ck.Domain, ck.Path, hidden),
+		Data: data,
+	}, nil
+}
+
+// pageHref reads location.href.
+func pageHref(ctx context.Context, c webkit.Caller) (string, error) {
+	res, err := tools.EvaluateScript(ctx, c, "location.href", true)
+	if err != nil {
+		return "", fmt.Errorf("reading the page's URL: %w", err)
+	}
+	var href string
+	if err := json.Unmarshal(res.Result.Value, &href); err != nil {
+		return "", fmt.Errorf("reading the page's URL: the page returned %s", res.Result.Type)
+	}
+	return href, nil
+}
+
+// cookieHiddenReason says why Page.getCookies on the page at pageURL can
+// leave out a cookie of ck's name, domain and path, or returns "" when the
+// page's URL gets every such cookie: it domain-matches and path-matches
+// the cookie (RFC 6265 sections 5.1.3 and 5.1.4), and it is https, so a
+// Secure cookie of that identity is listed too. The path match compares
+// the URI path as the page's URL has it (percent-encoded), as a browser
+// does: a page at /dc%34 does not get a cookie of path /dc4.
+func cookieHiddenReason(pageURL string, ck webkit.Cookie) (string, error) {
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return "", fmt.Errorf("reading the page's URL: %w", err)
+	}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	switch {
+	case !devtools.DomainMatch(u.Hostname(), ck.Domain):
+		return fmt.Sprintf("the page's host %s is outside the cookie domain %s", u.Hostname(), ck.Domain), nil
+	case !devtools.PathMatch(path, ck.Path):
+		return fmt.Sprintf("the page's path %s is outside the cookie path %s", path, ck.Path), nil
+	case u.Scheme != "https":
+		return "the page is not https, and a Secure cookie is not listed for such a page", nil
+	}
+	return "", nil
 }
 
 func importCookies(ctx context.Context, env Env, path, domain string) (Result, error) {

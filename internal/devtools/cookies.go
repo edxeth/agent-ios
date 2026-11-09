@@ -403,6 +403,16 @@ func DomainMatch(host, domain string) bool {
 	return h == d || (strings.HasSuffix(h, "."+d) && net.ParseIP(h) == nil)
 }
 
+// PathMatch reports whether a request path path-matches a cookie path
+// (RFC 6265 section 5.1.4): the same path, or a path below the cookie
+// path. An empty request path is "/".
+func PathMatch(reqPath, cookiePath string) bool {
+	if reqPath == "" {
+		reqPath = "/"
+	}
+	return reqPath == cookiePath || (strings.HasPrefix(reqPath, cookiePath) && (strings.HasSuffix(cookiePath, "/") || reqPath[len(cookiePath)] == '/'))
+}
+
 // cookieKey identifies a cookie in a jar: name, domain and path.
 type cookieKey struct{ name, domain, path string }
 
@@ -446,6 +456,24 @@ func DeleteCookies(ctx context.Context, c webkit.Caller, cookies []webkit.Cookie
 		}
 	}
 	return CheckCookiesGone(ctx, c, cookies)
+}
+
+// DeleteListedCookie deletes the cookie of ck's name, domain and path as
+// DeleteCookies does, and reports whether Page.getCookies listed such a
+// cookie before the delete. Page.getCookies lists only the cookies of the
+// page's frame and resource URLs, so "not listed" does not prove that the
+// jar had no such cookie.
+func DeleteListedCookie(ctx context.Context, c webkit.Caller, ck webkit.Cookie) (listed bool, err error) {
+	before, err := tools.GetCookies(ctx, c)
+	if err != nil {
+		return false, fmt.Errorf("reading the cookies before the delete: %w", err)
+	}
+	for _, b := range before {
+		if keyOf(b) == keyOf(ck) {
+			listed = true
+		}
+	}
+	return listed, DeleteCookies(ctx, c, []webkit.Cookie{ck})
 }
 
 // CheckCookiesGone reads the jar and fails, naming the cookies without

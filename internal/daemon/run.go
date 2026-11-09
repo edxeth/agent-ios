@@ -339,7 +339,7 @@ func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault 
 		return listingError(ctx, err) // nil (answers) or a process owns the port
 	}
 	if !isDefault || ts.o.StartIWDP == nil {
-		return fmt.Errorf("ios_webkit_debug_proxy is not running on %s; start it with: ios_webkit_debug_proxy --no-frontend (install: brew install ios-webkit-debug-proxy)", listing)
+		return fmt.Errorf("ios_webkit_debug_proxy is not running on %s; start it with: %s (install: brew install ios-webkit-debug-proxy)", listing, proxy.ManualCommand())
 	}
 	ts.starts.Lock()
 	defer ts.starts.Unlock()

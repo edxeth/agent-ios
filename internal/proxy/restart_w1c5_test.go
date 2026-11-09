@@ -81,7 +81,8 @@ func pkillCalls(t *testing.T) []string {
 // foreignIWDP runs a fake ios_webkit_debug_proxy that this program did not
 // start (the user's or another agent's): a process named
 // ios_webkit_debug_proxy in its own process group, serving the device list
-// on addr. It returns its pid; the test stops it by that pid.
+// on addr. It returns its pid; the test stops it by that pid, and it ends
+// with this test process (exitWithParent).
 func foreignIWDP(t *testing.T, addr string) int {
 	t.Helper()
 	exe, err := os.Executable()
@@ -93,7 +94,7 @@ func foreignIWDP(t *testing.T, addr string) int {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(link, "-test.run=^TestFakeIWDPProcess$")
-	cmd.Env = append(os.Environ(), fakeServeEnv+"="+addr)
+	cmd.Env = append(os.Environ(), fakeServeEnv+"="+addr, fakeParent())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -247,7 +248,7 @@ func TestRestartNeverSignalsAnotherProgramsIWDP(t *testing.T) {
 		t.Fatal("Restart succeeded against an iwdp that this program did not start")
 	}
 	t.Logf("refusal: %v", err)
-	for _, want := range []string{addr, "pid " + strconv.Itoa(foreign), "kill " + strconv.Itoa(foreign), "ios_webkit_debug_proxy --no-frontend"} {
+	for _, want := range []string{addr, "pid " + strconv.Itoa(foreign), "kill " + strconv.Itoa(foreign), wantManualIWDP()} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q does not contain %q", err, want)
 		}
@@ -276,7 +277,7 @@ func TestRestartRefusesAStaleRecord(t *testing.T) {
 			if err == nil {
 				t.Fatal("Restart succeeded with a stale record")
 			}
-			for _, want := range []string{addr, "pid " + strconv.Itoa(foreign), strconv.Itoa(recorded), "ios_webkit_debug_proxy --no-frontend"} {
+			for _, want := range []string{addr, "pid " + strconv.Itoa(foreign), strconv.Itoa(recorded), wantManualIWDP()} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("refusal %q does not contain %q", err, want)
 				}
@@ -327,7 +328,7 @@ func TestRestartRefusesAnInvalidRecord(t *testing.T) {
 			}
 			useStd(t, testStarter(addr, 2*time.Second))
 			err := Restart(context.Background())
-			if err == nil || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), "ios_webkit_debug_proxy --no-frontend") {
+			if err == nil || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), wantManualIWDP()) {
 				t.Fatalf("Restart with the record %s = %v, want a refusal naming %s and the manual command", data, err, addr)
 			}
 			checkUntouched(t, f, addr, other)

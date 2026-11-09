@@ -94,7 +94,8 @@ const (
 
 // TestFakeStubbornIWDPProcess is the body of the stubborn fake iwdp: it
 // ignores SIGTERM, starts a child (sleep) in its process group, writes the
-// child's pid, and serves an empty device list until it is killed. Without
+// child's pid, and serves an empty device list until it is killed or its
+// test process ends (exitWithParent, which also kills the child). Without
 // the variable it returns at once.
 func TestFakeStubbornIWDPProcess(t *testing.T) {
 	addr := os.Getenv(fakeStubbornEnv)
@@ -107,6 +108,7 @@ func TestFakeStubbornIWDPProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, "stubborn fake:", err)
 		os.Exit(3)
 	}
+	exitWithParent(func() { _ = child.Process.Kill() })
 	if err := os.WriteFile(os.Getenv(fakeStubbornChildEnv), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "stubborn fake:", err)
 		os.Exit(3)
@@ -134,7 +136,7 @@ func installStubbornIWDP(t *testing.T, f *fakeIWDP, addr string) string {
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 	childFile := filepath.Join(f.dir, "stubborn-child.pid")
 	script := "#!/bin/sh\necho \"$$ $*\" >> " + q(filepath.Join(f.dir, "starts.log")) + "\n" +
-		"exec env " + fakeStubbornEnv + "=" + q(addr) + " " + fakeStubbornChildEnv + "=" + q(childFile) + " " + q(exe) + " -test.run='^TestFakeStubbornIWDPProcess$'\n"
+		"exec env " + fakeParent() + " " + fakeStubbornEnv + "=" + q(addr) + " " + fakeStubbornChildEnv + "=" + q(childFile) + " " + q(exe) + " -test.run='^TestFakeStubbornIWDPProcess$'\n"
 	if err := os.WriteFile(filepath.Join(f.dir, "ios_webkit_debug_proxy"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

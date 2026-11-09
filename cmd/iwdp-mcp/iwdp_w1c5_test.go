@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -38,6 +39,12 @@ func TestIWDPStatusToolMakesOneStatusCall(t *testing.T) {
 	t.Cleanup(func() { iwdpStatus = old })
 	stuck := errors.New("ios_webkit_debug_proxy on 127.0.0.1:9221 does not answer GET /json within 5s: it is busy or stuck")
 	notListening := fmt.Errorf("%w (127.0.0.1:9221)", proxy.ErrNotListening)
+	// Review round 2, F5: the start advice is the command line of this
+	// system; on Linux it has -s 127.0.0.1:27753 (docs/known-limits.md).
+	startHint := "Start it with: ios_webkit_debug_proxy --no-frontend"
+	if runtime.GOOS == "linux" {
+		startHint += " -s 127.0.0.1:27753"
+	}
 	startFailed := &proxy.StartError{Err: errors.New("ios_webkit_debug_proxy exited during its start (exit status 1)")}
 	cs := mcpServerSession(t)
 	for _, c := range []struct {
@@ -50,7 +57,7 @@ func TestIWDPStatusToolMakesOneStatusCall(t *testing.T) {
 	}{
 		{"running", nil, false, nil, true, []string{`"running":true`, "is running on port 9221"}},
 		{"started", nil, true, nil, true, []string{`"running":true`, `"started":true`, "started it automatically"}},
-		{"not running, no auto-start", map[string]any{"auto_start": false}, false, notListening, false, []string{`"running":false`, "ios_webkit_debug_proxy --no-frontend"}},
+		{"not running, no auto-start", map[string]any{"auto_start": false}, false, notListening, false, []string{`"running":false`, startHint + `"`}},
 		{"stuck, auto-start", nil, false, stuck, true, []string{`"running":false`, "does not answer: ", "busy or stuck"}},
 		{"start failed", nil, false, startFailed, true, []string{`"running":false`, "failed to start iwdp: ", "exited during its start"}},
 		{"stuck, no auto-start", map[string]any{"auto_start": false}, false, stuck, false, []string{`"running":false`, "does not answer: ", "busy or stuck"}},

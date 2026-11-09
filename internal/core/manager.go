@@ -90,6 +90,13 @@ type AcquireOptions struct {
 	Reservation string        // reservation owner; "" = the session name
 	WaitLease   time.Duration // wait this long for another session's lease
 	Takeover    bool          // reattach a lost page (needs the reservation)
+	// OnGrant, when set, is called when this acquisition grants a new
+	// lease, with the page key and the lease epoch, while the page's lock
+	// is held: it must only record them. A caller that took the lease
+	// only for one operation can then end exactly that lease
+	// (ReleaseEpoch), also when the operation's admission fails after the
+	// grant.
+	OnGrant func(key string, epoch uint64)
 }
 
 func (ao AcquireOptions) normalized() AcquireOptions {
@@ -1291,6 +1298,9 @@ func (pg *Page) grantLocked(ao AcquireOptions, now time.Time) *lease {
 	pg.lease = l
 	pg.m.lifecycle("grant", pg, l)
 	pg.PS.Sched.SetLease(ao.Session, l.epoch)
+	if ao.OnGrant != nil {
+		ao.OnGrant(pg.Key, l.epoch)
+	}
 	return l
 }
 
@@ -1727,6 +1737,24 @@ func (m *Manager) Release(ctx context.Context, session, key string) error {
 	pg.mu.Unlock()
 	if l == nil || l.session != session {
 		return nil // nothing of this session to release
+	}
+	return m.releaseLease(ctx, pg, l)
+}
+
+// ReleaseEpoch is Release of session's lease on the page of key only
+// while that lease has epoch: a lease that ended and was granted again (a
+// new epoch, for example to a concurrent command of the same session)
+// stays.
+func (m *Manager) ReleaseEpoch(ctx context.Context, session, key string, epoch uint64) error {
+	pg := m.lookup(key)
+	if pg == nil {
+		return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no attached page %q", ErrNoPage, key)}
+	}
+	pg.mu.Lock()
+	l := pg.lease
+	pg.mu.Unlock()
+	if l == nil || l.session != session || l.epoch != epoch {
+		return nil // that lease ended already
 	}
 	return m.releaseLease(ctx, pg, l)
 }

@@ -121,7 +121,8 @@ func TestPortFreeIgnoresTimeWait(t *testing.T) {
 }
 
 // startServer runs the serve fake (TestFakeIWDPProcess) on addr in its own
-// process group and waits until it listens; it returns the fake's pid.
+// process group and waits until it listens; it returns the fake's pid. The
+// fake ends with this test process (exitWithParent).
 func startServer(t *testing.T, addr string) int {
 	t.Helper()
 	exe, err := os.Executable()
@@ -129,7 +130,7 @@ func startServer(t *testing.T, addr string) int {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe, "-test.run=^TestFakeIWDPProcess$")
-	cmd.Env = append(os.Environ(), fakeServeEnv+"="+addr)
+	cmd.Env = append(os.Environ(), fakeServeEnv+"="+addr, fakeParent())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

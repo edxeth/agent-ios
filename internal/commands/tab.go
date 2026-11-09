@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
@@ -35,10 +37,13 @@ func init() {
 	})
 	Register(&Command{
 		Name: "tab new", Aliases: []string{"window new"}, MCPName: "tab_new", Profile: ProfileDevtools,
-		Summary: "Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab.",
+		Summary: "Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end.",
 		Args:    []Arg{{Name: "url", Help: "URL to open (default about:blank)"}},
 		Flags:   []Flag{{Name: "label", Type: FlagString, Help: "label for the new tab, usable instead of its tN id"}},
-		Page:    LeasedPage, Mutates: true, Output: OutputText,
+		// No page of the command: runTabNew leases the current page for
+		// window.open in its own operation, so that it can end that lease
+		// after the operation.
+		Mutates: true, Output: OutputText,
 		Run: runTabNew,
 	})
 	Register(&Command{
@@ -59,16 +64,11 @@ const (
 	tabPollEvery = 250 * time.Millisecond
 	tabNewWait   = 10 * time.Second
 	tabCloseWait = 3 * time.Second
+	// tabReleaseBudget bounds the release of the lease that a failed
+	// "tab new" took, which runs also after the command's own deadline
+	// or cancel: the 5 s in which the daemon's stop cleans up every page.
+	tabReleaseBudget = 5 * time.Second
 )
-
-// callerOf is the caller of a command's page: its operation's fenced
-// caller in the daemon (design 2.10), else the page's.
-func callerOf(env Env, ps *core.PageSession) webkit.Caller {
-	if oe, ok := env.(interface{ Op() *core.Op }); ok && oe.Op() != nil {
-		return oe.Op().Caller()
-	}
-	return ps.Caller
-}
 
 func tabRequest(in Input, page string) core.PageRequest {
 	return core.PageRequest{Transport: in.Global.Transport, Page: page}
@@ -168,17 +168,48 @@ func runTab(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	m.SelectPage(in.Global.Session, req)
 	lines := []string{fmt.Sprintf("tab %s is now the current page of session %q", id, in.Global.Session)}
-	// The session moves its lease with it (design 3.8): its leases on other
-	// pages end, with their cleanup.
-	for _, p := range sessionPages(m, in.Global.Session) {
-		if p.Key == key {
+	lines = append(lines, releaseOtherLeases(ctx, m, in.Global.Session, key)...)
+	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"tab": id, "key": key}}, nil
+}
+
+// releaseOtherLeases ends session's leases on every page but keep, with
+// their cleanup: the session moves its lease with its current page
+// (design 3.8). It returns a warning line for each release that failed
+// (releaseLeaseOf).
+func releaseOtherLeases(ctx context.Context, m *core.Manager, session, keep string) []string {
+	var warnings []string
+	for _, p := range sessionPages(m, session) {
+		if p.Key == keep {
 			continue
 		}
-		if err := m.Release(ctx, in.Global.Session, p.Key); err != nil {
-			lines = append(lines, fmt.Sprintf("warning: releasing the lease of %q: %v", p.Title, err))
+		if w := releaseLeaseOf(ctx, m, session, p.Key, strconv.Quote(p.Title)); w != "" {
+			warnings = append(warnings, w)
 		}
 	}
-	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"tab": id, "key": key}}, nil
+	return warnings
+}
+
+// releaseLeaseOf ends session's lease on the page of key with its cleanup
+// and returns "" or a warning line that names the page as name. A release
+// whose page connection ended (closedPageGone, as for a tab that closed
+// after a "tab close" whose page listing failed) cannot send its
+// page-side cleanup, and nothing of the session stays on a page that is
+// gone: that is a daemon log line, not a warning.
+func releaseLeaseOf(ctx context.Context, m *core.Manager, session, key, name string) string {
+	return releaseWarning(m, session, name, m.Release(ctx, session, key))
+}
+
+// releaseWarning is the warning line of err, the result of a release of
+// session's lease on the page named name (releaseLeaseOf).
+func releaseWarning(m *core.Manager, session, name string, err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case closedPageGone(err):
+		m.Logf("tab: the lease of session %s on another page was released, but its page-side cleanup was not sent because the page connection ended: %v", logsafe.ID(session), logsafe.Error(err))
+		return ""
+	}
+	return fmt.Sprintf("warning: releasing the lease of %s: %v", name, err)
 }
 
 // tabSelectError is the error of "tab <id>" when its page operation failed
@@ -252,11 +283,7 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	for _, t := range before {
 		known[t.Key] = true
 	}
-	ps, err := env.Page(ctx)
-	if err != nil {
-		return Result{}, err
-	}
-	caller := callerOf(env, ps)
+	session := in.Global.Session
 	u := arg(in, 0)
 	if u == "" {
 		u = "about:blank"
@@ -265,18 +292,60 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	raw, err := caller.Send(ctx, "Runtime.evaluate", map[string]any{"expression": "!!window.open(" + string(expr) + ")", "returnByValue": true, "emulateUserGesture": true})
-	if err != nil {
-		return Result{}, fmt.Errorf("tab new: window.open: %w", err)
+	// window.open runs in the session's current page (the opener), which
+	// in a new session is the device's first tab, often the user's own.
+	// borrowed is the lease that this call's acquisition granted on the
+	// opener (none when the session held it before), reported by the core
+	// at the grant, so also when the operation's admission fails after it.
+	var borrowedMu sync.Mutex
+	var borrowed struct {
+		key   string
+		epoch uint64
 	}
-	if opened, err := evalValue[bool](raw); err != nil || !opened {
-		return Result{}, logcause.Errorf("tab new: window.open(%s) returned no window; the browser blocked the popup (%v)", expr, err)
+	ao := acquireFor(in)
+	ao.OnGrant = func(key string, epoch uint64) {
+		borrowedMu.Lock()
+		borrowed.key, borrowed.epoch = key, epoch
+		borrowedMu.Unlock()
+	}
+	err = m.Do(ctx, tabRequest(in, in.Global.Page), ao, "tab new", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
+		raw, err := mo.Op.Caller().Send(ctx, "Runtime.evaluate", map[string]any{"expression": "!!window.open(" + string(expr) + ")", "returnByValue": true, "emulateUserGesture": true})
+		if err != nil {
+			return fmt.Errorf("tab new: window.open: %w", err)
+		}
+		if opened, err := evalValue[bool](raw); err != nil || !opened {
+			return logcause.Errorf("tab new: window.open(%s) returned no window; the browser blocked the popup (%v)", expr, err)
+		}
+		return nil
+	})
+	// A failed tab new leaves the session on the opener; it ends the lease
+	// that it borrowed there, only while that lease has the epoch that this
+	// call was granted (ReleaseEpoch): a lease held before, a lease on
+	// another page and a lease granted again later stay. The release gets
+	// its own budget, because a canceled or expired command must still end
+	// the lease and send its cleanup.
+	failed := func(err error) error {
+		borrowedMu.Lock()
+		key, epoch := borrowed.key, borrowed.epoch
+		borrowedMu.Unlock()
+		if key == "" {
+			return err
+		}
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tabReleaseBudget)
+		defer cancel()
+		if w := releaseWarning(m, session, "the page that ran window.open", m.ReleaseEpoch(rctx, session, key, epoch)); w != "" {
+			return fmt.Errorf("%w; %s", err, w)
+		}
+		return err
+	}
+	if err != nil {
+		return Result{}, failed(err)
 	}
 	end := time.Now().Add(tabNewWait)
 	for {
 		tabs, _, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
 		if err != nil {
-			return Result{}, err
+			return Result{}, failed(err)
 		}
 		for _, t := range tabs {
 			if known[t.Key] {
@@ -284,21 +353,25 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 			}
 			if label != "" {
 				if err := m.LabelTab(t.Key, label); err != nil {
-					return Result{}, usagef("tab new --label: %v", err)
+					return Result{}, failed(usagef("tab new --label: %v", err))
 				}
 			}
-			m.SelectPage(in.Global.Session, tabRequest(in, t.Key))
+			m.SelectPage(session, tabRequest(in, t.Key))
+			// The session moves its lease with its current page, as for
+			// "tab <id>": its lease on the opener ends with its cleanup.
+			lines := []string{fmt.Sprintf("opened tab %s (%s); it is now the current page of session %q", t.ID, u, session)}
+			lines = append(lines, releaseOtherLeases(ctx, m, session, t.Key)...)
 			return Result{
-				Text: fmt.Sprintf("opened tab %s (%s); it is now the current page of session %q", t.ID, u, in.Global.Session),
+				Text: strings.Join(lines, "\n"),
 				Data: map[string]any{"tab": t.ID, "key": t.Key, "label": label},
 			}, nil
 		}
 		if time.Now().After(end) {
-			return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("tab new: no new tab appeared in the page list within %s; the browser may have blocked the popup or may not list script-opened windows", tabNewWait)}
+			return Result{}, failed(&core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("tab new: no new tab appeared in the page list within %s; the browser may have blocked the popup or may not list script-opened windows", tabNewWait)})
 		}
 		sleepUntil(ctx, time.Now().Add(tabPollEvery))
 		if ctx.Err() != nil {
-			return Result{}, ctx.Err()
+			return Result{}, failed(ctx.Err())
 		}
 	}
 }

@@ -43,7 +43,7 @@ func cmdStatus(ctx context.Context) {
 	fmt.Println(iwdpLogLine())
 	switch {
 	case notListening:
-		fmt.Fprintln(os.Stderr, "Start it with: ios_webkit_debug_proxy --no-frontend")
+		fmt.Fprintln(os.Stderr, "Start it with: "+proxy.ManualCommand())
 		os.Exit(1)
 	case err != nil:
 		// A process owns the listing port but does not answer as iwdp.

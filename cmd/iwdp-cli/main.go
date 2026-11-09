@@ -331,7 +331,7 @@ func requireIWDP(ctx context.Context) {
 		return
 	}
 	if errors.Is(err, proxy.ErrNotListening) {
-		fmt.Fprintf(os.Stderr, "ios_webkit_debug_proxy is not running.\nStart it with: ios_webkit_debug_proxy --no-frontend\n")
+		fmt.Fprintf(os.Stderr, "ios_webkit_debug_proxy is not running.\nStart it with: %s\n", proxy.ManualCommand())
 		os.Exit(1)
 	}
 	fatal(&core.CodedError{Code: core.CodeNoPage, Err: err})
