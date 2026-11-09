@@ -26,7 +26,7 @@ func TestNodeRunFailureIsReported(t *testing.T) {
 	}
 	for _, client := range []string{"playwright-core", "puppeteer-core"} {
 		for form, url := range map[string]string{"ws": u.WS, "http": u.HTTP} {
-			code, data, err := e.execNode(t, "fatal-"+client+"-"+form, client, "resolve", url, inject)
+			code, data, err := e.execNode(t, "fatal-"+client+"-"+form, client, "resolve", url, nodeOptions{preload: inject})
 			if err != nil {
 				t.Fatalf("%s %s: %v", client, form, err)
 			}
@@ -128,6 +128,8 @@ func TestClientEnvDropsCodeLoadingSettings(t *testing.T) {
 		"NODE_REPL_EXTERNAL_MODULE", "NODE_ICU_DATA", "NODE_EXTRA_CA_CERTS", "NODE_V8_COVERAGE",
 		"OPENSSL_CONF", "OPENSSL_CONF_INCLUDE", "OPENSSL_MODULES", "OPENSSL_ENGINES",
 		"npm_config_node_options", "NPM_CONFIG_USERCONFIG",
+		// chrome-devtools-mcp settings: a category switch, a crash mode.
+		"CHROME_DEVTOOLS_MCP_CATEGORY_EXPERIMENTAL_THIRD_PARTY", "CHROME_DEVTOOLS_MCP_CRASH_ON_UNCAUGHT",
 	}
 	for _, k := range dropped {
 		t.Setenv(k, "/hostile")

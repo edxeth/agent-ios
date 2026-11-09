@@ -75,6 +75,9 @@ func navFixtures(t *testing.T, e *navEnv) navSite {
 		e.recMu.Unlock()
 		_, _ = w.Write([]byte("slow"))
 	})
+	// /nocontent answers 204 No Content: a navigation to it leaves the
+	// current document in place (TestAbandonedProvisionalTarget).
+	mux.HandleFunc("/nocontent", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/record", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		e.recMu.Lock()

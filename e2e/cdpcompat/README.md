@@ -4,7 +4,7 @@ Design: docs/design/agentic-parity.md, sections 5.1, 5.2 ("Pins"), 5.4, 5.5, 7.8
 
 The suite runs the pinned CDP clients against the daemon's CDP endpoint and checks what they do. A Go driver (the `_test.go` files, build tag `cdpcompat`) starts the endpoint, runs the real `iwdp-cli` to get the URLs, runs one client script per client and form, and checks the JSON result of each script and the requests that the endpoint saw.
 
-Built so far (W5c-2a): the Node project, the pins, the driver, the result and expected-missing formats, and test 10 (endpoint resolution). The client scenarios (tests 8 and 12) come in the second part of W5c-2, after W5c-1a.
+Built: the Node project, the pins, the driver, the result and expected-missing formats, test 10 (endpoint resolution; W5c-2a), and the client scenarios on WebKitGTK: test 8 for agent-browser (both builds), Puppeteer, Playwright and chrome-devtools-mcp, test 11 (a) and (d) with Puppeteer, and test 12 with Puppeteer and Playwright (W5c-2b part 2; "Scenarios" below).
 
 ## How to run
 
@@ -13,7 +13,7 @@ make test-cdpcompat
 ```
 
 - The target runs `npm ci` in this directory when `package.json` or `package-lock.json` is newer than `node_modules` (with `PUPPETEER_SKIP_DOWNLOAD=1`: no browser download is needed), then runs `IWDP_CDP_COMPAT=1 go test -tags=cdpcompat ./e2e/cdpcompat/ -v -count=1`.
-- Requirements: Node.js 24 or later with npm. The lockfile pins every client, agent-browser included. A missing requirement fails the suite with a message that says what to install; the suite never skips.
+- Requirements: Node.js 24 or later with npm. The lockfile pins every client, agent-browser included. The scenario tests also need the WebKitGTK MiniBrowser (/usr/lib/webkit2gtk-4.1/MiniBrowser), broadwayd, gcc and pkg-config gdk-3.0 (for the DPI shim of e2e/webkitgtk), as the WebKitGTK suite does. A missing requirement fails the suite with a message that says what to install; the suite never skips.
 - npm ci runs with --ignore-scripts: agent-browser's postinstall would download a missing binary and patches global bin links. The package ships its binaries; the Makefile sets their execute bit.
 - `CDPCOMPAT_LOG_DIR=<dir>` keeps the logs of a run: the daemon log, the output of every client run and every result file. Tokens and endpoint ids in them are replaced with `<secretN>`.
 
@@ -59,7 +59,7 @@ Each client script (`clients/<client>.mjs <scenario> <url> <result-file>`) write
   "url": "http://127.0.0.1:<port>/t/<token>/e/<endpoint>",
   "ok": true,
   "error": "only when the script itself failed",
-  "steps": [{"name": "connect", "ok": true, "ms": 41, "error": "only when the step failed"}],
+  "steps": [{"name": "connect", "ok": true, "ms": 41, "error": "only when the step failed", "value": "only for an observed step"}],
   "sent": [{"method": "Target.getBrowserContexts", "sessionId": ""}]
 }
 ```
@@ -68,10 +68,11 @@ Each client script (`clients/<client>.mjs <scenario> <url> <result-file>`) write
 - `scenario`: the scenario that ran. `form`: `ws` or `http`, from the URL's scheme.
 - `url`: the URL exactly as the script received it on its command line. The driver checks that it equals the output of `get cdp-url` byte for byte.
 - `ok`: the scenario's own verdict (every assertion of the scenario passed). `error`: the exception that ended the script, or the script's 60 s limit.
-- `steps`: each named step in order, with its outcome, duration and error.
+- `steps`: each named step in order, with its outcome, duration and error. An observed step (`observe` in clients/result.mjs) also records the value it saw (any JSON), so the driver can check it.
 - `sent`: every CDP command the client sent, in send order, with its CDP session id (`""` for the browser session). The scripts record them with client-side protocol hooks:
   - puppeteer-core: a wrapper around `Connection.prototype._rawSend`, which every browser and session command goes through;
-  - playwright-core: the `pw:protocol` debug logger (`DEBUG=pw:protocol`), whose `SEND ►` lines the script reads from its own stderr.
+  - playwright-core: the `pw:protocol` debug logger (`DEBUG=pw:protocol`), whose `SEND ►` lines the script reads from its own stderr;
+  - chrome-devtools-mcp: its bundled Puppeteer's `puppeteer:protocol:SEND ►` debug log, which the script turns on for the server process only (`NODE_DEBUG=puppeteer:protocol:SEND*`) and reads from the server's `--logFile` after the server ended.
   - agent-browser has no hook: the driver uses the endpoint's unknown-method counts (below) for it.
 - The parser (`parseResult`) refuses unknown fields and a result without `client`, `version`, `scenario`, `form` or `url`.
 
@@ -95,7 +96,25 @@ For every client run, the driver also reads `iwdp-cli cdp log --json` before and
 
 - Each entry names a CDP method (`Domain.method`) once per client, the optional client feature it belongs to, and a review note. The parser refuses an unknown client, a missing list, a malformed method, a duplicate, an empty feature or review, and unknown fields (`TestExpectedMissingFormat`).
 - **Rule:** in a scenario test, every unknown method that the endpoint counted during a client's run must be on that client's list; any other unknown method fails the test, and the failure names each method with its count (`expectedMissing.unexpectedUnknown`, `TestUnknownMethodRule`). This keeps a required client operation from failing while the suite stays green.
-- The lists are empty until the scenarios of tests 8 and 12 run (the second part of W5c-2). Test 10 checks endpoint resolution only: it records the unknown methods and the sent commands, and it checks that each unknown method appears in a Node client's own record, but it does not apply the rule.
+- The scenario tests (8, 11 and 12) apply the rule to every client run. Review rule for a new entry: name the client code that sends the method (file and lines of the pinned version), show that the client continues without it (the code catches the error, or a scenario passes with the endpoint's "wasn't found" answer), name the feature that is lost, and date and sign the note. A method that a scenario needs gets a translation instead (design 5.4). Test 10 checks endpoint resolution only: it records the unknown methods and the sent commands, and it checks that each unknown method appears in a Node client's own record, but it does not apply the rule.
+
+## Scenarios on WebKitGTK (tests 8, 11 and 12)
+
+Each test starts broadwayd, MiniBrowser (with the DPI shim of e2e/webkitgtk) on fixtures/second.html, a fixture server and the in-process daemon on the webkitgtk transport (`startGTK`, gtk_test.go). Every client gets a fresh browser and its own logical session; the driver issues its URLs with `iwdp-cli --session <s> get cdp-url` and closes the session afterwards, which releases the lease. Every step is checked by its effect on the page, by the script and, after the run, by `iwdp-cli --session <s> eval` in the same logical session (an oracle that does not depend on the client).
+
+Fixtures (fixtures/): form.html (a heading, the fields Name and Email, a button "Press me" that becomes "Clicked N" and adds #late 300 ms later, #status that shows every input of Name), second.html (the start page). The fixture server also answers /resource with "from the server" and counts the requests.
+
+| Test | Client | Steps and assertions |
+|---|---|---|
+| 8 | agent-browser --cdp (pinned and PATH build) | open form.html (the page shows it), snapshot -i (refs of the button and the Name textbox), click @ref (button says Clicked 1), fill @ref Linus (value and the page's input handler), get title (CDP form), screenshot (a PNG of the viewport size); the endpoint saw only upgrades of the printed ws URL |
+| 8 | puppeteer-core, ws and http forms | connect, one page, goto (status 200, title), $eval (h1), click (Clicked 1), waitForSelector('#late') with a main-world read of the handle, type (value and #status), screenshot (PNG of innerWidth x innerHeight), accessibility.snapshot (root RootWebArea named by the title, the button "Clicked 1", the textbox Name with Ada) |
+| 8 | chrome-devtools-mcp, ws form | the script starts the server with `--wsEndpoint <printed ws URL>` and drives it through MCP stdio (newline-delimited JSON-RPC: initialize, tools/list, tools/call); list_pages (one page, the start page; its id goes with every page tool, because the server routes by page id by default), navigate_page to form.html ("Successfully navigated to"), take_snapshot (RootWebArea "CDP form", heading, the uids of the button and the Name textbox), click by the button's uid with includeSnapshot (the new snapshot has the button "Clicked 1"), list_network_requests (GET form.html [200]), take_screenshot (one image/png of the viewport size), and the server exits 0 when its stdin closes; the eval oracle sees the form with the button "Clicked 1"; every unknown method that the endpoint counted is in the script's record |
+| 8 | playwright-core, ws and http forms | connectOverCDP (one context, one page), goto, evaluate, getByRole('button').click(), getByLabel('Name').fill (value and #status), locator('#late').textContent() in the utility world (the endpoint announced an isolated context named `__playwright_utility_world_*`), screenshot, ariaSnapshot (heading, button, textbox lines) |
+| 12 | puppeteer-core | setRequestInterception(true) with a handler that answers /resource with respond({body: 'ok'}); page.evaluate(() => fetch('/resource').then(r => r.text())) returns ok within 2 s of a 10 s deadline; the fixture server got no /resource request |
+| 12 | playwright-core | the same with page.route('**/resource', r => r.fulfill({body: 'ok'})). The design writes '/resource'; Playwright resolves a path glob only against a baseURL, which connectOverCDP's default context does not have, so '/resource' never matches. |
+| 11 (a), (d) | puppeteer-core | s1 opens the form and takes a snapshot through the CLI; Puppeteer connects with s1's URL and evaluates; at the checkpoint "attached" the driver checks s1's lease epoch, clicks with the snapshot's ref through the CLI (the script then sees "Clicked 1") and checks that "s2 get title" exits 4 with the lease message; Puppeteer's connection through s2's URL lists the page and Target.attachToTarget fails with the lease message; s1's connection still evaluates and its epoch is unchanged (checkpoint "refused") |
+
+Checkpoints: a script that needs the driver in the middle of a run writes `@checkpoint <name>` on stdout and waits for "ok" on stdin (clients/result.mjs `checkpoint`; the driver's `runInteractive`).
 
 ## Test 10: endpoint resolution
 
@@ -140,4 +159,4 @@ Every client run (a Node script, an agent-browser command and its session close)
 
 ## Client isolation
 
-Every client runs with a HOME, XDG base and working directory that the driver owns, and without proxy, AGENT_BROWSER_*, DEBUG and DEBUG_* variables. agent-browser gets an explicit --config with the driver's {} file, which replaces its config discovery. The driver sets Playwright's DEBUG and DEBUG_COLORS. Clients also get no variable that changes how Node or npm load code: no NODE_* variable (NODE_OPTIONS among them), no OPENSSL_CONF, OPENSSL_CONF_INCLUDE, OPENSSL_MODULES or OPENSSL_ENGINES, and no npm_config_* variable. A test injects a fault only through the driver's explicit preload option (execNode). TestClientsIgnoreUserSettings checks the isolation with a hostile user environment, a NODE_OPTIONS preload among it. TestNodeRunFailureIsReported checks that a failed script fails the run. TestPathAgentBrowserResolution, TestPathScriptRunsMappedBinary and TestMetadataCommandsAreBounded check the PATH build choice and the deadlines. TestFormatProperties checks the format contract with testing/quick.
+Every client runs with a HOME, XDG base and working directory that the driver owns, and without proxy, AGENT_BROWSER_*, CHROME_DEVTOOLS_MCP_*, DEBUG and DEBUG_* variables. The driver sets chrome-devtools-mcp's CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS, CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS and CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY (no statistics, no update check, no configuration file). agent-browser gets an explicit --config with the driver's {} file, which replaces its config discovery. The driver sets Playwright's DEBUG and DEBUG_COLORS. Clients also get no variable that changes how Node or npm load code: no NODE_* variable (NODE_OPTIONS among them), no OPENSSL_CONF, OPENSSL_CONF_INCLUDE, OPENSSL_MODULES or OPENSSL_ENGINES, and no npm_config_* variable. A test injects a fault only through the driver's explicit preload option (execNode). TestClientsIgnoreUserSettings checks the isolation with a hostile user environment, a NODE_OPTIONS preload among it. TestNodeRunFailureIsReported checks that a failed script fails the run. TestPathAgentBrowserResolution, TestPathScriptRunsMappedBinary and TestMetadataCommandsAreBounded check the PATH build choice and the deadlines. TestFormatProperties checks the format contract with testing/quick.

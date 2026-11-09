@@ -1,6 +1,95 @@
 {
-  "agent-browser": [],
-  "chrome-devtools-mcp": [],
-  "playwright-core": [],
-  "puppeteer-core": []
+  "agent-browser": [
+    {
+      "method": "WebMCP.enable",
+      "feature": "agent-browser's experimental webmcp commands (webmcp list, invoke, result, cancel: tools that a page declares through WebMCP)",
+      "review": "W5c-2b part 2 worker, 2026-11-09: agent-browser 0.41.2 (pinned release binary and the PATH build v0.41.2-16-gdd694de3) sends it once per page attach; with the endpoint's 'wasn't found' answer, open, snapshot -i, click @ref, fill @ref, get title and screenshot of test 8 exit 0 and change the page as expected (TestClientScenarios/agent-browser and agent-browser-path); P2 item 4 saw the same. WebKit has no WebMCP; the webmcp commands are not supported through the endpoint."
+    }
+  ],
+  "chrome-devtools-mcp": [
+    {
+      "method": "Autofill.enable",
+      "feature": "the DevTools SDK's Autofill model (address-form autofill events of the DevTools Autofill panel); no chrome-devtools-mcp tool reads it",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from the SDK's AutofillModel (build/src/third_party/index.js line 125070, a void call) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Autofill.setAddresses",
+      "feature": "the DevTools SDK's test addresses for the Autofill menu; no chrome-devtools-mcp tool reads it",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from AutofillModel #setTestAddresses (build/src/third_party/index.js line 124955, a void call) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "CSS.enable",
+      "feature": "get_css_styles, which reads matched styles through the DevTools universe's CSSModel (build/src/McpPage.js lines 904-926); not part of test 8 and not checked through the endpoint. Design 5.4 refuses CSS.enable always",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from the SDK's CSSModel enable (build/src/third_party/index.js line 123061) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Debugger.enable",
+      "feature": "source-mapped stack traces of console messages and errors (get_console_message, list_console_messages with stack traces), which use the DevTools universe's DebuggerModel (createStackTrace, build/src/devtools/DevtoolsUtils.js lines 296-301); not part of test 8",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from the SDK's DebuggerModel enable (build/src/third_party/index.js lines 117607-117624), auto-started by overrideAutoStartModels (DevtoolsUtils.js line 104), on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Debugger.setAsyncCallStackDepth",
+      "feature": "async parts of source-mapped console stack traces (DevTools universe DebuggerModel); not part of test 8",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from DebuggerModel asyncStackTracesStateChanged (build/src/third_party/index.js line 117722) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Debugger.setBlackboxPatterns",
+      "feature": "ignore-listed scripts in the DevTools universe's stack traces; not part of test 8",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from DebuggerModel setBlackboxPatterns (build/src/third_party/index.js lines 118104-118107, which returns false on an error) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Debugger.setPauseOnExceptions",
+      "feature": "the DevTools universe's pause-on-exception setting (chrome-devtools-mcp keeps all pauses skipped); not part of test 8",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from DebuggerModel pauseOnExceptionStateChanged (build/src/third_party/index.js line 117716, a void call) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Debugger.setSkipAllPauses",
+      "feature": "the DevTools universe's skip-all-pauses setting, which chrome-devtools-mcp sets so that the page never pauses (DevtoolsUtils.js lines 116-117); WebKit pages do not pause through the endpoint",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from DebuggerModel enable (build/src/third_party/index.js line 117607) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Log.startViolationsReport",
+      "feature": "violation reports (long tasks, long layouts, blocked events) as console entries of the DevTools universe; not part of test 8",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from the SDK's LogModel constructor (build/src/third_party/index.js line 118681, a void call) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Network.setAttachDebugStack",
+      "feature": "script stacks attached to network requests in the DevTools universe's network model, which chrome-devtools-mcp disables anyway (DISABLE_NETWORK, DevtoolsUtils.js lines 121 and 126-137; its network tools use Puppeteer's events)",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from the SDK's NetworkManager constructor (build/src/third_party/index.js line 111165, a void call) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Runtime.getIsolateId",
+      "feature": "the JavaScript isolate id that the DevTools SDK groups targets by (IsolateManager, memory views); on an error RuntimeModel.isolateId uses the target id instead",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once from RuntimeModel.isolateId (build/src/third_party/index.js lines 109705-109710, which falls back to the target id) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Storage.getStorageKey",
+      "feature": "the storage keys (storage partitions) of frames in the DevTools universe's resource tree; not part of test 8",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once per main-frame navigation from ResourceTreeModel.storageKeyForFrame (build/src/third_party/index.js lines 113595-113599, called from line 113730 as a void call) on the DevTools-universe CDP session that chrome-devtools-mcp opens per page (build/src/McpPage.js lines 309-321, createTargetUniverse in build/src/devtools/DevtoolsUtils.js lines 95-125); the bundled DevTools SDK's agent calls return the error in the response instead of throwing; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "Target.getDevToolsTarget",
+      "feature": "the element or network request selected in a Chrome DevTools window that is open on the page (getDevToolsData, used by list_network_requests, take_snapshot and the tool telemetry); WebKit pages have no such window through the endpoint",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it on the browser session before most tool calls (9 times in test 8): the bundled puppeteer-core's Browser._hasDevToolsTarget (build/src/third_party/index.js lines 62762-62766) through Page.hasDevTools (lines 60959-60963), called by McpPage.getDevToolsPage (build/src/McpPage.js lines 529-541), which catches the error and returns undefined, so getDevToolsData (lines 932-960) returns {}; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    },
+    {
+      "method": "WebMCP.enable",
+      "feature": "list_webmcp_tools and execute_webmcp_tool (WebMCP tools that a page declares); WebKit has no WebMCP",
+      "review": "W5c-2b part 2b worker, 2026-11-09: chrome-devtools-mcp 1.12.0 sends it once per page attach from the bundled puppeteer-core's WebMCP.initialize (build/src/third_party/index.js lines 60544-60547), which catches the error and logs it, as puppeteer-core 25.16.0 does; the five tools of test 8 (navigate_page, take_snapshot, click by uid, list_network_requests, take_screenshot) pass with the endpoint's 'wasn't found' answer (TestClientScenarios/chrome-devtools-mcp)."
+    }
+  ],
+  "playwright-core": [
+    {
+      "method": "Inspector.enable",
+      "feature": "page crash and target reload notices (Inspector.targetCrashed, Inspector.targetReloadedAfterCrash) for a page that existed when connectOverCDP connected",
+      "review": "W5c-2b part 2 worker, 2026-11-09: playwright-core 1.65.0 lib/coreBundle.js lines 39441-39442 send it only while connecting over CDP, with _sendMayFail (a failure is ignored); the scenarios of tests 8 and 12 pass with the endpoint's 'wasn't found' answer (TestClientScenarios/playwright, TestAwaitedInterceptedFetch/playwright); P2 item 4 saw the same. Without it, page.on('crash') does not fire for such a page."
+    }
+  ],
+  "puppeteer-core": [
+    {
+      "method": "WebMCP.enable",
+      "feature": "page.webmcp (WebMCP tool discovery and invocation, experimental)",
+      "review": "W5c-2b part 2 worker, 2026-11-09: puppeteer-core 25.16.0 src/cdp/WebMCP.ts lines 371-375 send it in initialize() and catch the error (logged only); the scenarios of tests 8, 11 and 12 pass with the endpoint's 'wasn't found' answer (TestClientScenarios/puppeteer, TestSessionBindingWithPuppeteer, TestAwaitedInterceptedFetch/puppeteer); P2 item 4 saw the same. WebKit has no WebMCP."
+    }
+  ]
 }

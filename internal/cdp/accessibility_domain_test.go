@@ -78,6 +78,14 @@ func TestAXFullTree(t *testing.T) {
 	if root.Role.Type != "role" || root.Name.Type != "computedString" || root.ParentID != "" || strings.Join(root.ChildIDs, ",") != strings.Join([]string{id("Title"), id("Agree"), id("Menu"), id("O")}, ",") {
 		t.Fatalf("root %+v", root)
 	}
+	// The root is focusable, as Chrome's RootWebArea is. Puppeteer's
+	// accessibility.snapshot() (puppeteer-core 25.16.0 cdp/Accessibility.ts
+	// isInteresting) keeps a node without a control role only when it is
+	// focusable or a named leaf; without the property it drops the root and
+	// returns the root's first child as the whole snapshot.
+	if string(root.Properties) != `[{"name":"focusable","value":{"type":"booleanOrUndefined","value":true}}]` {
+		t.Fatalf("root properties %s, want focusable true", root.Properties)
+	}
 	if h := by["Title"]; h.ParentID != root.NodeID || strings.Join(h.ChildIDs, ",") != id("text:Title") || string(h.Properties) != `[{"name":"level","value":{"type":"integer","value":1}}]` {
 		t.Fatalf("heading %+v %s", h, h.Properties)
 	}

@@ -1,13 +1,12 @@
-//go:build webkitgtk
+//go:build cdpcompat
 
-// Package proofs holds the W1a contract proofs P1 and P2 (design
-// docs/design/agentic-parity.md, section 7.1). They run against a local
-// WebKitGTK MiniBrowser under broadwayd:
-//
-//	go test -tags=webkitgtk ./e2e/proofs/ -v -count=1
-//
-// W5 deletes this directory when its own suite covers the same scenarios.
-package proofs
+package cdpcompat
+
+// The WebKitGTK side of the client scenarios (design 7.8 tests 8, 11 and
+// 12): broadwayd, MiniBrowser on a fixture page served by the test, and the
+// in-process daemon on the webkitgtk transport. The broadway helpers come
+// from the P2 proof harness (e2e/proofs, which this suite replaces) and are
+// the same as e2e/webkitgtk's.
 
 import (
 	"bytes"
@@ -23,38 +22,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
 )
 
 const miniBrowser = "/usr/lib/webkit2gtk-4.1/MiniBrowser"
-
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-// serve starts an HTTP server on a free local port and returns its origin.
-func serve(t *testing.T, h http.Handler) string {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &http.Server{Handler: h}
-	go func() { _ = srv.Serve(l) }()
-	t.Cleanup(func() { _ = srv.Close() })
-	return "http://" + l.Addr().String()
-}
 
 // startProcess starts a command in its own process group and kills the
 // group at cleanup, so no MiniBrowser or broadwayd survives the test.
@@ -420,33 +396,123 @@ func TestPortListenerTables(t *testing.T) {
 }
 
 // browserStart bounds how long a test waits for MiniBrowser to list its
-// page. No product requirement bounds how long MiniBrowser takes to start;
-// on a loaded host it took more than 15 s. This bound only guards against a
-// hang of the external process.
+// page with a title. No product requirement bounds how long MiniBrowser
+// takes to start; on a loaded host it took more than 15 s. This bound only
+// guards against a hang of the external process.
 const browserStart = 60 * time.Second
 
-// browser starts broadwayd and MiniBrowser on startURL and returns the
-// webkitgtk transport and the page.
-func browser(t *testing.T, startURL string) (*webkitgtk.Transport, transport.Page) {
+// dpiShim fixes the page geometry of WebKitGTK 2.54 under broadway (the
+// same shim as e2e/webkitgtk's runtime harness; docs/notes/w3a.md): WebKit
+// reads the page zoom from gdk_screen_get_resolution, which broadway
+// leaves at -1, so every box would be empty and clicks and screenshots
+// would find nothing. Preloading this function gives 96 DPI.
+const dpiShim = "#include <gdk/gdk.h>\ngdouble gdk_screen_get_resolution(GdkScreen *s) { (void)s; return 96.0; }\n"
+
+// buildDPIShim compiles dpiShim into dir and returns the library path.
+func buildDPIShim(dir string) (string, error) {
+	src, lib := filepath.Join(dir, "dpi.c"), filepath.Join(dir, "libdpi.so")
+	if err := os.WriteFile(src, []byte(dpiShim), 0o600); err != nil {
+		return "", err
+	}
+	flags, err := runBounded(buildTimeout, "", nil, "pkg-config", "--cflags", "gdk-3.0")
+	if err != nil {
+		return "", fmt.Errorf("pkg-config --cflags gdk-3.0 (needed for the WebKitGTK DPI shim): %w", err)
+	}
+	args := append([]string{"-shared", "-fPIC", "-o", lib, src}, strings.Fields(string(flags))...)
+	if _, err := runBounded(buildTimeout, "", nil, "gcc", args...); err != nil {
+		return "", fmt.Errorf("compiling the WebKitGTK DPI shim with gcc: %w", err)
+	}
+	return lib, nil
+}
+
+// fixtureDir holds the scenario pages (README.md, "Fixtures").
+const fixtureDir = "fixtures"
+
+// site is the fixture server of one test: the pages of fixtureDir, and
+// /resource, which answers "from the server" and counts its requests. A
+// client that intercepts /resource answers it itself, so the count shows
+// whether a request reached the network.
+type site struct {
+	origin string
+
+	mu        sync.Mutex
+	resources int
+}
+
+// resourceBody is what /resource answers when no client intercepts it.
+const resourceBody = "from the server"
+
+// serveSite starts the fixture server on a free local port; it stops at
+// cleanup.
+func serveSite(t *testing.T) *site {
+	t.Helper()
+	s := &site{}
+	mux := http.NewServeMux()
+	mux.Handle("/", http.FileServer(http.Dir(fixtureDir)))
+	mux.HandleFunc("/resource", func(w http.ResponseWriter, _ *http.Request) {
+		s.mu.Lock()
+		s.resources++
+		s.mu.Unlock()
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(resourceBody))
+	})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	s.origin = "http://" + l.Addr().String()
+	return s
+}
+
+// resourceRequests returns how many requests /resource got.
+func (s *site) resourceRequests() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resources
+}
+
+// gtk is the WebKitGTK setup of one scenario test: the fixture site,
+// MiniBrowser on its start page, and the in-process daemon on the
+// webkitgtk transport with the CDP endpoint.
+type gtk struct {
+	*endpoint
+	site *site
+}
+
+// startGTK starts the fixture server, broadwayd, MiniBrowser (with the DPI
+// shim) on start (a path of the site) and the in-process daemon on the
+// webkitgtk transport. Every process ends at cleanup. A fresh browser per
+// test: WebKitGTK refuses quick reconnects to a page (spike A step B).
+func startGTK(t *testing.T, start string) *gtk {
 	t.Helper()
 	if _, err := os.Stat(miniBrowser); err != nil {
-		t.Fatalf("WebKitGTK MiniBrowser not found at %s: %v", miniBrowser, err)
+		t.Fatalf("WebKitGTK MiniBrowser not found at %s: %v; the client scenarios need MiniBrowser, broadwayd, gcc and pkg-config gdk-3.0 (README.md)", miniBrowser, err)
+	}
+	s := serveSite(t)
+	shim, err := buildDPIShim(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
 	display := broadway(t)
-	addr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
-	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr}, miniBrowser, startURL)
+	addr := "127.0.0.1:" + strconv.Itoa(freePort(t))
+	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr, "LD_PRELOAD=" + shim},
+		miniBrowser, s.origin+start)
 	tr := webkitgtk.New(addr)
-	dev := "webkitgtk-" + addr
-	deadline := time.Now().Add(browserStart)
-	for time.Now().Before(deadline) {
+	listed := false
+	for end := time.Now().Add(browserStart); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		pages, err := tr.Pages(ctx, dev)
+		pages, err := tr.Pages(ctx, "webkitgtk-"+addr)
 		cancel()
-		if err == nil && len(pages) > 0 {
-			return tr, pages[0]
+		if err == nil && len(pages) > 0 && pages[0].Title != "" {
+			listed = true
+			break
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("MiniBrowser did not list a page at %s within %v", addr, browserStart)
-	return nil, transport.Page{}
+	if !listed {
+		t.Fatalf("MiniBrowser did not list the page %s with a title at %s within %v", start, addr, browserStart)
+	}
+	return &gtk{endpoint: startDaemonOn(t, "webkitgtk", addr), site: s}
 }

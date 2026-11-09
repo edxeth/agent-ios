@@ -10,14 +10,17 @@ const require = createRequire(import.meta.url);
 // scriptLimit bounds one script run; the Go driver waits a little longer.
 export const scriptLimit = 60_000;
 
-// parseArgs reads "<scenario> <url> <result-file>".
+// parseArgs reads "<scenario> <url> <result-file> [scenario arguments]".
+// The scenario arguments are what a scenario needs besides the URL: the
+// fixture site's origin, and for the session scenario the URL of the
+// competing session.
 export function parseArgs(usage) {
-  const [scenario, url, file] = process.argv.slice(2);
+  const [scenario, url, file, ...rest] = process.argv.slice(2);
   if (!scenario || !url || !file) {
-    console.error(`usage: ${usage} <scenario> <cdp-ws-url or cdp-http-url> <result-file>`);
+    console.error(`usage: ${usage} <scenario> <cdp-ws-url or cdp-http-url> <result-file> [scenario arguments]`);
     process.exit(64);
   }
-  return { scenario, url, file };
+  return { scenario, url, file, rest };
 }
 
 // newResult starts the result of one run. url is kept exactly as received,
@@ -61,6 +64,72 @@ export async function step(out, name, fn) {
     return undefined;
   } finally {
     s.ms = Date.now() - start;
+  }
+}
+
+// observe runs one named step like step and also records the value that
+// fn returns (JSON), so the driver can check it.
+export async function observe(out, name, fn) {
+  return step(out, name, async () => {
+    const v = await fn();
+    out.steps[out.steps.findLastIndex((s) => s.name === name)].value = v;
+    return v;
+  });
+}
+
+// canonical is the JSON text of v with object keys sorted.
+function canonical(v) {
+  return JSON.stringify(v, (_, x) =>
+    x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x,
+  );
+}
+
+// expect throws unless got equals want (compared as JSON, key order aside).
+export function expect(what, got, want) {
+  if (canonical(got) !== canonical(want)) {
+    throw new Error(`${what}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+  }
+  return got;
+}
+
+// allPassed reports whether every recorded step passed.
+export function allPassed(out) {
+  return out.steps.length > 0 && out.steps.every((s) => s.ok);
+}
+
+// pngSize returns the width and height of a PNG image (its IHDR chunk), and
+// throws for anything that is not a PNG.
+export function pngSize(buf) {
+  const signature = '89504e470d0a1a0a';
+  if (buf.length < 24 || buf.subarray(0, 8).toString('hex') !== signature || buf.subarray(12, 16).toString() !== 'IHDR') {
+    throw new Error(`not a PNG image (${buf.length} bytes, starts with ${buf.subarray(0, 16).toString('hex')})`);
+  }
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20), bytes: buf.length };
+}
+
+// withDeadline resolves like promise, or rejects after ms with what in the
+// message.
+export function withDeadline(promise, ms, what) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what}: no answer within ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+// checkpoint hands control to the driver (the session scenario of design
+// 7.8 test 11): it writes "@checkpoint <name>" on stdout, waits for the
+// driver's answer line on stdin, and throws unless the answer is "ok".
+let stdinLines;
+export async function checkpoint(name) {
+  if (!stdinLines) {
+    const { createInterface } = await import('node:readline');
+    stdinLines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
+  }
+  process.stdout.write(`@checkpoint ${name}\n`);
+  const { value, done } = await stdinLines.next();
+  if (done || value !== 'ok') {
+    throw new Error(`checkpoint ${name}: the driver answered ${done ? 'nothing (stdin closed)' : JSON.stringify(value)}`);
   }
 }
 

@@ -111,7 +111,12 @@ type axFlat struct {
 
 func (p *pageCall) axFlatten(t axTree, depth int) *axFlat {
 	f := &axFlat{src: map[int64]axSrc{}, parent: map[int64]int64{}, kids: map[int64][]int64{}}
-	root := axSrc{H: t.H, Role: "RootWebArea", Name: t.Title, Children: t.Tree}
+	// The root is focusable, as Chrome's RootWebArea is: Puppeteer's
+	// accessibility.snapshot() keeps only interesting nodes, and a node
+	// without a control role is interesting when it is focusable or a named
+	// leaf, so without it the snapshot loses its root.
+	focusable := true
+	root := axSrc{H: t.H, Role: "RootWebArea", Name: t.Title, Fo: &focusable, Children: t.Tree}
 	var walk func(n axSrc, parent int64, level int)
 	walk = func(n axSrc, parent int64, level int) {
 		id := p.backendID(t.Doc, n.H)

@@ -138,8 +138,9 @@ func TestNodeProjectPins(t *testing.T) {
 
 // Node client scripts (clients/*.mjs) by client name.
 var nodeScripts = map[string]string{
-	"playwright-core": "clients/playwright.mjs",
-	"puppeteer-core":  "clients/puppeteer.mjs",
+	"chrome-devtools-mcp": "clients/chrome-devtools-mcp.mjs",
+	"playwright-core":     "clients/playwright.mjs",
+	"puppeteer-core":      "clients/puppeteer.mjs",
 }
 
 // nodeEnv is the extra environment of a client script. Playwright's method
@@ -148,6 +149,9 @@ var nodeScripts = map[string]string{
 // DEBUG_* variable, DEBUG_FILE included).
 var nodeEnv = map[string][]string{
 	"playwright-core": {"DEBUG=pw:protocol", "DEBUG_COLORS=no"},
+	// chrome-devtools-mcp sends no usage statistics, makes no update check
+	// and reads no configuration file (PLUGIN_DATA, ~/.config/cd4a).
+	"chrome-devtools-mcp": {"CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1", "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1", "CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY=1"},
 }
 
 // clientRun is one client run: its result file (Node clients) and the
@@ -157,12 +161,34 @@ type clientRun struct {
 	unknown map[string]int
 }
 
-// runNode runs the script of client for scenario with url and fails the
-// test unless the run succeeded (judgeNodeRun).
-func (e *endpoint) runNode(t *testing.T, logName, client, scenario, url string) clientRun {
+// runNode runs the script of client for scenario with url and the
+// scenario arguments args, and fails the test unless the run succeeded
+// (judgeNodeRun).
+func (e *endpoint) runNode(t *testing.T, logName, client, scenario, url string, args ...string) clientRun {
+	t.Helper()
+	return e.runNodeWith(t, logName, client, scenario, url, nodeOptions{args: args})
+}
+
+// nodeOptions are the optional parts of a script run.
+type nodeOptions struct {
+	// preload, when not empty, is a module that node loads with --import
+	// before the script: the driver's only way to inject a fault, because
+	// clientEnv drops NODE_OPTIONS.
+	preload string
+	// args are the scenario arguments after the result file.
+	args []string
+	// checkpoint answers the script's checkpoints (clients/result.mjs
+	// checkpoint) in the test goroutine; the script continues when it
+	// returns nil and fails at that checkpoint otherwise. nil: the script
+	// gets no stdin.
+	checkpoint func(name string) error
+}
+
+// runNodeWith is runNode with the options o.
+func (e *endpoint) runNodeWith(t *testing.T, logName, client, scenario, url string, o nodeOptions) clientRun {
 	t.Helper()
 	before := unknownCounts(t)
-	code, data, err := e.execNode(t, logName, client, scenario, url, "")
+	code, data, err := e.execNode(t, logName, client, scenario, url, o)
 	if err == nil {
 		var r clientResult
 		if r, err = judgeNodeRun(code, data, client, scenario, url); err == nil {
@@ -173,19 +199,22 @@ func (e *endpoint) runNode(t *testing.T, logName, client, scenario, url string) 
 	return clientRun{}
 }
 
-// execNode runs the script and returns its exit code and result file.
-// preload, when not empty, is a module that node loads with --import
-// before the script: the driver's only way to inject a fault, because
-// clientEnv drops NODE_OPTIONS.
-func (e *endpoint) execNode(t *testing.T, logName, client, scenario, url, preload string) (int, []byte, error) {
+// execNode runs the script with the options o and returns its exit code
+// and result file.
+func (e *endpoint) execNode(t *testing.T, logName, client, scenario, url string, o nodeOptions) (int, []byte, error) {
 	t.Helper()
 	file := filepath.Join(t.TempDir(), "result.json")
 	var args []string
-	if preload != "" {
-		args = append(args, "--import="+preload)
+	if o.preload != "" {
+		args = append(args, "--import="+o.preload)
 	}
-	args = append(args, nodeScripts[client], scenario, url, file)
-	code, _ := e.runLogged(t, logName+".log", nodeDir, clientTimeout, nodeEnv[client], "node", args...)
+	args = append(append(args, nodeScripts[client], scenario, url, file), o.args...)
+	var code int
+	if o.checkpoint == nil {
+		code, _ = e.runLogged(t, logName+".log", nodeDir, clientTimeout, nodeEnv[client], "node", args...)
+	} else {
+		code = e.runInteractive(t, logName+".log", client, o.checkpoint, args)
+	}
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return code, nil, fmt.Errorf("%s exited %d and wrote no result file: %w", client, code, err)
@@ -194,6 +223,63 @@ func (e *endpoint) execNode(t *testing.T, logName, client, scenario, url, preloa
 		t.Errorf("keeping the result: %v", err)
 	}
 	return code, data, nil
+}
+
+// checkpointMark starts a checkpoint line of a script's stdout.
+const checkpointMark = "@checkpoint "
+
+// runInteractive runs node with args like runLogged and answers each
+// checkpoint line of its stdout with checkpoint's verdict on its stdin
+// ("ok", or "fail" after the test recorded the error). The checkpoints run
+// in the test goroutine. When the test ends early (a fatal error in
+// checkpoint), the cleanup closes the script's stdin, so its checkpoint
+// fails and the script ends, and waits for the run.
+func (e *endpoint) runInteractive(t *testing.T, logName, client string, checkpoint func(string) error, args []string) int {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make(chan string)
+	stop, done := make(chan struct{}), make(chan struct{})
+	var code int
+	go func() {
+		defer close(done)
+		defer func() { _ = r.Close() }()
+		code, _ = e.runLoggedIO(t, logName, nodeDir, clientTimeout, nodeEnv[client], clientIO{stdin: r, line: func(l string) {
+			if name, ok := strings.CutPrefix(l, checkpointMark); ok {
+				select {
+				case names <- name:
+				case <-stop:
+				}
+			}
+		}}, "node", args...)
+	}()
+	ended := false
+	t.Cleanup(func() {
+		if !ended {
+			close(stop)
+			_ = w.Close()
+			<-done
+		}
+	})
+	for {
+		select {
+		case name := <-names:
+			answer := "ok"
+			if err := checkpoint(name); err != nil {
+				t.Errorf("%s checkpoint %s: %v", client, name, err)
+				answer = "fail"
+			}
+			if _, err := fmt.Fprintln(w, answer); err != nil {
+				t.Errorf("answering %s checkpoint %s: %v", client, name, err)
+			}
+		case <-done:
+			ended = true
+			_ = w.Close()
+			return code
+		}
+	}
 }
 
 // judgeNodeRun checks one script run against the result format (README.md,
@@ -234,19 +320,43 @@ const agentBrowserClose = 30 * time.Second
 // code, the output and the unknown methods.
 func (e *endpoint) runAgentBrowser(t *testing.T, bin, logName, url string, args ...string) (int, string, map[string]int) {
 	t.Helper()
+	ab := e.agentBrowserSession(t, bin, logName, url)
+	before := unknownCounts(t)
+	code, out := ab.run(t, logName, args...)
+	return code, out, newUnknown(before, unknownCounts(t))
+}
+
+// agentBrowser is one agent-browser session of a run: the commands of a
+// scenario share it, so the refs of its snapshot stay valid.
+type agentBrowser struct {
+	e    *endpoint
+	bin  string
+	url  string
+	base []string // --config and --session
+}
+
+// agentBrowserSession starts an agent-browser session with a name unique
+// to this run, and closes it at cleanup (log logName-close.log).
+func (e *endpoint) agentBrowserSession(t *testing.T, bin, logName, url string) *agentBrowser {
+	t.Helper()
 	// agent-browser refuses a session whose socket path is longer than
 	// 103 bytes, so the name is short and the sockets live in
 	// agentBrowserSockets.
 	session := "cdpc-" + strconv.Itoa(os.Getpid()) + "-" + strconv.Itoa(int(agentBrowserRuns.Add(1)))
-	base := []string{"--config", agentBrowserConfig, "--session", session}
+	ab := &agentBrowser{e: e, bin: bin, url: url, base: []string{"--config", agentBrowserConfig, "--session", session}}
 	t.Cleanup(func() {
-		if code, out := e.runLogged(t, logName+"-close.log", clientHome, agentBrowserClose, nil, bin, append(base, "close")...); code != 0 {
+		if code, out := e.runLogged(t, logName+"-close.log", clientHome, agentBrowserClose, nil, bin, append(ab.base, "close")...); code != 0 {
 			t.Errorf("agent-browser --session %s close: exit %d: %s", session, code, out)
 		}
 	})
-	before := unknownCounts(t)
-	code, out := e.runLogged(t, logName+".log", clientHome, clientTimeout, nil, bin, append(append(base, "--cdp", url), args...)...)
-	return code, out, newUnknown(before, unknownCounts(t))
+	return ab
+}
+
+// run runs "agent-browser --config <driver config> --session <s> --cdp
+// <url> <args>" (log logName.log) and returns its exit code and output.
+func (ab *agentBrowser) run(t *testing.T, logName string, args ...string) (int, string) {
+	t.Helper()
+	return ab.e.runLogged(t, logName+".log", clientHome, clientTimeout, nil, ab.bin, append(append(append([]string(nil), ab.base...), "--cdp", ab.url), args...)...)
 }
 
 // agentBrowserBuild records an agent-browser build that a run used.

@@ -16,6 +16,7 @@
 package cdpcompat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -243,16 +244,23 @@ type endpoint struct {
 // runs of the test reach it through the shared socket directory.
 func startDaemon(t *testing.T) *endpoint {
 	t.Helper()
+	return startDaemonOn(t, "", "")
+}
+
+// startDaemonOn is startDaemon with the daemon's transport and its address
+// (daemon.RunOptions Transport and Addr; "" for the defaults).
+func startDaemonOn(t *testing.T, transport, addr string) *endpoint {
+	t.Helper()
 	e := &endpoint{rec: &recorder{}, port: freePort(t)}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	logf, err := os.Create(filepath.Join(logDir, t.Name()+"-daemon.log"))
+	logf, err := os.Create(filepath.Join(logDir, logName(t, "daemon.log")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	log := &redactingWriter{w: logf, e: e}
 	go func() {
-		done <- daemon.Run(ctx, daemon.RunOptions{Version: "cdpcompat", CDPPort: e.port, CDPObserve: e.rec.observe, Log: log})
+		done <- daemon.Run(ctx, daemon.RunOptions{Version: "cdpcompat", Transport: transport, Addr: addr, CDPPort: e.port, CDPObserve: e.rec.observe, Log: log})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -283,6 +291,12 @@ func startDaemon(t *testing.T) *endpoint {
 			t.Fatalf("in-process daemon did not answer within %v: %v", daemonStart, err)
 		}
 	}
+}
+
+// logName is the name of a log file of test t in logDir: the test's name
+// (subtests joined with "_") and suffix.
+func logName(t *testing.T, suffix string) string {
+	return strings.ReplaceAll(t.Name(), "/", "_") + "-" + suffix
 }
 
 // addSecrets registers the token and endpoint id of an issued URL for
@@ -328,6 +342,21 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// cliExit runs the real iwdp-cli like cli and returns its exit code,
+// stdout and stderr; only a timeout, a start or wait failure and dropped
+// output fail the test.
+func cliExit(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command(cliBin, args...)
+	out, errb := &cappedBuffer{limit: clientOutputLimit}, &cappedBuffer{limit: clientOutputLimit}
+	cmd.Stdout, cmd.Stderr = out, errb
+	timedOut, err := runOwned(cmd, cliTimeout, false)
+	if exit := (*exec.ExitError)(nil); timedOut || (err != nil && !errors.As(err, &exit)) || out.dropped > 0 {
+		t.Fatalf("iwdp-cli %s: %v (timed out after %v: %v; stdout bytes dropped: %d)", strings.Join(args, " "), err, cliTimeout, timedOut, out.dropped)
+	}
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
+}
+
 // cli runs the real iwdp-cli (runOwned, within cliTimeout) and fails the
 // test unless it exits 0 with all of its output kept. It returns stdout.
 func cli(t *testing.T, args ...string) string {
@@ -354,16 +383,21 @@ type cdpURLs struct {
 }
 
 // getCDPURL runs "iwdp-cli --session <session> get cdp-url" and the same
-// with --json for page, and checks that both name the same record.
+// with --json for page ("": the session's current page, as resolved for
+// any command), and checks that both name the same record.
 func (e *endpoint) getCDPURL(t *testing.T, session, page string) cdpURLs {
 	t.Helper()
-	printed := cli(t, "--session", session, "get", "cdp-url", "--page", page)
+	args := []string{"--session", session, "get", "cdp-url"}
+	if page != "" {
+		args = append(args, "--page", page)
+	}
+	printed := cli(t, args...)
 	ws, ok := strings.CutSuffix(printed, "\n")
 	if !ok || strings.Contains(ws, "\n") {
 		t.Fatalf("get cdp-url printed %q, want one line", printed)
 	}
 	var j struct{ WS, HTTP string }
-	if err := json.Unmarshal([]byte(cli(t, "--session", session, "get", "cdp-url", "--page", page, "--json")), &j); err != nil {
+	if err := json.Unmarshal([]byte(cli(t, append(args, "--json")...)), &j); err != nil {
 		t.Fatalf("get cdp-url --json: %v", err)
 	}
 	host := "127.0.0.1:" + strconv.Itoa(e.port)
@@ -412,7 +446,8 @@ func newUnknown(before, after map[string]int) map[string]int {
 // userSetting reports whether the environment variable k is a user
 // setting that a client must not inherit:
 //   - proxies (nothing may sit between a client and the endpoint);
-//   - agent-browser settings;
+//   - agent-browser and chrome-devtools-mcp settings (the driver sets the
+//     chrome-devtools-mcp variables it needs, nodeEnv);
 //   - the debug selection that Playwright's method record depends on (the
 //     debug module reads DEBUG and every DEBUG_* variable, DEBUG_FILE
 //     redirects Playwright's log away from stderr);
@@ -430,7 +465,7 @@ func userSetting(k string) bool {
 	u := strings.ToUpper(k)
 	switch {
 	case u == "HTTP_PROXY", u == "HTTPS_PROXY", u == "ALL_PROXY", u == "NO_PROXY",
-		strings.HasPrefix(u, "AGENT_BROWSER_"), u == "DEBUG", strings.HasPrefix(u, "DEBUG_"),
+		strings.HasPrefix(u, "AGENT_BROWSER_"), strings.HasPrefix(u, "CHROME_DEVTOOLS_MCP_"), u == "DEBUG", strings.HasPrefix(u, "DEBUG_"),
 		strings.HasPrefix(u, "NODE_"), strings.HasPrefix(u, "NPM_CONFIG_"),
 		u == "OPENSSL_CONF", u == "OPENSSL_CONF_INCLUDE", u == "OPENSSL_MODULES", u == "OPENSSL_ENGINES":
 		return true
@@ -467,7 +502,13 @@ func clientEnv(extra []string) []string {
 // the caller's cleanups, agent-browser's session close among them, to run.
 func (e *endpoint) runLogged(t *testing.T, logName, dir string, timeout time.Duration, extraEnv []string, name string, args ...string) (int, string) {
 	t.Helper()
-	code, out, timedOut, err := e.runClient(logName, dir, timeout, extraEnv, name, args...)
+	return e.runLoggedIO(t, logName, dir, timeout, extraEnv, clientIO{}, name, args...)
+}
+
+// runLoggedIO is runLogged with the stdin and stdout hook of cio.
+func (e *endpoint) runLoggedIO(t *testing.T, logName, dir string, timeout time.Duration, extraEnv []string, cio clientIO, name string, args ...string) (int, string) {
+	t.Helper()
+	code, out, timedOut, err := e.runClientIO(logName, dir, timeout, extraEnv, cio, name, args...)
 	if timedOut {
 		t.Errorf("%s did not end within %v; its process group was killed; log %s", name, timeout, filepath.Join(logDir, logName))
 	}
@@ -475,6 +516,45 @@ func (e *endpoint) runLogged(t *testing.T, logName, dir string, timeout time.Dur
 		t.Errorf("%s: %s; log %s", name, e.redact(err.Error()), filepath.Join(logDir, logName))
 	}
 	return code, out
+}
+
+// syncWriter serializes the writes to w.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+// lineTapLimit bounds the unfinished line that a lineTap keeps; a longer
+// line is not passed on (checkpoint lines are short).
+const lineTapLimit = 64 << 10
+
+// lineTap writes everything to w and calls line with each complete line.
+type lineTap struct {
+	w       io.Writer
+	line    func(string)
+	partial []byte
+}
+
+func (l *lineTap) Write(p []byte) (int, error) {
+	l.partial = append(l.partial, p...)
+	for {
+		i := bytes.IndexByte(l.partial, '\n')
+		if i < 0 {
+			break
+		}
+		l.line(string(l.partial[:i]))
+		l.partial = l.partial[i+1:]
+	}
+	if len(l.partial) > lineTapLimit {
+		l.partial = nil
+	}
+	return l.w.Write(p)
 }
 
 // runClient runs a client command in dir within timeout through runOwned
@@ -486,11 +566,32 @@ func (e *endpoint) runLogged(t *testing.T, logName, dir string, timeout time.Dur
 // but an exit status: a start or wait failure, or a failed log write.
 // extraEnv is added to the client environment.
 func (e *endpoint) runClient(logName, dir string, timeout time.Duration, extraEnv []string, name string, args ...string) (int, string, bool, error) {
+	return e.runClientIO(logName, dir, timeout, extraEnv, clientIO{}, name, args...)
+}
+
+// clientIO is what an interactive client run adds to runClient (the
+// checkpoints of a script, clients/result.mjs checkpoint): the client's
+// stdin, and a function that gets each complete line of its stdout.
+type clientIO struct {
+	stdin *os.File
+	line  func(string)
+}
+
+// runClientIO is runClient with the stdin and stdout hook of cio.
+func (e *endpoint) runClientIO(logName, dir string, timeout time.Duration, extraEnv []string, cio clientIO, name string, args ...string) (int, string, bool, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = clientEnv(extraEnv)
 	buf := &cappedBuffer{limit: clientOutputLimit}
 	cmd.Stdout, cmd.Stderr = buf, buf
+	if cio.stdin != nil {
+		cmd.Stdin = cio.stdin
+	}
+	if cio.line != nil {
+		// Two writers, so exec copies stdout and stderr in two goroutines.
+		shared := &syncWriter{w: buf}
+		cmd.Stdout, cmd.Stderr = &lineTap{w: shared, line: cio.line}, shared
+	}
 	timedOut, werr := runOwned(cmd, timeout, false)
 	code := -1
 	if cmd.ProcessState != nil {

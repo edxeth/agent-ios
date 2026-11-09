@@ -31,6 +31,8 @@ type clientResult struct {
 		OK    bool   `json:"ok"`
 		MS    int    `json:"ms"`
 		Error string `json:"error,omitempty"`
+		// Value is what an observed step saw (clients/result.mjs observe).
+		Value json.RawMessage `json:"value,omitempty"`
 	} `json:"steps"`
 	Sent []sentCommand `json:"sent"`
 }

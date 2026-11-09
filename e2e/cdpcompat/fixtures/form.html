@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CDP form</title>
+</head>
+<body>
+<h1>Sign up</h1>
+<form id="signup" onsubmit="return false">
+  <label for="name">Name</label>
+  <input id="name" name="name" type="text">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email">
+</form>
+<button id="change" type="button">Press me</button>
+<p id="status">ready</p>
+<a id="next" href="second.html">Second page</a>
+<script>
+  // The button changes its own text and adds #late 300 ms later, so a
+  // client's wait for #late has to poll.
+  let clicks = 0;
+  document.getElementById('change').addEventListener('click', (e) => {
+    clicks++;
+    e.target.textContent = 'Clicked ' + clicks;
+    setTimeout(() => {
+      if (!document.getElementById('late')) {
+        const p = document.createElement('p');
+        p.id = 'late';
+        p.textContent = 'late element';
+        document.body.appendChild(p);
+      }
+    }, 300);
+  });
+  // Every input event of the name field shows up in #status, so a typed or
+  // filled value is visible to the page, not only in the field.
+  document.getElementById('name').addEventListener('input', (e) => {
+    document.getElementById('status').textContent = 'name: ' + e.target.value;
+  });
+</script>
+</body>
+</html>
