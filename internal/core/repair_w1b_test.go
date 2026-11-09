@@ -140,9 +140,12 @@ func TestSweepDoesNotEndARenewedCommand(t *testing.T) {
 	}
 	r.m.End(mo.ID)
 	r.f.DelayReplies("Network.disable", 700*time.Millisecond)
+	// The first Network.enable went out after the agent's reset, a
+	// Network.disable; the expiry cleanup sends the next one.
+	disables := len(r.f.ReceivedMethod("Network.disable"))
 	swept := make(chan struct{})
 	go func() { defer close(swept); r.m.Sweep(time.Now().Add(DefaultLeaseTTL + time.Second)) }()
-	eventually(t, 3*time.Second, "the expiry cleanup to start", func() bool { return len(r.f.ReceivedMethod("Network.disable")) == 1 })
+	eventually(t, 3*time.Second, "the expiry cleanup to start", func() bool { return len(r.f.ReceivedMethod("Network.disable")) == disables+1 })
 	next, err := r.m.Begin(ctx, r.req, agent, "b", ClassExclusive)
 	if err != nil {
 		t.Fatalf("Begin during the expiry: %v", err)

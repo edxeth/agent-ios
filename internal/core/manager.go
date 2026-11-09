@@ -76,6 +76,10 @@ type PageRequest struct {
 	Transport string // auto, iwdp, direct, webkitgtk; "" = auto
 	Addr      string // listing or inspector address; "" = the transport's default
 	Page      string // ws:// URL, page id or key, or a substring of the title or URL; "" = first page
+	// prefer is the session's default page for a request without a page
+	// (sessionPage): its record key, used while its connection is open
+	// (attachedTarget).
+	prefer string
 }
 
 // AcquireOptions are a client's lease and ownership options (design 2.5).
@@ -332,6 +336,9 @@ func (m *Manager) resolve(ctx context.Context, req PageRequest) (pageTarget, err
 	if isWSURL(req.Page) {
 		return m.resolveURL(ctx, req)
 	}
+	if t, ok := m.attachedTarget(req); ok {
+		return t, nil
+	}
 	sel := strings.ToLower(req.Page)
 	t, listed, err := m.findListed(ctx, req, func(key string, p transport.Page) bool {
 		if sel == "" {
@@ -351,7 +358,9 @@ func (m *Manager) resolve(ctx context.Context, req PageRequest) (pageTarget, err
 
 // findListed lists the pages of req's transport and returns the first page
 // for which match holds, with its device (key "" when none matches), and the
-// number of pages listed.
+// number of pages listed. A matching page is returned even when the page
+// list of another device failed; when none matches, a failed page list
+// that the request may need (pageListFailed) is the error.
 func (m *Manager) findListed(ctx context.Context, req PageRequest, match func(key string, p transport.Page) bool) (pageTarget, int, error) {
 	kind := req.Transport
 	if kind == "" {
@@ -362,20 +371,23 @@ func (m *Manager) findListed(ctx context.Context, req PageRequest, match func(ke
 	}
 	tr, err := m.o.Transport(ctx, kind, req.Addr)
 	if err != nil {
-		return pageTarget{}, 0, &CodedError{Code: CodeNoPage, Err: err}
+		return pageTarget{}, 0, &CodedError{Code: CodeNoPage, Err: m.listingFailed(err)}
 	}
 	devs, err := tr.Devices(ctx)
 	if err != nil {
-		return pageTarget{}, 0, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("listing devices (%s): %w", tr.Kind(), err)}
+		return pageTarget{}, 0, &CodedError{Code: CodeNoPage, Err: m.listingFailed(&ListingError{Kind: tr.Kind(), Err: fmt.Errorf("listing devices (%s): %w", tr.Kind(), err)})}
 	}
 	if len(devs) == 0 {
 		return pageTarget{}, 0, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: %s lists no device; connect and unlock the device and enable Web Inspector", ErrNoPage, tr.Kind())}
 	}
 	var listed int
+	var failed error // the first failed page list that the request may need
 	for _, d := range devs {
 		pages, err := tr.Pages(ctx, d.ID)
 		if err != nil {
-			m.o.Logf("listing pages of %s: %v", d.Label, err)
+			if err := m.pageListFailed(tr, d, err); err != nil && failed == nil {
+				failed = err
+			}
 			continue
 		}
 		for _, p := range pages {
@@ -411,7 +423,7 @@ func (m *Manager) findListed(ctx context.Context, req PageRequest, match func(ke
 			}, listed, nil
 		}
 	}
-	return pageTarget{}, listed, nil
+	return pageTarget{}, listed, failed
 }
 
 // resolveURL resolves an explicit ws:// URL to the page record that
@@ -1354,9 +1366,13 @@ func (m *Manager) Touch(ctx context.Context, req PageRequest, ao AcquireOptions)
 
 func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions, op bool) (*Page, uint64, time.Time, error) {
 	// The session's current page and tab ids (pages_w3b.go, design 3.8).
-	t, err := m.resolve(ctx, m.sessionPage(ao.Session, req))
+	sreq := m.sessionPage(ao.Session, req)
+	t, err := m.resolve(ctx, sreq)
 	if err != nil {
 		return nil, 0, time.Time{}, err
+	}
+	if sreq.Page == "" {
+		m.setDefaultPage(ao.Session, sreq, t.key)
 	}
 	pg, err := m.page(t)
 	if err != nil {

@@ -10,33 +10,38 @@ import (
 )
 
 var (
-	cliBinaryOnce sync.Once
-	cliBinaryPath string
-	cliBinaryErr  error
+	cliBinariesMu sync.Mutex
+	cliBinaries   = map[string]string{} // listing address -> iwdp-cli binary
 )
 
 func buildCLI(t *testing.T) string {
 	t.Helper()
-	cliBinaryOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "iwdp-e2e-cli-*")
-		if err != nil {
-			cliBinaryErr = err
-			return
-		}
-		trackTempDir(dir)
-		bin := filepath.Join(dir, "iwdp-cli")
-		cmd := exec.Command("go", "build", "-ldflags", listingLDFlags(deadCLIListing().Addr()), "-o", bin, "../cmd/iwdp-cli")
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			cliBinaryErr = err
-			return
-		}
-		cliBinaryPath = bin
-	})
-	if cliBinaryErr != nil {
-		t.Fatalf("building iwdp-cli: %v", cliBinaryErr)
+	return buildCLIFor(t, deadCLIListing().Addr())
+}
+
+// buildCLIFor builds iwdp-cli once per iwdp listing address addr, a
+// private loopback address of these tests (listingLDFlags).
+func buildCLIFor(t *testing.T, addr string) string {
+	t.Helper()
+	cliBinariesMu.Lock()
+	defer cliBinariesMu.Unlock()
+	if bin, ok := cliBinaries[addr]; ok {
+		return bin
 	}
-	return cliBinaryPath
+	dir, err := os.MkdirTemp("", "iwdp-e2e-cli-*")
+	if err != nil {
+		t.Fatalf("building iwdp-cli: %v", err)
+	}
+	trackTempDir(dir)
+	bin := filepath.Join(dir, "iwdp-cli")
+	args := append([]string{"build", "-ldflags", listingLDFlags(addr)}, coverBuildFlags(t)...)
+	cmd := exec.Command("go", append(args, "-o", bin, "../cmd/iwdp-cli")...)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("building iwdp-cli for the listing %s: %v", addr, err)
+	}
+	cliBinaries[addr] = bin
+	return bin
 }
 
 func TestCLI_Help(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
 	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
@@ -319,14 +320,40 @@ func endOperation(c pageClient) {
 	}
 }
 
-func cmdDevices(ctx context.Context) {
-	if !proxy.IsRunning() {
+// requireIWDP ends the command unless iwdp's listing answers. Only a
+// listing port that nothing owns means that iwdp is not running (exit 1);
+// an owner that does not answer gets the check's error, which says how it
+// failed (an iwdp can close listing requests while a page is connected,
+// docs/known-limits.md), with the exit code of a listing failure (5).
+func requireIWDP(ctx context.Context) {
+	err := proxy.CheckListing(ctx, proxy.ListingAddr())
+	if err == nil {
+		return
+	}
+	if errors.Is(err, proxy.ErrNotListening) {
 		fmt.Fprintf(os.Stderr, "ios_webkit_debug_proxy is not running.\nStart it with: ios_webkit_debug_proxy --no-frontend\n")
 		os.Exit(1)
 	}
+	fatal(&core.CodedError{Code: core.CodeNoPage, Err: err})
+}
+
+// listingReadFailed ends a legacy listing command whose read of addr (the
+// device list, or a device's page list) failed after requireIWDP passed,
+// classified as requireIWDP does (proxy.ReadFailure): err itself with
+// exit 1 when nothing owns addr, otherwise how the owner failed, with the
+// exit code of a listing failure (5).
+func listingReadFailed(ctx context.Context, addr string, err error) {
+	if cerr := proxy.ReadFailure(ctx, addr, err); !errors.Is(cerr, proxy.ErrNotListening) {
+		err = &core.CodedError{Code: core.CodeNoPage, Err: cerr}
+	}
+	fatal(err)
+}
+
+func cmdDevices(ctx context.Context) {
+	requireIWDP(ctx)
 	devices, err := proxy.ListDevices()
 	if err != nil {
-		fatal(err)
+		listingReadFailed(ctx, proxy.ListingAddr(), err)
 	}
 	if len(devices) == 0 {
 		fmt.Println("No devices connected.")
@@ -339,13 +366,10 @@ func cmdDevices(ctx context.Context) {
 
 func cmdPages(ctx context.Context, args []string) {
 	port := getPort(args)
-	if !proxy.IsRunning() {
-		fmt.Fprintf(os.Stderr, "ios_webkit_debug_proxy is not running.\nStart it with: ios_webkit_debug_proxy --no-frontend\n")
-		os.Exit(1)
-	}
+	requireIWDP(ctx)
 	pages, err := proxy.ListPages(port)
 	if err != nil {
-		fatal(err)
+		listingReadFailed(ctx, proxy.DeviceAddr(port), err)
 	}
 	if len(pages) == 0 {
 		fmt.Println("No Safari tabs found.")

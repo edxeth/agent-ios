@@ -124,9 +124,12 @@ func selfBusyRig(t *testing.T) *rig {
 	return r
 }
 
-// stallSecondCommand attaches by discovery, runs a second discovery
-// command (whose listing shows the page busy: the daemon's own connection)
-// and stalls it, which starts the background recovery.
+// stallSecondCommand attaches by discovery, runs a second command that
+// selects the page by title (whose listing shows the page busy: the
+// daemon's own connection) and stalls it, which starts the background
+// recovery. The second command names the page by title because a request
+// without a page resolves to the attached page without the listing
+// (listing_attached.go), and only a listing stores the busy hint.
 func stallSecondCommand(t *testing.T, r *rig) *Page {
 	t.Helper()
 	ctx := ctxFor(t, 5*time.Second)
@@ -135,7 +138,9 @@ func stallSecondCommand(t *testing.T, r *rig) *Page {
 		t.Fatalf("first command: %v", err)
 	}
 	r.m.End(a.ID)
-	mo, err := r.m.Begin(ctx, r.req, agent, "second", ClassExclusive)
+	byTitle := r.req
+	byTitle.Page = "Fixture"
+	mo, err := r.m.Begin(ctx, byTitle, agent, "second", ClassExclusive)
 	if err != nil {
 		t.Fatalf("second command on the daemon's own page: %v", err)
 	}

@@ -45,7 +45,8 @@ func (m *Manager) ResolvePage(ctx context.Context, req PageRequest) (ListedPage,
 
 // ListPages lists every page of req's transport (req.Page is ignored),
 // with the record key that page resolution gives each page. A device whose
-// page list does not answer is left out and logged, as in page resolution.
+// page list fails is left out and logged, as in page resolution, unless
+// the daemon holds an open page connection to it (pageListFailed).
 func (m *Manager) ListPages(ctx context.Context, req PageRequest) ([]ListedPage, error) {
 	kind := req.Transport
 	if kind == "" {
@@ -56,17 +57,19 @@ func (m *Manager) ListPages(ctx context.Context, req PageRequest) ([]ListedPage,
 	}
 	tr, err := m.o.Transport(ctx, kind, req.Addr)
 	if err != nil {
-		return nil, &CodedError{Code: CodeNoPage, Err: err}
+		return nil, &CodedError{Code: CodeNoPage, Err: m.listingFailed(err)}
 	}
 	devs, err := tr.Devices(ctx)
 	if err != nil {
-		return nil, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("listing devices (%s): %w", tr.Kind(), err)}
+		return nil, &CodedError{Code: CodeNoPage, Err: m.listingFailed(&ListingError{Kind: tr.Kind(), Err: fmt.Errorf("listing devices (%s): %w", tr.Kind(), err)})}
 	}
 	var out []ListedPage
 	for _, d := range devs {
 		pages, err := tr.Pages(ctx, d.ID)
 		if err != nil {
-			m.o.Logf("listing pages of %s: %v", d.Label, err)
+			if err := m.pageListFailed(tr, d, err); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		for _, p := range pages {

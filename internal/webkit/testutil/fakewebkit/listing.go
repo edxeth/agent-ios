@@ -2,6 +2,7 @@ package fakewebkit
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ type Listing struct {
 	mu      sync.Mutex
 	srv     *httptest.Server
 	devices []*ListedDevice
+	silent  []*Server // EmptyReplyWhileConnected
 }
 
 // ListedDevice is one device of a Listing, with its own page-list server.
@@ -43,6 +45,9 @@ type ListedPage struct {
 func NewListing(frontend bool) *Listing {
 	l := &Listing{Frontend: frontend}
 	l.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if l.emptyReply(w) {
+			return
+		}
 		if r.URL.Path != "/json" {
 			http.NotFound(w, r)
 			return
@@ -59,6 +64,37 @@ func NewListing(frontend bool) *Listing {
 		_ = json.NewEncoder(w).Encode(out)
 	}))
 	return l
+}
+
+// EmptyReplyWhileConnected models the iwdp of the second device check
+// (docs/known-limits.md, "iwdp does not list pages while a page is
+// connected"): while any of servers has an open WebSocket connection, the
+// device list and every page list accept each HTTP connection and close it
+// without a reply. They answer again once no connection is open.
+func (l *Listing) EmptyReplyWhileConnected(servers ...*Server) {
+	l.mu.Lock()
+	l.silent = append(l.silent, servers...)
+	l.mu.Unlock()
+}
+
+// emptyReply closes the request's connection without a reply when
+// EmptyReplyWhileConnected applies, and reports whether it did.
+func (l *Listing) emptyReply(w http.ResponseWriter) bool {
+	l.mu.Lock()
+	connected := false
+	for _, s := range l.silent {
+		connected = connected || s.OpenConnections() > 0
+	}
+	l.mu.Unlock()
+	if !connected {
+		return false
+	}
+	c, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		panic(fmt.Sprintf("fakewebkit listing: hijacking a listing request: %v", err))
+	}
+	_ = c.Close()
+	return true
 }
 
 // Addr is the host:port of the device list.
@@ -115,6 +151,9 @@ func (d *ListedDevice) ServedBy(p *ListedPage, s *Server) {
 func (d *ListedDevice) Addr() string { return strings.TrimPrefix(d.srv.URL, "http://") }
 
 func (d *ListedDevice) serve(w http.ResponseWriter, r *http.Request) {
+	if d.l.emptyReply(w) {
+		return
+	}
 	if r.URL.Path != "/json" {
 		http.NotFound(w, r)
 		return

@@ -317,7 +317,7 @@ func (ts *transports) get(ctx context.Context, kind, addr string) (transport.Tra
 func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault bool) error {
 	err := proxy.CheckListing(ctx, listing)
 	if !errors.Is(err, proxy.ErrNotListening) {
-		return err // nil (answers) or a process owns the port
+		return listingError(ctx, err) // nil (answers) or a process owns the port
 	}
 	if !isDefault || ts.o.StartIWDP == nil {
 		return fmt.Errorf("ios_webkit_debug_proxy is not running on %s; start it with: ios_webkit_debug_proxy --no-frontend (install: brew install ios-webkit-debug-proxy)", listing)
@@ -326,13 +326,24 @@ func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault 
 	defer ts.starts.Unlock()
 	err = proxy.CheckListing(ctx, listing)
 	if !errors.Is(err, proxy.ErrNotListening) {
-		return err
+		return listingError(ctx, err)
 	}
 	ts.logf("ios_webkit_debug_proxy is not running; starting it")
 	if err := ts.o.StartIWDP(ctx); err != nil {
 		return fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", err)
 	}
 	return nil
+}
+
+// listingError marks err, a failed check of a listing that a process owns,
+// as a listing failure (core.ListingError), so that core can tell why an
+// iwdp with an open page connection does not answer. nil and the caller's
+// own end stay as they are.
+func listingError(ctx context.Context, err error) error {
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	return &core.ListingError{Kind: transport.KindIWDP, Err: err}
 }
 
 func (ts *transports) close() {

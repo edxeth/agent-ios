@@ -38,6 +38,10 @@ type tabState struct {
 	next    int               // last N handed out
 	labels  map[string]string // label -> page key
 	current map[string]PageRequest
+	// defaults holds, per session, the page that its last request without
+	// a page and without a current page resolved to (Page is the record
+	// key; Transport, with "" as "auto", and Addr are the request's).
+	defaults map[string]PageRequest
 }
 
 // tabStates holds the tabState of each Manager. It lives here and not in
@@ -51,7 +55,7 @@ func (m *Manager) tabs() *tabState {
 	if s, ok := tabStates.Load(m); ok {
 		return s.(*tabState)
 	}
-	s, _ := tabStates.LoadOrStore(m, &tabState{ids: map[string]int{}, labels: map[string]string{}, current: map[string]PageRequest{}})
+	s, _ := tabStates.LoadOrStore(m, &tabState{ids: map[string]int{}, labels: map[string]string{}, current: map[string]PageRequest{}, defaults: map[string]PageRequest{}})
 	return s.(*tabState)
 }
 
@@ -214,12 +218,38 @@ func (m *Manager) ForgetTab(key string) {
 			delete(s.current, sess)
 		}
 	}
+	for sess, r := range s.defaults {
+		if r.Page == key {
+			delete(s.defaults, sess)
+		}
+	}
+}
+
+// setDefaultPage records key as the default page of session for requests
+// with req's transport and address and no page (sessionPage).
+func (m *Manager) setDefaultPage(session string, req PageRequest, key string) {
+	session = AcquireOptions{Session: session}.normalized().Session
+	s := m.tabs()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.defaults[session] = PageRequest{Transport: autoKind(req.Transport), Addr: req.Addr, Page: key}
+}
+
+// autoKind is a requested transport kind with "" as "auto".
+func autoKind(kind string) string {
+	if kind == "" {
+		return "auto"
+	}
+	return kind
 }
 
 // sessionPage is the page request a command of session resolves: a tab id
 // or label in req.Page becomes its page key, and a request that names no
 // page gets the session's current page when its transport and address
-// agree (an explicit --page always wins).
+// agree (an explicit --page always wins). Without such a current page, it
+// carries the session's default page (setDefaultPage) for the same
+// transport and address, which resolve uses while that page's connection
+// is open; otherwise the listing picks the first page, as before.
 func (m *Manager) sessionPage(session string, req PageRequest) PageRequest {
 	if req.Page != "" {
 		if k, ok := m.TabKey(req.Page); ok {
@@ -228,12 +258,16 @@ func (m *Manager) sessionPage(session string, req PageRequest) PageRequest {
 		return req
 	}
 	cur, ok := m.CurrentPage(session)
-	if !ok {
-		return req
-	}
 	auto := func(k string) bool { return k == "" || k == "auto" }
-	if (auto(req.Transport) || auto(cur.Transport) || req.Transport == cur.Transport) && (req.Addr == "" || req.Addr == cur.Addr) {
+	if ok && (auto(req.Transport) || auto(cur.Transport) || req.Transport == cur.Transport) && (req.Addr == "" || req.Addr == cur.Addr) {
 		return cur
 	}
+	session = AcquireOptions{Session: session}.normalized().Session
+	s := m.tabs()
+	s.mu.Lock()
+	if d, ok := s.defaults[session]; ok && d.Transport == autoKind(req.Transport) && d.Addr == req.Addr {
+		req.prefer = d.Page
+	}
+	s.mu.Unlock()
 	return req
 }

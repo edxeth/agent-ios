@@ -63,6 +63,7 @@ The legacy commands keep their earlier output and argument parsing. Only the reg
 
 - **Output flags.** Legacy commands do not apply `--json`, `--max-output` or `--content-boundaries`. A legacy command ignores such a flag or reads it as one of its arguments, depending on the command and the position. For example, `iwdp-cli eval document.title --content-boundaries` prints the page title without the content markers. When an agent must see untrusted page text between markers, use a registry command (`get text`, `read`, `snapshot`) with `--content-boundaries`.
 - **Usage errors exit 1.** A legacy command with a missing argument or a bad flag exits 1, not 2: for example `iwdp-cli eval` without an expression, or `iwdp-cli screenshot -o` without a file name.
+- **Listing exit codes of `devices` and `pages`.** They exit 1 with "not running" when nothing owns the iwdp listing address, and 1 with the read's error when nothing owns the device port that `pages` reads. When a process owns the address but its listing is unusable, they exit 5 and name the failure: an empty reply (with advice about open page connections), a timeout, a refusal, a status other than 200, or a body that is not valid JSON. `status` exits 1 for every failure.
 - **Other exit codes.** A legacy command exits 124 when the command deadline expires and 130 on SIGINT or SIGTERM. A daemon error that has its own exit code (4 page busy or lost, 5 no device or page, 6 reservation missing) keeps it; every other error exits 1.
 
 ## For skills and prompts written for agent-browser

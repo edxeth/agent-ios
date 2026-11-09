@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -18,13 +19,18 @@ func cmdRestartIWDP(ctx context.Context) {
 	fmt.Println("ios_webkit_debug_proxy restarted")
 }
 
-func cmdStatus(_ context.Context) {
-	if proxy.IsRunning() {
+func cmdStatus(ctx context.Context) {
+	err := proxy.CheckListing(ctx, proxy.ListingAddr())
+	switch {
+	case err == nil:
 		fmt.Println("ios_webkit_debug_proxy is running")
-	} else {
+	case errors.Is(err, proxy.ErrNotListening):
 		fmt.Println("ios_webkit_debug_proxy is NOT running")
 		fmt.Fprintln(os.Stderr, "Start it with: ios_webkit_debug_proxy --no-frontend")
 		os.Exit(1)
+	default:
+		// A process owns the listing port but does not answer as iwdp.
+		fatal(err)
 	}
 }
 
