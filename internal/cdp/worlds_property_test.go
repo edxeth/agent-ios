@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math/rand"
+	"os"
 	"slices"
+	"strconv"
 	"testing"
 	"testing/quick"
+	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 )
@@ -87,8 +91,9 @@ type worldRun struct {
 	// The world names each frame of the current document must have, by
 	// the rules of worlds.go: createIsolatedWorld names stay with their
 	// frame (the main frame across documents, a child frame until the
-	// main frame's next document), addScriptToEvaluateOnNewDocument
-	// names reach every frame from its next document on.
+	// main frame's next document, also one that a reset announces),
+	// addScriptToEvaluateOnNewDocument names reach every frame from its
+	// next document on.
 	expected  map[string]map[string]bool // by CDP frame id
 	sticky    map[string][]string        // createIsolatedWorld names by CDP frame id
 	docWorlds []string
@@ -183,10 +188,14 @@ func (w *worldRun) flush() {
 }
 
 // resetReadLocked starts the tree read of an ordered run's reset since
-// the last call (connSeq grows at each reset).
+// the last call (connSeq grows at each reset). A reset announces the
+// page's document as a new main-frame document (staging.go resetLocked),
+// so the createIsolatedWorld names of the child frames end with the old
+// one, as at a navigation; the main frame keeps its own.
 func (w *worldRun) resetReadLocked() {
 	if w.ps.connSeq != w.resets {
 		w.resets = w.ps.connSeq
+		maps.DeleteFunc(w.sticky, func(id string, _ []string) bool { return id != "PAGE" })
 		w.reads = append(w.reads, runRead{&treeRead{ps: w.ps, seq: w.ps.connSeq}, w.delay})
 	}
 }
@@ -673,25 +682,13 @@ func checkClientFrames(w *worldRun) error {
 // id per frame and document (checkContexts).
 func TestContextIDProperty(t *testing.T) {
 	prop := func(steps []worldStep) bool {
-		if len(steps) > maxWorldSteps {
-			steps = steps[:maxWorldSteps]
-		}
-		w := newWorldRun(t)
-		for _, s := range steps {
-			w.step(s)
-		}
-		w.finish()
-		err := checkContexts(w)
-		if err == nil {
-			err = checkClientFrames(w)
-		}
-		if err != nil {
+		if err := runWorldSteps(t, false, steps); err != nil {
 			t.Logf("steps %v: %v", steps, err)
 			return false
 		}
 		return true
 	}
-	if err := quick.Check(prop, &quick.Config{MaxCount: 400}); err != nil {
+	if err := quick.Check(prop, worldsQuickConfig(t)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -703,26 +700,70 @@ func TestContextIDProperty(t *testing.T) {
 // reconnects during tree reads (wsHandover; review r5, F11).
 func TestContextIDPropertyOrdered(t *testing.T) {
 	prop := func(steps []worldStep) bool {
-		if len(steps) > maxWorldSteps {
-			steps = steps[:maxWorldSteps]
-		}
-		w := newWorldRun(t)
-		w.ordered = true
-		for _, s := range steps {
-			w.step(s)
-		}
-		w.finish()
-		err := checkContexts(w)
-		if err == nil {
-			err = checkClientFrames(w)
-		}
-		if err != nil {
+		if err := runWorldSteps(t, true, steps); err != nil {
 			t.Logf("steps %v: %v", steps, err)
 			return false
 		}
 		return true
 	}
-	if err := quick.Check(prop, &quick.Config{MaxCount: 400}); err != nil {
+	if err := quick.Check(prop, worldsQuickConfig(t)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// worldsQuickConfig configures the context-id properties: 400 step lists
+// generated from the seed IWDP_WORLDS_SEED, or from the time. The seed is
+// logged, so a failing run can be repeated.
+func worldsQuickConfig(t *testing.T) *quick.Config {
+	seed := time.Now().UnixNano()
+	if s := os.Getenv("IWDP_WORLDS_SEED"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			t.Fatalf("IWDP_WORLDS_SEED=%q: want an integer", s)
+		}
+		seed = n
+	}
+	t.Logf("generated step lists: IWDP_WORLDS_SEED=%d", seed)
+	return &quick.Config{MaxCount: 400, Rand: rand.New(rand.NewSource(seed))}
+}
+
+// runWorldSteps runs the context-id property on steps (at most
+// maxWorldSteps of them), ordered or not, and returns its first violation.
+func runWorldSteps(t *testing.T, ordered bool, steps []worldStep) error {
+	if len(steps) > maxWorldSteps {
+		steps = steps[:maxWorldSteps]
+	}
+	w := newWorldRun(t)
+	w.ordered = ordered
+	for _, s := range steps {
+		w.step(s)
+	}
+	w.finish()
+	if err := checkContexts(w); err != nil {
+		return err
+	}
+	return checkClientFrames(w)
+}
+
+// TestContextIDPropertyOrderedResetEndsChildWorlds replays counterexamples
+// of TestContextIDPropertyOrdered (WS2a coverage gate, input #119, and its
+// minimized form): a child frame gets a createIsolatedWorld name, a
+// reconnect (wsHandover) resets the attachment, whose tree read announces
+// the page's document as a new main-frame document with the child frame
+// attached again, and the child frame then loads a new document. The reset
+// ends the child frame's createIsolatedWorld names with the old document,
+// as a main-frame navigation does (worlds.go clearContextsLocked; staging.go
+// resetLocked), so its new document has no alias for that name.
+func TestContextIDPropertyOrderedResetEndsChildWorlds(t *testing.T) {
+	for name, steps := range map[string][]worldStep{
+		"logged": {{225, 207, 146}, {17, 126, 131}, {246, 166, 176}, {177, 215, 39}, {243, 70, 75}, {23, 87, 119}, {134, 3, 117}, {15, 95, 4}, {67, 41, 41}, {224, 149, 126}, {180, 171, 157}, {95, 204, 243}, {62, 40, 82}, {144, 137, 169}, {108, 64, 210}},
+		// child frame c1 attaches; reconnect; createIsolatedWorld{c1, util};
+		// an aborted provisional target; flush (the reset); Runtime.enable
+		// (its tree read's reply); c1 loads a new document
+		"minimized": {{243, 70, 75}, {67, 41, 41}, {224, 149, 126}, {95, 204, 243}, {62, 40, 82}, {144, 137, 169}, {108, 64, 210}},
+	} {
+		if err := runWorldSteps(t, true, steps); err != nil {
+			t.Errorf("%s steps %v: %v", name, steps, err)
+		}
 	}
 }
