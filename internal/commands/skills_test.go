@@ -22,15 +22,15 @@ func repoSkill(t *testing.T, name string) string {
 }
 
 // Design 4.2: "skills get|list|path" print the skills embedded in the
-// binary; they need no daemon or page and have no MCP tool.
-func TestSkillsCommandsAreLocalWithoutAnMCPTool(t *testing.T) {
+// binary; they need no daemon or page.
+func TestSkillsCommandsAreLocal(t *testing.T) {
 	for _, n := range []string{"skills list", "skills get", "skills path"} {
 		c, words := Lookup(strings.Fields(n))
 		if c == nil || words != 2 || c.Name != n {
 			t.Fatalf("Lookup(%q) = %v, %d", n, c, words)
 		}
-		if !c.Local || c.MCPName != "" || c.Page != NoPage {
-			t.Errorf("%s: Local %v, MCP name %q, page need %v; want a local command without a page or MCP tool", n, c.Local, c.MCPName, c.Page)
+		if !c.Local || c.Page != NoPage {
+			t.Errorf("%s: Local %v, page need %v; want a local command without a page", n, c.Local, c.Page)
 		}
 	}
 	if c, _ := Lookup([]string{"skills"}); c == nil || c.Name != "skills list" {
@@ -44,14 +44,15 @@ func TestSkillsGetPrintsTheRepositorySkill(t *testing.T) {
 	if code != ExitOK || out != want {
 		t.Fatalf("skills get iwdp: exit %d, stderr %q; stdout differs from skills/iwdp/SKILL.md:\n%s", code, errOut, out)
 	}
-	// Several names, and no name, print several whole skills in order.
-	code, out, _, _ = runCLI("skills", "get", "iwdp", "ios-safari-debug")
-	if code != ExitOK || !strings.HasPrefix(out, want) || !strings.HasSuffix(out, repoSkill(t, "ios-safari-debug")) {
-		t.Fatalf("skills get iwdp ios-safari-debug: exit %d, stdout %q", code, out)
+	// Several names print several whole skills in order; no name prints
+	// every skill (the repository has one).
+	code, out, _, _ = runCLI("skills", "get", "iwdp", "iwdp")
+	if code != ExitOK || !strings.HasPrefix(out, want) || !strings.HasSuffix(out, want) || strings.Count(out, "name: iwdp\n") != 2 {
+		t.Fatalf("skills get iwdp iwdp: exit %d, stdout %q; want the skill twice", code, out)
 	}
 	for _, args := range [][]string{{"skills", "get"}, {"skills", "get", "--all"}} {
 		code, out, _, _ = runCLI(args...)
-		if code != ExitOK || !strings.Contains(out, "name: iwdp\n") || !strings.Contains(out, "name: ios-safari-debug\n") {
+		if code != ExitOK || strings.Count(out, "---\nname: ") != 1 || !strings.Contains(out, "---\nname: iwdp\n") {
 			t.Fatalf("%v: exit %d, want every skill, got %q", args, code, out)
 		}
 	}
@@ -69,17 +70,17 @@ func TestSkillsGetPrintsTheRepositorySkill(t *testing.T) {
 func TestSkillsListShowsNamesAndShortDescriptions(t *testing.T) {
 	code, out, _, _ := runCLI("skills", "list")
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if code != ExitOK || len(lines) != 2 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "ios-safari-debug ") || !strings.HasPrefix(strings.TrimSpace(lines[1]), "iwdp ") {
-		t.Fatalf("skills list: exit %d, stdout %q; want one line per skill, sorted", code, out)
+	if code != ExitOK || len(lines) != 1 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "iwdp ") {
+		t.Fatalf("skills list: exit %d, stdout %q; want one line per skill", code, out)
 	}
 	for _, l := range lines {
-		if n := len([]rune(l)); n > 2+len("ios-safari-debug")+2+listDescriptionRunes+3 {
+		if n := len([]rune(l)); n > 2+len("iwdp")+2+listDescriptionRunes+3 {
 			t.Errorf("line of %d runes is longer than the cut description allows: %q", n, l)
 		}
 	}
 	code, out, _, _ = runCLI("--json", "skills")
 	var got []skills.Skill
-	if code != ExitOK || json.Unmarshal([]byte(out), &got) != nil || len(got) != 2 || got[0].Content != "" || got[1].Description == "" {
+	if code != ExitOK || json.Unmarshal([]byte(out), &got) != nil || len(got) != 1 || got[0].Content != "" || got[0].Description == "" {
 		t.Fatalf("--json skills: exit %d, stdout %q; want names and whole descriptions without content", code, out)
 	}
 }

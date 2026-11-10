@@ -52,7 +52,7 @@ const listingHost = "127.0.0.1"
 var listingAddr = "127.0.0.1:9221"
 
 // ListingAddr is iwdp's default listing address (host:port), which
-// IsRunning, Start, EnsureRunning, ListDevices and the iwdp transport use.
+// IsRunning, Start, ListDevices and the iwdp transport use.
 func ListingAddr() string { return listingAddr }
 
 // ProbeBudget bounds one check whether iwdp's listing answers (CheckListing,
@@ -158,7 +158,7 @@ func ownerFailure(addr string, err, bindErr error, limit time.Duration) error {
 		return logcause.Errorf("%s refuses connections but cannot be bound (%v): another process holds the port without listening, or the address is not local; no second iwdp is started", addr, bindErr)
 	}
 	const owned = "A process owns the port, so no second iwdp is started"
-	const restart = "The restart_iwdp tool and 'iwdp-cli restart-iwdp' restart it only when iwdp-mcp started it; they refuse another program's iwdp"
+	const restart = "'iwdp-cli restart-iwdp' restarts it only when iwdp-cli, or an earlier iwdp-mcp, started and recorded it; it refuses another program's iwdp"
 	switch {
 	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET):
 		// The second device check saw this from an iwdp while a page
@@ -223,8 +223,8 @@ func NewStarter(addr string) *Starter {
 	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens, identify: readIdentity, kill: syscall.Kill}
 }
 
-// std is the Starter of iwdp's default listing address, used by IsRunning,
-// Start and EnsureRunning.
+// std is the Starter of iwdp's default listing address, used by IsRunning
+// and Start.
 var std = NewStarter(listingAddr)
 
 // IsRunning checks if ios_webkit_debug_proxy answers on the listing port
@@ -509,46 +509,6 @@ func stopGroup(pgid int, exited <-chan struct{}) {
 			return
 		}
 	}
-}
-
-// StartError is an error of Status that comes from a start of iwdp: the
-// listing address was free and Status started iwdp, which failed. Every
-// other error of Status comes from its listing check, and then no start
-// was attempted.
-type StartError struct{ Err error }
-
-func (e *StartError) Error() string { return e.Err.Error() }
-func (e *StartError) Unwrap() error { return e.Err }
-
-// Status reports on iwdp at the default listing address and starts it
-// when asked (Starter.Status); the iwdp_status tool uses it.
-func Status(ctx context.Context, autoStart bool) (started bool, err error) {
-	return std.Status(ctx, autoStart)
-}
-
-// Status checks once whether iwdp answers on the listing address
-// (CheckListing) and returns false and nil when it does. When nothing owns
-// the address, it returns the ErrNotListening error, or with autoStart it
-// starts iwdp (Start) and returns true, or the failed start's error as a
-// *StartError. Otherwise it returns the check's error and starts nothing.
-// The one check serves both steps, so an owner that does not answer costs
-// one ProbeBudget; Start's own check of the free address is a bind.
-func (s *Starter) Status(ctx context.Context, autoStart bool) (started bool, err error) {
-	err = CheckListing(ctx, s.addr)
-	if !autoStart || !errors.Is(err, ErrNotListening) {
-		return false, err
-	}
-	if err := s.Start(ctx); err != nil {
-		return false, &StartError{Err: err}
-	}
-	return true, nil
-}
-
-// EnsureRunning checks if iwdp is running and starts it if not.
-// If iwdp crashed (e.g., after a large heap snapshot), this will restart it.
-// Start checks the listing first, so a running iwdp is left alone.
-func EnsureRunning(ctx context.Context) error {
-	return Start(ctx)
 }
 
 // ListDevices fetches connected devices from the listing port (9221).

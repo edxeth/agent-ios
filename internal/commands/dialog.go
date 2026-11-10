@@ -17,8 +17,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "dialog",
-		MCPName: "dialog",
-		Profile: ProfileCore,
 		Summary: "Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept|dismiss).",
 		Args: []Arg{
 			{Name: "action", Help: "status, accept, dismiss or default", Required: true},

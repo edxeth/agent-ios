@@ -12,46 +12,37 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/devtools/devtoolstest"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
 )
 
-// legacySetCookieParams are the parameters of the W0 MCP tool set_cookie
-// (cmd/iwdp-mcp SetCookieInput). Design 4.1: an existing MCP tool that a
-// registry command takes over keeps its parameters; design 4.2 row
-// "cookies set": the MCP tool is set_cookie, the W4 part adds import.
-var legacySetCookieParams = []string{"name", "value", "domain", "path", "expires", "secure", "http_only", "same_site"}
-
-// Design 4.2 row "cookies set": the registry command is the MCP tool
-// set_cookie (in the core profile, as the W0 tool was) with every legacy
-// parameter plus the import parameter curl; there is no tool
-// import_cookies. Help works and an unknown flag exits 2 before any
-// connection, as for the other W4 commands.
-func TestCookiesSetIsTheSetCookieTool(t *testing.T) {
+// Design 4.2 row "cookies set": the registry command sets one cookie
+// (name, value, domain, path, expires, secure, http-only, same-site, as
+// the W0 tool set_cookie did) and imports a file (curl). Help works and an
+// unknown flag exits 2 before any connection, as for the other W4
+// commands.
+func TestCookiesSetHelpAndFlags(t *testing.T) {
 	c, n := Lookup([]string{"cookies", "set"})
 	if c == nil || n != 2 {
 		t.Fatal("cookies set is not registered")
 	}
-	if c.MCPName != "set_cookie" || c.Profile != ProfileCore {
-		t.Fatalf("cookies set: MCP %q in profile %q, want set_cookie in core", c.MCPName, c.Profile)
+	if len(c.Args) != 2 || c.Args[0].Name != "name" || c.Args[1].Name != "value" {
+		t.Errorf("cookies set arguments %+v, want name and value", c.Args)
 	}
-	for _, other := range All() {
-		if other.MCPName == "import_cookies" {
-			t.Fatalf("%s still registers the MCP tool import_cookies", other.Name)
+	flags := map[string]FlagType{}
+	for _, f := range c.Flags {
+		flags[f.Name] = f.Type
+	}
+	for _, f := range []string{"curl", "domain", "path", "expires", "same-site"} {
+		if _, ok := flags[f]; !ok {
+			t.Errorf("cookies set lacks the flag --%s: %v", f, flags)
 		}
 	}
-	props, _ := InputSchema(c)["properties"].(map[string]any)
-	for _, p := range append(legacySetCookieParams, "curl") {
-		if _, ok := props[p]; !ok {
-			t.Errorf("set_cookie schema lacks the parameter %q: %v", p, props)
-		}
-	}
-	for _, p := range []string{"secure", "http_only"} {
-		if typ := props[p].(map[string]any)["type"]; typ != "boolean" {
-			t.Errorf("set_cookie %s has type %v, want boolean as in the W0 tool", p, typ)
+	for _, f := range []string{"secure", "http-only"} {
+		if typ, ok := flags[f]; !ok || typ != FlagBool {
+			t.Errorf("cookies set --%s: present %v, type %v; want a boolean flag", f, ok, typ)
 		}
 	}
 	var out, errb bytes.Buffer
@@ -66,39 +57,16 @@ func TestCookiesSetIsTheSetCookieTool(t *testing.T) {
 	}
 }
 
-// setCookieMCP serves the core registry tools on page p and returns a
-// client session.
-func setCookieMCP(t *testing.T, p *devtoolstest.Page, dir string) *mcp.ClientSession {
+// setCookie runs "cookies set" with argv on page p; dir resolves relative
+// paths. It returns the result, its data as JSON and the error.
+func setCookie(t *testing.T, p *devtoolstest.Page, dir string, argv ...string) (Result, string, error) {
 	t.Helper()
-	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	ps := &core.PageSession{Caller: p.Conn}
-	RegisterMCP(server, ProfileCore, func(context.Context, Globals) (Env, error) { return spEnv{ps: ps, dir: dir}, nil })
-	st, ct := mcp.NewInMemoryTransports()
-	ctx := context.Background()
-	if _, err := server.Connect(ctx, st, nil); err != nil {
-		t.Fatal(err)
+	res, err := runCmd(t, spEnv{ps: &core.PageSession{Caller: p.Conn}, dir: dir}, append([]string{"cookies", "set"}, argv...)...)
+	data, merr := json.Marshal(res.Data)
+	if merr != nil {
+		t.Fatalf("cookies set %v: result data: %v", argv, merr)
 	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cs.Close() })
-	return cs
-}
-
-func callSetCookie(t *testing.T, cs *mcp.ClientSession, args map[string]any) (*mcp.CallToolResult, string) {
-	t.Helper()
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_cookie", Arguments: args})
-	if err != nil {
-		t.Fatalf("set_cookie %v: %v", args, err)
-	}
-	var text strings.Builder
-	for _, c := range res.Content {
-		if tc, ok := c.(*mcp.TextContent); ok {
-			text.WriteString(tc.Text)
-		}
-	}
-	return res, text.String()
+	return res, string(data), err
 }
 
 func storedCookie(p *devtoolstest.Page, name string) (webkit.Cookie, bool) {
@@ -112,71 +80,60 @@ func storedCookie(p *devtoolstest.Page, name string) (webkit.Cookie, bool) {
 	return webkit.Cookie{}, false
 }
 
-// The legacy parameters keep their W0 names and meaning (cmd/iwdp-mcp
-// SetCookieInput): http_only and same_site, expires in Unix seconds with 0
-// for a session cookie. The result keeps the W0 output {ok, cookie} as
-// structured content, with the value redacted.
-func TestSetCookieToolKeepsLegacyParameters(t *testing.T) {
+// The cookie flags keep the meaning of the W0 tool set_cookie: http-only
+// and same-site, expires in Unix seconds with 0 for a session cookie. The
+// result data keeps the W0 output {ok, cookie}, with the value redacted.
+func TestCookiesSetKeepsTheW0Meaning(t *testing.T) {
 	p := devtoolstest.New(t, "https://app.test")
-	cs := setCookieMCP(t, p, t.TempDir())
+	dir := t.TempDir()
 
-	res, text := callSetCookie(t, cs, map[string]any{
-		"name": "sid", "value": "topsecret7", "domain": "app.test", "path": "/",
-		"expires": 0, "secure": true, "http_only": true, "same_site": "strict",
-	})
-	if res.IsError {
-		t.Fatalf("set_cookie: %s", text)
+	res, data, err := setCookie(t, p, dir, "sid", "topsecret7", "--domain", "app.test", "--path", "/",
+		"--expires", "0", "--secure", "--http-only", "--same-site", "strict")
+	if err != nil {
+		t.Fatalf("cookies set: %v", err)
 	}
 	got, ok := storedCookie(p, "sid")
 	want := webkit.Cookie{Name: "sid", Value: "topsecret7", Domain: "app.test", Path: "/", Secure: true, HTTPOnly: true, Session: true, SameSite: "Strict"}
 	if !ok || got != want {
 		t.Fatalf("stored %+v, want %+v (expires 0 is a session cookie)", got, want)
 	}
-	structured, _ := json.Marshal(res.StructuredContent)
-	if !strings.Contains(string(structured), `"ok":true`) || !strings.Contains(string(structured), `"name":"sid"`) || strings.Contains(string(structured)+text, "topsecret7") {
-		t.Fatalf("structured %s, text %q; want {ok, cookie} without the value", structured, text)
+	if !strings.Contains(data, `"ok":true`) || !strings.Contains(data, `"name":"sid"`) || strings.Contains(data+res.Text, "topsecret7") {
+		t.Fatalf("data %s, text %q; want {ok, cookie} without the value", data, res.Text)
 	}
 
-	if res, text = callSetCookie(t, cs, map[string]any{"name": "persist", "value": "v", "domain": "app.test", "expires": 1893456000}); res.IsError {
-		t.Fatalf("set_cookie with expires: %s", text)
+	if _, _, err = setCookie(t, p, dir, "persist", "v", "--domain", "app.test", "--expires", "1893456000"); err != nil {
+		t.Fatalf("cookies set with expires: %v", err)
 	}
 	if got, _ = storedCookie(p, "persist"); got.Session || got.Expires != 1893456000*1000 {
 		t.Fatalf("stored %+v, want expires 1893456000 s in milliseconds", got)
 	}
-
-	res, text = callSetCookie(t, cs, map[string]any{"name": "x", "value": "v", "domain": "app.test", "http_only": true, "http-only": true})
-	if !res.IsError || !strings.Contains(text, `"http-only"`) || !strings.Contains(text, `"http_only"`) {
-		t.Fatalf("both http_only and http-only: IsError %v, %q; want an error that names both", res.IsError, text)
-	}
 }
 
-// Design 4.2 row "cookies set": the import part (agent-browser
-// "cookies set --curl <file>") is the parameter curl of set_cookie.
-func TestSetCookieToolImportsAFile(t *testing.T) {
+// Design 4.2 row "cookies set": the import part is agent-browser
+// "cookies set --curl <file>".
+func TestCookiesSetImportsAFile(t *testing.T) {
 	p := devtoolstest.New(t, "https://app.test")
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "c.txt"), []byte("sid=topsecret8; theme=dark"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cs := setCookieMCP(t, p, dir)
-	res, text := callSetCookie(t, cs, map[string]any{"curl": "c.txt"})
-	if res.IsError {
-		t.Fatalf("set_cookie curl: %s", text)
+	res, data, err := setCookie(t, p, dir, "--curl", "c.txt")
+	if err != nil {
+		t.Fatalf("cookies set --curl: %v", err)
 	}
 	for _, name := range []string{"sid", "theme"} {
 		if c, ok := storedCookie(p, name); !ok || c.Domain != "app.test" {
 			t.Fatalf("cookie %s: %+v, %v; want it on the page's host app.test", name, c, ok)
 		}
 	}
-	structured, _ := json.Marshal(res.StructuredContent)
-	if !strings.Contains(string(structured), `"ok":true`) || !strings.Contains(string(structured), `"imported":2`) || strings.Contains(string(structured)+text, "topsecret8") {
-		t.Fatalf("structured %s, text %q", structured, text)
+	if !strings.Contains(data, `"ok":true`) || !strings.Contains(data, `"imported":2`) || strings.Contains(data+res.Text, "topsecret8") {
+		t.Fatalf("data %s, text %q", data, res.Text)
 	}
 }
 
-// --expires keeps the W0 meaning of the MCP parameter: Unix seconds, and
-// 0 is a session cookie (cmd/iwdp-mcp SetCookieInput: "0 or omit for
-// session cookie"). An RFC 3339 time is the CLI form.
+// --expires keeps the W0 meaning: Unix seconds, and 0 is a session cookie
+// (the W0 tool set_cookie: "0 or omit for session cookie"). An RFC 3339
+// time is the CLI form.
 func TestCookieExpiresProperty(t *testing.T) {
 	session, ms, err := cookieExpiry("0")
 	if err != nil || !session || ms != 0 {
@@ -211,19 +168,18 @@ func TestSetCookieWithAPastExpiryDeletesThatCookie(t *testing.T) {
 		{Name: "gone", Value: "v-root", Domain: "app.test", Path: "/", Session: true, SameSite: "Lax"},
 	}
 	p.Mu.Unlock()
-	cs := setCookieMCP(t, p, t.TempDir())
-	res, text := callSetCookie(t, cs, map[string]any{"name": "gone", "value": "x", "domain": "app.test", "path": "/anything", "expires": 1})
-	if res.IsError {
-		t.Fatalf("set_cookie with an expiry in the past failed: %s", text)
+	dir := t.TempDir()
+	res, data, err := setCookie(t, p, dir, "gone", "x", "--domain", "app.test", "--path", "/anything", "--expires", "1")
+	if err != nil {
+		t.Fatalf("cookies set with an expiry in the past failed: %v", err)
 	}
 	for _, want := range []string{"gone", "/anything", "deleted"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("set_cookie with an expiry in the past = %q, want it to report the deletion (%q)", text, want)
+		if !strings.Contains(res.Text, want) {
+			t.Errorf("cookies set with an expiry in the past = %q, want it to report the deletion (%q)", res.Text, want)
 		}
 	}
-	structured, _ := json.Marshal(res.StructuredContent)
-	if !strings.Contains(string(structured), `"ok":true`) || !strings.Contains(string(structured), `"deleted":true`) {
-		t.Errorf("structured %s, want ok and deleted", structured)
+	if !strings.Contains(data, `"ok":true`) || !strings.Contains(data, `"deleted":true`) {
+		t.Errorf("data %s, want ok and deleted", data)
 	}
 	p.Mu.Lock()
 	left := append([]webkit.Cookie(nil), p.Cookies...)
@@ -234,9 +190,8 @@ func TestSetCookieWithAPastExpiryDeletesThatCookie(t *testing.T) {
 
 	// A WebKit that keeps the cookie fails the read-back, as before.
 	p.Server.Handle("Page.setCookie", func(fakewebkit.Call) (any, *fakewebkit.Error) { return nil, nil })
-	res, text = callSetCookie(t, cs, map[string]any{"name": "gone", "value": "x", "domain": "app.test", "path": "/", "expires": "2001-01-01T00:00:00Z"})
-	if !res.IsError || !strings.Contains(text, "kept") {
-		t.Fatalf("set_cookie with a past expiry that WebKit ignores: IsError %v, %q; want the read-back failure", res.IsError, text)
+	if _, _, err = setCookie(t, p, dir, "gone", "x", "--domain", "app.test", "--path", "/", "--expires", "2001-01-01T00:00:00Z"); err == nil || !strings.Contains(err.Error(), "kept") {
+		t.Fatalf("cookies set with a past expiry that WebKit ignores: %v; want the read-back failure", err)
 	}
 }
 

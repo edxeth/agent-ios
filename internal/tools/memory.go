@@ -213,14 +213,6 @@ func NewHeapTrackingCollector() *HeapTrackingCollector {
 	return &HeapTrackingCollector{}
 }
 
-// PipelineHealthy reports whether the event pipeline survived the massive
-// trackingStart event. If false, garbageCollected events won't arrive.
-func (c *HeapTrackingCollector) PipelineHealthy() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.pipelineHealthy
-}
-
 // Start begins heap tracking, collecting garbageCollected events.
 // It waits up to HeapTrackingReadyTimeout for the trackingStart event to
 // confirm the event pipeline is healthy.

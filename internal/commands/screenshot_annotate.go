@@ -29,17 +29,12 @@ import (
 // docs/design/agentic-parity.md, section 3.9; agent-browser "screenshot").
 // The capture itself is the W0 code (tools.CaptureScreenshot). The
 // command also takes the legacy iwdp-cli forms (-o file, --full-page,
-// --selector css). It is also the MCP tool take_screenshot: the legacy
-// parameters full_page and selector keep working, the MCP binding returns
-// the PNG as image content next to the file path (mcpResult), and
-// annotate and if_changed are new.
+// --selector css).
 func init() {
 	Register(&Command{
 		Name:    "screenshot",
-		MCPName: "take_screenshot", Profile: ProfileCore,
-		MCPAliases: map[string]string{"full_page": "full-page", "if_changed": "if-changed"},
-		Summary:    "Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture.",
-		Args:       []Arg{{Name: "path", Help: "PNG file to write (default $TMPDIR/iwdp-screenshot-<time>.png)"}},
+		Summary: "Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture.",
+		Args:    []Arg{{Name: "path", Help: "PNG file to write (default $TMPDIR/iwdp-screenshot-<time>.png)"}},
 		Flags: []Flag{
 			{Name: "output", Short: "o", Type: FlagPath, Help: "PNG file to write (same as path)"},
 			{Name: "full-page", Type: FlagBool, Help: "capture the whole scrollable document"},

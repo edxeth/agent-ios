@@ -2,115 +2,113 @@
 
 <!-- Generated from the command registry by "make docs" (go run ./internal/commands/refgen docs/commands.md). Do not edit by hand. -->
 
-This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs with the MCP server. For each command it gives the usage, the arguments, the flags, the MCP tool name and the MCP profile that registers the tool.
+This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.
 
-- A command without an MCP tool is a CLI command only.
-- The MCP server registers the tools of the selected profile: `core` by default, or any comma-separated set of `core`, `devtools` and `legacy`, or `all` (`IWDP_MCP_TOOLS` or `iwdp-mcp --tools`). See [MCP profiles](guide.md#mcp-profiles).
-- The legacy commands of `iwdp-cli` (for example `eval`, `cookies`, `set-breakpoint`) and the legacy MCP tools are not in the registry. `iwdp-cli --help` lists them, and [the migration notes](migration.md) map them to registry commands.
+- The legacy commands of `iwdp-cli` (for example `eval`, `cookies`, `set-breakpoint`) are not in the registry. `iwdp-cli --help` lists them, and [the migration notes](migration.md) map them to registry commands.
 - `iwdp-cli <command> --help` prints the same usage and never connects to a page.
 
 Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--transport`, `--max-output`, `--content-boundaries`, `--reservation`, `--wait-lease`, `--takeover`.
 
 ## Index
 
-| Command | MCP tool | Profile | Summary |
-|---|---|---|---|
-| [`addinitscript`](#addinitscript) | `add_init_script` | `devtools` | Run a script in every new document of the page, before page scripts when the page is paused on start (partial otherwise). Prints the script id. |
-| [`back`](#back) | `go_back` | `core` | Go back in the page's history (history.back), then wait for the load state. |
-| [`blur`](#blur) |  |  | Blur the focused element. |
-| [`cdp log`](#cdp-log) |  |  | Show how often CDP clients sent methods that the endpoint does not translate (answered "wasn't found", never forwarded). |
-| [`cdp start`](#cdp-start) |  |  | Start the CDP endpoint on 127.0.0.1 (a running endpoint is kept); then run 'get cdp-url' for a client URL. |
-| [`cdp status`](#cdp-status) |  |  | Show the CDP endpoint: address, allowed origins and, per endpoint record, its session, page, scope, connections and attachments. |
-| [`cdp stop`](#cdp-stop) |  |  | Stop the CDP endpoint: close its client connections (each releases its state) and revoke every CDP URL. |
-| [`check`](#check) | `check` | `core` | Check a checkbox or radio (a hidden input through its label) and read the state back. |
-| [`click`](#click) | `click` | `core` | Click an element with synthetic pointer and mouse events after the actionability checks. |
-| [`close`](#close) | `close_session` | `core` | End this session (--session): release its page leases and run their cleanup. The Safari tab stays open; other sessions are not touched. |
-| [`console`](#console) | `get_console_messages` | `devtools` | Print the console messages captured since the lease (and up to 100 that WebKit replays). For a live stream use 'console -d \<duration\>' or 'console --follow'. |
-| [`console clear`](#console-clear) | `clear_console` | `devtools` | Empty the console buffer and WebKit's stored messages. |
-| [`cookies clear`](#cookies-clear) | `clear_cookies` | `devtools` | Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back. |
-| [`cookies set`](#cookies-set) | `set_cookie` | `core` | Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result. |
-| [`daemon logs`](#daemon-logs) |  |  | Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log). |
-| [`daemon run`](#daemon-run) |  |  | Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeout (clients start it on demand). |
-| [`daemon start`](#daemon-start) |  |  | Start the daemon in the background unless it runs. |
-| [`daemon status`](#daemon-status) |  |  | Show the daemon, its pages, leases and device reservations. |
-| [`daemon stop`](#daemon-stop) |  |  | Stop the daemon after the cleanup of every page (5 s at most). |
-| [`dblclick`](#dblclick) | `dblclick` | `devtools` | Double-click an element: two click sequences (detail 1 and 2), then dblclick. |
-| [`device list`](#device-list) |  |  | List the live device reservations. |
-| [`device release`](#device-release) |  |  | Release an owner's device reservation. |
-| [`device reserve`](#device-reserve) |  |  | Reserve a physical device for an owner, so that only that owner's sessions attach to its pages. |
-| [`dialog`](#dialog) | `dialog` | `core` | Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept\|dismiss). |
-| [`diff screenshot`](#diff-screenshot) | `diff_screenshot` | `devtools` | Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ. |
-| [`diff snapshot`](#diff-snapshot) | `diff_snapshot` | `core` | Show what changed between the last two snapshots of this session (a unified line diff). |
-| [`drag`](#drag) | `drag` | `devtools` | Drag from one element to another in 10 pointer steps with synthetic drag events (best effort). |
-| [`emulate network`](#emulate-network) | `set_emulated_conditions` | `devtools` | Throttle the page's network to a preset (4g, fast-3g, slow-3g) or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have. |
-| [`errors`](#errors) | `get_errors` | `devtools` | Print uncaught errors and unhandled promise rejections with their stacks (the first run installs the error hooks). |
-| [`fill`](#fill) | `fill` | `core` | Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change. |
-| [`find`](#find) | `find` | `core` | Find elements by role, text, label, placeholder, alt, title, testid, or first\|last\|nth of a selector; print them with refs. |
-| [`focus`](#focus) | `focus` | `devtools` | Focus an element (el.focus()). |
-| [`forward`](#forward) | `go_forward` | `core` | Go forward in the page's history (history.forward), then wait for the load state. |
-| [`frame`](#frame) | `select_frame` | `core` | Make an iframe (@eN, CSS or locator) the frame that this session's later commands work in, or return to the top document with main. |
-| [`get`](#get) | `get` | `core` | Get url, title, or text, html, value, attr, count, box or styles of a target (@ref, CSS selector or locator). |
-| [`get cdp-url`](#get-cdp-url) | `get_cdp_url` | `devtools` | Print a CDP URL for this session's page (starts the CDP endpoint if needed). Clients act for this session; use the URL exactly as printed. |
-| [`highlight`](#highlight) | `highlight_node` | `core` | Highlight an element on the device screen (DOM.highlightNode) until release. |
-| [`hit-test`](#hit-test) | `hit_test` | `core` | Print the element at a viewport point (CSS pixels): its snapshot line with a ref, its tag and its box. |
-| [`hover`](#hover) | `hover` | `core` | Move the pointer over an element (synthetic events do not set CSS :hover; --css forces it). |
-| [`is`](#is) | `is` | `core` | Print true or false: is a target visible, enabled, checked, editable or focused. |
-| [`keyboard`](#keyboard) | `keyboard` | `devtools` | Type into the focused element (keyboard type \<text\>) or insert text without key events (keyboard inserttext \<text\>). |
-| [`keydown`](#keydown) |  |  | Send keydown for a key on the focused element (no default action). |
-| [`keyup`](#keyup) |  |  | Send keyup for a key on the focused element. |
-| [`lease break`](#lease-break) |  |  | End the lease on a page whoever holds it, with its cleanup. |
-| [`lease takeover`](#lease-takeover) |  |  | Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval). |
-| [`mouse`](#mouse) | `mouse` | `devtools` | Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx]. |
-| [`network har start`](#network-har-start) | `har_start` | `devtools` | Start recording a HAR of the requests from now on; 'network har stop' writes it. |
-| [`network har stop`](#network-har-stop) | `har_stop` | `devtools` | Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values masked unless --show-secrets). |
-| [`network request`](#network-request) | `get_network_request` | `devtools` | Show one request of 'network requests': headers, request body and status; --body adds the response body. |
-| [`network requests`](#network-requests) | `list_network_requests` | `devtools` | List the requests captured since the lease: id, method, status, type and URL; network resets show as gaps. |
-| [`network route`](#network-route) | `network_route` | `devtools` | Abort, fulfill or delay requests whose URL matches: a glob with \* and \*\* matches the whole URL, other text any URL that contains it. Without --abort, --body or --status the request continues after --delay. |
-| [`network unroute`](#network-unroute) | `network_unroute` | `devtools` | Remove the routes with this pattern (all without one); requests that a route holds continue unchanged. |
-| [`open`](#open) | `navigate` | `core` | Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open). The MCP tool navigate takes only http and https URLs. |
-| [`press`](#press) | `press` | `core` | Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action. |
-| [`profiler start`](#profiler-start) | `profiler_start` | `devtools` | Start sampling the page's JavaScript with the WebKit ScriptProfiler (profiler stop writes the .cpuprofile). |
-| [`profiler stop`](#profiler-stop) | `profiler_stop` | `devtools` | Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mode 0600) to path, or to a new file in the temp directory. |
-| [`pushstate`](#pushstate) | `pushstate` | `devtools` | Change the URL without loading: the Next.js router when the page has one, else history.pushState and a popstate event. |
-| [`read`](#read) | `read_page` | `core` | Print the visible text of the current page, or of an http(s) URL fetched on this computer; --outline prints only the headings. |
-| [`reload`](#reload) | `reload` | `core` | Reload the page (Page.reload after withdrawing unused dialog answers), then wait for the load state. |
-| [`removeinitscript`](#removeinitscript) | `remove_init_script` | `devtools` | Remove an init script of this session by the id that addinitscript printed. |
-| [`screenshot`](#screenshot) | `take_screenshot` | `core` | Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture. |
-| [`scroll`](#scroll) | `scroll` | `core` | Scroll the window or an element up, down, left or right (default 300 px). |
-| [`scrollintoview`](#scrollintoview) | `scroll_into_view` | `devtools` | Scroll an element into the center of the viewport. |
-| [`select`](#select) | `select_option` | `core` | Select options of a \<select\> by value, then by visible label; dispatches input and change. |
-| [`session`](#session) |  |  | Print the current session name (--session or IWDP_SESSION; default "default"). |
-| [`session info`](#session-info) | `session_info` | `core` | Show this session's leased pages: page, lease state (active or lost), epoch and last use. |
-| [`session list`](#session-list) |  |  | List the sessions that hold page leases in the daemon. |
-| [`session release`](#session-release) |  |  | Release this session's page leases and run their cleanup (same as close). |
-| [`set credentials`](#set-credentials) | `set_credentials` | `devtools` | Send HTTP Basic credentials to the requests of one origin only; on a command line the password is the first line of stdin. Supported only where a test has shown that other origins and cross-origin redirects never get them (WebKitGTK today). |
-| [`set device`](#set-device) |  |  | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
-| [`set geo`](#set-geo) | `set_geolocation` | `devtools` | Answer navigator.geolocation with this position (a page-side shim: WebKit has no geolocation override). |
-| [`set headers`](#set-headers) | `set_extra_headers` | `devtools` | Send these extra HTTP headers with every request of the page; '{}' removes this session's headers. |
-| [`set media`](#set-media) | `set_media` | `devtools` | Emulate prefers-color-scheme (dark, light or no-preference), and optionally reduced motion and more contrast. |
-| [`set offline`](#set-offline) | `set_offline` | `devtools` | Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device. |
-| [`set useragent`](#set-useragent) | `set_user_agent` | `devtools` | Override the user agent string of the page (--reset removes the override). |
-| [`set viewport`](#set-viewport) |  |  | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
-| [`skills get`](#skills-get) |  |  | Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill. |
-| [`skills list`](#skills-list) |  |  | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
-| [`skills path`](#skills-path) |  |  | Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all. |
-| [`snapshot`](#snapshot) | `snapshot` | `core` | Print the page's accessibility tree with @eN refs for later commands. |
-| [`state load`](#state-load) | `state_load` | `devtools` | Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's. |
-| [`state save`](#state-save) | `state_save` | `devtools` | Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials). |
-| [`storage`](#storage) | `storage` | `devtools` | Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session). |
-| [`swipe`](#swipe) | `swipe` | `core` | Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down). |
-| [`tab`](#tab) | `tab_select` | `core` | Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs. |
-| [`tab close`](#tab-close) | `tab_close` | `devtools` | Close a tab (default: the current one) with window.close(); works only for tabs that a script opened. |
-| [`tab list`](#tab-list) | `tab_list` | `core` | List the pages of the device as tabs t1, t2, ... with labels; \* marks this session's current tab. |
-| [`tab new`](#tab-new) | `tab_new` | `devtools` | Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end. |
-| [`tap`](#tap) | `tap` | `core` | Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and touchend, then the click sequence with pointerType touch. |
-| [`trace start`](#trace-start) | `trace_start` | `devtools` | Start a WebKit Timeline recording of the page for a Chrome trace file (trace stop writes it). |
-| [`trace stop`](#trace-stop) | `trace_stop` | `devtools` | Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to path, or to a new file in the temp directory. |
-| [`type`](#type) | `type_text` | `core` | Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) into an element, or with only \<text\> into the focused element. |
-| [`uncheck`](#uncheck) |  |  | Uncheck a checkbox (a hidden input through its label) and read the state back. |
-| [`upload`](#upload) | `upload_file` | `core` | Set the files of a file input (read on the host, at most 8 MiB in total) and dispatch input and change. |
-| [`vitals`](#vitals) | `vitals` | `devtools` | Show the page's Web Vitals: LCP, CLS, TTFB, FCP, INP, DOMContentLoaded and load (unavailable ones say why). |
-| [`wait`](#wait) | `wait` | `core` | Wait for milliseconds, an element state, text, a URL glob, a load state or a JavaScript condition (default timeout 25 s; exit 3 on timeout). |
+| Command | Summary |
+|---|---|
+| [`addinitscript`](#addinitscript) | Run a script in every new document of the page, before page scripts when the page is paused on start (partial otherwise). Prints the script id. |
+| [`back`](#back) | Go back in the page's history (history.back), then wait for the load state. |
+| [`blur`](#blur) | Blur the focused element. |
+| [`cdp log`](#cdp-log) | Show how often CDP clients sent methods that the endpoint does not translate (answered "wasn't found", never forwarded). |
+| [`cdp start`](#cdp-start) | Start the CDP endpoint on 127.0.0.1 (a running endpoint is kept); then run 'get cdp-url' for a client URL. |
+| [`cdp status`](#cdp-status) | Show the CDP endpoint: address, allowed origins and, per endpoint record, its session, page, scope, connections and attachments. |
+| [`cdp stop`](#cdp-stop) | Stop the CDP endpoint: close its client connections (each releases its state) and revoke every CDP URL. |
+| [`check`](#check) | Check a checkbox or radio (a hidden input through its label) and read the state back. |
+| [`click`](#click) | Click an element with synthetic pointer and mouse events after the actionability checks. |
+| [`close`](#close) | End this session (--session): release its page leases and run their cleanup. The Safari tab stays open; other sessions are not touched. |
+| [`console`](#console) | Print the console messages captured since the lease (and up to 100 that WebKit replays). For a live stream use 'console -d \<duration\>' or 'console --follow'. |
+| [`console clear`](#console-clear) | Empty the console buffer and WebKit's stored messages. |
+| [`cookies clear`](#cookies-clear) | Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back. |
+| [`cookies set`](#cookies-set) | Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result. |
+| [`daemon logs`](#daemon-logs) | Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log). |
+| [`daemon run`](#daemon-run) | Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeout (clients start it on demand). |
+| [`daemon start`](#daemon-start) | Start the daemon in the background unless it runs. |
+| [`daemon status`](#daemon-status) | Show the daemon, its pages, leases and device reservations. |
+| [`daemon stop`](#daemon-stop) | Stop the daemon after the cleanup of every page (5 s at most). |
+| [`dblclick`](#dblclick) | Double-click an element: two click sequences (detail 1 and 2), then dblclick. |
+| [`device list`](#device-list) | List the live device reservations. |
+| [`device release`](#device-release) | Release an owner's device reservation. |
+| [`device reserve`](#device-reserve) | Reserve a physical device for an owner, so that only that owner's sessions attach to its pages. |
+| [`dialog`](#dialog) | Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept\|dismiss). |
+| [`diff screenshot`](#diff-screenshot) | Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ. |
+| [`diff snapshot`](#diff-snapshot) | Show what changed between the last two snapshots of this session (a unified line diff). |
+| [`drag`](#drag) | Drag from one element to another in 10 pointer steps with synthetic drag events (best effort). |
+| [`emulate network`](#emulate-network) | Throttle the page's network to a preset (4g, fast-3g, slow-3g) or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have. |
+| [`errors`](#errors) | Print uncaught errors and unhandled promise rejections with their stacks (the first run installs the error hooks). |
+| [`fill`](#fill) | Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change. |
+| [`find`](#find) | Find elements by role, text, label, placeholder, alt, title, testid, or first\|last\|nth of a selector; print them with refs. |
+| [`focus`](#focus) | Focus an element (el.focus()). |
+| [`forward`](#forward) | Go forward in the page's history (history.forward), then wait for the load state. |
+| [`frame`](#frame) | Make an iframe (@eN, CSS or locator) the frame that this session's later commands work in, or return to the top document with main. |
+| [`get`](#get) | Get url, title, or text, html, value, attr, count, box or styles of a target (@ref, CSS selector or locator). |
+| [`get cdp-url`](#get-cdp-url) | Print a CDP URL for this session's page (starts the CDP endpoint if needed). Clients act for this session; use the URL exactly as printed. |
+| [`highlight`](#highlight) | Highlight an element on the device screen (DOM.highlightNode) until release. |
+| [`hit-test`](#hit-test) | Print the element at a viewport point (CSS pixels): its snapshot line with a ref, its tag and its box. |
+| [`hover`](#hover) | Move the pointer over an element (synthetic events do not set CSS :hover; --css forces it). |
+| [`is`](#is) | Print true or false: is a target visible, enabled, checked, editable or focused. |
+| [`keyboard`](#keyboard) | Type into the focused element (keyboard type \<text\>) or insert text without key events (keyboard inserttext \<text\>). |
+| [`keydown`](#keydown) | Send keydown for a key on the focused element (no default action). |
+| [`keyup`](#keyup) | Send keyup for a key on the focused element. |
+| [`lease break`](#lease-break) | End the lease on a page whoever holds it, with its cleanup. |
+| [`lease takeover`](#lease-takeover) | Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval). |
+| [`mouse`](#mouse) | Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx]. |
+| [`network har start`](#network-har-start) | Start recording a HAR of the requests from now on; 'network har stop' writes it. |
+| [`network har stop`](#network-har-stop) | Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values masked unless --show-secrets). |
+| [`network request`](#network-request) | Show one request of 'network requests': headers, request body and status; --body adds the response body. |
+| [`network requests`](#network-requests) | List the requests captured since the lease: id, method, status, type and URL; network resets show as gaps. |
+| [`network route`](#network-route) | Abort, fulfill or delay requests whose URL matches: a glob with \* and \*\* matches the whole URL, other text any URL that contains it. Without --abort, --body or --status the request continues after --delay. |
+| [`network unroute`](#network-unroute) | Remove the routes with this pattern (all without one); requests that a route holds continue unchanged. |
+| [`open`](#open) | Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open). |
+| [`press`](#press) | Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action. |
+| [`profiler start`](#profiler-start) | Start sampling the page's JavaScript with the WebKit ScriptProfiler (profiler stop writes the .cpuprofile). |
+| [`profiler stop`](#profiler-stop) | Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mode 0600) to path, or to a new file in the temp directory. |
+| [`pushstate`](#pushstate) | Change the URL without loading: the Next.js router when the page has one, else history.pushState and a popstate event. |
+| [`read`](#read) | Print the visible text of the current page, or of an http(s) URL fetched on this computer; --outline prints only the headings. |
+| [`reload`](#reload) | Reload the page (Page.reload after withdrawing unused dialog answers), then wait for the load state. |
+| [`removeinitscript`](#removeinitscript) | Remove an init script of this session by the id that addinitscript printed. |
+| [`screenshot`](#screenshot) | Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture. |
+| [`scroll`](#scroll) | Scroll the window or an element up, down, left or right (default 300 px). |
+| [`scrollintoview`](#scrollintoview) | Scroll an element into the center of the viewport. |
+| [`select`](#select) | Select options of a \<select\> by value, then by visible label; dispatches input and change. |
+| [`session`](#session) | Print the current session name (--session or IWDP_SESSION; default "default"). |
+| [`session info`](#session-info) | Show this session's leased pages: page, lease state (active or lost), epoch and last use. |
+| [`session list`](#session-list) | List the sessions that hold page leases in the daemon. |
+| [`session release`](#session-release) | Release this session's page leases and run their cleanup (same as close). |
+| [`set credentials`](#set-credentials) | Send HTTP Basic credentials to the requests of one origin only; on a command line the password is the first line of stdin. Supported only where a test has shown that other origins and cross-origin redirects never get them (WebKitGTK today). |
+| [`set device`](#set-device) | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
+| [`set geo`](#set-geo) | Answer navigator.geolocation with this position (a page-side shim: WebKit has no geolocation override). |
+| [`set headers`](#set-headers) | Send these extra HTTP headers with every request of the page; '{}' removes this session's headers. |
+| [`set media`](#set-media) | Emulate prefers-color-scheme (dark, light or no-preference), and optionally reduced motion and more contrast. |
+| [`set offline`](#set-offline) | Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device. |
+| [`set useragent`](#set-useragent) | Override the user agent string of the page (--reset removes the override). |
+| [`set viewport`](#set-viewport) | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
+| [`skills get`](#skills-get) | Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill. |
+| [`skills list`](#skills-list) | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
+| [`skills path`](#skills-path) | Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all. |
+| [`snapshot`](#snapshot) | Print the page's accessibility tree with @eN refs for later commands. |
+| [`state load`](#state-load) | Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's. |
+| [`state save`](#state-save) | Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials). |
+| [`storage`](#storage) | Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session). |
+| [`swipe`](#swipe) | Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down). |
+| [`tab`](#tab) | Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs. |
+| [`tab close`](#tab-close) | Close a tab (default: the current one) with window.close(); works only for tabs that a script opened. |
+| [`tab list`](#tab-list) | List the pages of the device as tabs t1, t2, ... with labels; \* marks this session's current tab. |
+| [`tab new`](#tab-new) | Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end. |
+| [`tap`](#tap) | Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and touchend, then the click sequence with pointerType touch. |
+| [`trace start`](#trace-start) | Start a WebKit Timeline recording of the page for a Chrome trace file (trace stop writes it). |
+| [`trace stop`](#trace-stop) | Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to path, or to a new file in the temp directory. |
+| [`type`](#type) | Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) into an element, or with only \<text\> into the focused element. |
+| [`uncheck`](#uncheck) | Uncheck a checkbox (a hidden input through its label) and read the state back. |
+| [`upload`](#upload) | Set the files of a file input (read on the host, at most 8 MiB in total) and dispatch input and change. |
+| [`vitals`](#vitals) | Show the page's Web Vitals: LCP, CLS, TTFB, FCP, INP, DOMContentLoaded and load (unavailable ones say why). |
+| [`wait`](#wait) | Wait for milliseconds, an element state, text, a URL glob, a load state or a JavaScript condition (default timeout 25 s; exit 3 on timeout). |
 
 ## Commands
 
@@ -122,7 +120,6 @@ iwdp-cli addinitscript [<script>] [flags]
 
 Run a script in every new document of the page, before page scripts when the page is paused on start (partial otherwise). Prints the script id.
 
-- MCP tool: `add_init_script` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -141,7 +138,6 @@ iwdp-cli back [flags]
 
 Go back in the page's history (history.back), then wait for the load state.
 
-- MCP tool: `go_back` (profile `core`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -156,7 +152,6 @@ iwdp-cli blur
 
 Blur the focused element.
 
-- MCP tool: none (CLI only)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -168,7 +163,6 @@ iwdp-cli cdp log
 
 Show how often CDP clients sent methods that the endpoint does not translate (answered "wasn't found", never forwarded).
 
-- MCP tool: none (CLI only)
 - Page: none
 
 ### `cdp start`
@@ -179,7 +173,6 @@ iwdp-cli cdp start [flags]
 
 Start the CDP endpoint on 127.0.0.1 (a running endpoint is kept); then run 'get cdp-url' for a client URL.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 | Flag | Value | Description |
@@ -195,7 +188,6 @@ iwdp-cli cdp status
 
 Show the CDP endpoint: address, allowed origins and, per endpoint record, its session, page, scope, connections and attachments.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 ### `cdp stop`
@@ -206,7 +198,6 @@ iwdp-cli cdp stop
 
 Stop the CDP endpoint: close its client connections (each releases its state) and revoke every CDP URL.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 ### `check`
@@ -217,7 +208,6 @@ iwdp-cli check <target> [flags]
 
 Check a checkbox or radio (a hidden input through its label) and read the state back.
 
-- MCP tool: `check` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -238,8 +228,6 @@ iwdp-cli click <target> [flags]
 
 Click an element with synthetic pointer and mouse events after the actionability checks.
 
-- MCP tool: `click` (profile `core`)
-- Legacy MCP parameters: `selector` for `target`
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -262,7 +250,6 @@ iwdp-cli close
 
 End this session (--session): release its page leases and run their cleanup. The Safari tab stays open; other sessions are not touched.
 
-- MCP tool: `close_session` (profile `core`)
 - Page: none
 
 ### `console`
@@ -273,7 +260,6 @@ iwdp-cli console [flags]
 
 Print the console messages captured since the lease (and up to 100 that WebKit replays). For a live stream use 'console -d \<duration\>' or 'console --follow'.
 
-- MCP tool: `get_console_messages` (profile `devtools`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -290,7 +276,6 @@ iwdp-cli console clear
 
 Empty the console buffer and WebKit's stored messages.
 
-- MCP tool: `clear_console` (profile `devtools`)
 - Page: leases the session's page
 
 ### `cookies clear`
@@ -301,7 +286,6 @@ iwdp-cli cookies clear [flags]
 
 Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back.
 
-- MCP tool: `clear_cookies` (profile `devtools`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -316,8 +300,6 @@ iwdp-cli cookies set [<name>] [<value>] [flags]
 
 Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result.
 
-- MCP tool: `set_cookie` (profile `core`)
-- Legacy MCP parameters: `http_only` for `http-only`, `same_site` for `same-site`
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -343,7 +325,6 @@ iwdp-cli daemon logs [flags]
 
 Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log).
 
-- MCP tool: none (CLI only)
 - Page: none; runs in the client process, not in the daemon
 
 | Flag | Value | Description |
@@ -358,7 +339,6 @@ iwdp-cli daemon run [flags]
 
 Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeout (clients start it on demand).
 
-- MCP tool: none (CLI only)
 - Page: none; runs in the client process, not in the daemon
 
 | Flag | Value | Description |
@@ -375,7 +355,6 @@ iwdp-cli daemon start [flags]
 
 Start the daemon in the background unless it runs.
 
-- MCP tool: none (CLI only)
 - Page: none; runs in the client process, not in the daemon
 
 | Flag | Value | Description |
@@ -392,7 +371,6 @@ iwdp-cli daemon status
 
 Show the daemon, its pages, leases and device reservations.
 
-- MCP tool: none (CLI only)
 - Page: none; runs in the client process, not in the daemon
 
 ### `daemon stop`
@@ -403,7 +381,6 @@ iwdp-cli daemon stop
 
 Stop the daemon after the cleanup of every page (5 s at most).
 
-- MCP tool: none (CLI only)
 - Page: none; runs in the client process, not in the daemon
 
 ### `dblclick`
@@ -414,7 +391,6 @@ iwdp-cli dblclick <target> [flags]
 
 Double-click an element: two click sequences (detail 1 and 2), then dblclick.
 
-- MCP tool: `dblclick` (profile `devtools`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -434,7 +410,6 @@ iwdp-cli device list
 
 List the live device reservations.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 ### `device release`
@@ -445,7 +420,6 @@ iwdp-cli device release [flags]
 
 Release an owner's device reservation.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 | Flag | Value | Description |
@@ -461,7 +435,6 @@ iwdp-cli device reserve [flags]
 
 Reserve a physical device for an owner, so that only that owner's sessions attach to its pages.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 | Flag | Value | Description |
@@ -478,7 +451,6 @@ iwdp-cli dialog <action> [<value>]
 
 Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept|dismiss).
 
-- MCP tool: `dialog` (profile `core`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -494,7 +466,6 @@ iwdp-cli diff screenshot [flags]
 
 Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ.
 
-- MCP tool: `diff_screenshot` (profile `devtools`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -510,7 +481,6 @@ iwdp-cli diff snapshot
 
 Show what changed between the last two snapshots of this session (a unified line diff).
 
-- MCP tool: `diff_snapshot` (profile `core`)
 - Page: uses the session's page
 
 ### `drag`
@@ -521,7 +491,6 @@ iwdp-cli drag <target> <destination> [flags]
 
 Drag from one element to another in 10 pointer steps with synthetic drag events (best effort).
 
-- MCP tool: `drag` (profile `devtools`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -542,7 +511,6 @@ iwdp-cli emulate network [<preset>] [flags]
 
 Throttle the page's network to a preset (4g, fast-3g, slow-3g) or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have.
 
-- MCP tool: `set_emulated_conditions` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -561,7 +529,6 @@ iwdp-cli errors [flags]
 
 Print uncaught errors and unhandled promise rejections with their stacks (the first run installs the error hooks).
 
-- MCP tool: `get_errors` (profile `devtools`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -576,8 +543,6 @@ iwdp-cli fill <target> [<text>] [flags]
 
 Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change.
 
-- MCP tool: `fill` (profile `core`)
-- Legacy MCP parameters: `selector` for `target`, `value` for `text`
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -599,7 +564,6 @@ iwdp-cli find <kind> <value> [<action>...] [flags]
 
 Find elements by role, text, label, placeholder, alt, title, testid, or first|last|nth of a selector; print them with refs.
 
-- MCP tool: `find` (profile `core`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -621,7 +585,6 @@ iwdp-cli focus <target>
 
 Focus an element (el.focus()).
 
-- MCP tool: `focus` (profile `devtools`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -637,7 +600,6 @@ iwdp-cli forward [flags]
 
 Go forward in the page's history (history.forward), then wait for the load state.
 
-- MCP tool: `go_forward` (profile `core`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -652,7 +614,6 @@ iwdp-cli frame <target>
 
 Make an iframe (@eN, CSS or locator) the frame that this session's later commands work in, or return to the top document with main.
 
-- MCP tool: `select_frame` (profile `core`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -667,7 +628,6 @@ iwdp-cli get <what> [<target>] [<name>]
 
 Get url, title, or text, html, value, attr, count, box or styles of a target (@ref, CSS selector or locator).
 
-- MCP tool: `get` (profile `core`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -684,7 +644,6 @@ iwdp-cli get cdp-url [flags]
 
 Print a CDP URL for this session's page (starts the CDP endpoint if needed). Clients act for this session; use the URL exactly as printed.
 
-- MCP tool: `get_cdp_url` (profile `devtools`)
 - Page: none
 
 | Flag | Value | Description |
@@ -700,8 +659,6 @@ iwdp-cli highlight [<target>] [flags]
 
 Highlight an element on the device screen (DOM.highlightNode) until release.
 
-- MCP tool: `highlight_node` (profile `core`)
-- Legacy MCP parameters: `node_id` for `node-id`, `selector` for `target`
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -721,7 +678,6 @@ iwdp-cli hit-test <x> <y>
 
 Print the element at a viewport point (CSS pixels): its snapshot line with a ref, its tag and its box.
 
-- MCP tool: `hit_test` (profile `core`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -737,7 +693,6 @@ iwdp-cli hover <target> [flags]
 
 Move the pointer over an element (synthetic events do not set CSS :hover; --css forces it).
 
-- MCP tool: `hover` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -758,7 +713,6 @@ iwdp-cli is <state> <target>
 
 Print true or false: is a target visible, enabled, checked, editable or focused.
 
-- MCP tool: `is` (profile `core`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -774,7 +728,6 @@ iwdp-cli keyboard <mode> <text> [flags]
 
 Type into the focused element (keyboard type \<text\>) or insert text without key events (keyboard inserttext \<text\>).
 
-- MCP tool: `keyboard` (profile `devtools`)
 - Page: leases the session's page
 - Default deadline: 30s (`--timeout` overrides it)
 
@@ -795,7 +748,6 @@ iwdp-cli keydown <key>
 
 Send keydown for a key on the focused element (no default action).
 
-- MCP tool: none (CLI only)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -811,7 +763,6 @@ iwdp-cli keyup <key>
 
 Send keyup for a key on the focused element.
 
-- MCP tool: none (CLI only)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -827,7 +778,6 @@ iwdp-cli lease break <page>
 
 End the lease on a page whoever holds it, with its cleanup.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 | Argument | Required | Description |
@@ -842,7 +792,6 @@ iwdp-cli lease takeover [<page>]
 
 Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval).
 
-- MCP tool: none (CLI only)
 - Page: none
 
 | Argument | Required | Description |
@@ -857,7 +806,6 @@ iwdp-cli mouse <action> [<a>] [<b>] [flags]
 
 Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx].
 
-- MCP tool: `mouse` (profile `devtools`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -879,7 +827,6 @@ iwdp-cli network har start [flags]
 
 Start recording a HAR of the requests from now on; 'network har stop' writes it.
 
-- MCP tool: `har_start` (profile `devtools`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -894,7 +841,6 @@ iwdp-cli network har stop [<path>] [flags]
 
 Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values masked unless --show-secrets).
 
-- MCP tool: `har_stop` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -913,7 +859,6 @@ iwdp-cli network request <id> [flags]
 
 Show one request of 'network requests': headers, request body and status; --body adds the response body.
 
-- MCP tool: `get_network_request` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -933,7 +878,6 @@ iwdp-cli network requests [flags]
 
 List the requests captured since the lease: id, method, status, type and URL; network resets show as gaps.
 
-- MCP tool: `list_network_requests` (profile `devtools`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -952,7 +896,6 @@ iwdp-cli network route <url> [flags]
 
 Abort, fulfill or delay requests whose URL matches: a glob with \* and \*\* matches the whole URL, other text any URL that contains it. Without --abort, --body or --status the request continues after --delay.
 
-- MCP tool: `network_route` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -976,7 +919,6 @@ iwdp-cli network unroute [<url>]
 
 Remove the routes with this pattern (all without one); requests that a route holds continue unchanged.
 
-- MCP tool: `network_unroute` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -989,9 +931,8 @@ Remove the routes with this pattern (all without one); requests that a route hol
 iwdp-cli open <url> [flags]
 ```
 
-Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open). The MCP tool navigate takes only http and https URLs.
+Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open).
 
-- MCP tool: `navigate` (profile `core`)
 - Aliases: `goto`, `navigate`
 - Page: leases the session's page
 
@@ -1011,7 +952,6 @@ iwdp-cli press <key> [flags]
 
 Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action.
 
-- MCP tool: `press` (profile `core`)
 - Aliases: `key`
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
@@ -1032,7 +972,6 @@ iwdp-cli profiler start
 
 Start sampling the page's JavaScript with the WebKit ScriptProfiler (profiler stop writes the .cpuprofile).
 
-- MCP tool: `profiler_start` (profile `devtools`)
 - Page: leases the session's page
 
 ### `profiler stop`
@@ -1043,7 +982,6 @@ iwdp-cli profiler stop [<path>]
 
 Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mode 0600) to path, or to a new file in the temp directory.
 
-- MCP tool: `profiler_stop` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1058,7 +996,6 @@ iwdp-cli pushstate <url>
 
 Change the URL without loading: the Next.js router when the page has one, else history.pushState and a popstate event.
 
-- MCP tool: `pushstate` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1073,7 +1010,6 @@ iwdp-cli read [<url>] [flags]
 
 Print the visible text of the current page, or of an http(s) URL fetched on this computer; --outline prints only the headings.
 
-- MCP tool: `read_page` (profile `core`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1092,8 +1028,6 @@ iwdp-cli reload [flags]
 
 Reload the page (Page.reload after withdrawing unused dialog answers), then wait for the load state.
 
-- MCP tool: `reload` (profile `core`)
-- Legacy MCP parameters: `ignore_cache` for `ignore-cache`
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -1109,7 +1043,6 @@ iwdp-cli removeinitscript <id>
 
 Remove an init script of this session by the id that addinitscript printed.
 
-- MCP tool: `remove_init_script` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1124,8 +1057,6 @@ iwdp-cli screenshot [<path>] [flags]
 
 Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture.
 
-- MCP tool: `take_screenshot` (profile `core`)
-- Legacy MCP parameters: `full_page` for `full-page`, `if_changed` for `if-changed`
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1149,7 +1080,6 @@ iwdp-cli scroll <direction> [<px>] [flags]
 
 Scroll the window or an element up, down, left or right (default 300 px).
 
-- MCP tool: `scroll` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -1170,7 +1100,6 @@ iwdp-cli scrollintoview <target>
 
 Scroll an element into the center of the viewport.
 
-- MCP tool: `scroll_into_view` (profile `devtools`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -1186,7 +1115,6 @@ iwdp-cli select <target> <values>... [flags]
 
 Select options of a \<select\> by value, then by visible label; dispatches input and change.
 
-- MCP tool: `select_option` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -1207,7 +1135,6 @@ iwdp-cli session
 
 Print the current session name (--session or IWDP_SESSION; default "default").
 
-- MCP tool: none (CLI only)
 - Page: none
 
 ### `session info`
@@ -1218,7 +1145,6 @@ iwdp-cli session info
 
 Show this session's leased pages: page, lease state (active or lost), epoch and last use.
 
-- MCP tool: `session_info` (profile `core`)
 - Page: none
 
 ### `session list`
@@ -1229,7 +1155,6 @@ iwdp-cli session list
 
 List the sessions that hold page leases in the daemon.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 ### `session release`
@@ -1240,7 +1165,6 @@ iwdp-cli session release
 
 Release this session's page leases and run their cleanup (same as close).
 
-- MCP tool: none (CLI only)
 - Page: none
 
 ### `set credentials`
@@ -1251,7 +1175,6 @@ iwdp-cli set credentials [<user>] [flags]
 
 Send HTTP Basic credentials to the requests of one origin only; on a command line the password is the first line of stdin. Supported only where a test has shown that other origins and cross-origin redirects never get them (WebKitGTK today).
 
-- MCP tool: `set_credentials` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1261,7 +1184,7 @@ Send HTTP Basic credentials to the requests of one origin only; on a command lin
 | Flag | Value | Description |
 |---|---|---|
 | `--origin` | text | the origin that gets the credentials, for example https://example.com |
-| `--password` | text | MCP only (a command line refuses it, because argv is readable by other local users; pipe the password to stdin); never logged or printed |
+| `--password` | text | the password; a command line refuses it, because argv is readable by other local users: pipe the password to stdin; never logged or printed |
 | `--clear` | none | remove every credential of this session instead |
 
 ### `set device`
@@ -1272,7 +1195,6 @@ iwdp-cli set device [<args>...]
 
 Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 | Argument | Required | Description |
@@ -1287,7 +1209,6 @@ iwdp-cli set geo <latitude> <longitude> [flags]
 
 Answer navigator.geolocation with this position (a page-side shim: WebKit has no geolocation override).
 
-- MCP tool: `set_geolocation` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1307,8 +1228,6 @@ iwdp-cli set headers <json>
 
 Send these extra HTTP headers with every request of the page; '{}' removes this session's headers.
 
-- MCP tool: `set_extra_headers` (profile `devtools`)
-- Legacy MCP parameters: `headers` for `json`
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1323,7 +1242,6 @@ iwdp-cli set media <scheme> [flags]
 
 Emulate prefers-color-scheme (dark, light or no-preference), and optionally reduced motion and more contrast.
 
-- MCP tool: `set_media` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1343,7 +1261,6 @@ iwdp-cli set offline <state>
 
 Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device.
 
-- MCP tool: `set_offline` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1358,7 +1275,6 @@ iwdp-cli set useragent [<ua>] [flags]
 
 Override the user agent string of the page (--reset removes the override).
 
-- MCP tool: `set_user_agent` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1377,7 +1293,6 @@ iwdp-cli set viewport [<args>...]
 
 Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute.
 
-- MCP tool: none (CLI only)
 - Page: none
 
 | Argument | Required | Description |
@@ -1392,7 +1307,6 @@ iwdp-cli skills get [<name>...] [flags]
 
 Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill.
 
-- MCP tool: none (CLI only)
 - Page: none; runs in the client process, not in the daemon
 
 | Argument | Required | Description |
@@ -1411,7 +1325,6 @@ iwdp-cli skills list
 
 List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one.
 
-- MCP tool: none (CLI only)
 - Aliases: `skills`
 - Page: none; runs in the client process, not in the daemon
 
@@ -1423,7 +1336,6 @@ iwdp-cli skills path [<name>]
 
 Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all.
 
-- MCP tool: none (CLI only)
 - Page: none; runs in the client process, not in the daemon
 
 | Argument | Required | Description |
@@ -1438,7 +1350,6 @@ iwdp-cli snapshot [flags]
 
 Print the page's accessibility tree with @eN refs for later commands.
 
-- MCP tool: `snapshot` (profile `core`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -1457,7 +1368,6 @@ iwdp-cli state load <path>
 
 Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's.
 
-- MCP tool: `state_load` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1472,7 +1382,6 @@ iwdp-cli state save <path>
 
 Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials).
 
-- MCP tool: `state_save` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1487,7 +1396,6 @@ iwdp-cli storage <area> [<action>] [<key>] [<value>] [flags]
 
 Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session).
 
-- MCP tool: `storage` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1509,7 +1417,6 @@ iwdp-cli swipe <direction> [<px>] [flags]
 
 Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down).
 
-- MCP tool: `swipe` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -1530,7 +1437,6 @@ iwdp-cli tab [<id>]
 
 Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs.
 
-- MCP tool: `tab_select` (profile `core`)
 - Page: none
 
 | Argument | Required | Description |
@@ -1545,7 +1451,6 @@ iwdp-cli tab close [<id>]
 
 Close a tab (default: the current one) with window.close(); works only for tabs that a script opened.
 
-- MCP tool: `tab_close` (profile `devtools`)
 - Page: none
 
 | Argument | Required | Description |
@@ -1560,7 +1465,6 @@ iwdp-cli tab list
 
 List the pages of the device as tabs t1, t2, ... with labels; \* marks this session's current tab.
 
-- MCP tool: `tab_list` (profile `core`)
 - Page: none
 
 ### `tab new`
@@ -1571,7 +1475,6 @@ iwdp-cli tab new [<url>] [flags]
 
 Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end.
 
-- MCP tool: `tab_new` (profile `devtools`)
 - Aliases: `window new`
 - Page: none
 
@@ -1591,7 +1494,6 @@ iwdp-cli tap <target> [<y>] [flags]
 
 Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and touchend, then the click sequence with pointerType touch.
 
-- MCP tool: `tap` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -1612,7 +1514,6 @@ iwdp-cli trace start [flags]
 
 Start a WebKit Timeline recording of the page for a Chrome trace file (trace stop writes it).
 
-- MCP tool: `trace_start` (profile `devtools`)
 - Page: leases the session's page
 
 | Flag | Value | Description |
@@ -1627,7 +1528,6 @@ iwdp-cli trace stop [<path>]
 
 Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to path, or to a new file in the temp directory.
 
-- MCP tool: `trace_stop` (profile `devtools`)
 - Page: leases the session's page
 
 | Argument | Required | Description |
@@ -1642,8 +1542,6 @@ iwdp-cli type [<target>] <text> [flags]
 
 Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) into an element, or with only \<text\> into the focused element.
 
-- MCP tool: `type_text` (profile `core`)
-- Legacy MCP parameters: `selector` for `target`
 - Page: leases the session's page
 - Default deadline: 30s (`--timeout` overrides it)
 
@@ -1665,7 +1563,6 @@ iwdp-cli uncheck <target> [flags]
 
 Uncheck a checkbox (a hidden input through its label) and read the state back.
 
-- MCP tool: none (CLI only)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -1685,7 +1582,6 @@ iwdp-cli upload <target> <files>...
 
 Set the files of a file input (read on the host, at most 8 MiB in total) and dispatch input and change.
 
-- MCP tool: `upload_file` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
@@ -1702,7 +1598,6 @@ iwdp-cli vitals
 
 Show the page's Web Vitals: LCP, CLS, TTFB, FCP, INP, DOMContentLoaded and load (unavailable ones say why).
 
-- MCP tool: `vitals` (profile `devtools`)
 - Page: leases the session's page
 
 ### `wait`
@@ -1713,7 +1608,6 @@ iwdp-cli wait [<target>] [flags]
 
 Wait for milliseconds, an element state, text, a URL glob, a load state or a JavaScript condition (default timeout 25 s; exit 3 on timeout).
 
-- MCP tool: `wait` (profile `core`)
 - Page: leases the session's page
 - Default deadline: 25.15s (`--timeout` overrides it)
 

@@ -21,8 +21,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "storage",
-		MCPName: "storage",
-		Profile: ProfileDevtools,
 		Summary: "Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set <key> <value>, storage local clear (same for session).",
 		Args: []Arg{
 			{Name: "area", Help: "local or session", Required: true},

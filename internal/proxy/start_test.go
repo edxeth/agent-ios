@@ -369,9 +369,9 @@ func TestCheckListingReturnsTheCallersContextError(t *testing.T) {
 	}
 }
 
-// Start and EnsureRunning use the Starter of the default listing address
-// (std; a private running listing here).
-func TestStartAndEnsureRunningUseTheDefaultStarter(t *testing.T) {
+// Start uses the Starter of the default listing address (std; a private
+// running listing here).
+func TestStartUsesTheDefaultStarter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("[]")) }))
 	t.Cleanup(srv.Close)
 	addr := strings.TrimPrefix(srv.URL, "http://")
@@ -381,9 +381,6 @@ func TestStartAndEnsureRunningUseTheDefaultStarter(t *testing.T) {
 	std = NewStarter(addr)
 	if err := Start(context.Background()); err != nil {
 		t.Fatalf("Start with iwdp running: %v", err)
-	}
-	if err := EnsureRunning(context.Background()); err != nil {
-		t.Fatalf("EnsureRunning with iwdp running: %v", err)
 	}
 	if n := len(f.starts()); n != 0 {
 		t.Fatalf("ios_webkit_debug_proxy ran %d times with iwdp running, want 0", n)

@@ -242,16 +242,6 @@ func TestListPages_EmptyList(t *testing.T) {
 	}
 }
 
-func TestEnsureRunning_AlreadyRunning(t *testing.T) {
-	// When iwdp IS running on 9221, EnsureRunning should return nil.
-	// When it's NOT running, EnsureRunning will try to start it (which will fail in CI).
-	// We can only reliably test the "already running" path with a mock,
-	// but IsRunning checks a hardcoded port, so we just verify EnsureRunning
-	// doesn't panic in either case.
-	// This is a best-effort test — in CI it will try Start() which may fail.
-	_ = EnsureRunning
-}
-
 // extractPort extracts the port number from an httptest server URL.
 func extractPort(serverURL string) int {
 	var port int

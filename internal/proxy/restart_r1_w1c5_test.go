@@ -82,6 +82,13 @@ func TestRestartRefusesAForgedRecordOfAForeignListener(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "restart refused") {
 		t.Errorf("Restart with a forged record = %v, want a refusal", err)
 	}
+	// The refusal states the ownership rule: iwdp-cli and an earlier
+	// iwdp-mcp write the same record, so either one's iwdp can be stopped
+	// (review WS1 S2 F1).
+	const rule = "not an ios_webkit_debug_proxy that iwdp-cli or an earlier iwdp-mcp started and recorded"
+	if err != nil && !strings.Contains(err.Error(), rule) {
+		t.Errorf("the refusal %q does not state the ownership rule %q", err, rule)
+	}
 }
 
 // fakeStubbornEnv makes TestFakeStubbornIWDPProcess serve the device list

@@ -21,8 +21,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "set media",
-		MCPName: "set_media",
-		Profile: ProfileDevtools,
 		Summary: "Emulate prefers-color-scheme (dark, light or no-preference), and optionally reduced motion and more contrast.",
 		Args:    []Arg{{Name: "scheme", Help: "dark, light or no-preference", Required: true}},
 		Flags: []Flag{
@@ -49,8 +47,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "set useragent",
-		MCPName: "set_user_agent",
-		Profile: ProfileDevtools,
 		Summary: "Override the user agent string of the page (--reset removes the override).",
 		Args:    []Arg{{Name: "ua", Help: "user agent string"}},
 		Flags:   []Flag{{Name: "reset", Type: FlagBool, Help: "remove the override"}},
@@ -77,28 +73,20 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "set headers",
-		MCPName: "set_extra_headers",
-		Profile: ProfileDevtools,
 		Summary: "Send these extra HTTP headers with every request of the page; '{}' removes this session's headers.",
 		Args:    []Arg{{Name: "json", Help: "a JSON object of header names and string values, for example '{\"X-A\":\"1\"}'", Required: true}},
-		// The legacy MCP tool set_extra_headers took "headers", an object
-		// of string values (design 4.1); it is the same object as json.
-		MCPAliases: map[string]string{"headers": "json"},
-		MCPSchema:  map[string]map[string]any{"headers": {"type": "object", "additionalProperties": map[string]any{"type": "string"}}},
-		Page:       LeasedPage,
-		Mutates:    true,
-		Output:     OutputText,
-		Run:        runSetHeaders,
+		Page:    LeasedPage,
+		Mutates: true,
+		Output:  OutputText,
+		Run:     runSetHeaders,
 	})
 	Register(&Command{
 		Name:    "set credentials",
-		MCPName: "set_credentials",
-		Profile: ProfileDevtools,
 		Summary: "Send HTTP Basic credentials to the requests of one origin only; on a command line the password is the first line of stdin. Supported only where a test has shown that other origins and cross-origin redirects never get them (WebKitGTK today).",
 		Args:    []Arg{{Name: "user", Help: "user name (on a command line, the password is the first line of stdin)"}},
 		Flags: []Flag{
 			{Name: "origin", Type: FlagString, Help: "the origin that gets the credentials, for example https://example.com"},
-			{Name: "password", Type: FlagString, Help: "MCP only (a command line refuses it, because argv is readable by other local users; pipe the password to stdin); never logged or printed"},
+			{Name: "password", Type: FlagString, Help: "the password; a command line refuses it, because argv is readable by other local users: pipe the password to stdin; never logged or printed"},
 			{Name: "clear", Type: FlagBool, Help: "remove every credential of this session instead"},
 		},
 		Page:       LeasedPage,
@@ -109,8 +97,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "set geo",
-		MCPName: "set_geolocation",
-		Profile: ProfileDevtools,
 		Summary: "Answer navigator.geolocation with this position (a page-side shim: WebKit has no geolocation override).",
 		Args: []Arg{
 			{Name: "latitude", Help: "degrees, -90 to 90", Required: true},
@@ -124,8 +110,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "set offline",
-		MCPName: "set_offline",
-		Profile: ProfileDevtools,
 		Summary: "Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device.",
 		Args:    []Arg{{Name: "state", Help: "on or off", Required: true}},
 		Page:    LeasedPage,

@@ -26,8 +26,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "cookies clear",
-		MCPName: "clear_cookies",
-		Profile: ProfileDevtools,
 		Summary: "Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back.",
 		Flags: []Flag{
 			{Name: "domain", Type: FlagString, Help: "delete only the cookies of this domain and its subdomains"},
@@ -38,15 +36,8 @@ func init() {
 		Run:     runCookiesClear,
 	})
 	Register(&Command{
-		Name: "cookies set",
-		// Design 4.2: the registry command takes over the W0 MCP tool
-		// set_cookie (core profile) and keeps its parameters (design 4.1):
-		// name, value, domain, path, expires, secure, http_only and
-		// same_site; the W4 part adds curl (import).
-		MCPName:    "set_cookie",
-		Profile:    ProfileCore,
-		MCPAliases: map[string]string{"http_only": "http-only", "same_site": "same-site"},
-		Summary:    "Set one cookie (cookies set <name> <value> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result.",
+		Name:    "cookies set",
+		Summary: "Set one cookie (cookies set <name> <value> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result.",
 		Args: []Arg{
 			{Name: "name", Help: "the cookie name (not with --curl)"},
 			{Name: "value", Help: "the cookie value (not with --curl)"},
@@ -60,13 +51,10 @@ func init() {
 			{Name: "secure", Type: FlagBool, Help: "set Secure"},
 			{Name: "same-site", Type: FlagString, Help: "Lax, Strict or None (default Lax)"},
 		},
-		// The W0 tool's expires is a JSON number of Unix seconds; the
-		// string form (an RFC 3339 time) is the addition of the CLI.
-		MCPSchema: map[string]map[string]any{"expires": {"type": []any{"number", "string"}}},
-		Page:      LeasedPage,
-		Mutates:   true,
-		Output:    OutputText,
-		Run:       runCookiesSet,
+		Page:    LeasedPage,
+		Mutates: true,
+		Output:  OutputText,
+		Run:     runCookiesSet,
 	})
 }
 
@@ -104,7 +92,7 @@ const maxCookieFile = 4 << 20
 var singleCookieFlags = []string{"path", "expires", "http-only", "secure", "same-site"}
 
 // unixSeconds matches --expires in Unix seconds: an integer or a decimal
-// fraction, as the W0 MCP tool's JSON number reaches the command (mcpText).
+// fraction.
 var unixSeconds = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
 // cookieExpiry reads --expires as the W0 tool set_cookie read its

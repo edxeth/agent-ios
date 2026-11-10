@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
 )
@@ -251,73 +250,5 @@ func TestScreenshotAnnotateCleanupRunsBeforeQueuedSuccessor(t *testing.T) {
 	}
 	if o := s.order(); o != "overlay,overlayClear,successor" {
 		t.Fatalf("calls %q, want the overlay removed before the queued successor ran", o)
-	}
-}
-
-// Review finding 7: the MCP binding returns a capture as image content
-// with its text and its data, plus the legacy file_path; a PNG over the
-// MCP image limit, or a file that is not a PNG, is only named; other
-// results keep their JSON text.
-// jsonEqual reports whether v marshals to the JSON value want.
-func jsonEqual(v any, want string) bool {
-	got, err := json.Marshal(v)
-	return err == nil && string(got) == want
-}
-
-func TestMCPResultOfACapture(t *testing.T) {
-	shot := byMCPName(t, "take_screenshot")
-	dir := t.TempDir()
-	write := func(name string, b []byte) string {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, b, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return p
-	}
-	small := pngOf(t, color.Black)
-	p := write("a.png", small)
-	res, err := mcpResult(shot, Result{Text: "Screenshot saved to " + p, Data: map[string]any{"path": p, "sha256": "x"}})
-	if err != nil || len(res.Content) != 2 {
-		t.Fatalf("capture result %+v, %v: want text and image", res, err)
-	}
-	if tc := res.Content[0].(*mcp.TextContent); tc.Text != "Screenshot saved to "+p {
-		t.Fatalf("text %q", tc.Text)
-	}
-	if ic := res.Content[1].(*mcp.ImageContent); ic.MIMEType != "image/png" || !bytes.Equal(ic.Data, small) {
-		t.Fatalf("image %s, %d bytes", ic.MIMEType, len(ic.Data))
-	}
-	if sc := res.StructuredContent.(map[string]any); sc["file_path"] != p || sc["path"] != p || sc["sha256"] != "x" {
-		t.Fatalf("structured content %v", sc)
-	}
-
-	big := write("big.png", append(append([]byte{}, pngSignature...), make([]byte, mcpImageLimit)...))
-	res, err = mcpResult(shot, Result{Text: "saved", Data: map[string]any{"path": big}})
-	if err != nil || len(res.Content) != 1 || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "image not attached") {
-		t.Fatalf("over the limit: %+v, %v; want only the text with the reason", res, err)
-	}
-	notPNG := write("fake.png", []byte("GIF89a"))
-	res, err = mcpResult(shot, Result{Text: "saved", Data: map[string]any{"path": notPNG}})
-	if err != nil || len(res.Content) != 1 || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "not a PNG") {
-		t.Fatalf("not a PNG: %+v, %v", res, err)
-	}
-	if _, err := mcpResult(shot, Result{Text: "saved", Data: map[string]any{"path": filepath.Join(dir, "gone.png")}}); err == nil {
-		t.Fatal("a missing capture file gave no error")
-	}
-	// A result object without a capture is JSON text and, as every JSON
-	// object result (W4: set_cookie keeps the legacy {ok, cookie}), the
-	// same object as structured content.
-	res, err = mcpResult(shot, Result{Text: "unchanged", Data: map[string]any{"unchanged": true}})
-	if err != nil || len(res.Content) != 1 || res.Content[0].(*mcp.TextContent).Text != `{"unchanged":true}` || !jsonEqual(res.StructuredContent, `{"unchanged":true}`) {
-		t.Fatalf("result without a file: %+v, %v; want its JSON as text and structured content", res, err)
-	}
-	res, err = mcpResult(byMCPName(t, "reload"), Result{Text: "navigated", Data: map[string]any{"path": p}})
-	if err != nil || len(res.Content) != 1 || res.Content[0].(*mcp.TextContent).Text != `{"path":"`+p+`"}` {
-		t.Fatalf("a text command with a path in its data: %+v, %v; want its JSON only", res, err)
-	}
-	if res, err := mcpResult(shot, Result{Text: "plain"}); err != nil || res.Content[0].(*mcp.TextContent).Text != "plain" {
-		t.Fatalf("result without data: %+v, %v", res, err)
-	}
-	if _, err := mcpResult(shot, Result{Data: func() {}}); err == nil {
-		t.Fatal("data that is not JSON gave no error")
 	}
 }

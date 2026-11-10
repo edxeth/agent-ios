@@ -29,34 +29,29 @@ func init() {
 		Register(c)
 	}
 	nav(&Command{
-		Name: "open", Aliases: []string{"goto", "navigate"}, MCPName: "navigate", Profile: ProfileCore,
-		Summary: "Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open). The MCP tool navigate takes only http and https URLs.",
+		Name: "open", Aliases: []string{"goto", "navigate"},
+		Summary: "Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open).",
 		Args:    []Arg{{Name: "url", Help: "the URL to open", Required: true}},
-		// The legacy MCP navigate tool (cmd/iwdp-mcp) refused every URL
-		// whose scheme is not http or https, javascript: included.
-		MCPCheck: func(in Input) error { return webURL(arg(in, 0)) },
-		Run:      runOpen,
+		Run:     runOpen,
 	})
 	nav(&Command{
-		Name: "back", MCPName: "go_back", Profile: ProfileCore,
+		Name:    "back",
 		Summary: "Go back in the page's history (history.back), then wait for the load state.",
 		Run:     historyRun("back", -1),
 	})
 	nav(&Command{
-		Name: "forward", MCPName: "go_forward", Profile: ProfileCore,
+		Name:    "forward",
 		Summary: "Go forward in the page's history (history.forward), then wait for the load state.",
 		Run:     historyRun("forward", 1),
 	})
 	nav(&Command{
-		Name: "reload", MCPName: "reload", Profile: ProfileCore,
+		Name:    "reload",
 		Summary: "Reload the page (Page.reload after withdrawing unused dialog answers), then wait for the load state.",
 		Flags:   []Flag{{Name: "ignore-cache", Type: FlagBool, Help: "reload without the cache (Page.reload ignoreCache)"}},
-		// The legacy MCP reload tool (cmd/iwdp-mcp ReloadInput) named it ignore_cache.
-		MCPAliases: map[string]string{"ignore_cache": "ignore-cache"},
-		Run:        runReload,
+		Run:     runReload,
 	})
 	Register(&Command{
-		Name: "pushstate", MCPName: "pushstate", Profile: ProfileDevtools,
+		Name:    "pushstate",
 		Summary: "Change the URL without loading: the Next.js router when the page has one, else history.pushState and a popstate event.",
 		Args:    []Arg{{Name: "url", Help: "the new URL (absolute or relative to the page)", Required: true}},
 		Page:    LeasedPage, Mutates: true, Output: OutputText,
@@ -98,20 +93,6 @@ func absoluteURL(raw string) (string, error) {
 		return "", usagef("open %q: %v", raw, err)
 	}
 	return u, nil
-}
-
-// webURL is the check of the legacy MCP navigate tool: raw must parse and
-// have the scheme http or https (any case). Its errors keep the legacy
-// wording.
-func webURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
-	}
-	if s := strings.ToLower(u.Scheme); s != "http" && s != "https" {
-		return fmt.Errorf("unsupported URL scheme %q; only http and https are allowed", u.Scheme)
-	}
-	return nil
 }
 
 // navMark is what a navigation wait compares against: the document

@@ -25,11 +25,9 @@ const typeTimeout = 30 * time.Second
 
 func init() {
 	registerAction(&Command{
-		Name: "fill", MCPName: "fill",
-		// "selector" and "value" are the parameters of the existing MCP tool.
-		MCPAliases: map[string]string{"selector": "target", "value": "text"},
-		Summary:    "Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change.",
-		Args:       []Arg{targetArg("input, textarea or contenteditable"), {Name: "text", Help: "the new value (or --stdin)"}},
+		Name:    "fill",
+		Summary: "Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change.",
+		Args:    []Arg{targetArg("input, textarea or contenteditable"), {Name: "text", Help: "the new value (or --stdin)"}},
 		Flags: []Flag{
 			{Name: "stdin", Type: FlagBool, Help: "read the value from the standard input (iwdp-cli only), so a secret is not in the command line; one trailing newline is removed"},
 			forceFlag,
@@ -41,7 +39,7 @@ func init() {
 	// <text> [ws-url], which this command would read as <target> <text>, so
 	// type-text stays the legacy command.
 	registerAction(&Command{
-		Name: "type", MCPName: "type_text", MCPAliases: legacySelector,
+		Name:    "type",
 		Summary: "Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) into an element, or with only <text> into the focused element.",
 		Args: []Arg{
 			{Name: "target", Help: "input, textarea or contenteditable: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator; omit it to type into the focused element"},
@@ -52,7 +50,7 @@ func init() {
 		Run:     runType,
 	})
 	registerAction(&Command{
-		Name: "keyboard", MCPName: "keyboard", Profile: ProfileDevtools,
+		Name:    "keyboard",
 		Summary: "Type into the focused element (keyboard type <text>) or insert text without key events (keyboard inserttext <text>).",
 		Args:    []Arg{{Name: "mode", Help: "type or inserttext", Required: true}, {Name: "text", Help: "the text", Required: true}},
 		Flags:   []Flag{{Name: "delay", Type: FlagDuration, Help: "type: pause between characters"}},
@@ -60,7 +58,7 @@ func init() {
 		Run:     runKeyboard,
 	})
 	registerAction(&Command{
-		Name: "press", Aliases: []string{"key"}, MCPName: "press",
+		Name: "press", Aliases: []string{"key"},
 		Summary: "Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action.",
 		Args:    []Arg{{Name: "key", Help: "key name or character, with optional Control+, Shift+, Alt+, Meta+ modifiers", Required: true}},
 		Flags:   []Flag{{Name: "phase", Type: FlagEnum, Enum: []string{"both", "down", "up"}, Default: "both", Help: "down or up sends only keydown or keyup"}},
@@ -244,7 +242,7 @@ func fillStdin(ctx context.Context, in *Input, stdin io.Reader) error {
 
 func runFill(ctx context.Context, env Env, in Input) (Result, error) {
 	if flagBool(in, "stdin") {
-		return Result{}, usagef("fill --stdin reads the standard input of iwdp-cli; MCP clients and other callers pass the value as text")
+		return Result{}, usagef("fill --stdin reads the standard input of iwdp-cli; other callers pass the value as text")
 	}
 	if len(in.Args) < 2 {
 		return Result{}, usagef("fill needs <target> and <text> (or --stdin)")
@@ -294,7 +292,7 @@ func typeInto(ctx context.Context, env Env, name, target, text string, delay tim
 }
 
 // runType: "type <target> <text>", or "type <text>" into the focused
-// element (the form of the existing MCP tool type_text).
+// element.
 func runType(ctx context.Context, env Env, in Input) (Result, error) {
 	target, text := arg(in, 0), arg(in, 1)
 	if len(in.Args) == 1 {

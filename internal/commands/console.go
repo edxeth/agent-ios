@@ -22,8 +22,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "console",
-		MCPName: "get_console_messages",
-		Profile: ProfileDevtools,
 		Summary: "Print the console messages captured since the lease (and up to 100 that WebKit replays). For a live stream use 'console -d <duration>' or 'console --follow'.",
 		Flags: []Flag{
 			{Name: "clear", Type: FlagBool, Help: "empty the buffer after printing"},
@@ -37,8 +35,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "console clear",
-		MCPName: "clear_console",
-		Profile: ProfileDevtools,
 		Summary: "Empty the console buffer and WebKit's stored messages.",
 		Page:    LeasedPage,
 		Mutates: true,
@@ -142,8 +138,7 @@ func IsRuntimeMessage(text string) bool { return strings.HasPrefix(text, runtime
 
 // PageConsoleMessages returns msgs without the runtime's own messages
 // (IsRuntimeMessage), in order, for the legacy console outputs that read a
-// tools.ConsoleCollector (iwdp-cli console-messages, the legacy MCP
-// get_console_messages). It is never nil, so an empty result encodes as [].
+// tools.ConsoleCollector (iwdp-cli console-messages). It is never nil, so an empty result encodes as [].
 func PageConsoleMessages(msgs []webkit.ConsoleMessage) []webkit.ConsoleMessage {
 	out := make([]webkit.ConsoleMessage, 0, len(msgs))
 	for _, m := range msgs {

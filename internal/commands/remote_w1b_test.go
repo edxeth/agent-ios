@@ -87,7 +87,7 @@ func randomInput(c *Command, r *rand.Rand) Input {
 
 // Property (design 2.2, /v1/run sends argv): Parse(Argv(c, in)) gives back
 // the command, its flags and its arguments for any valid input, so a
-// command line or an MCP call reaches the daemon unchanged.
+// command line reaches the daemon unchanged.
 func TestArgvRoundTripsThroughParse(t *testing.T) {
 	withFixtures(t)
 	for _, c := range fixtures() {

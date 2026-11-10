@@ -2,19 +2,12 @@ package commands
 
 import (
 	"encoding/json"
-	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"go/types"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	goruntime "runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -372,77 +365,6 @@ func TestW3bStateIsReleasedWithThePageRecord(t *testing.T) {
 	}
 }
 
-// W3b decision 2 (design 4.1): the existing MCP tools keep their
-// parameters. click takes the legacy "selector" or the new "target" (which
-// takes @eN); fill also "value"; type_text without a target types into the
-// focused element; highlight_node takes node_id. Giving a parameter and
-// its legacy name together is a clear error.
-func TestMCPToolsKeepLegacyParameters(t *testing.T) {
-	cases := []struct {
-		tool, args string
-		wantArgs   []string
-		wantFlags  map[string]any
-	}{
-		{"click", `{"selector":"#buy"}`, []string{"#buy"}, nil},
-		{"click", `{"target":"@e3"}`, []string{"@e3"}, nil},
-		{"fill", `{"selector":"#q","value":"hi"}`, []string{"#q", "hi"}, nil},
-		{"fill", `{"target":"@e2","text":"hi"}`, []string{"@e2", "hi"}, nil},
-		{"type_text", `{"text":"abc"}`, []string{"abc"}, nil},
-		{"type_text", `{"selector":"#q","text":"abc"}`, []string{"#q", "abc"}, nil},
-		{"highlight_node", `{"node_id":7}`, nil, map[string]any{"node-id": 7}},
-		{"highlight_node", `{"selector":"#a"}`, []string{"#a"}, nil},
-	}
-	for _, c := range cases {
-		cmd := byMCPName(t, c.tool)
-		in, err := mcpInput(cmd, json.RawMessage(c.args))
-		if err != nil {
-			t.Fatalf("%s %s: %v", c.tool, c.args, err)
-		}
-		if !slices.Equal(in.Args, c.wantArgs) {
-			t.Fatalf("%s %s: args %q, want %q", c.tool, c.args, in.Args, c.wantArgs)
-		}
-		for k, v := range c.wantFlags {
-			if in.Flags[k] != v {
-				t.Fatalf("%s %s: flag %s = %v, want %v", c.tool, c.args, k, in.Flags[k], v)
-			}
-		}
-		props := InputSchema(cmd)["properties"].(map[string]any)
-		var raw map[string]any
-		_ = json.Unmarshal([]byte(c.args), &raw)
-		for k := range raw {
-			if props[k] == nil {
-				t.Fatalf("%s: schema lacks the parameter %q", c.tool, k)
-			}
-		}
-	}
-	for _, c := range []struct{ tool, args string }{
-		{"click", `{"selector":"#a","target":"@e1"}`},
-		{"fill", `{"target":"#a","value":"x","text":"y"}`},
-		{"highlight_node", `{"selector":"#a","target":"#b"}`},
-	} {
-		if _, err := mcpInput(byMCPName(t, c.tool), json.RawMessage(c.args)); err == nil || !strings.Contains(err.Error(), "not both") {
-			t.Fatalf("%s %s: err = %v, want a clear error for both names", c.tool, c.args, err)
-		}
-	}
-	if _, err := mcpInput(byMCPName(t, "click"), json.RawMessage(`{}`)); err == nil || !strings.Contains(err.Error(), "target") {
-		t.Fatalf("click without a target: err = %v", err)
-	}
-	if req, _ := InputSchema(byMCPName(t, "click"))["required"].([]any); len(req) != 0 {
-		t.Fatalf("click requires %v; a legacy call gives only selector", req)
-	}
-}
-
-func byMCPName(t *testing.T, name string) *Command {
-	t.Helper()
-	for _, c := range All() {
-		if c.MCPName == name {
-			return c
-		}
-	}
-	t.Fatalf("no MCP tool %s", name)
-	return nil
-}
-
 // The legacy forms reach the page: click by selector, type into the
 // focused element (no target), highlight by node id.
 func TestLegacyFormsRunTheAction(t *testing.T) {
@@ -492,7 +414,7 @@ func TestTapAtPoint(t *testing.T) {
 
 // W3b decision 5: fill --stdin reads the value in the client (ClientStep),
 // so it is not in argv; the forwarded input carries it as the text
-// argument. Without the client step (MCP, the daemon) --stdin is refused.
+// argument. Without the client step (the daemon) --stdin is refused.
 func TestFillStdinReadsTheValueInTheClient(t *testing.T) {
 	c, _ := Lookup([]string{"fill"})
 	in := Input{Args: []string{"#pw"}, Flags: map[string]any{"stdin": true}}
@@ -526,7 +448,7 @@ func TestFillStdinReadsTheValueInTheClient(t *testing.T) {
 	if a := h.page.last("act")["args"].(map[string]any); a["text"] != "s3cret" {
 		t.Fatalf("fill --stdin sent %v", a)
 	}
-	if _, err := runFill(t.Context(), pageEnv{h.ps}, Input{Args: []string{"#pw"}, Flags: map[string]any{"stdin": true}}); ExitCodeOf(err) != ExitUsage || !strings.Contains(err.Error(), "MCP") {
+	if _, err := runFill(t.Context(), pageEnv{h.ps}, Input{Args: []string{"#pw"}, Flags: map[string]any{"stdin": true}}); ExitCodeOf(err) != ExitUsage || !strings.Contains(err.Error(), "standard input of iwdp-cli") {
 		t.Fatalf("fill --stdin without the client step: %v", err)
 	}
 }
@@ -731,149 +653,5 @@ func TestHoverCSSFailsWhereCSSEnableIsRefused(t *testing.T) {
 	}
 	if out := h.mustRun(t, "hover", "#hov"); strings.Contains(out, "CSS :hover forced") {
 		t.Fatalf("hover without --css output %q", out)
-	}
-}
-
-// legacyParam is one parameter of a legacy MCP tool's input struct.
-type legacyParam struct{ name, typ string }
-
-// legacyMCPParams reads cmd/iwdp-mcp/main.go: every addTool call's tool
-// name and the json names and types of its input struct's fields.
-func legacyMCPParams(t *testing.T) map[string][]legacyParam {
-	t.Helper()
-	fs := token.NewFileSet()
-	f, err := parser.ParseFile(fs, filepath.Join("..", "..", "cmd", "iwdp-mcp", "main.go"), nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	structs := map[string][]legacyParam{}
-	tools := map[string][]legacyParam{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		if ts, ok := n.(*ast.TypeSpec); ok {
-			if st, ok := ts.Type.(*ast.StructType); ok {
-				for _, fld := range st.Fields.List {
-					if fld.Tag == nil {
-						continue
-					}
-					tag, _ := strconv.Unquote(fld.Tag.Value)
-					name, _, _ := strings.Cut(reflect.StructTag(tag).Get("json"), ",")
-					if name != "" && name != "-" {
-						structs[ts.Name.Name] = append(structs[ts.Name.Name], legacyParam{name, types.ExprString(fld.Type)})
-					}
-				}
-			}
-		}
-		return true
-	})
-	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) != 3 {
-			return true
-		}
-		if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "addTool" {
-			return true
-		}
-		lit, _ := call.Args[1].(*ast.UnaryExpr)
-		h, _ := call.Args[2].(*ast.FuncLit)
-		if lit == nil || h == nil || len(h.Type.Params.List) != 3 {
-			return true
-		}
-		var name string
-		for _, e := range lit.X.(*ast.CompositeLit).Elts {
-			if kv, ok := e.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "Name" {
-				name, _ = strconv.Unquote(kv.Value.(*ast.BasicLit).Value)
-			}
-		}
-		in, _ := h.Type.Params.List[2].Type.(*ast.Ident)
-		if name != "" && in != nil {
-			tools[name] = structs[in.Name]
-		}
-		return true
-	})
-	if len(tools) < 100 {
-		t.Fatalf("read %d legacy tools from main.go; the parser missed the addTool calls", len(tools))
-	}
-	return tools
-}
-
-// W3b decision 2, design 4.1: an existing MCP tool keeps its parameters.
-// For every legacy tool of cmd/iwdp-mcp/main.go that an action command or
-// the registry screenshot now provides, the registry schema has each
-// legacy parameter, and a call with all of them is accepted and delivers
-// each value to an argument or flag. The call has the legacy JSON type of
-// each parameter and passes the registry's input schema, as the MCP SDK
-// checks it. navigate and reload are the
-// navigation part's (its own test).
-func TestTakenOverMCPToolsAcceptEveryLegacyParameter(t *testing.T) {
-	legacy := legacyMCPParams(t)
-	navigation := map[string]bool{"navigate": true, "reload": true}
-	var checked []string
-	for _, c := range All() {
-		params, ok := legacy[c.MCPName]
-		if c.MCPName == "" || !ok || navigation[c.MCPName] {
-			continue
-		}
-		checked = append(checked, c.MCPName)
-		props := InputSchema(c)["properties"].(map[string]any)
-		call, values := map[string]any{}, []string{}
-		for i, p := range params {
-			if props[p.name] == nil {
-				t.Fatalf("%s: the registry schema lacks the legacy parameter %q", c.MCPName, p.name)
-			}
-			var v any
-			var want string // the text the command gets (mcpText)
-			switch p.typ {
-			case "string":
-				v = fmt.Sprintf("value-%d", i)
-				want = v.(string)
-			case "int":
-				v = 7 + i
-				want = fmt.Sprint(v)
-			case "bool":
-				v, want = true, "true"
-			case "float64":
-				// A number in decimal notation without exponent: set_cookie's
-				// expires in seconds since the epoch (W4 MCPSchema).
-				v, want = 1893456000.5+float64(i), fmt.Sprintf("1893456%03d.5", i)
-			case "map[string]string":
-				// An object as its JSON: set_extra_headers' headers (W4
-				// MCPSchema).
-				v, want = map[string]any{"X-Test": fmt.Sprintf("value-%d", i)}, fmt.Sprintf(`{"X-Test":"value-%d"}`, i)
-			default:
-				t.Fatalf("%s: legacy parameter %q has type %s; extend this test", c.MCPName, p.name, p.typ)
-			}
-			call[p.name] = v
-			values = append(values, want)
-		}
-		raw, _ := json.Marshal(call)
-		// The MCP SDK validates every call against the tool's input
-		// schema before the handler runs, so each legacy JSON type must
-		// pass the schema too, not only mcpInput.
-		var decoded map[string]any
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			t.Fatal(err)
-		}
-		if err := resolvedSchema(t, strings.Fields(c.Name)...).Validate(decoded); err != nil {
-			t.Fatalf("%s %s: the registry schema refuses the legacy call: %v", c.MCPName, raw, err)
-		}
-		in, err := mcpInput(c, raw)
-		if err != nil {
-			t.Fatalf("%s %s: the legacy call is refused: %v", c.MCPName, raw, err)
-		}
-		got := slices.Clone(in.Args)
-		for _, f := range in.Flags {
-			got = append(got, fmt.Sprint(f))
-		}
-		for _, v := range values {
-			if !slices.Contains(got, v) {
-				t.Fatalf("%s %s: the value %s did not reach an argument or flag (args %q, flags %v)", c.MCPName, raw, v, in.Args, in.Flags)
-			}
-		}
-	}
-	slices.Sort(checked)
-	// W3b's actions and screenshot, and W4's console, network, cookie
-	// and emulation tools.
-	if want := []string{"clear_console", "click", "fill", "get_console_messages", "highlight_node", "list_network_requests", "set_cookie", "set_emulated_conditions", "set_extra_headers", "take_screenshot", "type_text"}; !slices.Equal(checked, want) {
-		t.Fatalf("the registry provides the legacy tools %v, want %v; update this list with the new tool's parameters checked", checked, want)
 	}
 }

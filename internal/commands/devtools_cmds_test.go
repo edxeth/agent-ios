@@ -7,12 +7,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
@@ -376,8 +373,7 @@ func TestSetCommands(t *testing.T) {
 // the /v1/run body, never in argv). A transport without a verified origin
 // scope refuses; the password is in no output and no error. A --password
 // on a command line (where other local users can read argv) is refused
-// before any connection, without echoing it. MCP clients pass the password
-// as a parameter of the same command (set_credentials).
+// before any connection, without echoing it.
 func TestSetCredentialsReadsStdinAndNeverPrintsThePassword(t *testing.T) {
 	const password = "pa55-w0rd-xyz"
 	h := newDTHarness(t)
@@ -420,45 +416,13 @@ func TestSetCredentialsReadsStdinAndNeverPrintsThePassword(t *testing.T) {
 	if n := len(h.forwarded); n != 2 || h.forwarded[1].Flags["clear"] != true || h.forwarded[1].Flags["password"] != nil {
 		t.Fatalf("set credentials --clear: %d forwards (%+v); want a second one with clear and no password", n, h.forwarded)
 	}
-
-	// MCP: set_credentials takes the password as a parameter and runs the
-	// same command; the tool error does not echo it.
-	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterMCP(server, ProfileDevtools, func(context.Context, Globals) (Env, error) { return dtEnv{h: h}, nil })
-	st, ct := mcp.NewInMemoryTransports()
-	ctx := context.Background()
-	if _, err := server.Connect(ctx, st, nil); err != nil {
-		t.Fatal(err)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = cs.Close() }()
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "set_credentials", Arguments: map[string]any{"user": "alice", "origin": "https://fixture.example", "password": password}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var text strings.Builder
-	for _, c := range res.Content {
-		if tc, ok := c.(*mcp.TextContent); ok {
-			text.WriteString(tc.Text)
-		}
-	}
-	if !res.IsError || !strings.Contains(text.String(), "unsupported") || strings.Contains(text.String(), password) {
-		t.Fatalf("set_credentials: error %v, text %q; want unsupported without the password", res.IsError, text.String())
-	}
-	if n := len(h.forwarded); n != 3 || h.forwarded[2].Flags["password"] != password {
-		t.Fatalf("set_credentials: %d forwards; want a third one with the password parameter", n)
-	}
 }
 
-// Design 4.2 "emulate network <preset>" (MCP set_emulated_conditions):
-// a preset throttles with Network.setEmulatedConditions (slow-3g is
-// Chrome DevTools' Slow 3G, 400 kbit/s = 50000 bytes/s); the earlier MCP
-// parameter bytes_per_second_limit still sets a rate; "none" removes the
-// throttle (WebKit: no bytesPerSecondLimit removes the limit); release
-// removes it too.
+// Design 4.2 "emulate network <preset>": a preset throttles with
+// Network.setEmulatedConditions (slow-3g is Chrome DevTools' Slow 3G,
+// 400 kbit/s = 50000 bytes/s); --bytes_per_second_limit sets a rate;
+// "none" removes the throttle (WebKit: no bytesPerSecondLimit removes the
+// limit); release removes it too.
 func TestEmulateNetwork(t *testing.T) {
 	h := newDTHarness(t)
 	h.mustRun(t, "emulate", "network", "slow-3g")
@@ -483,45 +447,12 @@ func TestEmulateNetwork(t *testing.T) {
 	if last := got[len(got)-1]; len(got) != 5 || len(last) != 0 {
 		t.Fatalf("setEmulatedConditions after release = %v; want the limit removed", got)
 	}
-	c, _ := Lookup([]string{"emulate", "network"})
-	if c == nil || c.MCPName != "set_emulated_conditions" || c.Profile != ProfileDevtools {
-		t.Fatalf("emulate network: %+v; want MCP tool set_emulated_conditions in the devtools profile", c)
-	}
-}
-
-// Design 4.1, 4.2 and decision D2: the W4-2a commands are MCP tools of
-// the devtools profile with the 4.2 names.
-func TestDevtoolsMCPToolNames(t *testing.T) {
-	want := []string{
-		"add_init_script", "clear_console", "get_console_messages", "get_errors", "get_network_request", "har_start", "har_stop",
-		"list_network_requests", "network_route", "network_unroute", "remove_init_script", "set_credentials", "set_extra_headers",
-		"set_geolocation", "set_media", "set_offline", "set_user_agent",
-	}
-	have := map[string]*Command{}
-	for _, c := range All() {
-		if c.MCPName != "" {
-			have[c.MCPName] = c
-		}
-	}
-	var missing []string
-	for _, n := range want {
-		c := have[n]
-		if c == nil || c.Profile != ProfileDevtools {
-			missing = append(missing, n)
-			continue
-		}
-		walkSchema(t, n, InputSchema(c))
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		t.Fatalf("MCP tools missing from the devtools profile: %v", missing)
-	}
 }
 
 // Device check 3, P3-H: the runtime's own console.debug messages (the
 // dialog override's "__iwdp_dialog__ {...}" records, 80-dialogs.js, and the
 // "__iwdp_nav__ " and "__iwdp_bind__ " hooks of the CDP page script) are
-// internal; "console" (CLI) and get_console_messages (MCP, the Data) leave
+// internal; "console" and "console --json" (the Data) leave
 // them out, as the CDP endpoint does (internal/cdp consoleMessage). A user
 // message that only contains the marker text stays.
 func TestConsoleLeavesOutTheRuntimesMarkers(t *testing.T) {

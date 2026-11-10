@@ -23,8 +23,7 @@ func readReference(t *testing.T) string {
 }
 
 // TestReferenceListsEveryRegistryCommand is design 7.9 acceptance 1: every
-// registry command appears in the checked-in reference, with its MCP tool
-// and profile when it has one.
+// registry command appears in the checked-in reference.
 func TestReferenceListsEveryRegistryCommand(t *testing.T) {
 	ref := readReference(t)
 	all := commands.All()
@@ -34,10 +33,6 @@ func TestReferenceListsEveryRegistryCommand(t *testing.T) {
 	for _, c := range all {
 		if !strings.Contains(ref, "\n### `"+c.Name+"`\n") {
 			t.Errorf("docs/commands.md has no section for registry command %q; run make docs", c.Name)
-			continue
-		}
-		if c.MCPName != "" && !strings.Contains(ref, "- MCP tool: `"+c.MCPName+"` (profile `"+c.Profile+"`)\n") {
-			t.Errorf("docs/commands.md does not name MCP tool %q (profile %q) of command %q; run make docs", c.MCPName, c.Profile, c.Name)
 		}
 	}
 }
@@ -72,13 +67,10 @@ func TestReferenceIsCurrent(t *testing.T) {
 // the heading id of "`net work`" is "net-work".
 func TestRenderCommandSection(t *testing.T) {
 	c := &commands.Command{
-		Name:       "net work",
-		Aliases:    []string{"nw"},
-		MCPName:    "net_work",
-		Profile:    commands.ProfileDevtools,
-		Summary:    "Route <url> with * and | in it.",
-		Page:       commands.LeasedPage,
-		MCPAliases: map[string]string{"selector": "target"},
+		Name:    "net work",
+		Aliases: []string{"nw"},
+		Summary: "Route <url> with * and | in it.",
+		Page:    commands.LeasedPage,
 		Args: []commands.Arg{
 			{Name: "target", Help: "a ref | selector", Required: true},
 			{Name: "rest", Help: "more", Variadic: true},
@@ -95,19 +87,22 @@ func TestRenderCommandSection(t *testing.T) {
 	local := &commands.Command{Name: "zz local", Summary: "Local thing.", Local: true, Run: c.Run}
 	out := render([]*commands.Command{c, local})
 	for _, want := range []string{
-		"| [`net work`](#net-work) | `net_work` | `devtools` | Route \\<url\\> with \\* and \\| in it. |\n",
-		"| [`zz local`](#zz-local) |  |  | Local thing. |\n",
+		"| [`net work`](#net-work) | Route \\<url\\> with \\* and \\| in it. |\n",
+		"| [`zz local`](#zz-local) | Local thing. |\n",
 		"\n### `net work`\n\n```\niwdp-cli net work <target> [<rest>...] [flags]\n```\n\nRoute \\<url\\> with \\* and | in it.\n\n",
-		"- MCP tool: `net_work` (profile `devtools`)\n- Legacy MCP parameters: `selector` for `target`\n- Aliases: `nw`\n- Page: leases the session's page\n",
+		"in it.\n\n- Aliases: `nw`\n- Page: leases the session's page\n",
 		"| `<target>` | yes | a ref \\| selector |\n| `<rest>...` | no | more |\n",
 		"| `--mode` | `wip`, `js` | how (default `wip`) |\n",
 		"| `-d`, `--delay` | duration | wait |\n",
 		"| `--quiet` | none | less output |\n",
-		"\n### `zz local`\n\n```\niwdp-cli zz local\n```\n\nLocal thing.\n\n- MCP tool: none (CLI only)\n- Page: none; runs in the client process, not in the daemon\n",
+		"\n### `zz local`\n\n```\niwdp-cli zz local\n```\n\nLocal thing.\n\n- Page: none; runs in the client process, not in the daemon\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render lacks %q\n--- render ---\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "MCP") {
+		t.Errorf("the reference must not name the removed MCP server:\n%s", out)
 	}
 	if strings.Contains(out, "Default deadline") {
 		t.Errorf("a command without its own timeout must not show a default deadline:\n%s", out)

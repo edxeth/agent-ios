@@ -30,24 +30,13 @@ const dragSteps = 10
 var forceFlag = Flag{Name: "force", Type: FlagBool, Help: "skip the actionability checks (attached, visible, stable, enabled, receives events)"}
 
 // registerAction registers an action command with the common settings.
-// An MCP tool is in the core profile unless it names another one: the
-// long-tail input tools (dblclick, focus, scroll_into_view, drag, mouse,
-// keyboard) are in devtools (W3b decision 3, D2's core of about 40).
 func registerAction(c *Command) {
 	c.Page, c.Mutates, c.Output = LeasedPage, true, OutputText
 	if c.Timeout == 0 {
 		c.Timeout = actionTimeout
 	}
-	if c.MCPName != "" && c.Profile == "" {
-		c.Profile = ProfileCore
-	}
 	Register(c)
 }
-
-// legacySelector is the parameter "selector" of the existing MCP tools
-// click, fill, type_text and highlight_node: the registry tool of the same
-// name takes it as its target (design 4.1).
-var legacySelector = map[string]string{"selector": "target"}
 
 func targetArg(help string) Arg {
 	return Arg{Name: "target", Help: help + ": @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator", Required: true}
@@ -55,7 +44,7 @@ func targetArg(help string) Arg {
 
 func init() {
 	registerAction(&Command{
-		Name: "click", MCPName: "click", MCPAliases: legacySelector,
+		Name:    "click",
 		Summary: "Click an element with synthetic pointer and mouse events after the actionability checks.",
 		Args:    []Arg{targetArg("element to click")},
 		Flags: []Flag{
@@ -67,14 +56,14 @@ func init() {
 		Run: runClick,
 	})
 	registerAction(&Command{
-		Name: "dblclick", MCPName: "dblclick", Profile: ProfileDevtools,
+		Name:    "dblclick",
 		Summary: "Double-click an element: two click sequences (detail 1 and 2), then dblclick.",
 		Args:    []Arg{targetArg("element to double-click")},
 		Flags:   []Flag{forceFlag},
 		Run:     simpleAction("dblclick", "dblclick", "double-clicked"),
 	})
 	registerAction(&Command{
-		Name: "tap", MCPName: "tap",
+		Name:    "tap",
 		Summary: "Tap an element, or the element at viewport point <x> <y>: touchstart and touchend, then the click sequence with pointerType touch.",
 		Args: []Arg{
 			targetArg("element to tap, or the x coordinate of a point (with y)"),
@@ -84,7 +73,7 @@ func init() {
 		Run:   runTap,
 	})
 	registerAction(&Command{
-		Name: "hover", MCPName: "hover",
+		Name:    "hover",
 		Summary: "Move the pointer over an element (synthetic events do not set CSS :hover; --css forces it).",
 		Args:    []Arg{targetArg("element to hover")},
 		Flags: []Flag{
@@ -94,7 +83,7 @@ func init() {
 		Run: runHover,
 	})
 	registerAction(&Command{
-		Name: "focus", MCPName: "focus", Profile: ProfileDevtools,
+		Name:    "focus",
 		Summary: "Focus an element (el.focus()).",
 		Args:    []Arg{targetArg("element to focus")},
 		Run:     simpleAction("focus", "focus", "focused"),
@@ -105,7 +94,7 @@ func init() {
 		Run:     simpleAction("blur", "blur", "blurred the focused element"),
 	})
 	registerAction(&Command{
-		Name: "check", MCPName: "check",
+		Name:    "check",
 		Summary: "Check a checkbox or radio (a hidden input through its label) and read the state back.",
 		Args:    []Arg{targetArg("checkbox or radio")},
 		Flags: []Flag{
@@ -122,47 +111,47 @@ func init() {
 		Run:     runCheck(false),
 	})
 	registerAction(&Command{
-		Name: "select", MCPName: "select_option",
+		Name:    "select",
 		Summary: "Select options of a <select> by value, then by visible label; dispatches input and change.",
 		Args:    []Arg{targetArg("select element"), {Name: "values", Help: "option values or labels (several for a multiple select)", Required: true, Variadic: true}},
 		Flags:   []Flag{forceFlag},
 		Run:     runSelect,
 	})
 	registerAction(&Command{
-		Name: "scroll", MCPName: "scroll",
+		Name:    "scroll",
 		Summary: "Scroll the window or an element up, down, left or right (default 300 px).",
 		Args:    []Arg{{Name: "direction", Help: "up, down, left or right", Required: true}, {Name: "px", Help: "pixels (default 300)"}},
 		Flags:   []Flag{{Name: "selector", Type: FlagString, Help: "scroll this element instead of the window"}},
 		Run:     runScroll("scroll", "scroll", "scrolled"),
 	})
 	registerAction(&Command{
-		Name: "swipe", MCPName: "swipe",
+		Name:    "swipe",
 		Summary: "Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down).",
 		Args:    []Arg{{Name: "direction", Help: "up, down, left or right (the finger's direction)", Required: true}, {Name: "px", Help: "pixels (default 300)"}},
 		Flags:   []Flag{{Name: "selector", Type: FlagString, Help: "swipe on this element instead of the page"}},
 		Run:     runScroll("swipe", "swipe", "swiped"),
 	})
 	registerAction(&Command{
-		Name: "scrollintoview", MCPName: "scroll_into_view", Profile: ProfileDevtools,
+		Name:    "scrollintoview",
 		Summary: "Scroll an element into the center of the viewport.",
 		Args:    []Arg{targetArg("element")},
 		Run:     simpleAction("scrollintoview", "scrollintoview", "scrolled into view"),
 	})
 	registerAction(&Command{
-		Name: "drag", MCPName: "drag", Profile: ProfileDevtools,
+		Name:    "drag",
 		Summary: "Drag from one element to another in 10 pointer steps with synthetic drag events (best effort).",
 		Args:    []Arg{targetArg("source element"), {Name: "destination", Help: "drop target: @eN ref, CSS selector or locator", Required: true}},
 		Flags:   []Flag{forceFlag},
 		Run:     runDrag,
 	})
 	registerAction(&Command{
-		Name: "upload", MCPName: "upload_file",
+		Name:    "upload",
 		Summary: "Set the files of a file input (read on the host, at most 8 MiB in total) and dispatch input and change.",
 		Args:    []Arg{targetArg("file input"), {Name: "files", Help: "file paths, relative to the current directory", Required: true, Variadic: true}},
 		Run:     runUpload,
 	})
 	registerAction(&Command{
-		Name: "mouse", MCPName: "mouse", Profile: ProfileDevtools,
+		Name:    "mouse",
 		Summary: "Low-level mouse: move <x> <y> [--steps n], down [button], up [button], wheel <dy> [dx].",
 		Args: []Arg{
 			{Name: "action", Help: "move, down, up or wheel", Required: true},
@@ -173,13 +162,11 @@ func init() {
 		Run:   runMouse,
 	})
 	registerAction(&Command{
-		Name: "highlight", MCPName: "highlight_node",
-		// node_id is the parameter of the existing MCP tool (a DOM node id).
-		MCPAliases: map[string]string{"selector": "target", "node_id": "node-id"},
-		Summary:    "Highlight an element on the device screen (DOM.highlightNode) until release.",
-		Args:       []Arg{{Name: "target", Help: "element to highlight: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator"}},
-		Flags:      []Flag{{Name: "node-id", Type: FlagInt, Help: "DOM node id instead of a target (as DOM.getDocument and query-selector return it)"}},
-		Run:        runHighlight,
+		Name:    "highlight",
+		Summary: "Highlight an element on the device screen (DOM.highlightNode) until release.",
+		Args:    []Arg{{Name: "target", Help: "element to highlight: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator"}},
+		Flags:   []Flag{{Name: "node-id", Type: FlagInt, Help: "DOM node id instead of a target (as DOM.getDocument and query-selector return it)"}},
+		Run:     runHighlight,
 	})
 }
 
@@ -672,7 +659,7 @@ func runMouse(ctx context.Context, env Env, in Input) (Result, error) {
 func runHighlight(ctx context.Context, env Env, in Input) (Result, error) {
 	t, n := arg(in, 0), flagInt(in, "node-id", 0)
 	if (t == "") == (n == 0) {
-		return Result{}, usagef("highlight: give a target or --node-id (MCP: target, selector or node_id), exactly one")
+		return Result{}, usagef("highlight: give a target or --node-id, exactly one")
 	}
 	w, err := openPage(ctx, env, "highlight")
 	if err != nil {

@@ -343,7 +343,7 @@ func (r *commandRun) timeoutMessage(cause error) string {
 		fmt.Fprintf(&b, "Last wait: %v\n", cause)
 	}
 	b.WriteString("Likely causes:\n")
-	b.WriteString("  - another inspector session holds the page (Safari Web Inspector, iwdp-mcp, or another iwdp-cli such as 'console --follow')\n")
+	b.WriteString("  - another inspector session holds the page (Safari Web Inspector or another iwdp-cli such as 'console --follow')\n")
 	b.WriteString("  - the page is stalled (long-running JavaScript, or an alert, confirm or prompt dialog is open)\n")
 	b.WriteString("  - the device is locked or asleep, or Safari is in the background\n")
 	b.WriteString("If the command is slow by design, raise the deadline with --timeout <duration> or " + timeoutEnv + ".")

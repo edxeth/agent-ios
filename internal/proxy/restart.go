@@ -333,8 +333,8 @@ func (rec *record) problem(addr string) string {
 }
 
 // Restart restarts ios_webkit_debug_proxy on the default listing address
-// when this program started it (Starter.Restart); the restart_iwdp tool
-// and 'iwdp-cli restart-iwdp' use it.
+// when this program started it (Starter.Restart); 'iwdp-cli restart-iwdp'
+// uses it.
 func Restart(ctx context.Context) error { return std.Restart(ctx) }
 
 // Restart stops the iwdp on the listing address and starts a new one
@@ -385,7 +385,7 @@ func (s *Starter) stopOwn(ctx context.Context, ep netip.AddrPort) (bool, error) 
 	case err != nil:
 		return false, s.refuse(ctx, ep, err.Error())
 	case rec == nil:
-		return false, s.refuse(ctx, ep, "no iwdp that iwdp-mcp started is recorded for it")
+		return false, s.refuse(ctx, ep, "no iwdp that iwdp-cli or an earlier iwdp-mcp started is recorded for it")
 	}
 	if p := rec.problem(s.addr); p != "" {
 		return false, s.refuse(ctx, ep, "the record "+recordName(s.addr)+" is not valid: "+p)
@@ -445,7 +445,7 @@ func (s *Starter) refuse(ctx context.Context, ep netip.AddrPort, reason string) 
 		owner = "pid " + strings.Join(list, ", ")
 		kill = "kill " + strings.Join(list, " ")
 	}
-	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-mcp started (%s). It may be the iwdp of the user or another agent, so nothing was stopped. If it is yours, restart it by hand: %s, then run '%s'",
+	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-cli or an earlier iwdp-mcp started and recorded (%s). It may be the iwdp of the user or another agent, so nothing was stopped. If it is yours, restart it by hand: %s, then run '%s'",
 		s.addr, owner, reason, kill, ManualCommand())
 }
 

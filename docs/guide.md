@@ -15,9 +15,9 @@ Terms used on every page:
 
 ## The daemon
 
-One daemon per user owns every page connection. `iwdp-cli`, `iwdp-mcp` and CDP clients are clients of the daemon, so they share leases, refs and page state, and two of them never take a page from each other.
+One daemon per user owns every page connection. `iwdp-cli` commands and CDP clients are clients of the daemon, so they share leases, refs and page state, and two of them never take a page from each other.
 
-- A client starts the daemon on demand (`<own executable> daemon run`). Both binaries contain it; there is no third binary.
+- A client starts the daemon on demand (`<own executable> daemon run`). The daemon is part of the `iwdp-cli` binary; there is no separate daemon binary.
 - Socket: `$XDG_RUNTIME_DIR/iwdp/daemon.sock`, else `$TMPDIR/iwdp-$UID/daemon.sock`. The directory must be a real directory owned by the user with mode 0700; otherwise the daemon and the clients refuse to start.
 - Log: `$XDG_STATE_HOME/iwdp/daemon.log` (fallback `~/.local/state/iwdp/daemon.log`). `iwdp-cli daemon logs` prints its end.
 - `iwdp-cli daemon start|stop|status|logs|run`. `daemon stop`, SIGTERM and the idle exit clean up every page first (5 s at most).
@@ -26,9 +26,9 @@ One daemon per user owns every page connection. `iwdp-cli`, `iwdp-mcp` and CDP c
 - `IWDP_NO_DAEMON=1` runs the same core inside one command process, for debugging. It gives no leases across processes, and a CDP endpoint started this way ends with the process.
 - A client and a daemon of another protocol version: the client asks an idle daemon to exit and starts its own. When the old daemon holds leases, the client fails and tells you to run `iwdp-cli daemon stop` when they finish.
 
-The daemon may start iwdp when it is not running (as `iwdp_status` does). It never stops or restarts an iwdp that it did not start. See [device-runbook.md](device-runbook.md).
+The daemon may start iwdp when it is not running (as `iwdp-cli status` does). It never stops or restarts an iwdp that it did not start. See [device-runbook.md](device-runbook.md).
 
-- An iwdp that iwdp-mcp starts appends its stdout and stderr to `$XDG_STATE_HOME/iwdp-mcp/iwdp.log` (fallback `~/.local/state/iwdp-mcp/iwdp.log`, mode 0600). `iwdp-cli status` and `iwdp_status` name the path (or why it is unknown) for every outcome, also when the listing port is owned but does not answer. A start that finds the log at 1 MiB or more keeps it as `iwdp.log.1` (replacing an older one) and begins a new one. iwdp's stdout is block-buffered in a file, so its "Connected ..." lines appear only when it exits; when GNU `stdbuf` is on `PATH` (Linux), iwdp runs under `stdbuf -oL` and they appear at once. stderr is unbuffered either way.
+- An iwdp that iwdp-mcp starts appends its stdout and stderr to `$XDG_STATE_HOME/iwdp-mcp/iwdp.log` (fallback `~/.local/state/iwdp-mcp/iwdp.log`, mode 0600). `iwdp-cli status` names the path (or why it is unknown) for every outcome, also when the listing port is owned but does not answer. A start that finds the log at 1 MiB or more keeps it as `iwdp.log.1` (replacing an older one) and begins a new one. iwdp's stdout is block-buffered in a file, so its "Connected ..." lines appear only when it exits; when GNU `stdbuf` is on `PATH` (Linux), iwdp runs under `stdbuf -oL` and they appear at once. stderr is unbuffered either way.
 - iwdp lists a device's pages a moment after it starts. After the daemon started iwdp, it waits up to 3 s (within the command's deadline) until a device lists a page; a list that stays empty is reported as before ("No tabs.").
 - The daemon log holds no page-supplied text: no page title, no page URL, no message or exception of a page, and no text of an error.
   - **What it keeps:** the operation, in the fixed text of each log line; ids: the page id (the transport's page id, for iwdp its WebSocket debugger URL without query; a CDP target id), target, request and session ids, the session name, the device label; numbers, durations and connection states; the configured addresses (the daemon socket, the CDP listen address); the method names of a CDP client's requests and hashes of the other values it sent (Host, Origin, path segments).
@@ -144,7 +144,7 @@ iwdp-cli dialog status          # the dialog log
 
 ### Navigation, tabs and frames
 
-- `open <url>` (aliases `goto`, `navigate`): a URL that does not start with `http:`, `https:`, `about:`, `data:` or `file:` gets `https://`. `--wait none` returns at once. The MCP tool `navigate` accepts only http and https URLs.
+- `open <url>` (aliases `goto`, `navigate`): a URL that does not start with `http:`, `https:`, `about:`, `data:` or `file:` gets `https://`. `--wait none` returns at once.
 - `tab list` lists the pages of reserved devices as `t1, t2, ...`. `tab <id>` makes a tab the session's page after a liveness probe. Safari answers only for the visible tab, and WIP cannot bring a tab to the front: a hidden tab fails with "tab tN is not the visible Safari tab; bring it to the front on the device".
 - `tab new [url]` uses `window.open` with an emulated user gesture; popup blocking can stop it. `window.open` runs in the session's current page, which in a new session is the device's first tab (it can be your own). After `tab new` the session keeps no lease there: as with `tab <id>`, the session's leases on other pages end with their cleanup (its network and console captures stop, and the runtime drops the session's state), and a failed `tab new` ends the lease that it took only for `window.open`. Only the daemon's connection to that page stays open, with the runtime that each connection installs, until it closes after 10 minutes without a lease and capture, or until `daemon stop`. `tab close` uses `window.close()` and works only for tabs that a script opened.
 - `frame <iframe>` makes later commands work inside that frame; `frame main` returns to the top document. Frames that iOS 26 puts in their own target are not supported.
@@ -166,14 +166,14 @@ The registry also has DevTools commands. Captures start with the session's lease
 | Performance | `trace start`, `trace stop`, `profiler start`, `profiler stop`, `vitals` |
 
 - `cookies set` with an expiry in the past (`--expires 1`, a past RFC 3339 time) deletes the cookie of that name, domain and path, as a browser does, checks that it is gone and reports the result (exit 0). Other cookies of the name (another path or domain) stay. `Page.getCookies` lists only the cookies of the page's URLs, so the report says "deleted" only for a cookie that the page listed before the delete, and says when the page had no such cookie. When the page cannot see such a cookie (the page's path or host is outside the cookie's path or domain, or the page is not https), the delete is still sent, but the report says that the read-back cannot verify it (`verified: false`); list the cookies on a page of that domain and path to check.
-- `console` (and `get_console_messages`, also in the `legacy` MCP profile, and the legacy `console-messages`, `console -d` and `console --follow`) leaves out the runtime's own console messages, whose text starts with `__iwdp_` (for example the dialog records `__iwdp_dialog__ {...}`), as the CDP endpoint does.
+- `console` (and the legacy `console-messages`, `console -d` and `console --follow`) leaves out the runtime's own console messages, whose text starts with `__iwdp_` (for example the dialog records `__iwdp_dialog__ {...}`), as the CDP endpoint does.
 - Secrets are masked by default: header values of `Cookie`, `Set-Cookie` and `Authorization`, secret query and body fields, and cookie values. `--show-secrets` or `--show-values` shows them.
 - HAR, trace, profile and state files are written with mode 0600. A state file holds cookies and storage in clear text: delete it after use.
 - `set credentials --origin <origin> <user>` reads the password from the first line of standard input, never from the command line. It works only on the WebKitGTK transport until it is verified on a device.
 - `set viewport` and `set device` always fail with the reason (see [synthetic-input.md](synthetic-input.md)).
 - Every override belongs to the session that set it. `close` removes it.
 
-The legacy DevTools commands and tools (debugger, DOM by node id, CSS, heap, animation, canvas, layers, workers, audit, security) stay available; see [migration.md](migration.md).
+The legacy DevTools commands (debugger, DOM by node id, CSS, heap, animation, canvas, layers, workers, audit, security) stay available; see [migration.md](migration.md).
 
 ## Use a CDP client
 
@@ -193,21 +193,6 @@ iwdp-cli close                          # releases the lease and revokes the URL
 - `get cdp-url` selects the page that the session's other commands use: `--page` (also a tab id such as `t2`), else the `tab <id>` choice, else the session's default page while it is attached, else the listing's first debuggable page; with no page it exits 5. [cdp.md](cdp.md#how-to-connect) gives the details.
 - Prefer the registry commands when they do the job: they have refs that survive reconnects, actionability checks, masking and deadlines. Use a CDP client for an existing CDP script or for a client feature that the registry has no command for.
 - Input through CDP is synthetic too. Features that WebKit lacks fail with "wasn't found" or an error that names the reason.
-
-## MCP profiles
-
-The MCP server is a client of the daemon. Its session is `IWDP_SESSION` (default `default`), its reservation owner `IWDP_DEVICE_RESERVATION` and its transport `IWDP_TRANSPORT`. Give each agent its own session name.
-
-The server registers the tools of a profile:
-
-| Profile | Tools |
-|---|---|
-| `core` (default) | 47 tools: the agentic tools (snapshot, get, is, find, click, fill, type_text, press, wait, dialog, tabs, frames, screenshots, ...) and the key legacy tools (iwdp_status, list_devices, list_pages, select_page, evaluate_script, get_matched_styles, network list and body, cookies, storage, console) |
-| `devtools` | the DevTools extras of the table above, advanced input (dblclick, focus, drag, mouse, keyboard, scroll_into_view), pushstate, tab_new, tab_close and get_cdp_url |
-| `legacy` | every tool of the earlier releases (about 118) |
-| `all` | every tool |
-
-Select profiles with `IWDP_MCP_TOOLS=core,devtools` or `iwdp-mcp --tools core,devtools` (the flag wins). An unknown value fails at start. The [command reference](commands.md) names the tool and profile of each registry command.
 
 ## Transports
 
@@ -237,7 +222,6 @@ The output flags below are global flags of the registry commands (the commands i
 | `IWDP_DEVICE_RESERVATION` | device reservation owner (default: the session name) |
 | `IWDP_TRANSPORT` | `auto`, `iwdp`, `direct` or `webkitgtk` |
 | `IWDP_TIMEOUT` | default command deadline |
-| `IWDP_MCP_TOOLS` | MCP profiles |
 | `IWDP_DAEMON_IDLE` | idle time before the daemon exits (default 15m) |
 | `IWDP_NO_DAEMON` | `1`: run the core in the command process |
 | `IWDP_WS_URL`, `IWDP_PORT` | legacy commands: default page WebSocket URL and device port |

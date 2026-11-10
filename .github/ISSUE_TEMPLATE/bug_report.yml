@@ -21,6 +21,6 @@ body:
       description: |
         - OS and version
         - iOS version
-        - iwdp-mcp version (`iwdp-mcp --version` or `iwdp-cli --version`)
+        - iwdp-cli version (release tag, or the version that `iwdp-cli daemon status` prints)
         - ios-webkit-debug-proxy version
-        - Client (Claude Code, VS Code, Cursor, CLI)
+        - How iwdp-cli runs (shell, or the agent that calls it)

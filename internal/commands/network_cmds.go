@@ -21,8 +21,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "network requests",
-		MCPName: "list_network_requests",
-		Profile: ProfileDevtools,
 		Summary: "List the requests captured since the lease: id, method, status, type and URL; network resets show as gaps.",
 		Flags: []Flag{
 			{Name: "filter", Type: FlagString, Help: "only URLs that contain this text"},
@@ -38,8 +36,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "network request",
-		MCPName: "get_network_request",
-		Profile: ProfileDevtools,
 		Summary: "Show one request of 'network requests': headers, request body and status; --body adds the response body.",
 		Args:    []Arg{{Name: "id", Help: "request id from 'network requests'", Required: true}},
 		Flags: []Flag{
@@ -53,8 +49,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "network route",
-		MCPName: "network_route",
-		Profile: ProfileDevtools,
 		Summary: "Abort, fulfill or delay requests whose URL matches: a glob with * and ** matches the whole URL, other text any URL that contains it. Without --abort, --body or --status the request continues after --delay.",
 		Args:    []Arg{{Name: "url", Help: "URL pattern", Required: true}},
 		Flags: []Flag{
@@ -75,8 +69,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "network unroute",
-		MCPName: "network_unroute",
-		Profile: ProfileDevtools,
 		Summary: "Remove the routes with this pattern (all without one); requests that a route holds continue unchanged.",
 		Args:    []Arg{{Name: "url", Help: "URL pattern as given to 'network route'"}},
 		Page:    LeasedPage,

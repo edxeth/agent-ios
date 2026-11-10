@@ -65,8 +65,8 @@ func connectInProcess(ctx context.Context, o Options) (*Client, error) {
 // CloseInProcess ends the in-process core of IWDP_NO_DAEMON=1, if one
 // runs, as a daemon ends at shutdown (design 2.3, 2.4): event streams get
 // their final item, every lease is released with the cleanup of its owned
-// page state within ctx, and the page connections close. A CLI or MCP
-// process calls it before it exits; without an in-process core it does
+// page state within ctx, and the page connections close. A CLI process
+// calls it before it exits; without an in-process core it does
 // nothing. A later Connect starts a new core.
 func CloseInProcess(ctx context.Context) error {
 	inproc.mu.Lock()

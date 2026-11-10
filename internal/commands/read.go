@@ -20,8 +20,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "read",
-		MCPName: "read_page",
-		Profile: ProfileCore,
 		Summary: "Print the visible text of the current page, or of an http(s) URL fetched on this computer; --outline prints only the headings.",
 		Args: []Arg{
 			{Name: "url", Help: "http or https URL to fetch on this computer instead of reading the current page"},

@@ -26,13 +26,11 @@ import (
 // storage, state save and load, trace, profiler, vitals and diff
 // screenshot (design docs/design/agentic-parity.md, section 4.2).
 
-// spCommands are the W4-2b commands of the devtools profile with their MCP
-// names (design 4.2). "cookies set" is the core tool set_cookie;
-// TestCookiesSetIsTheSetCookieTool covers it.
-var spCommands = map[string]string{
-	"cookies clear": "clear_cookies", "storage": "storage",
-	"state save": "state_save", "state load": "state_load", "trace start": "trace_start", "trace stop": "trace_stop",
-	"profiler start": "profiler_start", "profiler stop": "profiler_stop", "vitals": "vitals", "diff screenshot": "diff_screenshot",
+// spCommands are the W4-2b commands (design 4.2). TestCookiesSetHelpAndFlags
+// covers "cookies set".
+var spCommands = []string{
+	"cookies clear", "storage", "state save", "state load", "trace start", "trace stop",
+	"profiler start", "profiler stop", "vitals", "diff screenshot",
 }
 
 // spRun runs a command line against page session ps (no daemon).
@@ -67,18 +65,15 @@ func (e spEnv) Op() *core.Op {
 	return e.mo.Op
 }
 
-// Design 2.11 and 4.2: every W4-2b command has help, an MCP tool of the
-// devtools profile with the 4.2 name, and refuses an unknown flag with
-// exit 2 before it builds an environment (no connection).
+// Design 2.11 and 4.2: every W4-2b command has help and refuses an
+// unknown flag with exit 2 before it builds an environment (no
+// connection).
 func TestStoragePerfCommandsHelpAndFlags(t *testing.T) {
-	for name, mcpName := range spCommands {
+	for _, name := range spCommands {
 		c, n := Lookup(strings.Fields(name))
 		if c == nil || n != len(strings.Fields(name)) || c.Name != name {
 			t.Errorf("%s is not registered", name)
 			continue
-		}
-		if c.MCPName != mcpName || c.Profile != ProfileDevtools {
-			t.Errorf("%s: MCP %q in profile %q, want %q in %q", name, c.MCPName, c.Profile, mcpName, ProfileDevtools)
 		}
 		var out, errb bytes.Buffer
 		called := false
@@ -92,9 +87,6 @@ func TestStoragePerfCommandsHelpAndFlags(t *testing.T) {
 		args = append(strings.Fields(name), "--no-such-flag")
 		if code := RunCLI(context.Background(), args, &out, &errb, newEnv); code != ExitUsage || called || !strings.Contains(errb.String(), "unknown flag --no-such-flag") {
 			t.Errorf("%s --no-such-flag: exit %d, called %v, stderr %q; want exit 2 before any connection", name, code, called, errb.String())
-		}
-		if s := InputSchema(c); s["type"] != "object" {
-			t.Errorf("%s: schema %v", name, s)
 		}
 	}
 }

@@ -16,8 +16,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "network har start",
-		MCPName: "har_start",
-		Profile: ProfileDevtools,
 		Summary: "Start recording a HAR of the requests from now on; 'network har stop' writes it.",
 		Flags: []Flag{
 			{Name: "content", Type: FlagEnum, Enum: []string{"all", "none"}, Default: "all", Help: "all: add the response bodies at stop; none: headers and timings only"},
@@ -46,8 +44,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "network har stop",
-		MCPName: "har_stop",
-		Profile: ProfileDevtools,
 		Summary: "Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values masked unless --show-secrets).",
 		Args:    []Arg{{Name: "path", Help: "file to write (default network-<time>.har in the current directory)"}},
 		Flags: []Flag{

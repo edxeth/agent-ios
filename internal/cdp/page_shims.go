@@ -15,8 +15,8 @@ import (
 // script calls Element.prototype.checkVisibility (Safari 17.4) on every
 // visibility check. page_shims.js adds each missing API, and only a
 // missing one, in the main world, where the utility-world aliases run too
-// (worlds.go). Only CDP attachments install it; the CLI and MCP runtime
-// bundle does not change.
+// (worlds.go). Only CDP attachments install it; the CLI runtime bundle
+// does not change.
 //
 //go:embed page_shims.js
 var pageShimsJS string

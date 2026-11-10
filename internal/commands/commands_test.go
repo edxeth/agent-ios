@@ -3,13 +3,11 @@ package commands
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 )
 
@@ -24,19 +22,19 @@ func fixtures() []*Command {
 	}
 	return []*Command{
 		{
-			Name: "fixture click", Aliases: []string{"fixture tap"}, MCPName: "fixture_click", Profile: ProfileCore,
+			Name: "fixture click", Aliases: []string{"fixture tap"},
 			Summary: "Click an element.", Page: LeasedPage, Mutates: true,
 			Args:  []Arg{{Name: "target", Help: "ref or selector", Required: true}},
 			Flags: []Flag{{Name: "button", Type: FlagEnum, Enum: []string{"left", "right"}, Default: "left", Help: "mouse button"}, {Name: "force", Type: FlagBool, Help: "skip checks"}},
 			Run:   run,
 		},
 		{
-			Name: "fixture type", MCPName: "fixture_type", Profile: ProfileDevtools, Summary: "Type text.", Mutates: true,
+			Name: "fixture type", Summary: "Type text.", Mutates: true,
 			Args:  []Arg{{Name: "target", Help: "ref or selector", Required: true}, {Name: "text", Help: "text to type", Variadic: true}},
 			Flags: []Flag{{Name: "delay", Short: "d", Type: FlagDuration, Help: "pause between characters"}, {Name: "count", Type: FlagInt, Help: "repeat count"}},
 			Run:   run,
 		},
-		{Name: "fixture", Summary: "No MCP tool.", Run: run},
+		{Name: "fixture", Summary: "No page.", Run: run},
 	}
 }
 
@@ -166,11 +164,9 @@ func TestRegisterRejectsDuplicatesAndMissingHelp(t *testing.T) {
 	for name, c := range map[string]*Command{
 		"duplicate name":      {Name: "fixture", Summary: "x", Run: run},
 		"alias takes a name":  {Name: "other", Aliases: []string{"fixture click"}, Summary: "x", Run: run},
-		"duplicate MCP name":  {Name: "other", MCPName: "fixture_click", Profile: ProfileCore, Summary: "x", Run: run},
 		"flag without help":   {Name: "other", Summary: "x", Run: run, Flags: []Flag{{Name: "f"}}},
 		"shadows global flag": {Name: "other", Summary: "x", Run: run, Flags: []Flag{{Name: "json", Help: "h"}}},
 		"arg without help":    {Name: "other", Summary: "x", Run: run, Args: []Arg{{Name: "a"}}},
-		"MCP without profile": {Name: "other", MCPName: "other", Summary: "x", Run: run},
 	} {
 		func() {
 			defer func() {
@@ -183,179 +179,12 @@ func TestRegisterRejectsDuplicatesAndMissingHelp(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, c := range All() {
-		for _, n := range append([]string{c.Name, "mcp:" + c.MCPName}, c.Aliases...) {
-			if n == "mcp:" {
-				continue
-			}
+		for _, n := range append([]string{c.Name}, c.Aliases...) {
 			if seen[n] {
 				t.Fatalf("name %q is used twice", n)
 			}
 			seen[n] = true
 		}
-	}
-}
-
-// walkSchema checks the Codex rules on every object and array.
-func walkSchema(t *testing.T, tool string, v any) {
-	switch s := v.(type) {
-	case map[string]any:
-		if SchemaTypeIncludes(s["type"], "object") {
-			if _, ok := s["properties"].(map[string]any); !ok {
-				t.Fatalf("%s: object without properties: %v", tool, s)
-			}
-		}
-		if SchemaTypeIncludes(s["type"], "array") {
-			if _, ok := s["items"].(map[string]any); !ok {
-				t.Fatalf("%s: array without items: %v", tool, s)
-			}
-		}
-		for _, x := range s {
-			walkSchema(t, tool, x)
-		}
-	case []any:
-		for _, x := range s {
-			walkSchema(t, tool, x)
-		}
-	}
-}
-
-func TestMCPSchemasAreCodexCompatible(t *testing.T) {
-	withFixtures(t)
-	for _, c := range All() {
-		if c.MCPName == "" {
-			continue
-		}
-		s := InputSchema(c)
-		walkSchema(t, c.MCPName, s)
-		again := CodexCompatibleInputSchema(c.MCPName, s)
-		a, _ := json.Marshal(s)
-		b, _ := json.Marshal(again)
-		if !bytes.Equal(a, b) {
-			t.Fatalf("%s: schema changes under codexCompatibleInputSchema:\n%s\n%s", c.MCPName, a, b)
-		}
-	}
-}
-
-// onlyFixtures hides the production commands for tests that count the
-// registered MCP tools exactly; they are registered again at cleanup.
-func onlyFixtures(t *testing.T) {
-	t.Helper()
-	prod := All()
-	for _, c := range prod {
-		Unregister(c)
-	}
-	t.Cleanup(func() {
-		for _, c := range prod {
-			Register(c)
-		}
-	})
-	withFixtures(t)
-}
-
-func TestManifestDeduplicatesAndRejectsDuplicates(t *testing.T) {
-	onlyFixtures(t)
-	m, err := Manifest(ProfileCore, []string{"fixture_click", "eval_js", "list_pages"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := map[string]*Command{}
-	for _, e := range m {
-		if _, dup := names[e.Name]; dup {
-			t.Fatalf("manifest lists %q twice", e.Name)
-		}
-		names[e.Name] = e.Cmd
-	}
-	if names["fixture_click"] == nil || names["eval_js"] != nil || len(names) != 3 {
-		t.Fatalf("manifest = %+v; want the registry tool to replace the legacy one", m)
-	}
-	if _, ok := names["fixture_type"]; ok {
-		t.Fatal("a devtools tool is in the core profile")
-	}
-	if !ProvidesMCPTool(ProfileCore, "fixture_click") || ProvidesMCPTool(ProfileCore, "fixture_type") || !ProvidesMCPTool(ProfileAll, "fixture_type") {
-		t.Fatal("ProvidesMCPTool does not follow the profile")
-	}
-	if _, err := Manifest(ProfileCore, []string{"a", "a"}); err == nil {
-		t.Fatal("a duplicate legacy name was accepted")
-	}
-}
-
-// Design 4.1 and D2: IWDP_MCP_TOOLS (or iwdp-mcp --tools) takes "all" or
-// any comma-separated subset of core, devtools and legacy; an unknown
-// value fails with an error that names it.
-func TestSelectedProfile(t *testing.T) {
-	cases := []struct {
-		env, want, bad string // bad: text the error must contain
-	}{
-		{env: "", want: ProfileCore},
-		{env: "core", want: "core"},
-		{env: "all", want: ProfileAll},
-		{env: "devtools", want: "devtools"},
-		{env: "legacy,core", want: "core,legacy"},
-		{env: "core,devtools,legacy", want: "core,devtools,legacy"},
-		{env: " devtools , core ", want: "core,devtools"},
-		{env: "core,all", want: ProfileAll},
-		{env: "core,dev", bad: `unknown profile "dev"`},
-		{env: "everything", bad: `"everything"`},
-		{env: "core,", bad: `unknown profile ""`},
-	}
-	for _, c := range cases {
-		got, err := SelectedProfile(func(k string) string {
-			if k != "IWDP_MCP_TOOLS" {
-				t.Fatalf("SelectedProfile read %s", k)
-			}
-			return c.env
-		})
-		switch {
-		case c.bad != "" && (err == nil || !strings.Contains(err.Error(), c.bad)):
-			t.Errorf("IWDP_MCP_TOOLS=%q: %q, %v; want an error naming %s", c.env, got, err, c.bad)
-		case c.bad == "" && (err != nil || got != c.want):
-			t.Errorf("IWDP_MCP_TOOLS=%q: %q, %v; want %q", c.env, got, err, c.want)
-		}
-	}
-	core := &Command{MCPName: "a", Profile: ProfileCore}
-	dev := &Command{MCPName: "b", Profile: ProfileDevtools}
-	for _, c := range []struct {
-		profile   string
-		core, dev bool
-	}{{"core", true, false}, {"devtools", false, true}, {"core,devtools", true, true}, {"core,legacy", true, false}, {ProfileAll, true, true}} {
-		if InProfile(core, c.profile) != c.core || InProfile(dev, c.profile) != c.dev {
-			t.Errorf("profile %q: core tool %v, devtools tool %v; want %v, %v", c.profile, InProfile(core, c.profile), InProfile(dev, c.profile), c.core, c.dev)
-		}
-	}
-}
-
-func TestRegisterMCPRunsCommands(t *testing.T) {
-	onlyFixtures(t)
-	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterMCP(server, ProfileAll, func(context.Context, Globals) (Env, error) { return fakeEnv{}, nil })
-	st, ct := mcp.NewInMemoryTransports()
-	ctx := context.Background()
-	if _, err := server.Connect(ctx, st, nil); err != nil {
-		t.Fatal(err)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cs.Close()
-	tools, err := cs.ListTools(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tools.Tools) != 2 {
-		t.Fatalf("tools = %d, want the 2 fixture MCP tools", len(tools.Tools))
-	}
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "fixture_type", Arguments: map[string]any{"target": "@e1", "text": []any{"a", "b"}, "delay": "10ms", "count": 2}})
-	if err != nil || res.IsError {
-		t.Fatalf("call: %v %+v", err, res)
-	}
-	text := res.Content[0].(*mcp.TextContent).Text
-	if !strings.Contains(text, `"args":["@e1","a","b"]`) || !strings.Contains(text, `"count":2`) || !strings.Contains(text, `"delay":10000000`) {
-		t.Fatalf("result %s", text)
-	}
-	res, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "fixture_click", Arguments: map[string]any{"target": "@e1", "all": true}})
-	if err == nil && (res == nil || !res.IsError) {
-		t.Fatalf("unknown argument accepted: %+v", res)
 	}
 }
 

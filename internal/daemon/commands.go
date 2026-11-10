@@ -26,7 +26,7 @@ type Host interface {
 func hostOf(env commands.Env) (Host, error) {
 	h, ok := env.(Host)
 	if !ok {
-		return nil, errors.New("the daemon commands run in iwdp-cli and iwdp-mcp")
+		return nil, errors.New("the daemon commands run in iwdp-cli")
 	}
 	return h, nil
 }

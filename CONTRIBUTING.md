@@ -28,9 +28,9 @@ An older golangci-lint binary cannot read Go 1.27 export data and reports type e
 ## Testing
 
 - **Unit tests** (`make test`) — no device needed, uses mock WebSocket server
-- **E2E tests** (`make test-e2e`) — builds binaries, tests CLI + MCP server JSON-RPC
+- **E2E tests** (`make test-e2e`) — builds the CLI binary and tests it
 - **WebKitGTK tests** (`go test -tags=webkitgtk ./e2e/webkitgtk/`) — local MiniBrowser under broadwayd, no phone
-- **Simulator tests** (`make test-e2e`) — boots iOS Simulator, tests all tools against real Safari
+- **Simulator tests** (`make test-e2e`) — boots iOS Simulator, tests the commands against real Safari
 - **Coverage** (`make coverage-all`) — unit tests plus the WebKitGTK suites
 - Tests never start, stop or read the real iwdp; never run device tests without the device owner's approval ([docs/device-runbook.md](docs/device-runbook.md)).
 
@@ -58,9 +58,8 @@ refactor/proxy-port-parsing
 ## Architecture
 
 - `internal/webkit/` — WebKit Inspector Protocol client (WebSocket + Target routing)
-- `internal/tools/` — Tool implementations shared by MCP server and CLI
+- `internal/tools/` — WebKit Inspector Protocol helpers of the legacy commands
 - `internal/proxy/` — iwdp process detection and management
-- `cmd/iwdp-mcp/` — MCP server binary (stdio transport)
 - `cmd/iwdp-cli/` — CLI binary
 
 - `internal/daemon/`, `internal/core/` — the daemon, sessions, leases, reservations, desired state, scheduler
@@ -68,7 +67,7 @@ refactor/proxy-port-parsing
 - `internal/runtime/`, `internal/refs/` — the injected agent runtime and refs
 - `internal/devtools/`, `internal/cdp/`, `internal/transport/` — DevTools extras, CDP endpoint, transports
 
-A new command is a new file in `internal/commands` whose `init()` calls `Register`. Legacy tools return structured results; formatting is done by the caller (MCP or CLI). User docs live in docs/ (see docs/README.md); docs/notes/ is history.
+A new command is a new file in `internal/commands` whose `init()` calls `Register`. Legacy tools return structured results; formatting is done by the caller. User docs live in docs/ (see docs/README.md); docs/notes/ is history.
 
 ## License
 

@@ -19,8 +19,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "diff screenshot",
-		MCPName: "diff_screenshot",
-		Profile: ProfileDevtools,
 		Summary: "Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ.",
 		Flags: []Flag{
 			{Name: "baseline", Type: FlagPath, Help: "the baseline PNG (for example a viewport screenshot taken earlier)"},

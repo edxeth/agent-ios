@@ -20,7 +20,7 @@ const proxyListingVar = "github.com/nnemirovsky/iwdp-mcp/internal/proxy.listingA
 // for a missing variable, so the tests check that the binary reads addr.
 func listingLDFlags(addr string) string { return "-X " + proxyListingVar + "=" + addr }
 
-// The fake iwdp of the iwdp-mcp binary: one device with one page.
+// The fake iwdp of a healthy listing: one device with one page.
 const (
 	e2eDeviceID   = "e2e-fake-udid"
 	e2eDeviceName = "E2E Fake iPhone"
@@ -67,26 +67,26 @@ func newFakeListing(body any) *fakeListing {
 func (f *fakeListing) Addr() string { return strings.TrimPrefix(f.srv.URL, "http://") }
 
 var (
-	mcpListingOnce sync.Once
-	mcpListing     *fakeListing // the device list of the iwdp-mcp binary
-	mcpDevice      *fakeListing // the page list of its one device
+	deviceListingOnce sync.Once
+	deviceListing     *fakeListing // the device list of a healthy listing
+	devicePages       *fakeListing // the page list of its one device
 )
 
-// fakeMCPListing returns the fake iwdp that the iwdp-mcp binary of these
-// tests reads: its device list and the page list of its one device. The
+// fakeDeviceListing returns a healthy fake iwdp for the binaries of these
+// tests: its device list and the page list of its one device. The
 // servers live until the process exits.
-func fakeMCPListing() (listing, device *fakeListing) {
-	mcpListingOnce.Do(func() {
-		mcpDevice = newFakeListing([]map[string]any{{
+func fakeDeviceListing() (listing, device *fakeListing) {
+	deviceListingOnce.Do(func() {
+		devicePages = newFakeListing([]map[string]any{{
 			"devtoolsFrontendUrl": "", "title": e2ePageTitle, "type": "page",
 			"url": e2ePageURL, "webSocketDebuggerUrl": e2ePageWSURL, "appId": 1,
 		}})
-		mcpListing = newFakeListing([]map[string]string{{
+		deviceListing = newFakeListing([]map[string]string{{
 			"deviceId": e2eDeviceID, "deviceName": e2eDeviceName,
-			"deviceOSVersion": e2eDeviceOS, "url": mcpDevice.Addr(),
+			"deviceOSVersion": e2eDeviceOS, "url": devicePages.Addr(),
 		}})
 	})
-	return mcpListing, mcpDevice
+	return deviceListing, devicePages
 }
 
 var (
@@ -104,7 +104,7 @@ func deadCLIListing() *fakeListing {
 // The binaries of these tests are linked to private listings, never to
 // iwdp's default listing address.
 func TestE2EBinariesUseAPrivateListing(t *testing.T) {
-	listing, device := fakeMCPListing()
+	listing, device := fakeDeviceListing()
 	for _, addr := range []string{listing.Addr(), device.Addr(), deadCLIListing().Addr()} {
 		if addr == "127.0.0.1:9221" || addr == "127.0.0.1:9224" || !strings.HasPrefix(addr, "127.0.0.1:") {
 			t.Fatalf("private listing %s is not a private loopback address", addr)

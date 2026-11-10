@@ -5,8 +5,8 @@ Safari allows one inspector connection per tab, and a new connection takes the t
 ## Sessions
 
 - A session is a name that the client chooses: `--session <name>` or `IWDP_SESSION`. The default is `default`.
-- The default is for compatibility only. It is not isolation: two agents that both use `default` share leases, refs and dialog answers. **Every agent and every MCP server sets its own stable session name.**
-- Sharing a session is correct only when one agent uses both the CLI and the MCP server under the same name, or when a CDP client connects through a URL that `get cdp-url` issued for that session ([cdp.md](cdp.md)).
+- The default is for compatibility only. It is not isolation: two agents that both use `default` share leases, refs and dialog answers. **Every agent sets its own stable session name.**
+- Sharing a session is correct only when a CDP client connects through a URL that `get cdp-url` issued for that session ([cdp.md](cdp.md)).
 - `iwdp-cli session` prints the current name; `session info` shows the session's leases; `session list` lists the sessions that hold leases.
 
 ## Leases
@@ -16,7 +16,7 @@ A lease binds one page to one session. It carries an **epoch**, a number that in
 - The first page command of a session takes the lease on its page.
 - A command of another session on a leased page fails at once with: `page "<title>" is leased by session "<name>" since <time> (last command <age> ago); use --session <name>, wait, or run 'iwdp-cli lease break <page>'` (exit 4).
 - `--wait-lease <duration>` waits for the lease inside the command deadline.
-- A lease ends with `close` or `session release` (this session only), after 5 minutes without commands and captures (idle expiry), or with `lease break <page>`. An MCP server keeps the lease of its selected page while it runs.
+- A lease ends with `close` or `session release` (this session only), after 5 minutes without commands and captures (idle expiry), or with `lease break <page>`.
 - The end of a lease runs the cleanup of the session's state on the page: interception and paused requests are continued, breakpoints removed and the debugger resumed, overrides and init scripts removed, dialog overrides restored, overlays removed. The release does **not** undo what the page did: it does not restore authentication state, and it does not undo submitted forms or transactions.
 - `lease break` ends another session's lease. Use it only for a session that you own or that has clearly ended.
 
@@ -50,11 +50,11 @@ The daemon cannot see every inspector client: another agent's script, an older i
 
 ## Operations on one page
 
-All entry points (CLI, MCP, legacy commands, CDP messages) are operations in one scheduler per page. Commands that change the page (actions, snapshots, which allocate refs) run one at a time in arrival order; reads run in parallel with at most 8 protocol calls in flight. A cancelled command (Ctrl+C, MCP cancel) is cancelled in the daemon at once; an action step that was already sent may still have run, and the error says so ("the page may have run step 2 of 3 of type before the reply was lost").
+All entry points (CLI, legacy commands, CDP messages) are operations in one scheduler per page. Commands that change the page (actions, snapshots, which allocate refs) run one at a time in arrival order; reads run in parallel with at most 8 protocol calls in flight. A cancelled command (Ctrl+C) is cancelled in the daemon at once; an action step that was already sent may still have run, and the error says so ("the page may have run step 2 of 3 of type before the reply was lost").
 
 ## Rules for agents
 
-- Set a distinct, stable `--session` (or `IWDP_SESSION`) for each agent and each MCP server.
+- Set a distinct, stable `--session` (or `IWDP_SESSION`) for each agent.
 - On a physical device: `device reserve` at the start of the run, `close` and `device release` at the end.
 - Never `lease break` or `--takeover` a page that another agent may use, unless the device owner approved it.
 - On "lost": stop and ask; do not retry in a loop.

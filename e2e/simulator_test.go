@@ -869,55 +869,23 @@ func TestSim_IndexedDB(t *testing.T) {
 }
 
 // =============================================================================
-// Network: enable, disable, list_network_requests, get_response_body,
+// Network: enable, disable, get_response_body,
 //          set_extra_headers, set_request_interception, intercept_continue,
 //          intercept_with_response, set_emulated_conditions,
 //          set_resource_caching_disabled
 // =============================================================================
-
-func TestSim_NetworkMonitor(t *testing.T) {
-	client := getSimClient(t)
-	ctx, cancel := simCtx()
-	defer cancel()
-
-	monitor := tools.NewNetworkMonitor()
-	if err := monitor.Start(ctx, client); err != nil {
-		t.Fatalf("NetworkMonitor.Start: %v", err)
-	}
-
-	// Trigger a network request via fetch.
-	_, _ = tools.EvaluateScript(ctx, client, "fetch('/').catch(()=>{})", false)
-	time.Sleep(2 * time.Second)
-
-	requests := monitor.GetRequests()
-	t.Logf("captured %d network request(s)", len(requests))
-	for _, r := range requests {
-		status := 0
-		if r.Response != nil {
-			status = r.Response.Status
-		}
-		t.Logf("  %s %s -> %d", r.Request.Method, r.Request.URL, status)
-	}
-
-	if err := monitor.Stop(ctx, client); err != nil {
-		t.Fatalf("NetworkMonitor.Stop: %v", err)
-	}
-}
 
 func TestSim_GetResponseBody(t *testing.T) {
 	client := getSimClient(t)
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	monitor := tools.NewNetworkMonitor()
-	if err := monitor.Start(ctx, client); err != nil {
-		t.Fatalf("NetworkMonitor.Start: %v", err)
-	}
+	network := startSimNetwork(t, client)
 
 	_, _ = tools.EvaluateScript(ctx, client, "fetch('/').catch(()=>{})", false)
 	time.Sleep(2 * time.Second)
 
-	requests := monitor.GetRequests()
+	requests := network.requests()
 	if len(requests) == 0 {
 		t.Fatal("no network requests captured for get_response_body test")
 	}
@@ -925,8 +893,8 @@ func TestSim_GetResponseBody(t *testing.T) {
 	// Find a completed request
 	var requestID string
 	for _, r := range requests {
-		if r.Done && r.Request.RequestID != "" {
-			requestID = r.Request.RequestID
+		if r.Done {
+			requestID = r.ID
 			break
 		}
 	}
@@ -939,8 +907,6 @@ func TestSim_GetResponseBody(t *testing.T) {
 		t.Fatalf("GetResponseBody: %v", err)
 	}
 	t.Logf("response body: %d bytes, base64=%v", len(body), base64Encoded)
-
-	_ = monitor.Stop(ctx, client)
 }
 
 func TestSim_SetExtraHeaders(t *testing.T) {
@@ -948,8 +914,7 @@ func TestSim_SetExtraHeaders(t *testing.T) {
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	monitor := tools.NewNetworkMonitor()
-	_ = monitor.Start(ctx, client)
+	startSimNetwork(t, client)
 
 	headers := map[string]string{"X-Test": "sim-value"}
 	if err := tools.SetExtraHeaders(ctx, client, headers); err != nil {
@@ -957,7 +922,6 @@ func TestSim_SetExtraHeaders(t *testing.T) {
 	}
 	// Clear extra headers
 	_ = tools.SetExtraHeaders(ctx, client, map[string]string{})
-	_ = monitor.Stop(ctx, client)
 }
 
 func TestSim_SetRequestInterception(t *testing.T) {
@@ -965,8 +929,7 @@ func TestSim_SetRequestInterception(t *testing.T) {
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	monitor := tools.NewNetworkMonitor()
-	_ = monitor.Start(ctx, client)
+	startSimNetwork(t, client)
 
 	if err := tools.SetRequestInterception(ctx, client, true); err != nil {
 		t.Fatalf("SetRequestInterception enable: %v", err)
@@ -974,7 +937,6 @@ func TestSim_SetRequestInterception(t *testing.T) {
 	if err := tools.SetRequestInterception(ctx, client, false); err != nil {
 		t.Fatalf("SetRequestInterception disable: %v", err)
 	}
-	_ = monitor.Stop(ctx, client)
 }
 
 func TestSim_SetEmulatedConditions(t *testing.T) {
@@ -982,8 +944,7 @@ func TestSim_SetEmulatedConditions(t *testing.T) {
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	monitor := tools.NewNetworkMonitor()
-	_ = monitor.Start(ctx, client)
+	startSimNetwork(t, client)
 
 	if err := tools.SetEmulatedConditions(ctx, client, 100000); err != nil {
 		if strings.Contains(err.Error(), "'Network.setEmulatedConditions' was not found") {
@@ -994,7 +955,6 @@ func TestSim_SetEmulatedConditions(t *testing.T) {
 	}
 	// Reset
 	_ = tools.SetEmulatedConditions(ctx, client, 0)
-	_ = monitor.Stop(ctx, client)
 }
 
 func TestSim_SetResourceCachingDisabled(t *testing.T) {
@@ -1002,14 +962,12 @@ func TestSim_SetResourceCachingDisabled(t *testing.T) {
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	monitor := tools.NewNetworkMonitor()
-	_ = monitor.Start(ctx, client)
+	startSimNetwork(t, client)
 
 	if err := tools.SetResourceCachingDisabled(ctx, client, true); err != nil {
 		t.Fatalf("SetResourceCachingDisabled: %v", err)
 	}
 	_ = tools.SetResourceCachingDisabled(ctx, client, false)
-	_ = monitor.Stop(ctx, client)
 }
 
 // =============================================================================
@@ -1723,22 +1681,18 @@ func TestSim_GetCertificateInfo(t *testing.T) {
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	// Enable network to capture a request with a certificate.
-	// Keep monitor running while we query the certificate (stopping it clears resources).
-	monitor := tools.NewNetworkMonitor()
-	if err := monitor.Start(ctx, client); err != nil {
-		t.Fatalf("NetworkMonitor.Start: %v", err)
-	}
-	defer func() { _ = monitor.Stop(ctx, client) }()
+	// Enable network to capture a request with a certificate. The domain
+	// stays enabled until the test ends: disabling it clears the resources
+	// that the certificate query reads.
+	network := startSimNetwork(t, client)
 
 	_, _ = tools.EvaluateScript(ctx, client, "fetch('https://example.com/').catch(()=>{})", false)
 	time.Sleep(2 * time.Second)
 
-	requests := monitor.GetRequests()
 	var requestID string
-	for _, r := range requests {
-		if strings.HasPrefix(r.Request.URL, "https://") && r.Request.RequestID != "" {
-			requestID = r.Request.RequestID
+	for _, r := range network.requests() {
+		if strings.HasPrefix(r.URL, "https://") {
+			requestID = r.ID
 			break
 		}
 	}
@@ -1756,7 +1710,6 @@ func TestSim_GetCertificateInfo(t *testing.T) {
 
 // =============================================================================
 // select_page — implicitly tested by getSimClient (connects WebSocket to a page).
-// The MCP tool select_page is a thin wrapper around webkit.NewClient.
 // =============================================================================
 
 // =============================================================================
@@ -1768,8 +1721,7 @@ func TestSim_InterceptContinue(t *testing.T) {
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	monitor := tools.NewNetworkMonitor()
-	_ = monitor.Start(ctx, client)
+	startSimNetwork(t, client)
 
 	if err := tools.SetRequestInterception(ctx, client, true); err != nil {
 		t.Fatalf("SetRequestInterception enable: %v", err)
@@ -1809,7 +1761,6 @@ func TestSim_InterceptContinue(t *testing.T) {
 	}
 
 	_ = tools.SetRequestInterception(ctx, client, false)
-	_ = monitor.Stop(ctx, client)
 }
 
 func TestSim_InterceptWithResponse(t *testing.T) {
@@ -1817,8 +1768,7 @@ func TestSim_InterceptWithResponse(t *testing.T) {
 	ctx, cancel := simCtx()
 	defer cancel()
 
-	monitor := tools.NewNetworkMonitor()
-	_ = monitor.Start(ctx, client)
+	startSimNetwork(t, client)
 
 	if err := tools.SetRequestInterception(ctx, client, true); err != nil {
 		t.Fatalf("SetRequestInterception enable: %v", err)
@@ -1858,7 +1808,6 @@ func TestSim_InterceptWithResponse(t *testing.T) {
 	}
 
 	_ = tools.SetRequestInterception(ctx, client, false)
-	_ = monitor.Stop(ctx, client)
 }
 
 // =============================================================================

@@ -619,28 +619,23 @@ func TestKnownRefAfterLeaseEpochChangeIsUnknown(t *testing.T) {
 	}
 }
 
-// The W3a commands are registry entries with the MCP names of design 4.2,
-// all in the core profile.
+// The W3a commands are registry entries (design 4.2).
 func TestW3aCommandsRegistered(t *testing.T) {
-	for name, mcpName := range map[string]string{
-		"snapshot": "snapshot", "diff snapshot": "diff_snapshot", "get": "get", "is": "is",
-		"find": "find", "hit-test": "hit_test", "read": "read_page",
-	} {
+	for _, name := range []string{"snapshot", "diff snapshot", "get", "is", "find", "hit-test", "read"} {
 		c, n := Lookup(strings.Fields(name))
-		if c == nil || n != len(strings.Fields(name)) || c.MCPName != mcpName || c.Profile != ProfileCore {
+		if c == nil || n != len(strings.Fields(name)) || c.Name != name {
 			t.Errorf("command %q: %+v", name, c)
 		}
 	}
 	c, _ := Lookup([]string{"snapshot"})
-	props := InputSchema(c)["properties"].(map[string]any)
-	for _, p := range []string{"interactive", "compact", "depth", "selector", "urls"} {
-		if _, ok := props[p]; !ok {
-			t.Errorf("snapshot MCP schema has no %q (design 4.2)", p)
-		}
+	flags := map[string]bool{}
+	for _, f := range c.Flags {
+		flags[f.Name] = true
 	}
-	in, err := mcpInput(c, json.RawMessage(`{"interactive":true,"depth":2}`))
-	if err != nil || in.Flags["interactive"] != true || in.Flags["depth"] != 2 {
-		t.Fatalf("MCP input = %+v, %v", in, err)
+	for _, f := range []string{"interactive", "compact", "depth", "selector", "urls"} {
+		if !flags[f] {
+			t.Errorf("snapshot has no flag --%s (design 4.2)", f)
+		}
 	}
 	for _, c := range []string{"snapshot", "find", "hit-test"} {
 		if cmd, _ := Lookup(strings.Fields(c)); !cmd.Mutates {

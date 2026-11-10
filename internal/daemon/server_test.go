@@ -217,46 +217,6 @@ func TestEndOpLeavesOneCallOperations(t *testing.T) {
 	}
 }
 
-// The MCP server's scopes (design 2.10): every call of one tool call runs in
-// one exclusive operation that begins at the first call and ends with the
-// scope, so another tool call of the session waits for it.
-func TestScopeRunsOneOperationPerToolCall(t *testing.T) {
-	o := startInProcess(t, RunOptions{})
-	c := connect(t, o)
-	f := newFake(t, fakewebkit.Options{})
-	pc, err := c.AttachPage(ctxFor(t, 5*time.Second), PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: "mcp"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pc.Close() }()
-	ctxA, endA := pc.Scope(ctxFor(t, 5*time.Second))
-	if _, err := pc.Send(ctxA, "Runtime.evaluate", map[string]any{"expression": "1"}); err != nil {
-		t.Fatal(err)
-	}
-	ctxB, endB := pc.Scope(ctxFor(t, 5*time.Second))
-	sent := make(chan time.Time, 1)
-	go func() {
-		_, _ = pc.Send(ctxB, "Runtime.evaluate", map[string]any{"expression": "2"})
-		sent <- time.Now()
-	}()
-	time.Sleep(300 * time.Millisecond)
-	ended := time.Now()
-	endA()
-	select {
-	case at := <-sent:
-		if at.Before(ended) {
-			t.Fatalf("scope B's call ran while scope A's operation was open")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("scope B's call did not run after scope A ended")
-	}
-	endB()
-	// Without a scope, a call is a one-call operation.
-	if _, err := pc.Send(ctxFor(t, 2*time.Second), "Runtime.evaluate", map[string]any{"expression": "3"}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // A stalled call ends at the caller's deadline as a deadline error that
 // names the method (W0's timeout message), exit 124 (D9).
 func TestSendDeadlineNamesMethod(t *testing.T) {

@@ -5,7 +5,7 @@ How to work on a physical iPhone that other people or agents may also use. Read 
 ## Before you start
 
 - On the device: unlocked, trusted with this host, Settings > Safari > Advanced > Web Inspector on, and the page you work on open as the **visible** Safari tab. Safari answers only for the visible tab, and WIP cannot bring a tab to the front.
-- Check that iwdp runs: `iwdp-cli status` (MCP: `iwdp_status`). When no iwdp runs, iwdp-mcp starts one (pinned to the first device on port 9224). When an iwdp runs, iwdp-mcp uses it and never starts a second one.
+- Check that iwdp runs: `iwdp-cli status`. When no iwdp runs, the daemon starts one (pinned to the first device on port 9224). When an iwdp runs, the daemon uses it and never starts a second one.
 - iwdp 1.9.2 or newer is needed for messages of 30 KB or more (the injected runtime is about 51 KB on the wire).
 
 ## Reserve and release
@@ -29,15 +29,14 @@ One iwdp serves every client on the host. Stopping or restarting it ends every o
 - Never run `pkill`, `killall` or `kill` on `ios_webkit_debug_proxy`, and never run `iwdpctl`, unless you started that process yourself and nobody else uses it.
 - Do not start a second iwdp on the same device (`direct` transport included): two inspectors on one device take pages from each other.
 
-### restart_iwdp and iwdp-cli restart-iwdp
+### iwdp-cli restart-iwdp
 
-`restart_iwdp` (MCP) and `iwdp-cli restart-iwdp` restart iwdp **only when iwdp-mcp started it**:
+`iwdp-cli restart-iwdp` restarts iwdp **only when iwdp-cli (or its daemon), or an earlier iwdp-mcp, started and recorded it**:
 
-- When iwdp-mcp starts iwdp, it records the process (pid, process group, listing address, start time and a random token in the process environment) in a private file under `$XDG_RUNTIME_DIR` (else the temporary directory).
+- When iwdp-cli or its daemon starts iwdp, it records the process (pid, process group, listing address, start time and a random token in the process environment) in a private file under `$XDG_RUNTIME_DIR` (else the temporary directory). An earlier iwdp-mcp wrote the same record, so a restart can also stop an iwdp that a still-running iwdp-mcp started.
 - A restart stops the recorded process group only when the record is valid, the running process still has the recorded start time and token, and that process group owns the listening socket of port 9221. It sends SIGTERM, then SIGKILL after 2 s, checks the identity again before SIGKILL, and starts a new iwdp.
 - In every other case it **refuses** and signals nothing: the iwdp belongs to the user, another agent or another program. The refusal names the address, the owner pid when known, and the manual restart command. Do not run that command yourself; ask the owner.
 - When no iwdp runs, it starts one.
-- A refused restart keeps the MCP server's page connection; a successful one closes it.
 - On macOS the identity check reads the process start time (`ps`) and the token from the kernel's process arguments. When either cannot be read, the restart refuses.
 
 `make sim-setup` and `make sim-teardown` follow the same rule for the simulator: teardown stops only the iwdp that setup started (pid, start time and token checked). On macOS teardown cannot read the environment exactly, so it always refuses and prints `kill <pid>` for you to run; until then the next setup refuses because port 9221 is in use.

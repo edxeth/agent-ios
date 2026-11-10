@@ -17,8 +17,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "state save",
-		MCPName: "state_save",
-		Profile: ProfileDevtools,
 		Summary: "Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials).",
 		Args:    []Arg{{Name: "path", Help: "the state file to write", Required: true}},
 		Page:    LeasedPage,
@@ -27,8 +25,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "state load",
-		MCPName: "state_load",
-		Profile: ProfileDevtools,
 		Summary: "Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's.",
 		Args:    []Arg{{Name: "path", Help: "the state file to read", Required: true}},
 		Page:    LeasedPage,

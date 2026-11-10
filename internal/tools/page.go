@@ -266,7 +266,7 @@ func SetCookie(ctx context.Context, client webkit.Caller, cookie webkit.Cookie) 
 
 // cookieExpiryPrecisionMs is how far a read-back expiry may differ from the
 // requested one and still match. Cookie dates have second precision (RFC 6265
-// section 5.1.1), and the MCP expires input is in seconds.
+// section 5.1.1), and the --expires input is in seconds.
 const cookieExpiryPrecisionMs = 1000
 
 // SetCookieVerified sets a cookie and reads it back with Page.getCookies. It

@@ -14,8 +14,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "hit-test",
-		MCPName: "hit_test",
-		Profile: ProfileCore,
 		Summary: "Print the element at a viewport point (CSS pixels): its snapshot line with a ref, its tag and its box.",
 		Args: []Arg{
 			{Name: "x", Help: "viewport x in CSS pixels", Required: true},

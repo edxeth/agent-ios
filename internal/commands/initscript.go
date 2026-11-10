@@ -14,8 +14,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "addinitscript",
-		MCPName: "add_init_script",
-		Profile: ProfileDevtools,
 		Summary: "Run a script in every new document of the page, before page scripts when the page is paused on start (partial otherwise). Prints the script id.",
 		Args:    []Arg{{Name: "script", Help: "JavaScript source (or use --file)"}},
 		Flags: []Flag{
@@ -28,8 +26,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "removeinitscript",
-		MCPName: "remove_init_script",
-		Profile: ProfileDevtools,
 		Summary: "Remove an init script of this session by the id that addinitscript printed.",
 		Args:    []Arg{{Name: "id", Help: "script id, for example init1", Required: true}},
 		Page:    LeasedPage,

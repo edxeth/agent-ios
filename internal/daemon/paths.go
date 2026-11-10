@@ -1,8 +1,8 @@
 // Package daemon is the long-lived iwdp daemon and its client (design
 // docs/design/agentic-parity.md, sections 2.1 to 2.3): HTTP/1.1 with NDJSON
 // streams on a Unix socket in a private directory, auto-start, idle exit
-// and cleanup on shutdown. The daemon is the same binary as the CLI and the
-// MCP server, started as "<own executable> daemon run".
+// and cleanup on shutdown. The daemon is the same binary as the CLI,
+// started as "<own executable> daemon run".
 package daemon
 
 import (

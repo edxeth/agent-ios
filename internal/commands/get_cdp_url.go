@@ -15,10 +15,8 @@ import (
 // returns both. Issuing takes no lease.
 func init() {
 	Register(&Command{
-		Name:    "get cdp-url",
-		MCPName: "get_cdp_url",
+		Name: "get cdp-url",
 		// The devtools profile keeps the core tool count of decision D2.
-		Profile: ProfileDevtools,
 		Summary: "Print a CDP URL for this session's page (starts the CDP endpoint if needed). Clients act for this session; use the URL exactly as printed.",
 		Flags: []Flag{
 			{Name: "scope", Type: FlagEnum, Enum: []string{cdp.ScopePage, cdp.ScopeDevice}, Default: cdp.ScopePage, Help: "page: only this page; device: also the other pages of the devices reserved by --reservation"},

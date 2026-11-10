@@ -18,8 +18,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "trace start",
-		MCPName: "trace_start",
-		Profile: ProfileDevtools,
 		Summary: "Start a WebKit Timeline recording of the page for a Chrome trace file (trace stop writes it).",
 		Flags: []Flag{
 			{
@@ -34,8 +32,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "trace stop",
-		MCPName: "trace_stop",
-		Profile: ProfileDevtools,
 		Summary: "Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to path, or to a new file in the temp directory.",
 		Args:    []Arg{{Name: "path", Help: "the trace file to write (default: a new iwdp-trace-*.json in the temp directory)"}},
 		Page:    LeasedPage,

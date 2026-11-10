@@ -72,7 +72,7 @@ Not translated: every other method of these domains (for example `Network.getAll
    # ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/browser/<endpoint>
    ```
 
-   `get cdp-url` starts the endpoint when it is not running. MCP clients use the tool `get_cdp_url` (profile `devtools`).
+   `get cdp-url` starts the endpoint when it is not running.
 2. Give the client **the exact URL as printed**. Never build a URL by hand: the token and the endpoint id are part of the path.
 3. When the work is done, run `iwdp-cli close` for the session. It releases the lease and revokes the session's CDP URLs; later requests to them get 404.
 
@@ -81,18 +81,18 @@ Which page the URL selects:
 `get cdp-url` resolves the page as every page command of the session does, in this order:
 
 1. `--page`, when given: a tab id or label (`t2`, as `tab list` printed it), a page key (the first column of a page line in `iwdp-cli daemon status`, or `key` in `iwdp-cli tab list --json`), a part of a page's title or URL (the first listed page that matches), or a `ws://` page URL.
-2. Else the page chosen with `tab <id>`. MCP: the page that `select_page` chose (the tool sends its `ws://` URL as the page), or the tab chosen with `tab_select`.
+2. Else the page chosen with `tab <id>`.
 3. Else the session's default page (the page that its last command without `--page` used), while the daemon holds that page's connection open. This step reads no listing.
 4. Else the listing's first debuggable page.
 5. When none of these gives a page (for example the chosen tab is gone, or the listing has no page), the command exits 5.
 
-The transport of the request (`--transport`, MCP `IWDP_TRANSPORT`) limits steps 2 and 3: step 2 skips a tab that was chosen with another explicit transport, and step 3 uses only a default page that a command with the same transport value set (no value counts as `auto`).
+The transport of the request (`--transport` or `IWDP_TRANSPORT`) limits steps 2 and 3: step 2 skips a tab that was chosen with another explicit transport, and step 3 uses only a default page that a command with the same transport value set (no value counts as `auto`).
 
 Issuing a URL takes no lease and does not change the session's default page.
 
 The endpoint record lists and attaches pages through the transport and listing address where the selected page was found, not through the request's. For a page that the daemon holds open, these are the transport and address where the daemon found the page when it attached it. For example, a tab chosen on the direct transport, or the page key of an attached direct-transport page, gives a URL whose `/json/list` lists the direct transport's pages, also when the request named no transport. The record of an unlisted local endpoint (below) reads no listing.
 
-A `ws://` page URL (in `--page`, or the page of MCP `select_page`) gives one of two record types. The type follows how the daemon identifies the page, not whether the daemon holds it open:
+A `ws://` page URL (in `--page`) gives one of two record types. The type follows how the daemon identifies the page, not whether the daemon holds it open:
 
 - **A listed page**: the listing of the request's transport shows the URL, or the daemon holds open the page of that URL and found it through a listing (for example an iwdp page that a command attached by its tab id, title or URL). The URL resolves to that page's ordinary record, as a tab id or title would. Its scope rules hold: `--scope page` lists that page and the pages that the client creates, `--scope device` also the other pages of the reserved devices, and `Target.createTarget` works. Its target list reads the listing.
 - **An unlisted local endpoint** (a WebKitGTK page or a mock that no listing shows, and only when the URL is not on an iwdp device port): the record has that page as its only target, whatever the scope. Its target list reads no listing, and `Target.createTarget` fails ("a new tab needs a page from the transport's page list"). The page stays an unlisted local endpoint while the daemon holds it open: a URL issued again for it, also with `--scope device` and also when a listing shows it by then, gives this record type again. An iwdp device-port URL that the listing does not show fails with exit 5 instead.
@@ -161,7 +161,7 @@ CDP clients believe that they drive Chromium, so their page scripts call newer W
 - **What is shimmed:** `Element.prototype.checkVisibility` ([CSSOM View](https://drafts.csswg.org/cssom-view/#dom-element-checkvisibility); Safari has it from 17.4). Playwright 1.65's injected script calls it, without a check, on every visibility check: the actionability checks of locator actions, `getByRole` (which leaves hidden elements out) and `ariaSnapshot`. Without it these fail at once with `TypeError: element.checkVisibility is not a function` (device check 3, iOS 16.7). An inventory of the pinned clients' page scripts against the browser compatibility data found no other API that these paths need: Puppeteer and chrome-devtools-mcp use their own visibility check, and agent-browser uses none of the missing APIs.
 - **When:** each page attachment installs the shims when it attaches, in two places: in the current document of the main frame, and as a bootstrap part of the attachment, which WebKit runs in each new document before its scripts. The part runs before the client's `Page.addScriptToEvaluateOnNewDocument` scripts. A failed install refuses the attachment with the reason.
 - **Only when missing:** a shim is installed only when its API is missing, so a native method is never replaced. On iOS 17.4 and later and on WebKitGTK the shims change nothing.
-- **Only for CDP attachments:** the CLI and MCP install no shims; their runtime has its own visibility rule.
+- **Only for CDP attachments:** the CLI installs no shims; their runtime has its own visibility rule.
 - **Main world:** the shims are in the page's main world, where the utility worlds of Playwright and Puppeteer also run.
 - **Detach:** the detach removes the attachment's bootstrap part, so later documents have no shim. The current document keeps the shim: a page script may already hold or call the method, and removing it would break that script. The shim answers as the native method does, except in the closed-shadow-root case under "Limits".
 - **The checkVisibility rules:**

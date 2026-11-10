@@ -25,7 +25,7 @@ var (
 // The skills commands (design docs/design/agentic-parity.md, section 4.2
 // "skills get|list|path", 7.9): the agent skills embedded in this binary,
 // so an agent reads the instructions that match the installed version.
-// They are Local (no daemon, no page) and have no MCP tool (design 4.2).
+// They are Local (no daemon, no page).
 func init() {
 	Register(&Command{
 		Name: "skills list", Aliases: []string{"skills"}, Local: true,

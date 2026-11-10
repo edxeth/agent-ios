@@ -15,8 +15,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "profiler start",
-		MCPName: "profiler_start",
-		Profile: ProfileDevtools,
 		Summary: "Start sampling the page's JavaScript with the WebKit ScriptProfiler (profiler stop writes the .cpuprofile).",
 		Page:    LeasedPage,
 		Mutates: true,
@@ -25,8 +23,6 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "profiler stop",
-		MCPName: "profiler_stop",
-		Profile: ProfileDevtools,
 		Summary: "Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mode 0600) to path, or to a new file in the temp directory.",
 		Args:    []Arg{{Name: "path", Help: "the profile file to write (default: a new iwdp-profile-*.cpuprofile in the temp directory)"}},
 		Page:    LeasedPage,

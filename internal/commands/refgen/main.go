@@ -1,6 +1,6 @@
 // refgen writes docs/commands.md, the command reference, from the command
 // registry (internal/commands): every registry command of iwdp-cli with its
-// usage, arguments, flags, MCP tool name and MCP profile. It registers the
+// usage, arguments and flags. It registers the
 // same commands as the binaries: those of internal/commands and the daemon
 // commands of internal/daemon.
 //
@@ -13,7 +13,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
@@ -39,11 +38,9 @@ var header = strings.Join([]string{
 	"",
 	"<!-- Generated from the command registry by \"make docs\" (go run ./internal/commands/refgen docs/commands.md). Do not edit by hand. -->",
 	"",
-	"This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs with the MCP server. For each command it gives the usage, the arguments, the flags, the MCP tool name and the MCP profile that registers the tool.",
+	"This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.",
 	"",
-	"- A command without an MCP tool is a CLI command only.",
-	"- The MCP server registers the tools of the selected profile: `core` by default, or any comma-separated set of `core`, `devtools` and `legacy`, or `all` (`IWDP_MCP_TOOLS` or `iwdp-mcp --tools`). See [MCP profiles](guide.md#mcp-profiles).",
-	"- The legacy commands of `iwdp-cli` (for example `eval`, `cookies`, `set-breakpoint`) and the legacy MCP tools are not in the registry. `iwdp-cli --help` lists them, and [the migration notes](migration.md) map them to registry commands.",
+	"- The legacy commands of `iwdp-cli` (for example `eval`, `cookies`, `set-breakpoint`) are not in the registry. `iwdp-cli --help` lists them, and [the migration notes](migration.md) map them to registry commands.",
 	"- `iwdp-cli <command> --help` prints the same usage and never connects to a page.",
 	"",
 	"",
@@ -56,13 +53,9 @@ func render(cmds []*commands.Command) string {
 	b.WriteString(header)
 	fmt.Fprintf(&b, "Global flags (any position): %s.\n\n", strings.Join(globalFlags(), ", "))
 
-	b.WriteString("## Index\n\n| Command | MCP tool | Profile | Summary |\n|---|---|---|---|\n")
+	b.WriteString("## Index\n\n| Command | Summary |\n|---|---|\n")
 	for _, c := range cmds {
-		tool, profile := "", ""
-		if c.MCPName != "" {
-			tool, profile = code(c.MCPName), code(c.Profile)
-		}
-		fmt.Fprintf(&b, "| [%s](#%s) | %s | %s | %s |\n", code(c.Name), anchor(c.Name), tool, profile, cell(c.Summary))
+		fmt.Fprintf(&b, "| [%s](#%s) | %s |\n", code(c.Name), anchor(c.Name), cell(c.Summary))
 	}
 
 	b.WriteString("\n## Commands\n")
@@ -78,23 +71,6 @@ func section(c *commands.Command) string {
 	fmt.Fprintf(&b, "\n### %s\n\n", code(c.Name))
 	fmt.Fprintf(&b, "```\n%s\n```\n\n", synopsis(c))
 	fmt.Fprintf(&b, "%s\n\n", text(c.Summary))
-	if c.MCPName != "" {
-		fmt.Fprintf(&b, "- MCP tool: %s (profile %s)\n", code(c.MCPName), code(c.Profile))
-	} else {
-		b.WriteString("- MCP tool: none (CLI only)\n")
-	}
-	if len(c.MCPAliases) > 0 {
-		names := make([]string, 0, len(c.MCPAliases))
-		for legacy := range c.MCPAliases {
-			names = append(names, legacy)
-		}
-		sort.Strings(names)
-		parts := make([]string, len(names))
-		for i, legacy := range names {
-			parts[i] = fmt.Sprintf("%s for %s", code(legacy), code(c.MCPAliases[legacy]))
-		}
-		fmt.Fprintf(&b, "- Legacy MCP parameters: %s\n", strings.Join(parts, ", "))
-	}
 	if len(c.Aliases) > 0 {
 		quoted := make([]string, len(c.Aliases))
 		for i, a := range c.Aliases {

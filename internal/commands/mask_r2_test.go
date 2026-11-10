@@ -11,7 +11,7 @@ import (
 // W4 round 2 (watchout of /home/devkit/.pi/artifacts/worker/w4-r1-cmd-20261107-061500.md,
 // design 7.9 and R17): WebKit's error text of a failed request can quote
 // the URL; "network requests" and "network request" mask it as they mask
-// the URL, in the text line and in the JSON and MCP data.
+// the URL, in the text line and in the JSON data.
 func TestNetworkListingsMaskURLsInTheErrorText(t *testing.T) {
 	req := devtools.Request{
 		ID: "r1", Seq: 1, Method: "GET", State: devtools.StateFailed, URL: "https://a.test/cb",

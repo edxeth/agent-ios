@@ -44,7 +44,7 @@ func init() {
 		},
 	})
 	Register(&Command{
-		Name: "session info", MCPName: "session_info", Profile: ProfileCore,
+		Name:    "session info",
 		Summary: "Show this session's leased pages: page, lease state (active or lost), epoch and last use.",
 		Run: func(_ context.Context, env Env, in Input) (Result, error) {
 			m, err := managerOf(env)

@@ -10,13 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/quick"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/devtools/devtoolstest"
@@ -24,8 +23,8 @@ import (
 )
 
 // Regression tests of the W4 command review findings (repair round 1):
-// network listings mask secrets, set_extra_headers and set_cookie keep
-// their legacy MCP parameters, the stdin password read ends at the
+// network listings mask secrets, cookies set keeps the expiry of the W0
+// tool set_cookie, the stdin password read ends at the
 // command deadline, and diff screenshot refuses a threshold that is not a
 // finite number.
 
@@ -105,128 +104,6 @@ func TestNetworkRequestsMasksSecretsByDefault(t *testing.T) {
 	}
 }
 
-// The MCP tool list_network_requests masks the same values in its text and
-// structured content; its parameter show-secrets prints them.
-func TestNetworkRequestsMCPMasksSecrets(t *testing.T) {
-	h := newDTHarness(t)
-	h.mustRun(t, "set", "media", "light")
-	emitSecretRequest(h, "sec2")
-	waitFor(t, "the request", func() bool { return strings.Contains(h.mustRun(t, "network", "requests"), "sec2 POST 200") })
-	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterMCP(server, ProfileDevtools, func(context.Context, Globals) (Env, error) { return dtEnv{h: h}, nil })
-	st, ct := mcp.NewInMemoryTransports()
-	ctx := context.Background()
-	ss, err := server.Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ss.Close() })
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cs.Close() })
-	call := func(args map[string]any) string {
-		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "list_network_requests", Arguments: args})
-		if err != nil || res.IsError {
-			t.Fatalf("list_network_requests %v: %v %+v", args, err, res)
-		}
-		raw, _ := json.Marshal(res)
-		return string(raw)
-	}
-	if out := call(map[string]any{}); len(leakedSecrets(out)) > 0 || !strings.Contains(out, devtools.Masked) {
-		t.Fatalf("default MCP result discloses %v (text or structured content): %s", leakedSecrets(out), out)
-	}
-	if out := call(map[string]any{"show-secrets": true}); len(leakedSecrets(out)) != len(listingSecrets) {
-		t.Fatalf("show-secrets shows %v of %v: %s", leakedSecrets(out), listingSecrets, out)
-	}
-}
-
-// resolvedSchema is the advertised MCP input schema of the registry
-// command at path, ready to validate arguments.
-func resolvedSchema(t *testing.T, path ...string) *jsonschema.Resolved {
-	t.Helper()
-	c, _ := Lookup(path)
-	if c == nil {
-		t.Fatalf("no command %q", strings.Join(path, " "))
-	}
-	raw, err := json.Marshal(InputSchema(c))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var s jsonschema.Schema
-	if err := json.Unmarshal(raw, &s); err != nil {
-		t.Fatal(err)
-	}
-	rs, err := s.Resolve(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rs
-}
-
-// Design 4.1: a registry command that takes over an MCP tool keeps its
-// parameters. The legacy set_extra_headers took "headers", an object of
-// string values (cmd/iwdp-mcp SetExtraHeadersInput); the registry tool
-// advertises and accepts it with the same meaning as its JSON argument,
-// and still takes the JSON text.
-func TestSetExtraHeadersTakesTheLegacyHeadersObject(t *testing.T) {
-	c, _ := Lookup([]string{"set", "headers"})
-	rs := resolvedSchema(t, "set", "headers")
-	for _, tc := range []struct {
-		args string
-		want string // the JSON argument of "set headers"
-	}{
-		{`{"headers":{"X-A":"1"}}`, `{"X-A":"1"}`},
-		{`{"headers":{}}`, `{}`},
-		{`{"json":"{\"X-A\":\"1\"}"}`, `{"X-A":"1"}`},
-	} {
-		var v map[string]any
-		_ = json.Unmarshal([]byte(tc.args), &v)
-		if err := rs.Validate(v); err != nil {
-			t.Errorf("schema refuses %s: %v", tc.args, err)
-		}
-		in, err := mcpInput(c, json.RawMessage(tc.args))
-		if err != nil || len(in.Args) != 1 || in.Args[0] != tc.want {
-			t.Errorf("%s: input %+v, %v; want the argument %s", tc.args, in, err, tc.want)
-		}
-	}
-	if err := rs.Validate(map[string]any{"headers": map[string]any{"X-A": 1.0}}); err == nil {
-		t.Error("the schema accepts a header value that is not a string; the legacy schema refuses it")
-	}
-	if _, err := mcpInput(c, json.RawMessage(`{"headers":{"X-A":"1"},"json":"{}"}`)); err == nil {
-		t.Error("headers and json together were accepted")
-	}
-
-	// Through the MCP tool, the legacy form sets the headers on the page.
-	h := newDTHarness(t)
-	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterMCP(server, ProfileDevtools, func(context.Context, Globals) (Env, error) { return dtEnv{h: h}, nil })
-	st, ct := mcp.NewInMemoryTransports()
-	ctx := context.Background()
-	ss, err := server.Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ss.Close() })
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cs.Close() })
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "set_extra_headers", Arguments: map[string]any{"headers": map[string]any{"X-A": "1"}}})
-	if err != nil || res.IsError {
-		t.Fatalf("set_extra_headers {headers}: %v %+v", err, res)
-	}
-	if p := h.params("Network.setExtraHTTPHeaders"); len(p) != 1 || p[0]["headers"].(map[string]any)["X-A"] != "1" {
-		t.Fatalf("setExtraHTTPHeaders = %v", p)
-	}
-	res, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "set_extra_headers", Arguments: map[string]any{"headers": map[string]any{"X-A": 1}}})
-	if err != nil || !res.IsError {
-		t.Fatalf("set_extra_headers with a number value: %v %+v; want a tool error", err, res)
-	}
-}
-
 // "set credentials" reads the password under the command deadline: a stdin
 // that never sends a full line ends the command at the deadline with exit
 // 124, and the part of the line that was read reaches no output and no
@@ -258,21 +135,13 @@ func TestSetCredentialsStdinEndsAtTheDeadline(t *testing.T) {
 	}
 }
 
-// Design 4.1 and the W0 tool (cmd/iwdp-mcp SetCookieInput, expires is a
-// number of Unix seconds): the schema of set_cookie advertises a number
-// for expires, and also takes the string form of the CLI. A fractional
-// number keeps its milliseconds, as the W0 tool's expires*1000 did.
-func TestSetCookieSchemaKeepsTheLegacyNumber(t *testing.T) {
-	rs := resolvedSchema(t, "cookies", "set")
-	for _, expires := range []any{1893456000.0, 0.0, 1893456000.5, "1893456000", "2030-01-02T03:04:05Z"} {
-		if err := rs.Validate(map[string]any{"name": "sid", "value": "dummy", "expires": expires}); err != nil {
-			t.Errorf("set_cookie expires %v: %v", expires, err)
-		}
-	}
+// The W0 tool set_cookie took expires as a number of Unix seconds; a
+// fractional value keeps its milliseconds, as the W0 tool's expires*1000
+// did.
+func TestSetCookieKeepsFractionalSeconds(t *testing.T) {
 	p := devtoolstest.New(t, "https://app.test")
-	cs := setCookieMCP(t, p, t.TempDir())
-	if res, text := callSetCookie(t, cs, map[string]any{"name": "frac", "value": "v", "domain": "app.test", "expires": 1893456000.5}); res.IsError {
-		t.Fatalf("set_cookie with fractional expires: %s", text)
+	if _, _, err := setCookie(t, p, t.TempDir(), "frac", "v", "--domain", "app.test", "--expires", "1893456000.5"); err != nil {
+		t.Fatalf("cookies set with fractional expires: %v", err)
 	}
 	if got, _ := storedCookie(p, "frac"); got.Session || got.Expires != 1893456000500 {
 		t.Fatalf("stored %+v, want expires 1893456000.5 s as 1893456000500 ms", got)
@@ -406,16 +275,13 @@ func TestMaskRequestProperty(t *testing.T) {
 	}
 }
 
-// Property (W0 tool set_cookie: expires is a JSON number of seconds and
-// the cookie's expiry is expires*1000 ms, 0 a session cookie): any number
-// that an MCP call gives for expires reaches cookieExpiry as text
-// (mcpText) and gives the W0 tool's expiry.
+// Property (W0 tool set_cookie: expires is a number of seconds and the
+// cookie's expiry is expires*1000 ms, 0 a session cookie): any number in
+// decimal notation without exponent, as --expires takes it, gives the W0
+// tool's expiry.
 func TestCookieExpiresNumberProperty(t *testing.T) {
 	f := func(x float64) bool {
-		text, err := mcpText(x)
-		if err != nil {
-			return false
-		}
+		text := strconv.FormatFloat(x, 'f', -1, 64)
 		session, ms, err := cookieExpiry(text)
 		if x == 0 {
 			return err == nil && session

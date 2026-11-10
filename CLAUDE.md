@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 go build ./...                    # Compile (quick check)
-make build                        # Compile to bin/iwdp-mcp + bin/iwdp-cli
-make install                      # Install both binaries via go install
+make build                        # Compile to bin/iwdp-cli
+make install                      # Install iwdp-cli via go install
 make test                         # Run unit + smoke tests (go test ./... -v -count=1)
-make test-e2e                     # Run e2e tests (boots iOS Sim + iwdp, tests ALL tools)
+make test-e2e                     # Run e2e tests (boots iOS Sim + iwdp, tests the commands)
 make test-coverage                # Run tests with coverage → coverage.html
 make sim-setup                    # Boot iOS Simulator + iwdp (prints IWDP_SIM_WS_URL)
 make sim-teardown                 # Shut down simulator + iwdp
@@ -72,7 +72,7 @@ Some `<Domain>.enable` methods work through iwdp Target routing (e.g., `Debugger
 
 ### Rules for agents working on a device
 
-- Never stop, restart or pattern-kill an iwdp you did not start; `restart_iwdp`/`restart-iwdp` refuse for such an iwdp (decision L02, docs/device-runbook.md).
+- Never stop, restart or pattern-kill an iwdp you did not start. `restart-iwdp` refuses an iwdp that neither iwdp-cli nor an earlier iwdp-mcp started and recorded, but it does stop one that an earlier iwdp-mcp recorded (decision L02, docs/device-runbook.md).
 - Use a distinct `--session`; reserve physical devices (`device reserve`) and release them; on "lost" stop and ask before `--takeover`.
 - All input is synthetic (`isTrusted=false`); `set viewport`, PDF, downloads and browser contexts are impossible (docs/synthetic-input.md).
 - Pause-on-start is on in the daemon but best effort; "runs before page scripts" is partial without it.
@@ -82,12 +82,11 @@ Some `<Domain>.enable` methods work through iwdp Target routing (e.g., `Debugger
 
 User docs: docs/README.md (canonical). Design: docs/design/agentic-parity.md. docs/notes/ is workstream history. Accepted limits: docs/known-limits.md.
 
-A per-user daemon (`internal/daemon`, started on demand as `<binary> daemon run`) owns every page connection; the CLI, the MCP server (a daemon client, decision D1) and the opt-in CDP endpoint (`internal/cdp`, `get cdp-url`, tokenized URLs) are its clients. `internal/core` holds sessions, leases with epochs, device reservations, the per-page scheduler and the desired state that release cleans up. `internal/commands` is the command registry (one file per command; CLI parser, help, MCP schema and dispatch come from it). `internal/runtime` is the injected agent runtime (snapshots, refs, synthetic actions, waits, dialogs); `internal/devtools` the DevTools extras; `internal/transport` the iwdp, direct (go-ios) and webkitgtk transports. MCP profiles: `core` (default), `devtools`, `legacy`, `all` (`IWDP_MCP_TOOLS`, `--tools`).
+A per-user daemon (`internal/daemon`, started on demand as `<binary> daemon run`) owns every page connection; the CLI and the opt-in CDP endpoint (`internal/cdp`, `get cdp-url`, tokenized URLs) are its clients. `internal/core` holds sessions, leases with epochs, device reservations, the per-page scheduler and the desired state that release cleans up. `internal/commands` is the command registry (one file per command; CLI parser, help and dispatch come from it). `internal/runtime` is the injected agent runtime (snapshots, refs, synthetic actions, waits, dialogs); `internal/devtools` the DevTools extras; `internal/transport` the iwdp, direct (go-ios) and webkitgtk transports.
 
-Two binaries, one shared `internal/` package tree:
+One binary over the `internal/` package tree:
 
-- `cmd/iwdp-mcp/` — MCP server binary (stdio transport, 100+ tools registered via `mcp.AddTool`)
-- `cmd/iwdp-cli/` — CLI binary (devices, pages, eval, navigate, screenshot, cookies, dom, console, network)
+- `cmd/iwdp-cli/` — CLI and daemon binary (devices, pages, eval, navigate, screenshot, cookies, dom, console, network)
 
 ### Package Layout
 
@@ -96,7 +95,7 @@ Two binaries, one shared `internal/` package tree:
   - `types.go` — Protocol type definitions for all domains (DOM, CSS, Network, Runtime, Debugger, etc.)
   - `domains.go` — Domain enable/disable helpers
   - `testutil/mock.go` — Mock WebSocket server for unit tests
-- `internal/tools/` — Tool implementations shared by MCP server and CLI, one file per domain
+- `internal/tools/` — WebKit Inspector Protocol helpers of the legacy commands, one file per domain
 - `internal/proxy/` — iwdp process detection and management
   - `IsRunning()` — checks port 9221 (listing port). Never use a device port for detection.
   - `ListDevices()` — HTTP GET on port 9221
@@ -107,12 +106,12 @@ Two binaries, one shared `internal/` package tree:
 ### Key Patterns
 
 - All WebKit protocol communication goes through `webkit.Client`
-- Tools return structured results; formatting is done by the caller (MCP or CLI)
+- Tools return structured results; formatting is done by the caller
 - Unit tests use mock WebSocket server from `internal/webkit/testutil/` (`NeverRespond(method)` simulates a stalled page; `ReceivedMethods()` and `ConnectionCount()` show what a command sent)
 - CLI behavior tests in `cmd/iwdp-cli/cli_w0_test.go` re-run the test binary as `iwdp-cli` (`runCLI`) to check exit codes, output and written files
-- E2E tests in `e2e/` cover CLI binary smoke tests, MCP server JSON-RPC, and simulator-based tool tests (`-tags=simulator`) that test ALL tools against real Safari via iOS Simulator + iwdp
+- E2E tests in `e2e/` cover CLI binary smoke tests and simulator-based tests (`-tags=simulator`) that test the commands against real Safari via iOS Simulator + iwdp
 - Error messages should be actionable (tell the user what to do)
-- Network/Console/Timeline use collector patterns: `Start()` registers event handlers, `Get*()` returns collected data
+- Console, Timeline and the recording commands (heap, memory, profilers, animation) use collector patterns: `Start()` registers event handlers, `Get*()` returns collected data
 - gorilla/websocket is not concurrent-write-safe — the one-token channel `Client.writeSem` protects `conn.WriteMessage`; `Send` stops waiting for it when its context ends
 - E2E simulator tests share a single WebSocket connection via `sync.Once` (`getSimClient` in `e2e/sim_helpers_test.go`) — never create multiple connections to the same page
 - Use `simOrigin()` helper to get the page's actual origin for storage tests — never hardcode origins
@@ -146,18 +145,9 @@ refactor/proxy-port-parsing
 
 ## Version Bumps
 
-When bumping the version, update all three files:
-
-1. `cmd/iwdp-mcp/main.go` — `Version: "X.Y.Z"` in `mcp.Implementation`
-2. `.claude-plugin/plugin.json` — `"version": "X.Y.Z"`
-3. `.claude-plugin/marketplace.json` — `"version": "X.Y.Z"`
-
-Then commit, push, and create a git tag:
+The git tag is the only version source. goreleaser names the release and its archives after the tag, and the Go toolchain stamps the tag into the binary's build information (`go version -m`), which `iwdp-cli daemon status` reports (`daemon.BuildVersion`). No file holds a version number. To release:
 
 ```bash
-git add cmd/iwdp-mcp/main.go .claude-plugin/plugin.json .claude-plugin/marketplace.json
-git commit -m "chore: bump version to X.Y.Z"
-git push
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```

@@ -14,8 +14,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "find",
-		MCPName: "find",
-		Profile: ProfileCore,
 		Summary: "Find elements by role, text, label, placeholder, alt, title, testid, or first|last|nth of a selector; print them with refs.",
 		Args: []Arg{
 			{Name: "kind", Help: "role, text, label, placeholder, alt, title, testid, first, last or nth", Required: true},

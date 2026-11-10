@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -885,43 +884,6 @@ func TestClearIndexedDBStore(t *testing.T) {
 // Console (console.go)
 // ---------------------------------------------------------------------------
 
-func TestConsoleCollectorClear(t *testing.T) {
-	mock, client := setup(t)
-
-	mock.HandleFunc("Console.enable", map[string]interface{}{})
-
-	collector := tools.NewConsoleCollector()
-	ctx := context.Background()
-	if err := collector.Start(ctx, client); err != nil {
-		t.Fatalf("ConsoleCollector.Start: %v", err)
-	}
-
-	// Send a console event.
-	if err := mock.SendEvent("Console.messageAdded", map[string]interface{}{
-		"message": map[string]interface{}{
-			"source": "console-api",
-			"level":  "log",
-			"text":   "test message",
-		},
-	}); err != nil {
-		t.Fatalf("SendEvent: %v", err)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	msgs := collector.GetMessages()
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message before clear, got %d", len(msgs))
-	}
-
-	collector.Clear()
-
-	msgs = collector.GetMessages()
-	if len(msgs) != 0 {
-		t.Errorf("expected 0 messages after clear, got %d", len(msgs))
-	}
-}
-
 func TestConsoleCollectorStop(t *testing.T) {
 	mock, client := setup(t)
 
@@ -1173,27 +1135,4 @@ func TestSetResourceCachingDisabled(t *testing.T) {
 	if !receivedDisabled {
 		t.Errorf("expected disabled=true")
 	}
-}
-
-func TestNetworkMonitorStop(t *testing.T) {
-	mock, client := setup(t)
-
-	mock.HandleFunc("Network.enable", map[string]interface{}{})
-	mock.HandleFunc("Network.disable", map[string]interface{}{})
-
-	monitor := tools.NewNetworkMonitor()
-	ctx := context.Background()
-	if err := monitor.Start(ctx, client); err != nil {
-		t.Fatalf("NetworkMonitor.Start: %v", err)
-	}
-	if err := monitor.Stop(ctx, client); err != nil {
-		t.Fatalf("NetworkMonitor.Stop: %v", err)
-	}
-
-	// Verify the monitor has no requests after a fresh start/stop cycle.
-	reqs := monitor.GetRequests()
-	if len(reqs) != 0 {
-		t.Errorf("expected 0 requests after stop, got %d", len(reqs))
-	}
-	_ = mock
 }

@@ -10,8 +10,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "is",
-		MCPName: "is",
-		Profile: ProfileCore,
 		Summary: "Print true or false: is a target visible, enabled, checked, editable or focused.",
 		Args: []Arg{
 			{Name: "state", Help: "visible, enabled, checked, editable or focused", Required: true},

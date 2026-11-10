@@ -16,8 +16,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "errors",
-		MCPName: "get_errors",
-		Profile: ProfileDevtools,
 		Summary: "Print uncaught errors and unhandled promise rejections with their stacks (the first run installs the error hooks).",
 		Flags: []Flag{
 			{Name: "clear", Type: FlagBool, Help: "empty the error list after printing"},

@@ -11,8 +11,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "snapshot",
-		MCPName: "snapshot",
-		Profile: ProfileCore,
 		Summary: "Print the page's accessibility tree with @eN refs for later commands.",
 		Flags: []Flag{
 			{Name: "interactive", Short: "i", Type: FlagBool, Help: "show only elements with refs"},

@@ -11,20 +11,18 @@ import (
 )
 
 // emulate network: network throttling (design
-// docs/design/agentic-parity.md, section 4.2 "emulate network <preset>",
-// MCP set_emulated_conditions). The throttle is desired state owned by the
+// docs/design/agentic-parity.md, section 4.2 "emulate network <preset>").
+// The throttle is desired state owned by the
 // session: a reconnect or a new target gets it again, and the release of
 // the lease removes it.
 func init() {
 	Register(&Command{
 		Name:    "emulate network",
-		MCPName: "set_emulated_conditions",
-		Profile: ProfileDevtools,
 		Summary: "Throttle the page's network to a preset (" + strings.Join(networkPresets(), ", ") + ") or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have.",
 		Args:    []Arg{{Name: "preset", Help: strings.Join(networkPresets(), ", ") + " or none"}},
 		Flags: []Flag{
-			// The parameter name of the earlier MCP tool set_emulated_conditions,
-			// kept so that its callers still work (design 4.1).
+			// The underscore name is the parameter of the earlier tool
+			// set_emulated_conditions (design 4.1).
 			{Name: "bytes_per_second_limit", Type: FlagInt, Help: "a rate in bytes per second instead of a preset; 0 removes the throttle"},
 		},
 		Page:    LeasedPage,

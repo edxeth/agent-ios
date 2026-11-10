@@ -480,7 +480,7 @@ func readBackCookie(mock *testutil.MockServer, c webkit.Cookie) {
 // TestSetCookieVerifiedChecksSessionAndExpiry pins that verification covers
 // the session status and the expiry, not only name, flags and SameSite.
 // Expiry is compared to the second: cookie dates have second precision
-// (RFC 6265 section 5.1.1) and the MCP expires input is in seconds.
+// (RFC 6265 section 5.1.1) and the --expires input is in seconds.
 func TestSetCookieVerifiedChecksSessionAndExpiry(t *testing.T) {
 	const wantMs = 1893456000000.0 // 2030-01-01T00:00:00Z
 	persistent := webkit.Cookie{Name: "sid", Value: "v", Domain: "example.com", Path: "/", SameSite: "Lax", Expires: wantMs}
@@ -743,27 +743,6 @@ func TestConsoleCollectorKeepsNewestEntriesUpToCap(t *testing.T) {
 	}
 	if msgs[0].Text != "msg-5" || msgs[len(msgs)-1].Text != fmt.Sprintf("msg-%d", total-1) {
 		t.Errorf("kept %q..%q, want the newest 10000", msgs[0].Text, msgs[len(msgs)-1].Text)
-	}
-}
-
-func TestNetworkMonitorStopsAtCap(t *testing.T) {
-	mock, client := setup(t)
-	nm := tools.NewNetworkMonitor()
-	if err := nm.Start(context.Background(), client); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	const total = 10005
-	var seen atomic.Int64
-	client.OnEvent("Network.requestWillBeSent", func(string, json.RawMessage) { seen.Add(1) })
-	for i := 0; i < total; i++ {
-		_ = mock.SendEvent("Network.requestWillBeSent", map[string]interface{}{
-			"requestId": fmt.Sprintf("r%d", i),
-			"request":   map[string]interface{}{"url": "https://example.com/", "method": "GET"},
-		})
-	}
-	waitFor(t, func() bool { return seen.Load() == total })
-	if n := len(nm.GetRequests()); n != 10000 {
-		t.Errorf("monitor holds %d requests, want the cap of 10000", n)
 	}
 }
 

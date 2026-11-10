@@ -34,8 +34,8 @@ func DeadIWDPListing() string {
 }
 
 // FakeIWDPCommands are the executables through which code starts or stops
-// the real ios_webkit_debug_proxy (internal/proxy Start, EnsureRunning and
-// Restart run them by name) or reaches usbmuxd and the device (Start's
+// the real ios_webkit_debug_proxy (internal/proxy Start and Restart run
+// them by name) or reaches usbmuxd and the device (Start's
 // DeviceUDIDs runs idevice_id; its fake exits 1, so no UDID is pinned).
 var FakeIWDPCommands = []string{"ios_webkit_debug_proxy", "pkill", "idevice_id"}
 

@@ -55,3 +55,93 @@ func simOrigin(t *testing.T, client *webkit.Client) string {
 	_ = json.Unmarshal(result.Result.Value, &origin)
 	return origin
 }
+
+// simRequest is a request that simNetwork saw: its id and URL from
+// Network.requestWillBeSent, and whether Network.loadingFinished or
+// Network.loadingFailed ended it.
+type simRequest struct {
+	ID   string
+	URL  string
+	Done bool
+}
+
+// simNetwork records the requests of the shared simulator page, so that the
+// tests of the network functions can find request ids.
+type simNetwork struct {
+	mu    sync.Mutex
+	byID  map[string]*simRequest
+	order []string
+}
+
+// startSimNetwork enables the Network domain on client and records every
+// request the page sends. At t's cleanup it removes its event handlers and
+// disables the domain again.
+func startSimNetwork(t *testing.T, client *webkit.Client) *simNetwork {
+	t.Helper()
+	n := &simNetwork{byID: map[string]*simRequest{}}
+	unsubscribe := []func(){
+		client.Subscribe("Network.requestWillBeSent", func(_ string, params json.RawMessage) {
+			var evt struct {
+				RequestID string `json:"requestId"`
+				Request   struct {
+					URL string `json:"url"`
+				} `json:"request"`
+			}
+			if json.Unmarshal(params, &evt) != nil || evt.RequestID == "" {
+				return
+			}
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			if _, seen := n.byID[evt.RequestID]; !seen {
+				n.order = append(n.order, evt.RequestID)
+			}
+			n.byID[evt.RequestID] = &simRequest{ID: evt.RequestID, URL: evt.Request.URL}
+		}),
+		client.Subscribe("Network.loadingFinished", n.markDone),
+		client.Subscribe("Network.loadingFailed", n.markDone),
+	}
+	t.Cleanup(func() {
+		for _, u := range unsubscribe {
+			u()
+		}
+		ctx, cancel := simCtx()
+		defer cancel()
+		if _, err := client.Send(ctx, "Network.disable", nil); err != nil {
+			t.Errorf("Network.disable: %v", err)
+		}
+	})
+	ctx, cancel := simCtx()
+	defer cancel()
+	if _, err := client.Send(ctx, "Network.enable", nil); err != nil {
+		t.Fatalf("Network.enable: %v", err)
+	}
+	return n
+}
+
+// markDone marks the request of a Network.loadingFinished or
+// Network.loadingFailed event as ended.
+func (n *simNetwork) markDone(_ string, params json.RawMessage) {
+	var evt struct {
+		RequestID string `json:"requestId"`
+	}
+	if json.Unmarshal(params, &evt) != nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if r, ok := n.byID[evt.RequestID]; ok {
+		r.Done = true
+	}
+}
+
+// requests returns a copy of the recorded requests in the order the page
+// sent them.
+func (n *simNetwork) requests() []simRequest {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]simRequest, 0, len(n.order))
+	for _, id := range n.order {
+		out = append(out, *n.byID[id])
+	}
+	return out
+}

@@ -34,10 +34,7 @@ func init() {
 	for _, k := range []string{"IWDP_SESSION", "IWDP_DEVICE_RESERVATION", "IWDP_TRANSPORT", "IWDP_DAEMON_DIR"} {
 		_ = os.Unsetenv(k)
 	}
-	// The MCP tests check the full legacy tool set; the default profile is
-	// core (decision D2).
-	_ = os.Setenv("IWDP_MCP_TOOLS", "all")
-	// list_devices, list_pages and iwdp_status start iwdp when it does not
+	// devices, pages and status start iwdp when it does not
 	// answer, and a daemon started by a test may too (D10): every binary
 	// these tests start finds fake ios_webkit_debug_proxy and pkill first.
 	e2eFakeBin = filepath.Join(dir, "bin")

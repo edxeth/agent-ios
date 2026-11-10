@@ -603,9 +603,6 @@ func TestHeapTrackingCollector(t *testing.T) {
 	if err := collector.Start(ctx, client); err != nil {
 		t.Fatalf("HeapTrackingCollector.Start: %v", err)
 	}
-	if !collector.PipelineHealthy() {
-		t.Error("expected pipeline to be healthy after trackingStart event")
-	}
 
 	// Send garbageCollected events.
 	if err := mock.SendEvent("Heap.garbageCollected", map[string]interface{}{

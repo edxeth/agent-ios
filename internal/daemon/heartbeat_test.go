@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -8,9 +9,9 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
 )
 
-// Design 2.6 heartbeat: an MCP-style caller (AttachPage, then HoldLease)
-// keeps its lease past the idle TTL while it lives; after Close the TTL
-// releases it.
+// Design 2.6 heartbeat: an attached caller with an open event stream (as
+// a CLI command that follows events) keeps its lease past the idle TTL
+// while it lives; after Close the TTL releases it.
 func TestHoldLeaseKeepsTheLeaseUntilClose(t *testing.T) {
 	const ttl = 300 * time.Millisecond
 	o := startInProcess(t, RunOptions{Manager: core.ManagerOptions{LeaseTTL: ttl, SweepEvery: 50 * time.Millisecond}})
@@ -20,7 +21,7 @@ func TestHoldLeaseKeepsTheLeaseUntilClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pc.HoldLease()
+	pc.Subscribe("", func(string, json.RawMessage) {})
 	time.Sleep(4 * ttl)
 	st, err := c.Status(ctxFor(t, 5*time.Second))
 	if err != nil || len(st.Pages) != 1 || st.Pages[0].Session != "mcp" || st.Pages[0].Lease != "active" {

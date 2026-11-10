@@ -5,7 +5,7 @@ package commands
 // so one agent can never end another agent's session.
 func init() {
 	Register(&Command{
-		Name: "close", MCPName: "close_session", Profile: ProfileCore,
+		Name:    "close",
 		Summary: "End this session (--session): release its page leases and run their cleanup. The Safari tab stays open; other sessions are not touched.",
 		Run:     closeSession,
 	})

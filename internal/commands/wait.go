@@ -21,7 +21,7 @@ import (
 // the daemon on W4's network tracker (devtools.WaitNetworkIdle).
 func init() {
 	Register(&Command{
-		Name: "wait", MCPName: "wait", Profile: ProfileCore,
+		Name:    "wait",
 		Summary: "Wait for milliseconds, an element state, text, a URL glob, a load state or a JavaScript condition (default timeout 25 s; exit 3 on timeout).",
 		Args:    []Arg{{Name: "target", Help: "milliseconds, or an element: @eN ref, CSS selector or locator"}},
 		Flags: []Flag{

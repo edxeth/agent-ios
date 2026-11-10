@@ -27,10 +27,6 @@ const subscribeTimeout = 10 * time.Second
 // reported that the same deadline ended a call.
 const deadlineSkew = 250 * time.Millisecond
 
-// ScopeTimeout is the operation deadline of a scope whose context has no
-// deadline (an MCP tool call): long enough for the legacy recordings.
-const ScopeTimeout = 10 * time.Minute
-
 // PageOptions select a page and the caller's ownership options.
 type PageOptions struct {
 	Page  PageReq
@@ -40,8 +36,8 @@ type PageOptions struct {
 
 // PageCaller is a webkit.Caller whose calls run in the daemon (the legacy
 // bridge of design 2.10). Calls run inside the caller's current operation:
-// the fixed operation that OpenPage begins (a CLI command), the operation
-// of a Scope (an MCP tool call), or else a one-call operation each.
+// the fixed operation that OpenPage begins (a CLI command), or else a
+// one-call operation each.
 type PageCaller struct {
 	c    *Client
 	o    PageOptions
@@ -72,10 +68,9 @@ func (c *Client) OpenPage(ctx context.Context, o PageOptions) (*PageCaller, erro
 	return p, nil
 }
 
-// AttachPage resolves and leases the page without an operation (the MCP
-// server's select_page, and CLI commands that send only control-lane
-// messages); calls then run in scopes or one at a time. It does not queue
-// behind a running operation of the session.
+// AttachPage resolves and leases the page without an operation (CLI
+// commands that send only control-lane messages); calls then run one at a
+// time. It does not queue behind a running operation of the session.
 func (c *Client) AttachPage(ctx context.Context, o PageOptions) (*PageCaller, error) {
 	var out struct {
 		Page  *PageInfo   `json:"page"`
@@ -194,7 +189,7 @@ func (p *PageCaller) Send(ctx context.Context, method string, params any) (json.
 		raw = data
 	}
 	_, control := core.ControlKindOf(method)
-	opID, err := p.opFor(ctx, control)
+	opID, err := p.opFor()
 	if err != nil {
 		return nil, withMethod(method, err)
 	}
@@ -236,20 +231,13 @@ func withMethod(method string, err error) error {
 	return fmt.Errorf("%s: %w", method, err)
 }
 
-// opFor returns the operation a call in ctx runs in: the scope's (begun on
-// first use), the fixed one while it is open, or "" for a one-call
-// operation. A control-lane message (design 2.10) never begins an
-// operation: it must not wait behind the operation it lets finish. It keeps
-// the authority of an operation that is open (the daemon refuses it when
-// that operation ended), is refused when its scope ended, and otherwise
-// carries the caller's lease epoch ("").
-func (p *PageCaller) opFor(ctx context.Context, control bool) (string, error) {
-	if s, ok := ctx.Value(scopeKey{}).(*scope); ok && s.p == p {
-		if control {
-			return s.openOp()
-		}
-		return s.opID(ctx)
-	}
+// opFor returns the operation a call runs in: the fixed one while it is
+// open, or "" for a one-call operation. A control-lane message (design
+// 2.10) never begins an operation: it must not wait behind the operation it
+// lets finish. It keeps the authority of an operation that is open (the
+// daemon refuses it when that operation ended), and otherwise carries the
+// caller's lease epoch ("").
+func (p *PageCaller) opFor() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.hold != nil {
@@ -264,70 +252,6 @@ func (p *PageCaller) opFor(ctx context.Context, control bool) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-type scopeKey struct{}
-
-type scope struct {
-	p    *PageCaller
-	mu   sync.Mutex
-	h    *hold
-	done bool
-}
-
-// errScopeEnded refuses a call from a tool call (scope) that ended.
-var errScopeEnded = fmt.Errorf("%w: the tool call already ended", webkit.ErrNotSent)
-
-// openOp is the scope's operation without beginning one ("" when none
-// began); it fails when the scope ended.
-func (s *scope) openOp() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.done {
-		return "", errScopeEnded
-	}
-	if s.h == nil {
-		return "", nil
-	}
-	return s.h.op.OpID, nil
-}
-
-func (s *scope) opID(ctx context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.done {
-		return "", errScopeEnded
-	}
-	if s.h == nil {
-		bctx := ctx
-		if _, ok := ctx.Deadline(); !ok {
-			var cancel context.CancelFunc
-			bctx, cancel = context.WithTimeout(ctx, ScopeTimeout)
-			defer cancel()
-		}
-		h, err := s.p.c.begin(bctx, s.p.o)
-		if err != nil {
-			return "", err
-		}
-		s.h = h
-	}
-	return s.h.op.OpID, nil
-}
-
-// Scope returns a context whose calls run in one exclusive operation,
-// begun at the first call, and the function that ends it (an MCP tool
-// call, design 2.10).
-func (p *PageCaller) Scope(ctx context.Context) (context.Context, func()) {
-	s := &scope{p: p}
-	return context.WithValue(ctx, scopeKey{}, s), func() {
-		s.mu.Lock()
-		h := s.h
-		s.done = true
-		s.mu.Unlock()
-		if h != nil {
-			h.end(p.c)
-		}
-	}
 }
 
 // OnEvent registers h for the life of the caller.
@@ -365,14 +289,6 @@ func (p *PageCaller) Subscribe(method string, h webkit.EventHandler) func() {
 		p.mu.Unlock()
 		s.stop()
 	}
-}
-
-// HoldLease opens an event stream without events that lives until Close:
-// while it lives the daemon keeps the session's lease from the idle TTL
-// (design 2.6 heartbeat), and Done closes when the page connection ends.
-// The MCP server calls it after AttachPage.
-func (p *PageCaller) HoldLease() {
-	p.Subscribe("", func(string, json.RawMessage) {})
 }
 
 // ---- operation holds ----

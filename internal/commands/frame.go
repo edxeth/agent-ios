@@ -48,7 +48,7 @@ import (
 // not supported (design 3.8, 4.3).
 func init() {
 	Register(&Command{
-		Name: "frame", MCPName: "select_frame", Profile: ProfileCore,
+		Name:    "frame",
 		Summary: "Make an iframe (@eN, CSS or locator) the frame that this session's later commands work in, or return to the top document with main.",
 		Args:    []Arg{{Name: "target", Help: "main, or the iframe: @eN ref, CSS selector or locator (in the current frame)", Required: true}},
 		Page:    LeasedPage,

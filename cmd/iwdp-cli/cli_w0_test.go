@@ -248,6 +248,25 @@ func TestHelpCommandForms(t *testing.T) {
 	}
 }
 
+// The help of restart-iwdp states which iwdp it may stop: iwdp-cli and an
+// earlier iwdp-mcp write the same record (internal/proxy/restart.go), so
+// the iwdp of either one is stopped (review WS1 S2 F1 and F2).
+func TestRestartIWDPHelpStatesTheOwnershipRule(t *testing.T) {
+	res := runCLI(t, "", nil, "restart-iwdp", "--help")
+	if res.code != 0 {
+		t.Fatalf("restart-iwdp --help: exit %d, stderr %q", res.code, res.stderr)
+	}
+	help := strings.Join(strings.Fields(res.stdout), " ")
+	for _, want := range []string{
+		"Restart the ios_webkit_debug_proxy that iwdp-cli or an earlier iwdp-mcp started",
+		"Stops only an iwdp that iwdp-cli, or an earlier iwdp-mcp, started and recorded",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("restart-iwdp --help does not state %q:\n%s", want, res.stdout)
+		}
+	}
+}
+
 // --- Deadlines (criterion 1) ---
 
 func TestParseGlobalOptions(t *testing.T) {

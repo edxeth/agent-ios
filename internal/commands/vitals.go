@@ -12,8 +12,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:      "vitals",
-		MCPName:   "vitals",
-		Profile:   ProfileDevtools,
 		Summary:   "Show the page's Web Vitals: LCP, CLS, TTFB, FCP, INP, DOMContentLoaded and load (unavailable ones say why).",
 		Page:      LeasedPage,
 		RetrySafe: true,

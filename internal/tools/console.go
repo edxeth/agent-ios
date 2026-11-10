@@ -70,13 +70,6 @@ func (c *ConsoleCollector) GetMessages() []webkit.ConsoleMessage {
 	return msgs
 }
 
-// Clear clears all collected console messages.
-func (c *ConsoleCollector) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.messages = nil
-}
-
 // ClearConsoleMessages sends a command to clear the console in the inspected page.
 func ClearConsoleMessages(ctx context.Context, client webkit.Caller) error {
 	_, err := client.Send(ctx, "Console.clearMessages", nil)

@@ -3,11 +3,8 @@
 package webkitgtk
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"image/png"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
 	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
 )
@@ -232,60 +227,6 @@ func TestAnnotatedCaptureTimeoutRemovesOverlayOnWebKitGTK(t *testing.T) {
 	e.eventually(agentA, "!("+overlayPresent+")", 3*time.Second)
 	if got := e.js(agentA, "document.getElementById('save').textContent"); got != `"Save"` {
 		t.Fatalf("page after the cleanup: %s", got)
-	}
-}
-
-// navMCPEnv runs registry MCP tools in the test daemon for agentA, as the
-// MCP server's registryEnv (cmd/iwdp-mcp) does.
-type navMCPEnv struct{ e *navEnv }
-
-func (navMCPEnv) Page(context.Context) (*core.PageSession, error) {
-	return nil, errors.New("registry tools run in the daemon")
-}
-func (navMCPEnv) Emit(string)                 {}
-func (navMCPEnv) ResolvePath(p string) string { return p }
-func (m navMCPEnv) RunRemote(ctx context.Context, c *commands.Command, in commands.Input) (commands.Result, error) {
-	r, err := m.e.c.Run(ctx, daemon.RunRequest{Argv: commands.Argv(c, in), TimeoutMs: 30000, Owner: daemon.Owner{Session: agentA}}, nil)
-	if err != nil {
-		return commands.Result{}, err
-	}
-	return commands.Result{Text: r.Text, Data: r.Data}, nil
-}
-
-// Review finding 7: take_screenshot through MCP reaches the page with
-// annotate; the result has the labels and the image, and the overlay is
-// gone afterwards.
-func TestAnnotatedScreenshotThroughMCPOnWebKitGTK(t *testing.T) {
-	e := newNavEnv(t, "annotate.html", false)
-	ctx := context.Background()
-	impl := &mcp.Implementation{Name: "w3b-nav-test", Version: "0"}
-	server := mcp.NewServer(impl, nil)
-	commands.RegisterMCP(server, commands.ProfileCore, func(context.Context, commands.Globals) (commands.Env, error) { return navMCPEnv{e}, nil })
-	st, ct := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ss.Close() })
-	cs, err := mcp.NewClient(impl, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cs.Close() })
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "take_screenshot", Arguments: map[string]any{"annotate": true}})
-	if err != nil || res.IsError || len(res.Content) != 2 {
-		t.Fatalf("take_screenshot annotate: %v %+v", err, res)
-	}
-	text := res.Content[0].(*mcp.TextContent).Text
-	if !strings.Contains(text, `button "Save"`) || strings.Contains(text, `"Far below"`) {
-		t.Fatalf("labels:\n%s", text)
-	}
-	img, err := png.Decode(bytes.NewReader(res.Content[1].(*mcp.ImageContent).Data))
-	if err != nil || img.Bounds().Dx() == 0 {
-		t.Fatalf("image content is no PNG: %v", err)
-	}
-	if got := e.js(agentA, overlayPresent); got != "false" {
-		t.Fatal("the overlay is still in the page after the MCP capture")
 	}
 }
 

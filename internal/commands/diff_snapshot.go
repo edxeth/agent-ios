@@ -13,8 +13,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:      "diff snapshot",
-		MCPName:   "diff_snapshot",
-		Profile:   ProfileCore,
 		Summary:   "Show what changed between the last two snapshots of this session (a unified line diff).",
 		Page:      AnyPage,
 		RetrySafe: true,

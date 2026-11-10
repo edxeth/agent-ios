@@ -90,7 +90,7 @@ func TestReviewLegacyListingExitCode(t *testing.T) {
 // On a healthy listing the legacy listing commands answer from it: the
 // device list, the page list of the device's port, and status.
 func TestCLI_LegacyListingCommandsOnAHealthyListing(t *testing.T) {
-	listing, device := fakeMCPListing()
+	listing, device := fakeDeviceListing()
 	bin := buildCLIFor(t, listing.Addr())
 	for _, c := range []struct {
 		args []string

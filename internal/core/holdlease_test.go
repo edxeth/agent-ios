@@ -8,8 +8,9 @@ import (
 )
 
 // Design 2.6 heartbeat: while a client of the leasing session keeps an
-// event stream open (an MCP server), the idle TTL does not expire the
-// lease; after the stream closes, the TTL counts from the close.
+// event stream open (a CLI command that follows events, a CDP
+// attachment), the idle TTL does not expire the lease; after the stream
+// closes, the TTL counts from the close.
 func TestHeldLeaseDoesNotExpire(t *testing.T) {
 	const ttl = 300 * time.Millisecond
 	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{LeaseTTL: ttl, SweepEvery: 50 * time.Millisecond})

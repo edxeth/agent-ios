@@ -36,7 +36,7 @@ var helpSections = []helpSection{
 		{"devices", "devices", "List connected iOS devices", ""},
 		{"pages", "pages [port]", "List open Safari tabs (default port: 9224)", ""},
 		{"status", "status", "Check if ios_webkit_debug_proxy is running", ""},
-		{"restart-iwdp", "restart-iwdp", "Restart the ios_webkit_debug_proxy that iwdp-mcp started", "Stops only an iwdp that iwdp-mcp or iwdp-cli started and recorded, then starts\na new one. Another program's iwdp (the user's or another agent's) is never\nstopped: the command fails and names the owner pid and the manual restart\ncommand. When no iwdp runs, it starts one."},
+		{"restart-iwdp", "restart-iwdp", "Restart the ios_webkit_debug_proxy that iwdp-cli or an earlier iwdp-mcp started", "Stops only an iwdp that iwdp-cli, or an earlier iwdp-mcp, started and\nrecorded (both write the same record), then starts a new one. Any other\niwdp (for example one that the user or another program started) is never\nstopped: the command fails and names the owner pid and the manual restart\ncommand.\nWhen no iwdp runs, it starts one."},
 		{"eval", "eval [--await] <expr> [ws-url]", "Evaluate JavaScript", `Options:
   --await   If the expression returns a Promise, wait for it and print the settled value.
 Strings print as plain text; other values print as JSON. A thrown exception or a

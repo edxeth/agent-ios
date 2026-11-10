@@ -23,20 +23,20 @@ import (
 // probes the tab before it moves the session there.
 func init() {
 	Register(&Command{
-		Name: "tab list", MCPName: "tab_list", Profile: ProfileCore,
+		Name:      "tab list",
 		Summary:   "List the pages of the device as tabs t1, t2, ... with labels; * marks this session's current tab.",
 		RetrySafe: true, Output: OutputText,
 		Run: runTabList,
 	})
 	Register(&Command{
-		Name: "tab", MCPName: "tab_select", Profile: ProfileCore,
+		Name:    "tab",
 		Summary: "Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs.",
 		Args:    []Arg{{Name: "id", Help: "tab id (t1, t2, ...) or label from tab list; none: list the tabs"}},
 		Output:  OutputText,
 		Run:     runTab,
 	})
 	Register(&Command{
-		Name: "tab new", Aliases: []string{"window new"}, MCPName: "tab_new", Profile: ProfileDevtools,
+		Name: "tab new", Aliases: []string{"window new"},
 		Summary: "Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end.",
 		Args:    []Arg{{Name: "url", Help: "URL to open (default about:blank)"}},
 		Flags:   []Flag{{Name: "label", Type: FlagString, Help: "label for the new tab, usable instead of its tN id"}},
@@ -47,7 +47,7 @@ func init() {
 		Run: runTabNew,
 	})
 	Register(&Command{
-		Name: "tab close", MCPName: "tab_close", Profile: ProfileDevtools,
+		Name:    "tab close",
 		Summary: "Close a tab (default: the current one) with window.close(); works only for tabs that a script opened.",
 		Args:    []Arg{{Name: "id", Help: "tab id (tN) or label; default: the current tab"}},
 		Output:  OutputText,

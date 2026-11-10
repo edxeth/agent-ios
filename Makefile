@@ -3,19 +3,15 @@
 
 # Build
 build:
-	go build -o bin/iwdp-mcp ./cmd/iwdp-mcp
 	go build -o bin/iwdp-cli ./cmd/iwdp-cli
 
 # Run
-run-mcp:
-	go run ./cmd/iwdp-mcp
-
 run-cli:
 	go run ./cmd/iwdp-cli $(ARGS)
 
-# Install both binaries
+# Install iwdp-cli
 install:
-	go install ./cmd/...
+	go install ./cmd/iwdp-cli
 
 # Test
 test:

@@ -14,8 +14,6 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "get",
-		MCPName: "get",
-		Profile: ProfileCore,
 		Summary: "Get url, title, or text, html, value, attr, count, box or styles of a target (@ref, CSS selector or locator).",
 		Args: []Arg{
 			{Name: "what", Help: "url, title, text, html, value, attr, count, box or styles", Required: true},

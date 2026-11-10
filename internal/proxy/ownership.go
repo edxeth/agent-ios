@@ -192,7 +192,7 @@ func runtimeName(kind, addr, ext string) string {
 }
 
 // lockStart takes the host-wide start lock of the listing address addr, so
-// that cooperating processes (the daemon, the legacy MCP server, the CLI)
+// that cooperating processes (the daemon, the CLI)
 // start iwdp one at a time. The lock is a flock on a file in
 // XDG_RUNTIME_DIR, else the temporary directory (shared /tmp on Linux). The
 // file is opened with O_NOFOLLOW and close-on-exec, so the started iwdp

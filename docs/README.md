@@ -4,12 +4,12 @@ User documentation:
 
 | Page | Content |
 |---|---|
-| [guide.md](guide.md) | How the product works: the daemon, the agentic loop (snapshot, refs, actions, waits, dialogs), tabs and frames, DevTools extras, MCP profiles, transports, output and exit codes |
+| [guide.md](guide.md) | How the product works: the daemon, the agentic loop (snapshot, refs, actions, waits, dialogs), tabs and frames, DevTools extras, transports, output and exit codes |
 | [sessions.md](sessions.md) | Sessions, page leases and device reservations: the rules for agents |
 | [synthetic-input.md](synthetic-input.md) | The synthetic-input statement and the features that iOS WebKit cannot support |
 | [cdp.md](cdp.md) | The CDP endpoint: get a tokenized URL, connect agent-browser, Puppeteer, Playwright or chrome-devtools-mcp, the method table, the limits per domain and the compatibility suite |
-| [device-runbook.md](device-runbook.md) | Work on a physical iPhone: reserve and release, iwdp ownership, restart_iwdp, a lost page, pause-on-start |
-| [migration.md](migration.md) | From the legacy commands and MCP tools to the registry commands |
+| [device-runbook.md](device-runbook.md) | Work on a physical iPhone: reserve and release, iwdp ownership, restart-iwdp, a lost page, pause-on-start |
+| [migration.md](migration.md) | From the legacy commands to the registry commands, and from the removed MCP server to iwdp-cli |
 | [known-limits.md](known-limits.md) | Every accepted limit with its reason |
 | [commands.md](commands.md) | The command reference, generated from the command registry (`make docs`) |
 

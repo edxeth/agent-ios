@@ -1374,9 +1374,9 @@ func (m *Manager) acquire(ctx context.Context, pg *Page, ao AcquireOptions, op b
 // ---- operations ----
 
 // HoldLease keeps the lease of ao's session on pg from the idle TTL until the
-// returned function is called (design 2.6 heartbeat: a client such as the
-// MCP server keeps an event stream open, and the daemon renews its lease
-// while the stream lives). It holds nothing while another session leases
+// returned function is called (design 2.6 heartbeat: a client such as a
+// CDP attachment or a CLI command that follows events keeps an event stream
+// open, and the daemon renews its lease while the stream lives). It holds nothing while another session leases
 // the page. The TTL counts again from the end of the last hold.
 func (m *Manager) HoldLease(pg *Page, ao AcquireOptions) func() {
 	session := ao.normalized().Session

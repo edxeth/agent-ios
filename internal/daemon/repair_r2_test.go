@@ -85,44 +85,9 @@ func wantResumed(t *testing.T, done <-chan error) {
 	}
 }
 
-// R2-5, design 2.10: a control message keeps the authority of the
-// operation it was sent from. A Debugger.resume retained from an MCP tool
-// call (a scope) that already ended is refused unsent; it does not resume
-// the pause of the session's next tool call, whose own resume does.
-func TestControlFromAnEndedScopeIsRefused(t *testing.T) {
-	c := connect(t, startInProcess(t, RunOptions{}))
-	f := newFake(t, fakewebkit.Options{})
-	p, err := c.AttachPage(ctxFor(t, 5*time.Second), PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: "s1"}, Name: "mcp"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = p.Close() }()
-	old, endOld := p.Scope(ctxFor(t, 10*time.Second))
-	if _, err := p.Send(old, "Runtime.evaluate", map[string]any{"expression": "1"}); err != nil {
-		t.Fatalf("first tool call: %v", err)
-	}
-	endOld()
-	pauseOn(f)
-	cur, endCur := p.Scope(ctxFor(t, 10*time.Second))
-	defer endCur()
-	done := evalAsync(p, cur)
-	waitSent(t, f, "Debugger.paused")
-	if _, err := p.Send(old, "Debugger.resume", nil); err == nil || !errors.Is(err, webkit.ErrNotSent) {
-		t.Fatalf("resume from the ended tool call: %v, want a refusal that was not sent", err)
-	}
-	if n := len(f.ReceivedMethod("Debugger.resume")); n != 0 {
-		t.Fatalf("the page received %d Debugger.resume from an ended tool call", n)
-	}
-	if _, err := p.Send(cur, "Debugger.resume", nil); err != nil {
-		t.Fatalf("resume from the running tool call: %v", err)
-	}
-	wantResumed(t, done)
-}
-
-// R2-5: an attach-only control caller (the CLI resume command, an MCP page
-// selection) carries the epoch of the lease it attached under. After a
-// lease break and a new lease of the same session, its resume is refused
-// unsent and the new lease's pause stays for the new holder.
+// R2-5: an attach-only control caller (the CLI resume command) carries
+// the epoch of the lease it attached under. After a lease break and a new
+// lease of the same session, its resume is refused unsent and the new lease's pause stays for the new holder.
 func TestControlFromAnOldLeaseIsRefused(t *testing.T) {
 	c := connect(t, startInProcess(t, RunOptions{}))
 	f := newFake(t, fakewebkit.Options{})
@@ -230,7 +195,7 @@ func TestHeartbeatEOFEndsThePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = pc.Close() }()
-	pc.HoldLease()
+	pc.Subscribe("", func(string, json.RawMessage) {})
 	select {
 	case <-pc.Done():
 	case <-time.After(3 * time.Second):

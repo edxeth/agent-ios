@@ -16,8 +16,8 @@ import (
 const AnyDevice = "*"
 
 // Reservation is a cooperative device reservation (design 2.5, rule 1):
-// flock-protected JSON files that every iwdp-cli and iwdp-mcp of this
-// version honours. It does not stop clients that ignore it.
+// flock-protected JSON files that every iwdp-cli of this version
+// honours. It does not stop clients that ignore it.
 type Reservation struct {
 	Device  string        `json:"device"` // UDID, or AnyDevice
 	Owner   string        `json:"owner"`

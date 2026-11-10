@@ -1,6 +1,6 @@
 # Migration notes
 
-Earlier releases had one connection per command and one tool per WebKit method. The current release runs every command through the daemon and adds the registry commands of the agentic loop. The legacy commands and tools still work; this page says what changed and which registry command replaces which legacy one.
+Earlier releases had one connection per command and one tool per WebKit method. The current release runs every command through the daemon and adds the registry commands of the agentic loop. The legacy commands still work; this page says what changed and which registry command replaces which legacy one.
 
 ## What changed for every user
 
@@ -9,24 +9,12 @@ Earlier releases had one connection per command and one tool per WebKit method. 
 - **Device reservations.** Pages of a physical device need a reservation: `iwdp-cli device reserve --owner <owner>` first. Without one, page commands exit 6.
 - **Lost pages.** When someone else takes the page, commands fail with exit 4 and "ownership is unknown"; nothing reconnects by itself. `--takeover` reattaches, with the device owner's approval.
 - **The "Connecting to: <title>" line is gone.** Errors still name the page.
-- **restart_iwdp and restart-iwdp** restart only an iwdp that iwdp-mcp started, and refuse otherwise ([device-runbook.md](device-runbook.md)).
+- **restart-iwdp** restarts only an iwdp that iwdp-cli, or an earlier iwdp-mcp, started and recorded, and refuses otherwise ([device-runbook.md](device-runbook.md)).
 - **Exit codes of registry commands**: 0 ok, 1 error, 2 usage, 3 wait timeout, 4 page busy or lost, 5 no device or page, 6 reservation missing, 124 deadline, 130 signal. Legacy commands differ; see [Legacy commands: output and exit codes](#legacy-commands-output-and-exit-codes).
 
 ## MCP server
 
-- The server registers the `core` profile by default (47 tools). Earlier releases registered every tool. To get them all back, set `IWDP_MCP_TOOLS=all` or start `iwdp-mcp --tools all`; `--tools core,legacy` keeps the earlier tool names beside the new ones (the table below says which handler serves a shared name). See [guide.md](guide.md#mcp-profiles).
-- Set `IWDP_SESSION` in the server's environment to a name of its own, and `IWDP_DEVICE_RESERVATION` to the owner of the device reservation.
-- Thirteen registry commands reuse the name and the legacy parameters of a legacy tool. The selected profiles decide which handler serves such a name. When they include the profile of the registry command, the registry command serves the name and the legacy handler is not registered. Otherwise the legacy handler serves the name when the selected profiles register it (`legacy` registers every legacy tool, `core` a fixed list):
-
-  | Tool names | Registry command (profile) serves them in | Legacy handler serves them in | Not registered in |
-  |---|---|---|---|
-  | `navigate`, `reload`, `take_screenshot`, `click`, `fill`, `type_text`, `highlight_node`, `set_cookie` (`core`) | `core` (default), `core,devtools`, `core,legacy`, `all` | `legacy`, `devtools,legacy` | `devtools` |
-  | `set_extra_headers`, `list_network_requests`, `get_console_messages`, `clear_console` (`devtools`) | `devtools`, `core,devtools`, `devtools,legacy`, `all` | `core` (default), `core,legacy`, `legacy` | none |
-  | `set_emulated_conditions` (`devtools`) | `devtools`, `core,devtools`, `devtools,legacy`, `all` | `core,legacy`, `legacy` | `core` (default) |
-
-  In the default `core` profile the network and console tools are therefore the legacy handlers: `list_network_requests` is not masked, and it and `get_console_messages` stay empty there ([known-limits.md](known-limits.md#mcp-profiles)). For the daemon's masked network log and its console buffer, select a profile with `devtools`, for example `IWDP_MCP_TOOLS=core,devtools`.
-- Where the registry command serves the name, a legacy parameter and its new name are aliases (for example click's `selector` and `target`); give one of them, not both. `click`, `fill` and `type_text` then accept `@eN` refs and locators and run the actionability checks of their action ([guide.md](guide.md#the-agentic-loop), step 4); the checks differ per action.
-- New tools: see the index of [commands.md](commands.md). The MCP name of a registry command can differ from its CLI name (`open` is `navigate`, `tab` is `tab_select`, `frame` is `select_frame`, `close` is `close_session`, `read` is `read_page`).
+The MCP server (`iwdp-mcp`), its tool profiles (`IWDP_MCP_TOOLS`, `--tools`), the Claude Code plugin and the MCP skill `ios-safari-debug` are removed. Agents run `iwdp-cli` commands instead and read the built-in skill with `iwdp-cli skills get iwdp`. Each former tool of a registry command is the registry command of the [command reference](commands.md) (for example `navigate` is `open`, `tab_select` is `tab`, `select_frame` is `frame`, `close_session` is `close`, `read_page` is `read`); the other former tools are the legacy commands that `iwdp-cli --help` lists. Parameters are now flags: `full_page` is `--full-page`, `http_only` is `--http-only`, and a CSS selector is the target argument. A client that needs a protocol connection uses the CDP endpoint (`iwdp-cli get cdp-url`, [cdp.md](cdp.md)).
 
 ## CLI: legacy command to registry command
 

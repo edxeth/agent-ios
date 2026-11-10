@@ -28,13 +28,6 @@ func Register(c *Command) {
 			panic(fmt.Sprintf("commands.Register: %q is already used by command %q", n, prev.Name))
 		}
 	}
-	if c.MCPName != "" {
-		for _, o := range ordered {
-			if o.MCPName == c.MCPName {
-				panic(fmt.Sprintf("commands.Register: MCP name %q is already used by command %q", c.MCPName, o.Name))
-			}
-		}
-	}
 	for _, n := range append([]string{c.Name}, c.Aliases...) {
 		registry[n] = c
 	}
@@ -81,9 +74,6 @@ func validate(c *Command) error {
 		if a.Variadic && i != len(c.Args)-1 {
 			return fmt.Errorf("command %q: only the last argument can be variadic", c.Name)
 		}
-	}
-	if c.MCPName != "" && c.Profile == "" {
-		return fmt.Errorf("command %q: MCP tool %q has no profile", c.Name, c.MCPName)
 	}
 	return nil
 }
