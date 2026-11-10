@@ -158,7 +158,7 @@ func (c *stageConn) Send(_ context.Context, method string, params any) (json.Raw
 	c.sent = append(c.sent, sentCall{method, p})
 	return json.RawMessage("{}"), nil
 }
-func (c *stageConn) OnEvent(method string, h webkit.EventHandler) { c.handlers[method] = h }
+
 func (c *stageConn) Subscribe(method string, h webkit.EventHandler) func() {
 	c.handlers[method] = h
 	return func() {}

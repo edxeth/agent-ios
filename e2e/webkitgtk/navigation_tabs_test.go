@@ -260,7 +260,7 @@ func TestFrameKeepsAnotherRuntimeOwnerOnWebKitGTK(t *testing.T) {
 	defer cancel()
 	if err := e.m.Do(ctx, core.PageRequest{}, core.AcquireOptions{Session: agentA}, "legacy runtime", core.ClassExclusive, false,
 		func(ctx context.Context, mo *core.ManagedOp) error {
-			_, err := e.m.Raw(ctx, mo.ID, "Runtime.enable", nil)
+			_, err := e.m.RawAs(ctx, mo, core.SessionOwner("legacy", mo.Session), "Runtime.enable", nil)
 			return err
 		}); err != nil {
 		t.Fatalf("legacy Runtime.enable: %v", err)

@@ -89,8 +89,9 @@ func (e dtEnv) RunRemote(ctx context.Context, c *Command, in Input) (Result, err
 
 func (h *dtHarness) run(args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
-	code := RunCLI(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb,
+	code := RunCLIStarted(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb, nil,
 		func(context.Context, *Invocation) (Env, error) { return dtEnv{h: h}, nil })
+
 	return code, strings.TrimRight(out.String(), "\n"), errb.String()
 }
 
@@ -400,8 +401,9 @@ func TestSetCredentialsReadsStdinAndNeverPrintsThePassword(t *testing.T) {
 	stdinPipe(t, "from-stdin\n", true)
 	envBuilt := false
 	var out2, errb bytes.Buffer
-	code = RunCLI(context.Background(), []string{"set", "credentials", "--origin", "https://fixture.example", "--password", password, "alice"}, &out2, &errb,
+	code = RunCLIStarted(context.Background(), []string{"set", "credentials", "--origin", "https://fixture.example", "--password", password, "alice"}, &out2, &errb, nil,
 		func(context.Context, *Invocation) (Env, error) { envBuilt = true; return dtEnv{h: h}, nil })
+
 	if code != ExitUsage || envBuilt || !strings.Contains(errb.String(), "stdin") || strings.Contains(out2.String()+errb.String(), password) {
 		t.Fatalf("set credentials --password on a command line: exit %d, env built %v, stdout %q, stderr %q; want a usage error that points to stdin, without the password", code, envBuilt, out2.String(), errb.String())
 	}

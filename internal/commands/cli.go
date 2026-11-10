@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -72,11 +73,21 @@ type globalSpec struct {
 	set   func(g *Globals, v string) error
 }
 
-// parseTimeout parses the value of --timeout or IWDP_TIMEOUT (name).
+// parseTimeout parses the value of --timeout, IWDP_TIMEOUT or --wait-lease
+// (name): a Go duration ("30s", "1m30s") or a bare whole number of seconds
+// ("30"; strconv.Atoi syntax), greater than zero. Earlier iwdp-cli versions
+// accepted both forms. A second count too large for a time.Duration is
+// refused, as time.ParseDuration refuses the same count with an "s".
 func parseTimeout(name, v string) (time.Duration, error) {
 	d, err := time.ParseDuration(v)
+	if secs, aerr := strconv.Atoi(v); aerr == nil {
+		d, err = time.Duration(secs)*time.Second, nil
+		if secs <= 0 || secs > math.MaxInt64/int(time.Second) {
+			d = 0 // not positive, or too large for a Duration
+		}
+	}
 	if err != nil || d <= 0 {
-		return 0, fmt.Errorf("%s %q: want a positive duration such as 30s", name, v)
+		return 0, fmt.Errorf("%s %q: want a positive duration such as 30s, or a whole number of seconds such as 30", name, v)
 	}
 	return d, nil
 }
@@ -88,7 +99,7 @@ var globalSpecs = []globalSpec{
 		g.Timeout, err = parseTimeout("--timeout", v)
 		return err
 	}},
-	{"--json", false, func(g *Globals, _ string) error { g.JSON = true; return nil }},
+	{"--json", false, boolGlobal("--json", func(g *Globals, b bool) { g.JSON = b })},
 	{"--transport", true, func(g *Globals, v string) error {
 		switch v {
 		case "auto", "iwdp", "direct", "webkitgtk":
@@ -105,13 +116,29 @@ var globalSpecs = []globalSpec{
 		g.MaxOutput = n
 		return nil
 	}},
-	{"--content-boundaries", false, func(g *Globals, _ string) error { g.ContentBoundaries = true; return nil }},
+	{"--content-boundaries", false, boolGlobal("--content-boundaries", func(g *Globals, b bool) { g.ContentBoundaries = b })},
 	{"--reservation", true, func(g *Globals, v string) error { g.Reservation = v; return nil }},
 	{"--wait-lease", true, func(g *Globals, v string) (err error) {
 		g.WaitLease, err = parseTimeout("--wait-lease", v)
 		return err
 	}},
-	{"--takeover", false, func(g *Globals, _ string) error { g.Takeover = true; return nil }},
+	{"--takeover", false, boolGlobal("--takeover", func(g *Globals, b bool) { g.Takeover = b })},
+}
+
+// boolGlobal is the setter of the boolean global option name: "--name"
+// alone sets true (splitGlobals passes "true"), "--name=<v>" takes exactly
+// the values of strconv.ParseBool, and any other value is an error that
+// names the option and the value. An explicit false is honored, so
+// --takeover=false never authorizes a takeover.
+func boolGlobal(name string, set func(g *Globals, b bool)) func(*Globals, string) error {
+	return func(g *Globals, v string) error {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("%s %q: want true or false (or 1, t, T, TRUE, True, 0, f, F, FALSE, False)", name, v)
+		}
+		set(g, b)
+		return nil
+	}
 }
 
 func globalFlag(name string) *globalSpec {
@@ -128,6 +155,9 @@ type Invocation struct {
 	Cmd   *Command
 	Input Input
 	Help  bool // --help or -h: print help, run nothing
+	// Group, with Help and no Cmd, is the help of the command group that
+	// the command words name (GroupHelp).
+	Group string
 }
 
 // Parse parses a registry command line: global flags anywhere before "--",
@@ -154,22 +184,69 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An unknown long option or an unknown command is a usage error also
+	// with --help or -h; help never hides a malformed line.
 	words := commandWords(rest)
 	c, n := Lookup(words)
 	if c == nil {
 		if len(words) == 0 {
-			return &Invocation{Help: help}, nil
+			if help && onlyHelp(args) {
+				// "--help" or "-h" alone: the overview.
+				return &Invocation{Help: true}, nil
+			}
+			if name := unknownLongFlag(rest); name != "" {
+				return nil, &UsageError{fmt.Sprintf("no command in %q: unknown flag %s (run 'iwdp-cli --help')", strings.Join(args, " "), name)}
+			}
+			// Only global options, or a flag before any command word.
+			return nil, &UsageError{fmt.Sprintf("no command in %q (run 'iwdp-cli --help')", strings.Join(args, " "))}
+		}
+		if list, ok := GroupHelp(words); ok {
+			if help {
+				// A group has no flags of its own.
+				if name := unknownLongFlag(rest[len(words):]); name != "" {
+					group := strings.Join(words, " ")
+					return nil, &UsageError{fmt.Sprintf("%s: unknown flag %s (run 'iwdp-cli %s --help')", group, name, group)}
+				}
+				return &Invocation{Help: true, Group: list}, nil
+			}
+			return nil, &UsageError{fmt.Sprintf("%q is a group of commands, not a command.\n%s", strings.Join(words, " "), strings.TrimSuffix(list, "\n"))}
 		}
 		return nil, &UsageError{fmt.Sprintf("unknown command %q", strings.Join(words, " "))}
 	}
 	inv := &Invocation{Cmd: c, Help: help, Input: Input{Global: g, Flags: map[string]any{}}}
 	if help {
+		// Help needs none of the command's arguments, but its flags must
+		// be the command's, with valid values (Check).
+		in := Input{Global: g, Flags: map[string]any{}}
+		if err := parseFlags(c, rest[n:], &in); err != nil {
+			return nil, &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
+		}
+		if err := checkValues(c, in); err != nil {
+			return nil, err
+		}
 		return inv, nil
 	}
 	if err := parseCommand(c, rest[n:], &inv.Input); err != nil {
 		return nil, &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
 	}
+	if err := checkValues(c, inv.Input); err != nil {
+		return nil, err
+	}
 	return inv, nil
+}
+
+// checkValues runs c.Check, when set, and returns its error as a usage
+// error that names c. Parse calls it also for a help request, whose
+// arguments can be missing, so a Check checks values only, never that an
+// argument is given.
+func checkValues(c *Command, in Input) error {
+	if c.Check == nil {
+		return nil
+	}
+	if err := c.Check(in); err != nil {
+		return &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
+	}
+	return nil
 }
 
 // splitGlobals takes the global flags and --help (-h) out of args, up to
@@ -194,6 +271,9 @@ func splitGlobals(args []string, g *Globals) (rest []string, help bool, err erro
 			rest = append(rest, a)
 			continue
 		}
+		if !gs.value && !hasVal {
+			val = "true" // a boolean option alone
+		}
 		if gs.value && !hasVal {
 			if i+1 >= len(args) {
 				return rest, help, &UsageError{fmt.Sprintf("%s needs a value", name)}
@@ -211,6 +291,33 @@ func splitGlobals(args []string, g *Globals) (rest []string, help bool, err erro
 	return rest, help, nil
 }
 
+// onlyHelp reports whether every argument is --help or -h.
+func onlyHelp(args []string) bool {
+	for _, a := range args {
+		if a != "--help" && a != "-h" {
+			return false
+		}
+	}
+	return true
+}
+
+// unknownLongFlag returns the name of the first argument before "--" that
+// starts with "--" (its text before any "="), or "". It checks the
+// arguments of a line without a command, and those after a group's words,
+// where no long flag is known.
+func unknownLongFlag(args []string) string {
+	for _, a := range args {
+		if a == "--" {
+			return ""
+		}
+		if strings.HasPrefix(a, "--") {
+			name, _, _ := strings.Cut(a, "=")
+			return name
+		}
+	}
+	return ""
+}
+
 // commandWords are the leading arguments of rest that are not flags.
 func commandWords(rest []string) []string {
 	var words []string
@@ -223,18 +330,6 @@ func commandWords(rest []string) []string {
 	return words
 }
 
-// CommandWords returns the command words of a command line as Parse finds
-// them: the global flags (design 2.11: anywhere before "--") and --help are
-// skipped, also between the words, and the words end at the first other
-// flag. A global flag without its value ends the line.
-func CommandWords(args []string) []string {
-	// With g nil the only error is a value flag at the end of the line
-	// without its value; Parse reports it, and the words before it are
-	// still the command's.
-	rest, _, _ := splitGlobals(args, nil)
-	return commandWords(rest)
-}
-
 func findFlag(c *Command, name string) *Flag {
 	for i := range c.Flags {
 		f := &c.Flags[i]
@@ -245,7 +340,18 @@ func findFlag(c *Command, name string) *Flag {
 	return nil
 }
 
+// parseCommand parses the flags and arguments of c (parseFlags) and
+// checks the number of arguments.
 func parseCommand(c *Command, args []string, in *Input) error {
+	if err := parseFlags(c, args, in); err != nil {
+		return err
+	}
+	return checkArgs(c, in)
+}
+
+// parseFlags sets the flags of c in in.Flags, defaults first, and collects
+// the other arguments in in.Args.
+func parseFlags(c *Command, args []string, in *Input) error {
 	for _, f := range c.Flags {
 		if f.Default == "" {
 			continue
@@ -256,10 +362,14 @@ func parseCommand(c *Command, args []string, in *Input) error {
 		}
 		in.Flags[f.Name] = v
 	}
+	// Only exact, known flags are flags. Any other token that starts with
+	// "--" is a usage error; every other token, also one with a single
+	// leading dash that names no short flag of c (-1, -.5, -Math.abs(2),
+	// -window.scrollY), is an argument. "--" ends the flags.
 	positional := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if positional || !strings.HasPrefix(a, "-") || a == "-" {
+		if positional {
 			in.Args = append(in.Args, a)
 			continue
 		}
@@ -270,7 +380,11 @@ func parseCommand(c *Command, args []string, in *Input) error {
 		name, val, hasVal := strings.Cut(a, "=")
 		f := findFlag(c, name)
 		if f == nil {
-			return fmt.Errorf("unknown flag %s", name)
+			if strings.HasPrefix(a, "--") {
+				return fmt.Errorf("unknown flag %s", name)
+			}
+			in.Args = append(in.Args, a)
+			continue
 		}
 		if f.Type == FlagBool {
 			if !hasVal {
@@ -289,6 +403,11 @@ func parseCommand(c *Command, args []string, in *Input) error {
 		}
 		in.Flags[f.Name] = v
 	}
+	return nil
+}
+
+// checkArgs checks the number of arguments that parseFlags collected.
+func checkArgs(c *Command, in *Input) error {
 	need, max := 0, len(c.Args)
 	for _, a := range c.Args {
 		if a.Required {
@@ -302,9 +421,20 @@ func parseCommand(c *Command, args []string, in *Input) error {
 		return fmt.Errorf("missing argument <%s>", c.Args[len(in.Args)].Name)
 	}
 	if max >= 0 && len(in.Args) > max {
-		return fmt.Errorf("unexpected argument %q", in.Args[max])
+		extra := in.Args[max]
+		if isPageURL(extra) {
+			// Earlier iwdp-cli versions took the page URL as the last
+			// argument.
+			return fmt.Errorf("unexpected argument %q: a page URL is not an argument; pass it with --page <ws:// URL>", extra)
+		}
+		return fmt.Errorf("unexpected argument %q", extra)
 	}
 	return nil
+}
+
+// isPageURL reports whether an argument is a page's WebSocket URL.
+func isPageURL(a string) bool {
+	return strings.HasPrefix(a, "ws://") || strings.HasPrefix(a, "wss://")
 }
 
 func parseFlagValue(f Flag, v string) (any, error) {
@@ -386,6 +516,27 @@ func Help(c *Command) string {
 	return b.String()
 }
 
+// GroupHelp lists the commands of the group that the command words name:
+// each command whose name or alias starts with these words and has more
+// words, with its summary. It reports false when the words start no
+// command name.
+func GroupHelp(words []string) (string, bool) {
+	prefix := strings.Join(words, " ") + " "
+	var b strings.Builder
+	for _, c := range All() {
+		for _, n := range append([]string{c.Name}, c.Aliases...) {
+			if strings.HasPrefix(n, prefix) {
+				fmt.Fprintf(&b, "  %-24s %s\n", n, c.Summary)
+			}
+		}
+	}
+	if b.Len() == 0 {
+		return "", false
+	}
+	group := strings.TrimSpace(prefix)
+	return fmt.Sprintf("Usage: iwdp-cli %s <command>\n\nCommands of %q:\n%sRun 'iwdp-cli %s <command> --help' for the help of one.\n", group, group, b.String(), group), true
+}
+
 // Usage lists every registered command.
 func Usage() string {
 	var b strings.Builder
@@ -396,17 +547,22 @@ func Usage() string {
 	return b.String()
 }
 
-// ErrInterrupted is the cause with which the caller of RunCLI cancels ctx
-// when a signal (SIGINT or SIGTERM) ends the command. The caller exits 130
-// for the signal; RunCLI prints no error for a command that the signal
-// ended.
+// ErrInterrupted is the cause with which the caller of RunCLIStarted
+// cancels ctx when a signal (SIGINT or SIGTERM) ends the command. The
+// caller exits 130 for the signal; RunCLIStarted prints no error for a
+// command that the signal ended.
 var ErrInterrupted = errors.New("interrupted by a signal")
 
-// RunCLI parses args and runs the command. Help and usage errors are
-// handled before newEnv is called, so they never connect to anything. The
-// command deadline (commandTimeout; an earlier deadline of ctx stays) is
-// fixed before newEnv, so it covers building the environment and the run.
-func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv func(context.Context, *Invocation) (Env, error)) int {
+// RunCLIStarted parses args and runs the command. Help and usage errors
+// are handled before newEnv is called, so they never connect to anything.
+// The command deadline (commandTimeout; an earlier deadline of ctx stays)
+// is fixed before newEnv, so it covers building the environment and the
+// run. start, when not nil, is called once the command's deadline is
+// fixed, before the command's ClientStep and newEnv. The DeadlineReporter that start returns (nil: none) explains a
+// deadline error of every later stage: the ClientStep (for example a
+// read of the standard input), building the environment (for example
+// connecting to or starting the daemon) and the run.
+func RunCLIStarted(ctx context.Context, args []string, stdout, stderr io.Writer, start func(context.Context, *Invocation) DeadlineReporter, newEnv func(context.Context, *Invocation) (Env, error)) int {
 	inv, err := Parse(args, os.Getenv)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -415,42 +571,103 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, newEnv
 	if inv.Help || inv.Cmd == nil {
 		if inv.Cmd != nil {
 			fmt.Fprint(stdout, Help(inv.Cmd))
+		} else if inv.Group != "" {
+			_, _ = fmt.Fprint(stdout, inv.Group)
 		} else {
 			fmt.Fprint(stdout, Usage())
 		}
 		return ExitOK
 	}
+	if err := refusePageURLEnv(inv); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err) // nothing to do when stderr fails
+		return ExitCodeOf(err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout(inv.Cmd, inv.Input.Global))
 	defer cancel()
-	// A signal's cancellation ends the command without an error line.
-	interrupted := func() bool { return errors.Is(context.Cause(ctx), ErrInterrupted) }
+	var reporter DeadlineReporter
+	if start != nil {
+		reporter = start(ctx, inv)
+	}
+	// fail prints the error of a stage and returns its exit code: nothing
+	// after a signal's cancellation, the reporter's deadline message when
+	// the deadline ended the stage, else line (the error line).
+	fail := func(err error, line string) int {
+		if errors.Is(context.Cause(ctx), ErrInterrupted) {
+			return ExitCodeOf(err)
+		}
+		if reporter != nil {
+			if msg, hit := reporter.DeadlineMessage(err); hit {
+				_, _ = fmt.Fprintln(stderr, msg) // nothing to do when stderr fails
+				return ExitTimeout
+			}
+		}
+		_, _ = fmt.Fprintln(stderr, line) // nothing to do when stderr fails
+		return ExitCodeOf(err)
+	}
 	if inv.Cmd.ClientStep != nil {
 		if err := inv.Cmd.ClientStep(ctx, &inv.Input, os.Stdin); err != nil {
-			if !interrupted() {
-				_, _ = fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err) // nothing to do when stderr fails
-			}
-			return ExitCodeOf(err)
+			return fail(err, fmt.Sprintf("Error: %s: %v", inv.Cmd.Name, err))
 		}
 	}
 	env, err := newEnv(ctx, inv)
 	if err != nil {
-		if !interrupted() {
-			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err) // nothing to do when stderr fails
-		}
-		return ExitCodeOf(err)
+		return fail(err, fmt.Sprintf("Error: %v", err))
 	}
 	res, err := run(ctx, env, inv.Cmd, inv.Input)
-	if err != nil {
-		if !interrupted() {
-			_, _ = fmt.Fprintf(stderr, "Error: %s: %v\n", inv.Cmd.Name, err) // nothing to do when stderr fails
+	var wr *withResult
+	if errors.As(err, &wr) {
+		if werr := writeResult(stdout, wr.Result, inv.Input.Global); werr != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: writing the result: %v\n", werr) // nothing to do when stderr fails; Err follows
 		}
-		return ExitCodeOf(err)
+		err = wr.Err
+	}
+	if err != nil {
+		return fail(err, fmt.Sprintf("Error: %s: %v", inv.Cmd.Name, err))
 	}
 	if err := writeResult(stdout, res, inv.Input.Global); err != nil {
 		fmt.Fprintf(stderr, "Error: writing the result: %v\n", err)
 		return ExitError
 	}
 	return ExitOK
+}
+
+// withResult is the error of a command that fails with a result to show
+// (status: what it found and the iwdp log). RunCLIStarted writes Result
+// like the result of a successful command, so the output flags apply,
+// then reports Err with Err's exit code. Only a Local command may return
+// it: the daemon sends no result with an error.
+type withResult struct {
+	Result Result
+	Err    error
+}
+
+func (e *withResult) Error() string { return e.Err.Error() }
+func (e *withResult) Unwrap() error { return e.Err }
+
+// pageURLEnv is the environment variable with which earlier iwdp-cli
+// versions selected the page of a command by its WebSocket URL.
+const pageURLEnv = "IWDP_WS_URL"
+
+// refusePageURLEnv refuses a page command (one whose Page is not NoPage)
+// without --page while IWDP_WS_URL is set: earlier versions ran it on the
+// page that the variable names, so running it on the session's page
+// instead could act on another page than the caller expects. The usage
+// error (exit 2) names --page; an explicit --page wins over the variable.
+func refusePageURLEnv(inv *Invocation) error {
+	if inv.Cmd.Page == NoPage || inv.Input.Global.Page != "" || os.Getenv(pageURLEnv) == "" {
+		return nil
+	}
+	return &UsageError{Msg: fmt.Sprintf("%s: %s no longer selects the page; pass the page with --page <tab id or ws:// URL>, or unset %s", inv.Cmd.Name, pageURLEnv, pageURLEnv)}
+}
+
+// DeadlineReporter explains a deadline error of a command run by
+// RunCLIStarted (the CLI's deadline message: the command, its page, the
+// elapsed time, the last wait and the likely causes). When
+// DeadlineMessage reports that the command's deadline ended a stage
+// (hit), RunCLIStarted prints msg instead of its own error line and
+// returns ExitTimeout.
+type DeadlineReporter interface {
+	DeadlineMessage(err error) (msg string, hit bool)
 }
 
 // readWithin runs read, which may block without a deadline (a terminal,

@@ -13,7 +13,7 @@ iPhone Safari -> ios_webkit_debug_proxy (iwdp) -> iwdp daemon -> iwdp-cli, CDP c
 
 The **daemon** is one background process per user. The first command starts it. It holds the only inspector connection to each page, so refs, waits and captures survive from one command to the next. Every `iwdp-cli` command is a short client of the daemon.
 
-Run `iwdp-cli skills get iwdp` to print this skill as it matches the installed binary. `iwdp-cli <command> --help` prints the flags of a command and never connects to a page.
+Run `iwdp-cli skills get iwdp` to print this skill as it matches the installed binary. `iwdp-cli <command> --help` prints the flags of a command and never connects to a page; `iwdp-cli network --help` (any group word) lists the commands of that group.
 
 ## Safety rules
 
@@ -22,10 +22,10 @@ These rules bind every run that uses this skill.
 1. **No infrastructure writes.** Do not start, stop, restart or reconfigure servers, containers, compose stacks, proxies, routers, databases, runtime or devenv helpers, or the checkout. Use only the sign-in helpers that the task names. When a guard or wrapper refuses a command, stop and report the refusal; never change the call so that the guard passes.
 2. **Preflight, then one final verdict.** Before the first check, confirm three things with one bounded call each: the origin answers, the build under test is live (a fingerprint, or the changed rule or text is present), and the sign-in state is the one the task states. When one differs, the check is BLOCKED; do not work around it. End the run with exactly one verdict line, `VERDICT: PASS`, `VERDICT: FAIL` or `VERDICT: BLOCKED`, and one PASS, FAIL or NOT RUN row per check. A check that never reached the behavior under test (for example an HTTP 5xx before the logic ran) is NOT RUN, not FAIL.
 3. **One bounded diagnostic budget, then BLOCKED.** When the same step fails twice (exit 124, exit 3 from a wait, exit 4, a refused sign-in), stop retrying. Run one health probe, `iwdp-cli session info`, record the result, and mark the check NOT RUN. When no check can run, report BLOCKED. Sleeping and retrying does not bring a stalled page back.
-4. **Masking covers a few outputs only; filter the rest.** By default `cookies` redacts cookie values; `network requests`, `network request` and HAR files (`network har stop`) print the values of secret headers and of query, form and JSON fields whose names mark password and token fields as `[masked]`; `storage` masks the values of password and token keys. Use `--show-values` or `--show-secrets` only when the task asks for a value, and never on a shared transcript. Page reads are not masked: `get text`, `get value`, `get html`, `read`, `eval`, `console`, `errors` and snapshot text print what the page holds, and a token in a field with an ordinary name prints in full. Read only the fields you need, with an allowlisted read or a filter inside the command, and never run `get value` on a password or token field. Pass passwords with `fill --stdin`, never on the command line. HAR files (`network har stop`) and state files (`state save`) are written with mode 0600 and hold live credentials (a state file keeps every value): write them only into the evidence folder and delete them before the run ends. Do not dump the text, HTML, snapshot or screenshot of account, security or settings pages (two-factor setup keys, recovery codes, API tokens): read named fields only.
+4. **Masking covers a few outputs only; filter the rest.** By default `cookies` hides cookie values in every form; `network requests`, `network request` and HAR files (`network har stop`) print the values of secret headers and of query, form and JSON fields whose names mark password and token fields as `[masked]`; `storage` masks the values of password and token keys. Use `--show-values` or `--show-secrets` only when the task asks for a value, and never on a shared transcript. Page reads are not masked: `get text`, `get value`, `get html`, `read`, `eval`, `console`, `errors` and snapshot text print what the page holds, and a token in a field with an ordinary name prints in full. Read only the fields you need, with an allowlisted read or a filter inside the command, and never run `get value` on a password or token field. Pass passwords with `fill --stdin`, never on the command line. HAR files (`network har stop`) and state files (`state save`) are written with mode 0600 and hold live credentials (a state file keeps every value): write them only into the evidence folder and delete them before the run ends. Do not dump the text, HTML, snapshot or screenshot of account, security or settings pages (two-factor setup keys, recovery codes, API tokens): read named fields only.
 5. **Preserve and restore cookie owners.** Before you set or clear a cookie, save the current state (`state save`), and restore it (`state load`) at the end, so the cookies of the user or of another agent come back. Revoking a server-side session belongs to the sign-in helper that created it; report every session you created and whether it was revoked.
-6. **Bounded shell calls and known evidence folders.** Give every shell call a timeout. `iwdp-cli` has its own deadline (30 s, `--timeout` or `IWDP_TIMEOUT`; exit 124), but other helpers need `timeout`, `curl --max-time` and similar. Write every file by absolute path into the evidence folder that the task names. Never search the filesystem (`find /`, `find ~`, `grep -r` over home or `~/.pi`): search only the checkout, the evidence folder and paths the task names.
-7. **The device is shared.** Never stop, restart or kill an iwdp that another agent may use (`iwdpctl restart`, `iwdpctl stop`, `pkill`). The daemon never stops a running iwdp; `iwdp-cli restart-iwdp` stops only an iwdp that iwdp-cli, or an earlier iwdp-mcp, started and recorded, and refuses any other. Reserve the device at the start of a run (`device reserve`) and release it at the end (`device release`). Use a distinct `--session` name per agent.
+6. **Bounded shell calls and known evidence folders.** Give every shell call a timeout. `iwdp-cli` has its own deadline (30 s, `--timeout` or `IWDP_TIMEOUT`, as `10s` or `10`; exit 124), but other helpers need `timeout`, `curl --max-time` and similar. Write every file by absolute path into the evidence folder that the task names. Never search the filesystem (`find /`, `find ~`, `grep -r` over home or `~/.pi`): search only the checkout, the evidence folder and paths the task names.
+7. **The device is shared.** Never stop, restart or kill an iwdp that another agent may use (`iwdpctl restart`, `iwdpctl stop`, `pkill`). The daemon never stops a running iwdp; `iwdp-cli restart-iwdp` stops only an iwdp that iwdp-cli started and recorded, and refuses any other. Reserve the device at the start of a run (`device reserve`) and release it at the end (`device release`). Use a distinct `--session` name per agent.
 
 ## Start a run
 
@@ -110,7 +110,7 @@ iwdp-cli eval 'document.querySelectorAll("form").length'
 
 - Judge visibility with `is visible`, `get box` and `get styles`, not with text content: hidden elements have text too.
 - `hit-test <x> <y>` prints the element at a viewport point, so you can show what a tap at that point reaches.
-- `eval --await` waits for a promise. A thrown exception prints its message and stack and exits 1.
+- `eval` waits for a returned promise. A string, number or boolean prints raw on one line, other values as JSON. A thrown exception prints its message and stack and exits 1. `--page <tab>` evaluates in another tab. Only known flags are flags: an expression that starts with one `-` (`-1`, `-window.scrollY`) is the expression, and one that starts with `--` needs `--` before it (`iwdp-cli eval -- '--x'`).
 
 ### Dialogs
 
@@ -137,7 +137,7 @@ iwdp-cli vitals
 ```
 
 - A screenshot without a path goes to `$TMPDIR`; always give an absolute path in the evidence folder. `--full-page` captures the whole document, `--selector` one element, `--annotate` draws the ref labels. Do not capture pages that show secrets unless the task allows it: cropping later is too late.
-- `console` and `errors` print what the daemon captured since your session took the page (and up to 100 messages that WebKit replays). `console -d 10s` streams for a bounded time.
+- `console` and `errors` print what the daemon captured since your session took the page (and up to 100 messages that WebKit replays). There is no live stream: for new messages only, run `console --since "$last_id"` again, with `last_id` set to the last id that `console` printed.
 - `network requests` lists the requests since your session took the page; `network request <id> --body` shows one request. The values of secret headers and of query, form and JSON fields with password or token names print as `[masked]`; other values print in full.
 
 ### Navigation, tabs and frames
@@ -197,7 +197,7 @@ iwdp-cli state load "$EVIDENCE/state-before.json"
 rm -f -- "$EVIDENCE/state-before.json"
 ```
 
-- `cookies` prints names and flags with redacted values; `--show-values` prints values. `cookies set` reads the cookie back and exits 1 when WebKit stored something else; `--expires 0` makes a session cookie. `cookies set --curl <file>` imports cookies from a file.
+- `cookies` prints names and attributes with hidden values (`name=(hidden)`); `--show-values` prints values. Name another page with `--page`. `cookies set` reads the cookie back and exits 1 when WebKit stored something else; `--expires 0` makes a session cookie. `cookies set --curl <file>` imports cookies from a file.
 - `state save` writes the cookies, localStorage and sessionStorage of the current origin (mode 0600); `state load` replaces them with the file's, on a page of the same origin. This is the restore step of safety rule 5.
 
 ## CDP endpoint
@@ -263,6 +263,6 @@ iwdp-cli --timeout 10s tab list
 ## Known limits
 
 - Only one inspector connection per page. The daemon holds it; another tool that attaches (Safari Web Inspector, an older iwdp-cli, a hand-written WebSocket client) takes the page from the daemon. Never write your own WebSocket client.
-- A command names its page in one of two forms. A leading `--page` (a tab id or the page's `ws://` URL) runs the registry command: `iwdp-cli --page "$WS" navigate "$URL"` is `open` and waits for the load. A trailing `ws://` argument (`iwdp-cli eval 'expr' ws://...`, `iwdp-cli navigate <url> ws://...`) runs the older compatibility command; it also goes through the daemon, but its `navigate` returns when the navigation starts, not after the load, and it takes no refs. Neither form opens a second inspector connection. Use `--page`; use the trailing form only for commands without a registry form, such as `eval` and `cookies`.
+- A command names another page with `--page` (a tab id or the page's `ws://` URL): `iwdp-cli --page "$WS" navigate "$URL"` is `open` and waits for the load; `iwdp-cli --page t2 cookies`. It opens no second inspector connection. A trailing `ws://` argument, or `IWDP_WS_URL` set without `--page`, is a usage error (exit 2) for every page command.
 - After a release whose cleanup could not run (the page connection was already gone), page-side overrides (the geolocation shim, JavaScript routes) can stay in the current document until it navigates.
 - `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` hang through ios_webkit_debug_proxy, so the commands that need them refuse to run there; `hover --css` works only on WebKitGTK.

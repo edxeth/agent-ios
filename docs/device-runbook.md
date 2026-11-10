@@ -13,14 +13,15 @@ How to work on a physical iPhone that other people or agents may also use. Read 
 1. Reserve the device before the first page command. Use the same owner for the whole run:
 
    ```bash
-   iwdp-cli device reserve --owner <owner> --ttl 2h      # all devices; --device <udid> for one
-   export IWDP_DEVICE_RESERVATION=<owner>
-   export IWDP_SESSION=<owner>-1
+   OWNER=agent-a                                           # your owner name
+   iwdp-cli device reserve --owner "$OWNER" --ttl 2h      # all devices; add --device UDID for one
+   export IWDP_DEVICE_RESERVATION="$OWNER"
+   export IWDP_SESSION="$OWNER-1"
    ```
 
    The command fails when another owner holds a live reservation. Do not break it; wait or ask the owner. An orchestrator reserves once and passes `IWDP_DEVICE_RESERVATION` to its workers; each worker uses its own `IWDP_SESSION`.
 2. Work. Without a reservation, every page command on the device fails with exit 6.
-3. End: `iwdp-cli close` for each session, then `iwdp-cli device release --owner <owner>`. `device list` shows the reservations that remain.
+3. End: `iwdp-cli close` for each session, then `iwdp-cli device release --owner "$OWNER"`. `device list` shows the reservations that remain.
 
 ## Never stop another agent's iwdp
 
@@ -31,15 +32,15 @@ One iwdp serves every client on the host. Stopping or restarting it ends every o
 
 ### iwdp-cli restart-iwdp
 
-`iwdp-cli restart-iwdp` restarts iwdp **only when iwdp-cli (or its daemon), or an earlier iwdp-mcp, started and recorded it**:
+`iwdp-cli restart-iwdp` restarts iwdp **only when iwdp-cli (or its daemon) started and recorded it**:
 
-- When iwdp-cli or its daemon starts iwdp, it records the process (pid, process group, listing address, start time and a random token in the process environment) in a private file under `$XDG_RUNTIME_DIR` (else the temporary directory). An earlier iwdp-mcp wrote the same record, so a restart can also stop an iwdp that a still-running iwdp-mcp started.
+- When iwdp-cli or its daemon starts iwdp, it records the process (pid, process group, listing address, start time and a random token in the process environment) in a private file under `$XDG_RUNTIME_DIR` (else the temporary directory), marked as written by iwdp-cli. A record without that mark (written by the removed iwdp-mcp server, or by an older iwdp-cli) counts as another program's iwdp, so the restart refuses it; stop that iwdp by hand once ([migration.md](migration.md)).
 - A restart stops the recorded process group only when the record is valid, the running process still has the recorded start time and token, and that process group owns the listening socket of port 9221. It sends SIGTERM, then SIGKILL after 2 s, checks the identity again before SIGKILL, and starts a new iwdp.
 - In every other case it **refuses** and signals nothing: the iwdp belongs to the user, another agent or another program. The refusal names the address, the owner pid when known, and the manual restart command. Do not run that command yourself; ask the owner.
 - When no iwdp runs, it starts one.
 - On macOS the identity check reads the process start time (`ps`) and the token from the kernel's process arguments. When either cannot be read, the restart refuses.
 
-`make sim-setup` and `make sim-teardown` follow the same rule for the simulator: teardown stops only the iwdp that setup started (pid, start time and token checked). On macOS teardown cannot read the environment exactly, so it always refuses and prints `kill <pid>` for you to run; until then the next setup refuses because port 9221 is in use.
+`make sim-setup` and `make sim-teardown` follow the same rule for the simulator: teardown stops only the iwdp that setup started (pid, start time and token checked). On macOS teardown cannot read the environment exactly, so it always refuses and prints `kill <pid>` for you to run; until then the next setup refuses because port 9221 is in use. Teardown shuts down the Simulator only when setup's own boot started it (its UDID is recorded); a Simulator that someone else booted stays booted. One Simulator run per user account at a time: setup takes a lease (its run token) under a lock, and refuses while another run holds it; wait until that run has finished. The automatic teardowns (`make test-e2e`, CI) pass their run token and act only on their own lease, under the same lock. `make sim-teardown` is the manual recovery after a crashed run only: it tears down whatever run holds the lease.
 
 ## When a page is "lost"
 
@@ -67,9 +68,9 @@ When Safari moves a page to a new process (a cross-site navigation), the daemon 
 
 These checks need the device owner's grant and a time when nobody else inspects the device. They are recorded here so that the next run follows one list. Record outputs and timings in the run report.
 
-1. Daemon: `device reserve`, `IWDP_DEVICE_RESERVATION=<o> iwdp-cli eval 1+1`; the busy hint with iwdp's frontend on; the reconnect gap after a close; that a second inspector moves the lease to lost; the log line of pause-on-start (on or off).
+1. Daemon: `iwdp-cli device reserve --owner "$OWNER"`, `IWDP_DEVICE_RESERVATION="$OWNER" iwdp-cli eval 1+1`; the busy hint with iwdp's frontend on; the reconnect gap after a close; that a second inspector moves the lease to lost; the log line of pause-on-start (on or off).
 2. Navigation: `open` across two sites, `wait --url` across the swap, `dialog accept` before an inline `confirm` of a new document, `reload`, `back` and `forward` across sites, `tab list` and a hidden tab, `tab new` (popup blocked or not), `screenshot --annotate` and `--if-changed`, `frame` on a cross-origin iframe, `hover --css` (expect exit 2 through iwdp), `tap` and `swipe` touch events, `click --new-tab`.
 3. Actions: `click` on a covered element (the error names the cover, exit 124 after about 4.75 s); a mousedown handler with `setTimeout 0` state; `fill --stdin` with a password from a pipe (`ps` shows no value).
 4. DevTools: a route and a netlog (`Network.requestIntercepted` arrives; a fulfilled fetch), credentials scoped to one origin (then enable them for the device), storage, cookies, `state save` and `state load`, `vitals`, `trace` and `profiler` files, `diff screenshot` with 0 differing pixels, `set media dark`, `emulate network slow-3g` (accepted on iOS 16.4 to 17.x and on 27.3 or later; on iOS 16.0 to 16.3 and 18.0 to 27.2 it fails with "Network.setEmulatedConditions is not in the iOS <version> command list").
-5. Direct transport (`--transport direct`, only while iwdp does not serve the device): `devices`, `pages`, `eval 1+1`, `snapshot -i`, `click`; repeat on one iOS 17 or later device before `auto` may choose it.
+5. Direct transport (`--transport direct`, only while iwdp does not serve the device): `tab list`, `eval 1+1`, `snapshot -i`, `click`; repeat on one iOS 17 or later device before `auto` may choose it.
 6. CDP: the client scenarios through `get cdp-url`, before any is advertised as working on iOS.

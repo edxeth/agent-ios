@@ -160,13 +160,6 @@ func (c *Client) CallSeq(ctx context.Context, sessionID, method string, params a
 	}
 }
 
-// Send writes a raw message without waiting (for malformed-input tests).
-func (c *Client) Send(raw []byte) error {
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	return c.ws.WriteMessage(websocket.TextMessage, raw)
-}
-
 // Events returns the events received so far.
 func (c *Client) Events() []Event {
 	c.mu.Lock()

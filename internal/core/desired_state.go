@@ -20,8 +20,8 @@ type Sender interface {
 	Send(ctx context.Context, method string, params any) (json.RawMessage, error)
 }
 
-// Owner names who holds a desired-state entry: a session, a capture, a
-// legacy operation, the dialog bridge or a CDP attachment (design 2.4).
+// Owner names who holds a desired-state entry: a session, a capture, the
+// dialog bridge or a CDP attachment (design 2.4).
 type Owner string
 
 // InterceptRule is one WIP Network.addInterception rule.

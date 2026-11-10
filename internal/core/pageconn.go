@@ -720,8 +720,6 @@ func (p *pageConn) SubscribeTargetSync(method string, h webkit.TargetEventHandle
 	return p.subscribe(method, h, true)
 }
 
-func (p *pageConn) OnEvent(method string, h webkit.EventHandler) { p.Subscribe(method, h) }
-
 func (p *pageConn) IsTargetRouted() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

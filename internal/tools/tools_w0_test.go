@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"testing/quick"
-	"time"
 	"unicode/utf8"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
@@ -221,20 +219,6 @@ func TestRedactCookieValueProperty(t *testing.T) {
 	}
 	if err := quick.Check(prop, &quick.Config{MaxCount: 2000}); err != nil {
 		t.Error(err)
-	}
-}
-
-func TestRedactCookiesKeepsOtherFields(t *testing.T) {
-	in := []webkit.Cookie{{Name: "sid", Value: "secret-session-token", Domain: "example.com", Path: "/", HTTPOnly: true, SameSite: "Lax"}}
-	out := tools.RedactCookies(in)
-	if out[0].Value == in[0].Value || strings.Contains(out[0].Value, "secret-session-token") {
-		t.Errorf("value not redacted: %q", out[0].Value)
-	}
-	if out[0].Name != "sid" || out[0].Domain != "example.com" || !out[0].HTTPOnly || out[0].SameSite != "Lax" {
-		t.Errorf("other fields changed: %+v", out[0])
-	}
-	if in[0].Value != "secret-session-token" {
-		t.Error("RedactCookies modified its input")
 	}
 }
 
@@ -694,110 +678,4 @@ func TestCaptureScreenshotRejectsFullPageWithSelector(t *testing.T) {
 
 // --- CSS guard through Target routing ---
 
-func TestCSSStylesheetToolsNeverSendThroughTargetRouting(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	mock.EnableTargetRouting("page-1")
-	client, err := webkit.NewClient(context.Background(), mock.URL)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	defer func() { _ = client.Close() }()
-	if !client.IsTargetRouted() {
-		t.Fatal("expected Target routing")
-	}
-	ctx := context.Background()
-	if _, err := tools.GetAllStylesheets(ctx, client); err == nil {
-		t.Error("GetAllStylesheets: expected an error through Target routing")
-	}
-	if _, err := tools.GetStylesheetText(ctx, client, "ss1"); err == nil {
-		t.Error("GetStylesheetText: expected an error through Target routing")
-	}
-	for _, m := range mock.ReceivedMethods() {
-		if strings.HasPrefix(m, "CSS.") {
-			t.Errorf("sent %s through Target routing", m)
-		}
-	}
-}
-
 // --- Bounded collectors ---
-
-func TestConsoleCollectorKeepsNewestEntriesUpToCap(t *testing.T) {
-	mock, client := setup(t)
-	cc := tools.NewConsoleCollector()
-	if err := cc.Start(context.Background(), client); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	const total = 10005
-	var seen atomic.Int64
-	client.OnEvent("Console.messageAdded", func(string, json.RawMessage) { seen.Add(1) })
-	for i := 0; i < total; i++ {
-		_ = mock.SendEvent("Console.messageAdded", map[string]interface{}{
-			"message": map[string]interface{}{"level": "log", "text": fmt.Sprintf("msg-%d", i)},
-		})
-	}
-	waitFor(t, func() bool { return seen.Load() == total })
-	msgs := cc.GetMessages()
-	if len(msgs) != 10000 {
-		t.Fatalf("collector holds %d messages, want 10000", len(msgs))
-	}
-	if msgs[0].Text != "msg-5" || msgs[len(msgs)-1].Text != fmt.Sprintf("msg-%d", total-1) {
-		t.Errorf("kept %q..%q, want the newest 10000", msgs[0].Text, msgs[len(msgs)-1].Text)
-	}
-}
-
-// TestTrackingStopIsBoundedWithoutDeadline: Stop waits for a
-// *.trackingComplete event; when the page never sends it and the caller's
-// context has no deadline, Stop must still return.
-func TestTrackingStopIsBoundedWithoutDeadline(t *testing.T) {
-	old := webkit.DefaultSendTimeout
-	webkit.DefaultSendTimeout = 200 * time.Millisecond
-	defer func() { webkit.DefaultSendTimeout = old }()
-
-	type stopper func(ctx context.Context, client *webkit.Client) error
-	cases := map[string]func(*webkit.Client) (stopper, error){
-		"memory": func(c *webkit.Client) (stopper, error) {
-			col := tools.NewMemoryTrackingCollector()
-			return func(ctx context.Context, c *webkit.Client) error { _, err := col.Stop(ctx, c); return err }, col.Start(context.Background(), c)
-		},
-		"cpu": func(c *webkit.Client) (stopper, error) {
-			col := tools.NewCPUProfilerCollector()
-			return func(ctx context.Context, c *webkit.Client) error { _, err := col.Stop(ctx, c); return err }, col.Start(context.Background(), c)
-		},
-		"script": func(c *webkit.Client) (stopper, error) {
-			col := tools.NewScriptProfilerCollector()
-			return func(ctx context.Context, c *webkit.Client) error { _, err := col.Stop(ctx, c); return err }, col.Start(context.Background(), c)
-		},
-		"animation": func(c *webkit.Client) (stopper, error) {
-			col := tools.NewAnimationTrackingCollector()
-			return func(ctx context.Context, c *webkit.Client) error { _, err := col.Stop(ctx, c); return err }, col.Start(context.Background(), c)
-		},
-	}
-	for name, mk := range cases {
-		t.Run(name, func(t *testing.T) {
-			_, client := setup(t)
-			stop, err := mk(client)
-			if err != nil {
-				t.Fatalf("Start: %v", err)
-			}
-			done := make(chan error, 1)
-			go func() { done <- stop(context.Background(), client) }()
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-				t.Fatal("Stop did not return without a trackingComplete event")
-			}
-		})
-	}
-}
-
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not met within 10s")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}

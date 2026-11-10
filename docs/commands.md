@@ -4,7 +4,7 @@
 
 This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.
 
-- The legacy commands of `iwdp-cli` (for example `eval`, `cookies`, `set-breakpoint`) are not in the registry. `iwdp-cli --help` lists them, and [the migration notes](migration.md) map them to registry commands.
+- `iwdp-cli` runs only these commands. [The migration notes](migration.md) map each removed command of earlier versions (for example `pages`, `set-breakpoint`, `get-matched-styles`) to its registry command, or say that it was removed.
 - `iwdp-cli <command> --help` prints the same usage and never connects to a page.
 
 Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--transport`, `--max-output`, `--content-boundaries`, `--reservation`, `--wait-lease`, `--takeover`.
@@ -23,8 +23,9 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`check`](#check) | Check a checkbox or radio (a hidden input through its label) and read the state back. |
 | [`click`](#click) | Click an element with synthetic pointer and mouse events after the actionability checks. |
 | [`close`](#close) | End this session (--session): release its page leases and run their cleanup. The Safari tab stays open; other sessions are not touched. |
-| [`console`](#console) | Print the console messages captured since the lease (and up to 100 that WebKit replays). For a live stream use 'console -d \<duration\>' or 'console --follow'. |
+| [`console`](#console) | Print the console messages captured since the lease (and up to 100 that WebKit replays). For new messages only, run it again as console --since "$last_id", with the id of the last message that it printed. |
 | [`console clear`](#console-clear) | Empty the console buffer and WebKit's stored messages. |
+| [`cookies`](#cookies) | List the page's cookies (those Page.getCookies lists, httpOnly included): name, domain, path, sameSite, expiry or session, httpOnly, secure. Values are hidden unless --show-values. |
 | [`cookies clear`](#cookies-clear) | Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back. |
 | [`cookies set`](#cookies-set) | Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result. |
 | [`daemon logs`](#daemon-logs) | Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log). |
@@ -36,12 +37,14 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`device list`](#device-list) | List the live device reservations. |
 | [`device release`](#device-release) | Release an owner's device reservation. |
 | [`device reserve`](#device-reserve) | Reserve a physical device for an owner, so that only that owner's sessions attach to its pages. |
+| [`devices`](#devices) | List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). |
 | [`dialog`](#dialog) | Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept\|dismiss). |
 | [`diff screenshot`](#diff-screenshot) | Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ. |
 | [`diff snapshot`](#diff-snapshot) | Show what changed between the last two snapshots of this session (a unified line diff). |
 | [`drag`](#drag) | Drag from one element to another in 10 pointer steps with synthetic drag events (best effort). |
 | [`emulate network`](#emulate-network) | Throttle the page's network to a preset (4g, fast-3g, slow-3g) or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have. |
 | [`errors`](#errors) | Print uncaught errors and unhandled promise rejections with their stacks (the first run installs the error hooks). |
+| [`eval`](#eval) | Evaluate a JavaScript expression in the page and print the result, awaiting a returned Promise; the page is the session's, or the tab id or ws:// URL of --page. A string prints as is, other values as JSON; a thrown value exits 1 with its message and stack. |
 | [`fill`](#fill) | Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change. |
 | [`find`](#find) | Find elements by role, text, label, placeholder, alt, title, testid, or first\|last\|nth of a selector; print them with refs. |
 | [`focus`](#focus) | Focus an element (el.focus()). |
@@ -73,6 +76,7 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`read`](#read) | Print the visible text of the current page, or of an http(s) URL fetched on this computer; --outline prints only the headings. |
 | [`reload`](#reload) | Reload the page (Page.reload after withdrawing unused dialog answers), then wait for the load state. |
 | [`removeinitscript`](#removeinitscript) | Remove an init script of this session by the id that addinitscript printed. |
+| [`restart-iwdp`](#restart-iwdp) | Restart the ios_webkit_debug_proxy that iwdp-cli started. Stops only an iwdp that iwdp-cli started and recorded, then starts a new one. Any other iwdp (for example one that the user or another program started) is never stopped: the command fails and names the owner pid and the manual restart command. When no iwdp runs, it starts one. |
 | [`screenshot`](#screenshot) | Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture. |
 | [`scroll`](#scroll) | Scroll the window or an element up, down, left or right (default 300 px). |
 | [`scrollintoview`](#scrollintoview) | Scroll an element into the center of the viewport. |
@@ -95,6 +99,7 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`snapshot`](#snapshot) | Print the page's accessibility tree with @eN refs for later commands. |
 | [`state load`](#state-load) | Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's. |
 | [`state save`](#state-save) | Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials). |
+| [`status`](#status) | Check whether ios_webkit_debug_proxy answers on its listing address, and name the log of an iwdp that iwdp-cli starts. Exits 1 when it does not answer. |
 | [`storage`](#storage) | Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session). |
 | [`swipe`](#swipe) | Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down). |
 | [`tab`](#tab) | Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs. |
@@ -258,7 +263,7 @@ End this session (--session): release its page leases and run their cleanup. The
 iwdp-cli console [flags]
 ```
 
-Print the console messages captured since the lease (and up to 100 that WebKit replays). For a live stream use 'console -d \<duration\>' or 'console --follow'.
+Print the console messages captured since the lease (and up to 100 that WebKit replays). For new messages only, run it again as console --since "$last_id", with the id of the last message that it printed.
 
 - Page: leases the session's page
 
@@ -277,6 +282,20 @@ iwdp-cli console clear
 Empty the console buffer and WebKit's stored messages.
 
 - Page: leases the session's page
+
+### `cookies`
+
+```
+iwdp-cli cookies [flags]
+```
+
+List the page's cookies (those Page.getCookies lists, httpOnly included): name, domain, path, sameSite, expiry or session, httpOnly, secure. Values are hidden unless --show-values.
+
+- Page: leases the session's page
+
+| Flag | Value | Description |
+|---|---|---|
+| `--show-values` | none | print the cookie values (they can be session tokens) |
 
 ### `cookies clear`
 
@@ -443,6 +462,16 @@ Reserve a physical device for an owner, so that only that owner's sessions attac
 | `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
 | `--ttl` | duration | lifetime, renewed while the owner holds leases (default `2h`) |
 
+### `devices`
+
+```
+iwdp-cli devices
+```
+
+List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages).
+
+- Page: none; runs in the client process, not in the daemon
+
 ### `dialog`
 
 ```
@@ -534,6 +563,24 @@ Print uncaught errors and unhandled promise rejections with their stacks (the fi
 | Flag | Value | Description |
 |---|---|---|
 | `--clear` | none | empty the error list after printing |
+
+### `eval`
+
+```
+iwdp-cli eval <expression> [flags]
+```
+
+Evaluate a JavaScript expression in the page and print the result, awaiting a returned Promise; the page is the session's, or the tab id or ws:// URL of --page. A string prints as is, other values as JSON; a thrown value exits 1 with its message and stack.
+
+- Page: leases the session's page
+
+| Argument | Required | Description |
+|---|---|---|
+| `<expression>` | yes | the JavaScript expression (quote it for the shell) |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--await` | none | accepted for the older command line; eval always awaits a returned Promise |
 
 ### `fill`
 
@@ -1049,6 +1096,16 @@ Remove an init script of this session by the id that addinitscript printed.
 |---|---|---|
 | `<id>` | yes | script id, for example init1 |
 
+### `restart-iwdp`
+
+```
+iwdp-cli restart-iwdp
+```
+
+Restart the ios_webkit_debug_proxy that iwdp-cli started. Stops only an iwdp that iwdp-cli started and recorded, then starts a new one. Any other iwdp (for example one that the user or another program started) is never stopped: the command fails and names the owner pid and the manual restart command. When no iwdp runs, it starts one.
+
+- Page: none; runs in the client process, not in the daemon
+
 ### `screenshot`
 
 ```
@@ -1387,6 +1444,16 @@ Save the cookies, localStorage and sessionStorage of the page's current origin t
 | Argument | Required | Description |
 |---|---|---|
 | `<path>` | yes | the state file to write |
+
+### `status`
+
+```
+iwdp-cli status
+```
+
+Check whether ios_webkit_debug_proxy answers on its listing address, and name the log of an iwdp that iwdp-cli starts. Exits 1 when it does not answer.
+
+- Page: none; runs in the client process, not in the daemon
 
 ### `storage`
 

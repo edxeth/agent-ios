@@ -41,7 +41,7 @@ func TestAttachmentStateAndSharedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.m.Raw(ctxFor(t, 5*time.Second), mo.ID, "Network.setExtraHTTPHeaders", []byte(`{"headers":{"X-Legacy":"1"}}`)); err != nil {
+	if _, err := r.m.RawAs(ctxFor(t, 5*time.Second), mo, core.SessionOwner("legacy", mo.Session), "Network.setExtraHTTPHeaders", []byte(`{"headers":{"X-Legacy":"1"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	r.m.End(mo.ID)

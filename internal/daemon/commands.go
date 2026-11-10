@@ -191,6 +191,9 @@ func helloText(c *Client) string {
 func statusText(c *Client, st Status) string {
 	var b strings.Builder
 	b.WriteString(helloText(c) + "\n")
+	if p := c.Hello.Protocol; p != Protocol {
+		fmt.Fprintf(&b, "This daemon is older: it speaks protocol %d, this iwdp-cli protocol %d. Other commands replace it when it has no leases; 'iwdp-cli daemon stop' stops it.\n", p, Protocol)
+	}
 	fmt.Fprintf(&b, "Pages: %d\n", len(st.Pages))
 	for _, p := range st.Pages {
 		lease := p.Lease

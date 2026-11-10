@@ -379,7 +379,11 @@ func (t *cdpTrace) begin(ctx context.Context, s *session, mo *core.ManagedOp) er
 		}
 		if ps.State.Acquire(s.owner, "Timeline") {
 			if _, err := cc.Send(ctx, "Timeline.enable", nil); err != nil {
-				ps.State.ReleaseDomain(s.owner, "Timeline")
+				// An enable that may have reached the page keeps the
+				// owner's Timeline, so the detach's release disables it.
+				if wipNoEffect(err) {
+					ps.State.ReleaseDomain(s.owner, "Timeline")
+				}
 				return fmt.Errorf("starting the trace: Timeline.enable: %w", err)
 			}
 		}

@@ -24,8 +24,8 @@ import (
 // FileName is the file of a skill inside its directory.
 const FileName = "SKILL.md"
 
-// versionHexDigits is the length of Version, as for the runtime bundle
-// version (design 3.1).
+// versionHexDigits is the length of a skills version (version), as for the
+// runtime bundle version (design 3.1).
 const versionHexDigits = 12
 
 // Skill is one embedded skill.
@@ -70,18 +70,9 @@ func Get(name string) (Skill, error) {
 // All returns every skill with its content, sorted by name.
 func All() ([]Skill, error) { return load() }
 
-// Version is the first 12 hex digits of the SHA-256 of the skill names and
-// contents. It changes with every change of a skill, so Install never
-// mixes the files of two versions.
-func Version() (string, error) {
-	all, err := load()
-	if err != nil {
-		return "", err
-	}
-	return version(all), nil
-}
-
-// version is Version of the loaded skills all.
+// version is the first 12 hex digits of the SHA-256 of the names and
+// contents of the skills all. It changes with every change of a skill, so
+// Install never mixes the files of two versions.
 func version(all []Skill) string {
 	h := sha256.New()
 	for _, s := range all {
@@ -91,8 +82,8 @@ func version(all []Skill) string {
 	return hex.EncodeToString(h.Sum(nil))[:versionHexDigits]
 }
 
-// Install writes every skill to root/<Version>/<name>/SKILL.md (directories
-// mode 0700, files mode 0600) and returns root/<Version>. A file that
+// Install writes every skill to root/<version>/<name>/SKILL.md (directories
+// mode 0700, files mode 0600) and returns root/<version>. A file that
 // already has the right content is not written again; a file with other
 // content is replaced through a temporary file and a rename, so a reader
 // never sees a partial skill.

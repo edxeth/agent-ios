@@ -1,8 +1,5 @@
 # Runtime fixtures (W3a)
 
-`breakpoint.html` and `breakpoint.js` are the page of the debugger test
-e2e/webkitgtk/debugger_test.go (W1b); they have no expected snapshot.
-
 `checkvisibility.html` holds the cases of the differential test of the CDP
 endpoint's checkVisibility shim, e2e/webkitgtk/page_shims_test.go; its
 expected values are WebKitGTK's native `Element.prototype.checkVisibility`.

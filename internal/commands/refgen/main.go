@@ -40,7 +40,7 @@ var header = strings.Join([]string{
 	"",
 	"This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.",
 	"",
-	"- The legacy commands of `iwdp-cli` (for example `eval`, `cookies`, `set-breakpoint`) are not in the registry. `iwdp-cli --help` lists them, and [the migration notes](migration.md) map them to registry commands.",
+	"- `iwdp-cli` runs only these commands. [The migration notes](migration.md) map each removed command of earlier versions (for example `pages`, `set-breakpoint`, `get-matched-styles`) to its registry command, or say that it was removed.",
 	"- `iwdp-cli <command> --help` prints the same usage and never connects to a page.",
 	"",
 	"",

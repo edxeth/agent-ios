@@ -141,7 +141,7 @@ func TestClient_Events(t *testing.T) {
 	var mu sync.Mutex
 	var received []string
 
-	client.OnEvent("Console.messageAdded", func(method string, params json.RawMessage) {
+	client.Subscribe("Console.messageAdded", func(method string, params json.RawMessage) {
 		mu.Lock()
 		received = append(received, method)
 		mu.Unlock()

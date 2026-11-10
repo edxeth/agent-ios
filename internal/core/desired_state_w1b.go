@@ -11,19 +11,13 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
-// followTargets keeps the target-specific state (Scoped entries and
+// followCommits keeps the target-specific state (Scoped entries and
 // breakpoint ids) with the target it belongs to, from the Target events of
 // a connection (design 2.7): a commit moves it to the new target, and a
 // provisional target destroyed before commit takes only its own staged ids
 // with it. The handlers run in the connection's read loop.
-func (d *DesiredState) followTargets(c interface {
-	SubscribeSync(method string, h webkit.EventHandler) func()
-},
-) {
-	d.followCommits(c, nil)
-}
-
-// followCommits is followTargets with pending, called after a commit that
+//
+// pending, when not nil, is called after a commit that
 // left a cleanup pending on the committed target (commitTarget): the
 // committed target may hold released state until its agents are reset
 // (Manager.commitLeftCleanup). pending runs from a queued event

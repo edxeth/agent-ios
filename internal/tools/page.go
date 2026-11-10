@@ -1,3 +1,6 @@
+// Package tools holds the WebKit Inspector Protocol helpers that the registry
+// commands, the CDP endpoint (internal/cdp) and internal/devtools share:
+// script evaluation, screenshots, DOM lookup and cookies.
 package tools
 
 import (
@@ -12,20 +15,6 @@ import (
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
-
-// Navigate navigates the page to the given URL.
-func Navigate(ctx context.Context, client webkit.Caller, url string) error {
-	_, err := client.Send(ctx, "Page.navigate", map[string]string{"url": url})
-	return err
-}
-
-// Reload reloads the current page.
-func Reload(ctx context.Context, client webkit.Caller, ignoreCache bool) error {
-	_, err := client.Send(ctx, "Page.reload", map[string]interface{}{
-		"ignoreCache": ignoreCache,
-	})
-	return err
-}
 
 // ScreenshotOptions selects what CaptureScreenshot captures. The zero value
 // captures the visible viewport.
@@ -358,24 +347,4 @@ func RedactCookieValue(v string) string {
 		return suffix
 	}
 	return string([]rune(v)[:keep]) + "..." + suffix
-}
-
-// RedactCookies returns a copy of cookies with every value redacted by
-// RedactCookieValue.
-func RedactCookies(cookies []webkit.Cookie) []webkit.Cookie {
-	out := make([]webkit.Cookie, len(cookies))
-	for i, c := range cookies {
-		c.Value = RedactCookieValue(c.Value)
-		out[i] = c
-	}
-	return out
-}
-
-// DeleteCookie deletes a cookie by name and URL.
-func DeleteCookie(ctx context.Context, client webkit.Caller, name, url string) error {
-	_, err := client.Send(ctx, "Page.deleteCookie", map[string]string{
-		"cookieName": name,
-		"url":        url,
-	})
-	return err
 }

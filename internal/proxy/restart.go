@@ -39,7 +39,14 @@ type record struct {
 	Addr  string `json:"addr"`  // the listing address, host:port
 	Start string `json:"start"` // identity.start of the started process
 	Token string `json:"token"` // the tokenEnv value it was started with
+	// Writer is recordWriter. A record without it was written by the
+	// removed iwdp-mcp server, or by an iwdp-cli older than the writer
+	// field, and its iwdp counts as another program's (docs/migration.md).
+	Writer string `json:"writer"`
 }
+
+// recordWriter marks the records that iwdp-cli writes.
+const recordWriter = "iwdp-cli"
 
 // identity tells one process incarnation from another process with the
 // same pid.
@@ -252,7 +259,7 @@ func (s *Starter) saveRecord(pid int, token string) error {
 	}
 	path := filepath.Join(dir, recordName(s.addr))
 	if err == nil {
-		rec := record{PID: pid, PGID: pid, Addr: s.addr, Start: id.start, Token: token}
+		rec := record{PID: pid, PGID: pid, Addr: s.addr, Start: id.start, Token: token, Writer: recordWriter}
 		data, _ := json.Marshal(rec) // ints and strings always encode
 		var f *os.File
 		f, err = os.CreateTemp(dir, recordName(s.addr)+".*")
@@ -328,6 +335,8 @@ func (rec *record) problem(addr string) string {
 		return fmt.Sprintf("it names this program's own process group %d", rec.PGID)
 	case rec.Start == "" || rec.Token == "":
 		return "it holds no process identity (start time and start token)"
+	case rec.Writer != recordWriter:
+		return "it was not written by iwdp-cli (an earlier iwdp-mcp, or an older iwdp-cli, wrote it)"
 	}
 	return ""
 }
@@ -385,7 +394,7 @@ func (s *Starter) stopOwn(ctx context.Context, ep netip.AddrPort) (bool, error) 
 	case err != nil:
 		return false, s.refuse(ctx, ep, err.Error())
 	case rec == nil:
-		return false, s.refuse(ctx, ep, "no iwdp that iwdp-cli or an earlier iwdp-mcp started is recorded for it")
+		return false, s.refuse(ctx, ep, "no iwdp that iwdp-cli started is recorded for it")
 	}
 	if p := rec.problem(s.addr); p != "" {
 		return false, s.refuse(ctx, ep, "the record "+recordName(s.addr)+" is not valid: "+p)
@@ -445,7 +454,7 @@ func (s *Starter) refuse(ctx context.Context, ep netip.AddrPort, reason string) 
 		owner = "pid " + strings.Join(list, ", ")
 		kill = "kill " + strings.Join(list, " ")
 	}
-	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-cli or an earlier iwdp-mcp started and recorded (%s). It may be the iwdp of the user or another agent, so nothing was stopped. If it is yours, restart it by hand: %s, then run '%s'",
+	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-cli started and recorded (%s). It may be the iwdp of the user or another agent, so nothing was stopped. If it is yours, restart it by hand: %s, then run '%s'",
 		s.addr, owner, reason, kill, ManualCommand())
 }
 

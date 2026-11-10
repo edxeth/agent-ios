@@ -377,20 +377,6 @@ func ansiC(r []rune, i int, b *strings.Builder) (int, error) {
 	return 0, errors.New("unterminated $'...' quote")
 }
 
-// CookieURL is a URL to which the browser sends c: its domain without the
-// leading dot, its path, and https for a secure cookie.
-func CookieURL(c webkit.Cookie) string {
-	scheme := "http"
-	if c.Secure {
-		scheme = "https"
-	}
-	path := c.Path
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return scheme + "://" + strings.TrimPrefix(c.Domain, ".") + path
-}
-
 // DomainMatch reports whether host domain-matches a cookie domain (RFC
 // 6265 section 5.1.3; the leading dot of a domain cookie is ignored as in
 // section 5.2.3): the same name, or a subdomain when host is not an IP

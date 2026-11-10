@@ -289,7 +289,7 @@ Advice: run `iwdp-cli daemon stop` to close the page connections (this also stop
 
 - It runs `npm ci --ignore-scripts` when the lockfile is newer than `node_modules`, then `IWDP_CDP_COMPAT=1 go test -tags=cdpcompat ./e2e/cdpcompat/`. It needs Node.js 24 or later with npm, the WebKitGTK MiniBrowser, broadwayd, gcc and `pkg-config gdk-3.0`. A missing requirement fails the suite; it never skips.
 - agent-browser: the pinned release binary always runs. The agent-browser on `PATH` runs the same scenarios too, but only when `PATH` has one and the binary that it runs differs from the pinned binary (another SHA-256); otherwise the record says why it did not run. So a passing suite has not always run a second build. When `PATH` names a script (a wrapper), set `IWDP_CDPCOMPAT_PATH_AGENT_BROWSER` to the absolute path of the native binary that the script runs; without it the suite fails and names the script. Example: `IWDP_CDPCOMPAT_PATH_AGENT_BROWSER=$HOME/projects/agent-browser/cli/target/release/agent-browser make test-cdpcompat`.
-- `CDPCOMPAT_LOG_DIR=<dir>` keeps the logs of a run, with tokens and endpoint ids replaced.
+- `CDPCOMPAT_LOG_DIR` keeps the logs of a run in that directory, with tokens and endpoint ids replaced. Example: `CDPCOMPAT_LOG_DIR="$PWD/cdpcompat-logs" make test-cdpcompat`.
 
 What it proves, on WebKitGTK:
 

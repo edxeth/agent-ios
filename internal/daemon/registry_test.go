@@ -17,16 +17,9 @@ func run(t *testing.T, c *Client, session string, argv ...string) (RunResult, er
 func leaseFake(t *testing.T, c *Client, session string, sends ...string) *fakewebkit.Server {
 	t.Helper()
 	f := newFake(t, fakewebkit.Options{})
-	pc, err := openPage(t, c, f, session, 5*time.Second)
-	if err != nil {
+	if err := leasePage(t, c, f.URL, Owner{Session: session}, 5*time.Second, sends...); err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range sends {
-		if _, err := pc.Send(ctxFor(t, 5*time.Second), m, nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_ = pc.Close()
 	return f
 }
 
@@ -76,7 +69,7 @@ func TestCloseEndsOnlyTheCallersSession(t *testing.T) {
 func TestLeaseBreak(t *testing.T) {
 	c := connect(t, startInProcess(t, RunOptions{}))
 	f := leaseFake(t, c, "s1")
-	if _, err := openPage(t, c, f, "s2", time.Second); commands.ExitCodeOf(err) != 4 {
+	if err := leasePage(t, c, f.URL, Owner{Session: "s2"}, time.Second); commands.ExitCodeOf(err) != 4 {
 		t.Fatalf("s2 before the break: %v", err)
 	}
 	if _, err := run(t, c, "s2", "lease", "break", "no-such-page"); commands.ExitCodeOf(err) != 5 {
@@ -85,11 +78,9 @@ func TestLeaseBreak(t *testing.T) {
 	if _, err := run(t, c, "s2", "lease", "break", f.URL); err != nil {
 		t.Fatalf("lease break: %v", err)
 	}
-	pc, err := openPage(t, c, f, "s2", 2*time.Second)
-	if err != nil {
+	if err := leasePage(t, c, f.URL, Owner{Session: "s2"}, 2*time.Second); err != nil {
 		t.Fatalf("s2 after the break: %v", err)
 	}
-	_ = pc.Close()
 }
 
 // device reserve, list and release (design 2.5 rule 1): a second owner is

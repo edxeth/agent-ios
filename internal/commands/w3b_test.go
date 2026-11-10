@@ -432,7 +432,7 @@ func TestFillStdinReadsTheValueInTheClient(t *testing.T) {
 		t.Fatalf("--stdin with a text argument: %v", err)
 	}
 
-	// Through RunCLI: the value read from the standard input reaches the page.
+	// Through RunCLIStarted: the value read from the standard input reaches the page.
 	h := newActionHarness(t)
 	h.page.set("act", attempt("dispatched", "", map[string]any{"v": "s3cret"}))
 	r, w, err := os.Pipe()

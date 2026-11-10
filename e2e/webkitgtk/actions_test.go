@@ -110,8 +110,9 @@ func actionSession(t *testing.T, h hooks) (*core.PageSession, *attemptLog) {
 // stdout and stderr.
 func act(ctx context.Context, ps *core.PageSession, args ...string) (int, string, string) {
 	var out, errb strings.Builder
-	code := commands.RunCLI(ctx, args, &out, &errb,
+	code := commands.RunCLIStarted(ctx, args, &out, &errb, nil,
 		func(context.Context, *commands.Invocation) (commands.Env, error) { return env{ps}, nil })
+
 	return code, strings.TrimRight(out.String(), "\n"), errb.String()
 }
 

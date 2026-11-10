@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
 )
 
@@ -70,9 +68,43 @@ func connect(t *testing.T, o Options) *Client {
 	return c
 }
 
-func openPage(t *testing.T, c *Client, f *fakewebkit.Server, session string, d time.Duration) (*PageCaller, error) {
+// leaseFixture is a registry command that needs a page and sends each of
+// its arguments, a protocol method without parameters, through the
+// operation's caller. For "<Domain>.enable" the session's "test" owner
+// acquires the domain first, as a command that enables a domain does, so
+// the release of the session sends "<Domain>.disable". The session's lease
+// stays after the command (design 2.5). It is registered at init, so a
+// daemon process started from this test binary (spawnOptions) has it too.
+var leaseFixture = []string{"fixture", "lease"}
+
+func init() {
+	commands.Register(&commands.Command{
+		Name: strings.Join(leaseFixture, " "), Summary: "Test fixture: lease the page and send methods.", Page: commands.AnyPage, Mutates: true,
+		Args: []commands.Arg{{Name: "methods", Help: "protocol methods to send", Variadic: true}},
+		Run: func(ctx context.Context, env commands.Env, in commands.Input) (commands.Result, error) {
+			ps, err := env.Page(ctx)
+			if err != nil {
+				return commands.Result{}, err
+			}
+			c := env.(interface{ Op() *core.Op }).Op().Caller()
+			for _, m := range in.Args {
+				if domain, ok := strings.CutSuffix(m, ".enable"); ok {
+					ps.State.Acquire(core.SessionOwner("test", in.Global.Session), domain)
+				}
+				if _, err := c.Send(ctx, m, nil); err != nil {
+					return commands.Result{}, err
+				}
+			}
+			return commands.Result{}, nil
+		},
+	})
+}
+
+// leasePage runs leaseFixture on page for owner through /v1/run within d.
+func leasePage(t *testing.T, c *Client, page string, owner Owner, d time.Duration, methods ...string) error {
 	t.Helper()
-	return c.OpenPage(ctxFor(t, d), PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: session}, Name: "test"})
+	_, err := c.Run(ctxFor(t, d), RunRequest{Argv: append(append([]string{}, leaseFixture...), methods...), PageReq: PageReq{Page: page}, Owner: owner}, nil)
+	return err
 }
 
 func newFake(t *testing.T, o fakewebkit.Options) *fakewebkit.Server {
@@ -83,186 +115,17 @@ func newFake(t *testing.T, o fakewebkit.Options) *fakewebkit.Server {
 	return f
 }
 
-// The legacy bridge (design 2.10): a fixed operation per CLI command, raw
-// calls inside it, events through /v1/events, and Close ends the
-// operation while the lease stays with the session.
-func TestPageCallerFixedOperation(t *testing.T) {
-	o := startInProcess(t, RunOptions{})
-	c := connect(t, o)
-	f := newFake(t, fakewebkit.Options{})
-	pc, err := openPage(t, c, f, "s1", 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !pc.IsTargetRouted() {
-		t.Errorf("IsTargetRouted = false for a fake that announces its target")
-	}
-	got := make(chan string, 4)
-	unsub := pc.Subscribe("Console.messageAdded", func(method string, params json.RawMessage) { got <- string(params) })
-	res, err := pc.Send(ctxFor(t, 5*time.Second), "Runtime.evaluate", map[string]any{"expression": "1+1"})
-	if err != nil || !strings.Contains(string(res), "\"value\":2") {
-		t.Fatalf("Runtime.evaluate: %s, %v", res, err)
-	}
-	f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{"text": "hi"}})
-	select {
-	case p := <-got:
-		if !strings.Contains(p, "hi") {
-			t.Fatalf("event params %s", p)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("event did not arrive through /v1/events")
-	}
-	unsub()
-	if err := pc.Close(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-pc.Done():
-	default:
-		t.Error("Done is not closed after Close")
-	}
-	st, err := c.Status(ctxFor(t, 5*time.Second))
-	if err != nil || len(st.Pages) != 1 || st.Pages[0].Session != "s1" || st.Pages[0].Lease != "active" {
-		t.Fatalf("status after Close: %+v, %v; want s1's lease kept", st, err)
-	}
-}
-
-// An open legacy operation is exclusive (design 2.10): a second command of
-// the same session waits for it, and its deadline exits 124 (D9).
-func TestOperationIsExclusiveUntilClosed(t *testing.T) {
-	o := startInProcess(t, RunOptions{})
-	c := connect(t, o)
-	f := newFake(t, fakewebkit.Options{})
-	a, err := openPage(t, c, f, "s1", 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := time.Now()
-	_, err = openPage(t, c, f, "s1", 300*time.Millisecond)
-	if !errors.Is(err, context.DeadlineExceeded) || commands.ExitCodeOf(err) != 124 {
-		t.Fatalf("second operation while the first is open: %v (exit %d), want a deadline error with exit 124", err, commands.ExitCodeOf(err))
-	}
-	if el := time.Since(start); el > time.Second {
-		t.Fatalf("second operation ended after %v with a 300ms deadline", el)
-	}
-	_ = a.Close()
-	b, err := openPage(t, c, f, "s1", 2*time.Second)
-	if err != nil {
-		t.Fatalf("after Close: %v", err)
-	}
-	_ = b.Close()
-}
-
 // Design 2.5: another session gets the lease error (exit 4) at once.
 func TestOtherSessionGetsLeaseError(t *testing.T) {
 	o := startInProcess(t, RunOptions{})
 	c := connect(t, o)
 	f := newFake(t, fakewebkit.Options{})
-	a, err := openPage(t, c, f, "s1", 5*time.Second)
-	if err != nil {
+	if err := leasePage(t, c, f.URL, Owner{Session: "s1"}, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	_ = a.Close()
-	_, err = openPage(t, c, f, "s2", 5*time.Second)
+	err := leasePage(t, c, f.URL, Owner{Session: "s2"}, 5*time.Second)
 	if commands.ExitCodeOf(err) != 4 || err == nil || !strings.Contains(err.Error(), "leased by session \"s1\"") {
 		t.Fatalf("s2: %v (exit %d), want the lease error with exit 4", err, commands.ExitCodeOf(err))
-	}
-}
-
-// Design 2.5 rule 3: a page connection closed by someone else closes Done
-// and the next command fails with exit 4 and "ownership is unknown".
-func TestPageCallerDoneWhenPageLost(t *testing.T) {
-	o := startInProcess(t, RunOptions{})
-	c := connect(t, o)
-	f := newFake(t, fakewebkit.Options{})
-	pc, err := openPage(t, c, f, "s1", 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pc.Close() }()
-	f.CloseConnections()
-	select {
-	case <-pc.Done():
-	case <-time.After(3 * time.Second):
-		t.Fatal("Done not closed after the page connection closed")
-	}
-	_, err = pc.Send(ctxFor(t, 2*time.Second), "Runtime.evaluate", map[string]any{"expression": "1"})
-	if commands.ExitCodeOf(err) != 4 || !strings.Contains(err.Error(), "ownership is unknown") {
-		t.Fatalf("send after the loss: %v (exit %d)", err, commands.ExitCodeOf(err))
-	}
-	if n := f.ConnectionCount(); n != 1 {
-		t.Fatalf("the daemon reconnected by itself: %d connections", n)
-	}
-}
-
-// After EndOp (a streaming command after its enable step) each call runs
-// as its own one-call operation, so other commands are not blocked.
-func TestEndOpLeavesOneCallOperations(t *testing.T) {
-	o := startInProcess(t, RunOptions{})
-	c := connect(t, o)
-	f := newFake(t, fakewebkit.Options{})
-	pc, err := openPage(t, c, f, "s1", 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pc.Close() }()
-	pc.EndOp()
-	other, err := openPage(t, c, f, "s1", time.Second)
-	if err != nil {
-		t.Fatalf("operation after EndOp: %v", err)
-	}
-	_ = other.Close()
-	if _, err := pc.Send(ctxFor(t, 2*time.Second), "Runtime.evaluate", map[string]any{"expression": "1"}); err != nil {
-		t.Fatalf("one-call send after EndOp: %v", err)
-	}
-}
-
-// A stalled call ends at the caller's deadline as a deadline error that
-// names the method (W0's timeout message), exit 124 (D9).
-func TestSendDeadlineNamesMethod(t *testing.T) {
-	o := startInProcess(t, RunOptions{})
-	c := connect(t, o)
-	f := newFake(t, fakewebkit.Options{})
-	f.Stall("Runtime.evaluate")
-	ctx := ctxFor(t, 500*time.Millisecond)
-	pc, err := c.OpenPage(ctx, PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: "s1"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pc.Close() }()
-	start := time.Now()
-	_, err = pc.Send(ctx, "Runtime.evaluate", map[string]any{"expression": "6*7"})
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "Runtime.evaluate") || commands.ExitCodeOf(err) != 124 {
-		t.Fatalf("stalled call: %v (exit %d)", err, commands.ExitCodeOf(err))
-	}
-	if el := time.Since(start); el > 1500*time.Millisecond {
-		t.Fatalf("stalled call returned after %v with a 500ms deadline", el)
-	}
-	n := 0
-	for _, r := range f.ReceivedMethod("Runtime.evaluate") {
-		if strings.Contains(string(r.Params), "6*7") {
-			n++
-		}
-	}
-	if n != 1 {
-		t.Fatalf("the fake received %d evaluations of 6*7, want 1 (no retry; probes excluded)", n)
-	}
-}
-
-// Raw-call gates run in the daemon (design 2.10): the CSS hang methods are
-// refused before sending, and the error says the call was not sent.
-func TestRawGateRefusesHangMethod(t *testing.T) {
-	o := startInProcess(t, RunOptions{})
-	c := connect(t, o)
-	f := newFake(t, fakewebkit.Options{})
-	pc, err := openPage(t, c, f, "s1", 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pc.Close() }()
-	_, err = pc.Send(ctxFor(t, 2*time.Second), "CSS.getAllStyleSheets", nil)
-	if !errors.Is(err, webkit.ErrNotSent) || len(f.ReceivedMethod("CSS.getAllStyleSheets")) != 0 {
-		t.Fatalf("CSS.getAllStyleSheets: %v; the fake received %d", err, len(f.ReceivedMethod("CSS.getAllStyleSheets")))
 	}
 }
 

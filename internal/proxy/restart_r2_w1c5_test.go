@@ -193,7 +193,7 @@ func TestRestartWithTheDarwinReaderRefusesAForgedRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":%q,"start":%q,"token":"made-up-token"}`, foreign, foreign, addr, start)
+	data := fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":%q,"start":%q,"token":"made-up-token","writer":%q}`, foreign, foreign, addr, start, recordWriter)
 	if err := os.WriteFile(recordPath(addr), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}

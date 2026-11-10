@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -45,7 +46,7 @@ func writeRecord(t *testing.T, addr string, pid, pgid int) {
 	if id, err := readIdentity(pid); err == nil {
 		start = id.start
 	}
-	data := fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":%q,"start":%q,"token":"forged-token"}`, pid, pgid, addr, start)
+	data := fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":%q,"start":%q,"token":"forged-token","writer":%q}`, pid, pgid, addr, start, recordWriter)
 	if err := os.WriteFile(recordPath(addr), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +201,56 @@ func TestRestartRestartsTheIWDPThisProgramStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 	restart("the Starter that started it, without the record file", 4)
+	if calls := pkillCalls(t); len(calls) != 0 {
+		t.Errorf("Restart ran pkill: %q", calls)
+	}
+}
+
+// WS2b (the MCP server is removed): an iwdp that an earlier iwdp-mcp
+// started has a record without the writer field. Restart counts it as
+// another program's iwdp: it refuses with the reason and stops nothing, so
+// the user stops it by hand once (docs/migration.md).
+func TestRestartRefusesARecordWithoutTheWriter(t *testing.T) {
+	addr := freeAddr(t)
+	f := installFakeIWDP(t, fakeServe, addr)
+	useStd(t, testStarter(addr, 10*time.Second))
+	if err := Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	data, err := os.ReadFile(recordPath(addr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("record %q: %v", data, err)
+	}
+	if rec["writer"] != recordWriter {
+		t.Fatalf("the record of a start = %s, want the writer %q", data, recordWriter)
+	}
+	delete(rec, "writer")
+	old, _ := json.Marshal(rec) // strings and numbers always encode
+	if err := os.WriteFile(recordPath(addr), old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Another process of iwdp-cli finds the iwdp only through the file.
+	useStd(t, testStarter(addr, 10*time.Second))
+	pids := f.pids()
+	err = Restart(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "restart refused") || !strings.Contains(err.Error(), "not written by iwdp-cli") {
+		t.Fatalf("Restart with the record %s = %v, want a refusal that names the missing writer", old, err)
+	}
+	for _, pid := range pids {
+		if !alive(pid) {
+			t.Errorf("the iwdp %d of the record without the writer was stopped", pid)
+		}
+	}
+	if n := len(f.pids()); n != len(pids) {
+		t.Errorf("ios_webkit_debug_proxy ran %d times, want %d (no new start)", n, len(pids))
+	}
+	if err := CheckListing(context.Background(), addr); err != nil {
+		t.Errorf("the iwdp on %s no longer answers: %v", addr, err)
+	}
 	if calls := pkillCalls(t); len(calls) != 0 {
 		t.Errorf("Restart ran pkill: %q", calls)
 	}
@@ -490,7 +541,7 @@ func TestRecordProblemAcceptsOnlyASafeGroup(t *testing.T) {
 	const addr = "127.0.0.1:9221"
 	self := syscall.Getpgrp()
 	accepted, rejected := 0, 0
-	prop := func(pid, pgid int32, sameAddr, useSelf, hasStart, hasToken bool) bool {
+	prop := func(pid, pgid int32, sameAddr, useSelf, hasStart, hasToken, hasWriter bool) bool {
 		rec := record{PID: int(pid % 64), PGID: int(pgid % 64), Addr: "127.0.0.1:1"}
 		if sameAddr {
 			rec.Addr = addr
@@ -504,12 +555,15 @@ func TestRecordProblemAcceptsOnlyASafeGroup(t *testing.T) {
 		if hasToken {
 			rec.Token = "tok"
 		}
+		if hasWriter {
+			rec.Writer = recordWriter
+		}
 		if rec.problem(addr) != "" {
 			rejected++
 			return true
 		}
 		accepted++
-		return rec.PGID > 1 && rec.PGID != self && rec.PID == rec.PGID && rec.Addr == addr && rec.Start != "" && rec.Token != ""
+		return rec.PGID > 1 && rec.PGID != self && rec.PID == rec.PGID && rec.Addr == addr && rec.Start != "" && rec.Token != "" && rec.Writer == recordWriter
 	}
 	if err := quick.Check(prop, quickConfig(t, 20000)); err != nil {
 		t.Fatal(err)
@@ -519,7 +573,7 @@ func TestRecordProblemAcceptsOnlyASafeGroup(t *testing.T) {
 	if rejected == 0 {
 		t.Fatal("no generated record was rejected; the property was never tested on an unsafe record")
 	}
-	if p := (&record{PID: 4242, PGID: 4242, Addr: addr, Start: "100", Token: "tok"}).problem(addr); p != "" {
+	if p := (&record{PID: 4242, PGID: 4242, Addr: addr, Start: "100", Token: "tok", Writer: recordWriter}).problem(addr); p != "" {
 		t.Fatalf("a valid record has the problem %q", p)
 	}
 }
@@ -538,7 +592,7 @@ func TestRecordProblemAcceptsEverySafeRecord(t *testing.T) {
 		if pgid >= self {
 			pgid++ // skip this process's group
 		}
-		rec := record{PID: pgid, PGID: pgid, Addr: addr, Start: "s" + start, Token: "t" + token}
+		rec := record{PID: pgid, PGID: pgid, Addr: addr, Start: "s" + start, Token: "t" + token, Writer: recordWriter}
 		if p := rec.problem(addr); p != "" {
 			t.Logf("the safe record %+v has the problem %q", rec, p)
 			return false
@@ -553,6 +607,7 @@ func TestRecordProblemAcceptsEverySafeRecord(t *testing.T) {
 			"another address":    func(r *record) { r.Addr = "127.0.0.1:1" },
 			"no start time":      func(r *record) { r.Start = "" },
 			"no token":           func(r *record) { r.Token = "" },
+			"no writer":          func(r *record) { r.Writer = "" },
 		} {
 			bad := rec
 			change(&bad)

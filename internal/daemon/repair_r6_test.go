@@ -30,61 +30,23 @@ func noDaemonCore(t *testing.T) {
 	})
 }
 
-// closeLimit bounds one PageCaller.Close; it normally takes milliseconds.
-const closeLimit = 10 * time.Second
-
-// pageCloseRounds is how many operations TestPageCallerCloseReturns opens
-// and closes. Before the fix about one Close in a few hundred hung, more
-// often under -race and host load.
-const pageCloseRounds = 400
-
-// R6-5 (race run of round 6): PageCaller.Close never returned. hold.end
-// closed the begin stream's body while its reader goroutine was in a Read
-// that ended at EOF; net/http then blocks that Read forever (the read loop
-// of the connection has moved on), so Close waited for the reader forever.
-// The in-memory connections of IWDP_NO_DAEMON=1 hit it most often.
-func TestPageCallerCloseReturns(t *testing.T) {
-	noDaemonCore(t)
-	c, err := Connect(ctxFor(t, 3*time.Second), Options{Dir: filepath.Join(shortDir(t), "iwdp"), Exe: "/bin/false", Version: "test"})
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	defer c.Close()
-	f := newFake(t, fakewebkit.Options{})
-	for i := 0; i < pageCloseRounds; i++ {
-		pc, err := c.OpenPage(ctxFor(t, 5*time.Second), PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: "s1"}})
-		if err != nil {
-			t.Fatalf("OpenPage %d: %v", i, err)
-		}
-		closed := make(chan struct{})
-		go func() {
-			_ = pc.Close()
-			close(closed)
-		}()
-		select {
-		case <-closed:
-		case <-time.After(closeLimit):
-			t.Fatalf("PageCaller.Close of operation %d did not return within %v", i, closeLimit)
-		}
-	}
-}
-
 // Each test gets a fresh in-process core: the second test finds no page of
 // the first.
 func TestNoDaemonCoreIsPerTest(t *testing.T) {
 	t.Run("first", func(t *testing.T) {
+		// The page outlives the core (cleanups run last-in first-out),
+		// so that the core's cleanup reaches it instead of racing its
+		// close.
+		f := newFake(t, fakewebkit.Options{})
 		noDaemonCore(t)
 		c, err := Connect(ctxFor(t, 3*time.Second), Options{Dir: filepath.Join(shortDir(t), "iwdp"), Exe: "/bin/false", Version: "test"})
 		if err != nil {
 			t.Fatalf("Connect: %v", err)
 		}
 		defer c.Close()
-		f := newFake(t, fakewebkit.Options{})
-		pc, err := c.OpenPage(ctxFor(t, 5*time.Second), PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: "s1"}})
-		if err != nil {
-			t.Fatalf("OpenPage: %v", err)
+		if err := leasePage(t, c, f.URL, Owner{Session: "s1"}, 5*time.Second); err != nil {
+			t.Fatalf("leasing the page: %v", err)
 		}
-		_ = pc.Close()
 	})
 	t.Run("second", func(t *testing.T) {
 		noDaemonCore(t)

@@ -89,7 +89,7 @@ func TestReusedMockURLIsAFreshPageForTheNextTest(t *testing.T) {
 		old := cookieMock()
 		oldURL = old.URL
 		env := []string{"IWDP_WS_URL=" + oldURL}
-		if r := runCLI(t, "", env, "cookies"); r.code != 0 {
+		if r := runCLI(t, "", env, "cookies", "--page", oldURL); r.code != 0 {
 			old.Close()
 			t.Fatalf("cookies: exit %d, stderr %q", r.code, r.stderr)
 		}
@@ -98,7 +98,7 @@ func TestReusedMockURLIsAFreshPageForTheNextTest(t *testing.T) {
 	})
 	t.Run("second", func(t *testing.T) {
 		fresh := cookieMockAt(t, oldURL)
-		r := runCLI(t, "", []string{"IWDP_WS_URL=" + oldURL}, "cookies")
+		r := runCLI(t, "", []string{"IWDP_WS_URL=" + oldURL}, "cookies", "--page", oldURL)
 		if r.code != 0 || fresh.ConnectionCount() != 1 {
 			t.Fatalf("cookies on the reused URL: exit %d, connections %d, stderr %q; want exit 0 and one connection", r.code, fresh.ConnectionCount(), r.stderr)
 		}
@@ -106,18 +106,18 @@ func TestReusedMockURLIsAFreshPageForTheNextTest(t *testing.T) {
 	t.Run("guard", func(t *testing.T) {
 		old := cookieMock()
 		env := []string{"IWDP_WS_URL=" + old.URL}
-		if r := runCLI(t, "", env, "cookies"); r.code != 0 {
+		if r := runCLI(t, "", env, "cookies", "--page", old.URL); r.code != 0 {
 			old.Close()
 			t.Fatalf("cookies: exit %d, stderr %q", r.code, r.stderr)
 		}
 		old.Close()
 		waitLost(t, env, old.URL)
 		fresh := cookieMockAt(t, old.URL)
-		r := runCLI(t, "", env, "cookies")
+		r := runCLI(t, "", env, "cookies", "--page", old.URL)
 		if r.code != 4 || !strings.Contains(r.stderr, "connection to page was closed by someone else") || fresh.ConnectionCount() != 0 {
 			t.Fatalf("reused URL in the same daemon: exit %d, connections %d, stderr %q; want the lost-lease refusal (exit 4, no connection)", r.code, fresh.ConnectionCount(), r.stderr)
 		}
-		if r := runCLI(t, "", env, "cookies", "--takeover"); r.code != 0 || fresh.ConnectionCount() != 1 {
+		if r := runCLI(t, "", env, "cookies", "--page", old.URL, "--takeover"); r.code != 0 || fresh.ConnectionCount() != 1 {
 			t.Fatalf("--takeover: exit %d, connections %d, stderr %q", r.code, fresh.ConnectionCount(), r.stderr)
 		}
 	})

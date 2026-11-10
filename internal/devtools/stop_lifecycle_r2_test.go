@@ -68,7 +68,7 @@ func rawReview(t *testing.T, r *rig, method string, params string) json.RawMessa
 		t.Fatal(err)
 	}
 	defer r.m.End(mo.ID)
-	raw, err := r.m.Raw(ctx, mo.ID, method, json.RawMessage(params))
+	raw, err := r.m.RawAs(ctx, mo, core.SessionOwner("legacy", mo.Session), method, json.RawMessage(params))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -112,7 +112,7 @@ func (p *managedPage) raw(t *testing.T, method string, params any) (json.RawMess
 			t.Fatal(err)
 		}
 	}
-	return p.m.Raw(ctx, p.mo.ID, method, raw)
+	return p.m.RawAs(ctx, p.mo, core.SessionOwner("legacy", p.mo.Session), method, raw)
 }
 
 // evalIn evaluates expr in the active target, in context id when id > 0,

@@ -1,5 +1,8 @@
 # Design: agentic parity, CDP endpoint and direct transport for iwdp-mcp
 
+> **Note (2026-11-10):** the MCP server (commit f731071) and the old CLI commands (WS2b) are removed; iwdp-cli runs registry commands only. The parts of this design about the MCP server, its tools and the legacy commands are history.
+> The daemon protocol parts of section 2.2 are history too. The endpoints `/v1/op`, `/v1/raw`, `/v1/events` and `/v1/lease` are removed, with the operation scopes and raw calls of the legacy commands and the event streams of MCP clients. `/v1/run` takes an absolute `deadline` instead of `timeoutMs`. `/v1/batch` was never built. The current protocol (version 2) is in internal/daemon/proto.go; internal/daemon/server.go routes its four endpoints: `GET /v1/hello`, `GET /v1/status`, `POST /v1/run` and `POST /v1/shutdown`.
+
 Status: design for implementation, revised after the two design reviews of 2026-11-06 (section 7.10). Date: 2026-11-06. Base branch: `feat/agentic-parity` (b42bb20).
 Scope: make iwdp-cli and iwdp-mcp fast, agentic (parity with agent-browser 0.41.2), CDP-compatible, and able to reach the iPhone without ios_webkit_debug_proxy (iwdp).
 Targets: Safari 16.6 on iOS 16.7 (iPhone X, permanent test device) and current iOS 26/27.

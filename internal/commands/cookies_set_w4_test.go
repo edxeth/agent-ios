@@ -48,11 +48,11 @@ func TestCookiesSetHelpAndFlags(t *testing.T) {
 	var out, errb bytes.Buffer
 	called := false
 	newEnv := func(context.Context, *Invocation) (Env, error) { called = true; return nil, fmt.Errorf("no env") }
-	if code := RunCLI(context.Background(), []string{"cookies", "set", "--help"}, &out, &errb, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli cookies set") || called {
+	if code := RunCLIStarted(context.Background(), []string{"cookies", "set", "--help"}, &out, &errb, nil, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli cookies set") || called {
 		t.Errorf("cookies set --help: exit %d, called %v, out %q", code, called, out.String())
 	}
 	errb.Reset()
-	if code := RunCLI(context.Background(), []string{"cookies", "set", "--no-such-flag"}, &out, &errb, newEnv); code != ExitUsage || called || !strings.Contains(errb.String(), "unknown flag --no-such-flag") {
+	if code := RunCLIStarted(context.Background(), []string{"cookies", "set", "--no-such-flag"}, &out, &errb, nil, newEnv); code != ExitUsage || called || !strings.Contains(errb.String(), "unknown flag --no-such-flag") {
 		t.Errorf("cookies set --no-such-flag: exit %d, called %v, stderr %q; want exit 2 before any connection", code, called, errb.String())
 	}
 }

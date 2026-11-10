@@ -186,7 +186,7 @@ type staging struct {
 	reseed        bool                  // the next seed announces a new document (resetLocked)
 	applied       uint64                // pushed events that the goroutine handled
 	appliedSig    chan struct{}         // closed and replaced when applied grows
-	modelProv     map[string]bool       // provisional targets of a model (dispatch)
+	modelProv     map[string]bool       // provisional targets of a model (dispatch, in support_test.go)
 	testApply     func(wipEvent)        // test seam: runs before each queued event is applied, without ps.mu; nil in production
 }
 
@@ -346,28 +346,6 @@ func (ps *pageState) caughtUpTo(ctx context.Context, want uint64) error {
 			return nil // closed: the caller finds no context
 		}
 	}
-}
-
-// dispatch translates one event of a model (no connection): a target is
-// provisional from its Target.targetCreated{isProvisional} to its commit
-// or destruction.
-func (ps *pageState) dispatch(target, method string, params json.RawMessage) {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-	var p targetParams
-	if json.Unmarshal(params, &p) == nil {
-		switch method {
-		case evTargetCreated:
-			if p.TargetInfo.IsProvisional && p.TargetInfo.TargetID != "" {
-				ps.modelProv[p.TargetInfo.TargetID] = true
-			}
-		case evTargetCommitted:
-			delete(ps.modelProv, p.NewTargetID)
-		case evTargetDestroyed:
-			delete(ps.modelProv, p.TargetID)
-		}
-	}
-	ps.applyLocked(wipEvent{target: target, method: method, params: params, provisional: target != "" && ps.modelProv[target], at: monotonic()})
 }
 
 // targetParams are the params of the WIP Target events.

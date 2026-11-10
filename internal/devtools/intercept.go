@@ -187,7 +187,7 @@ func (p *Page) interceptorLocked() *interceptor {
 //
 // The same subscriber sees Target.didCommitProvisionalTarget after core's
 // own read-loop subscriber of that method made the committed target the
-// desired state's active target (DesiredState.followTargets), and applies
+// desired state's active target (DesiredState.followCommits), and applies
 // the tombstones to that target (applyTombstones).
 func (ic *interceptor) subscribe(c webkit.Caller) func() {
 	handle := func(target, method string, params json.RawMessage) {

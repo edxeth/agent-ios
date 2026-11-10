@@ -176,7 +176,7 @@ func (d *DesiredState) isUnknown(dom string) bool {
 }
 
 // isActive reports whether target is the active target of the model
-// (Apply on a new connection sets it; a commit moves it, followTargets).
+// (Apply on a new connection sets it; a commit moves it, followCommits).
 func (d *DesiredState) isActive(target string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()

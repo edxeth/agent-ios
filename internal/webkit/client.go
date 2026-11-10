@@ -354,11 +354,6 @@ type handlerEntry struct {
 	h  EventHandler
 }
 
-// OnEvent registers a handler for a specific event method.
-func (c *Client) OnEvent(method string, handler EventHandler) {
-	c.Subscribe(method, handler)
-}
-
 // Subscribe registers a handler for a specific event method and returns a
 // function that removes it. Client handlers run synchronously in the read
 // loop, as they always have.
@@ -501,7 +496,7 @@ func (c *Client) handleDispatchFromTarget(params json.RawMessage) {
 
 func (c *Client) dispatchEvent(method string, params json.RawMessage) {
 	c.eventMu.RLock()
-	// Copy slices so handlers can safely call OnEvent/OnAnyEvent without deadlock or race.
+	// Copy slices so handlers can safely call Subscribe/OnAnyEvent without deadlock or race.
 	handlers := make([]handlerEntry, len(c.handlers[method]))
 	copy(handlers, c.handlers[method])
 	globals := make([]EventHandler, len(c.globalHandlers))

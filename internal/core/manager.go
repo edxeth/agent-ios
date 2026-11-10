@@ -1416,6 +1416,9 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 	if err != nil {
 		return nil, 0, time.Time{}, err
 	}
+	if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
+		observe(t.key, t.title)
+	}
 	if sreq.Page == "" {
 		m.setDefaultPage(ao.Session, sreq, t.key)
 	}
@@ -1439,6 +1442,17 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 		m.leaseStarted(ctx, pg, ao.Session, epoch)
 		return pg, epoch, prev, nil
 	}
+}
+
+type pageObserverKey struct{}
+
+// WithPageObserver returns ctx with observe. An operation begun under the
+// returned context (Begin, Do) calls observe with the key and title of
+// its page as soon as it resolved the page, before the attach, the lease
+// and the scheduler's queue, so that the caller can name the page in an
+// error of those steps (the CLI's deadline message, design 2.6).
+func WithPageObserver(ctx context.Context, observe func(key, title string)) context.Context {
+	return context.WithValue(ctx, pageObserverKey{}, observe)
 }
 
 // errPageRemoved: the sweeper closed the page record and removed it from
@@ -1510,17 +1524,6 @@ func (m *Manager) Begin(ctx context.Context, req PageRequest, ao AcquireOptions,
 	return mo, nil
 }
 
-// Op returns the managed operation id.
-func (m *Manager) Op(id string) (*ManagedOp, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	mo := m.ops[id]
-	if mo == nil {
-		return nil, fmt.Errorf("operation %q is not open (it ended or the daemon restarted)", id)
-	}
-	return mo, nil
-}
-
 // End ends a managed operation.
 func (m *Manager) End(id string) {
 	m.mu.Lock()
@@ -1540,18 +1543,6 @@ func (m *Manager) End(id string) {
 		pg.lease.lastUsed = now
 	}
 	pg.mu.Unlock()
-}
-
-// Raw sends one legacy protocol call inside operation id (design 2.10).
-// The CSS hang methods and methods outside the device's iOS command list
-// are refused before sending; state-changing methods are mapped onto the
-// desired state with the legacy command of the session as owner.
-func (m *Manager) Raw(ctx context.Context, id, method string, params json.RawMessage) (json.RawMessage, error) {
-	mo, err := m.Op(id)
-	if err != nil {
-		return nil, err
-	}
-	return m.RawAs(ctx, mo, SessionOwner("legacy", mo.Session), method, params)
 }
 
 // RawAs is Raw inside operation mo with owner as the desired-state owner
@@ -1902,11 +1893,12 @@ const (
 	// runtimeReleaseReserve is the part of the remaining deadline that the
 	// runtime release never uses: the release still ends the lease, and
 	// its reply must reach the client before the client's own deadline.
-	// The client sends its remaining time as timeoutMs, so the daemon's
-	// deadline is later than the client's by the request's transit time.
-	// Transit and reply take well under a millisecond on the local socket;
-	// 50 ms keeps that true on a loaded host (the race detector, a busy
-	// CI machine) and is small against the 1 s budget.
+	// The daemon runs the release under the client's own absolute
+	// deadline (daemon.RunRequest.Deadline), and the reply needs its
+	// transit time before that deadline. Transit and reply take well
+	// under a millisecond on the local socket; 50 ms keeps that true on a
+	// loaded host (the race detector, a busy CI machine) and is small
+	// against the 1 s budget.
 	runtimeReleaseReserve = 50 * time.Millisecond
 	// runtimeReleaseMin is the shortest wait worth a send: a runtime call
 	// through the daemon takes milliseconds even on a local page (warm
@@ -2112,12 +2104,6 @@ func (m *Manager) allPages() []*Page {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
-}
-
-// Subscribe delivers method events of the page to h for the session that
-// holds its lease; done is closed when the page is lost or closed.
-func (m *Manager) Subscribe(pg *Page, method string, h webkit.EventHandler) (unsub func(), done <-chan struct{}) {
-	return pg.conn.Subscribe(method, h), pg.conn.Done()
 }
 
 // PageStatus describes one attached page.

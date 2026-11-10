@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 #
-# Boot an iOS Simulator, open Safari to a test page, and start ios_webkit_debug_proxy.
-# Exports IWDP_SIM_WS_URL to stdout (last line) for tests to use.
+# Boot an iOS Simulator, open Safari to a test page of its own, and start
+# ios_webkit_debug_proxy. Prints, on stdout, the export lines of
+# IWDP_SIM_WS_URL (the WebSocket URL of that page) and IWDP_SIM_PAGE_URL
+# (its URL, unique by a random query) for the simulator tests. Exits
+# non-zero, after its teardown, when a step fails; check the exit status
+# before you evaluate the output.
+#
+# Run it through 'make test-e2e' (setup, simulator tests, teardown) or
+# 'make sim-setup', which check its exit status and both URLs. One
+# Simulator run per user account at a time: setup refuses while another
+# run holds the lease. Wait until that run has finished; only after a
+# crashed run, recover with 'make sim-teardown'.
 #
 # Usage:
-#   eval "$(./scripts/sim-setup.sh)"           # sets IWDP_SIM_WS_URL
-#   ./scripts/sim-setup.sh --teardown          # clean shutdown
+#   ./scripts/sim-setup.sh                         # setup; prints the export lines,
+#                                                  # also IWDP_SIM_RUN_TOKEN
+#   ./scripts/sim-setup.sh --teardown-run TOKEN    # automatic teardown of the run TOKEN
+#                                                  # only; no-op for an empty TOKEN
+#   ./scripts/sim-setup.sh --teardown              # manual recovery after a crashed run
+#   ./scripts/sim-setup.sh --boot-simulator        # steps 1-2 only (tests)
+#   ./scripts/sim-setup.sh --select-page LISTING_URL PAGE_URL
+#       # prints the WebSocket URL of the SIMULATOR's page PAGE_URL in the
+#       # iwdp listing LISTING_URL (one attempt; tests)
 #
 set -euo pipefail
 
@@ -14,7 +31,18 @@ set -euo pipefail
 STATE_BASE="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
 STATE_DIR="${STATE_BASE%/}/iwdp-sim-$(id -u)"
 PIDFILE="$STATE_DIR/iwdp.pid"
+# The state is a lease of one setup run: LEASEFILE holds that run's token
+# and is created atomically, so while it exists every other setup
+# refuses. SIMFILE holds "<run token> <udid> booted|reused": "booted" only
+# when that run's own 'simctl boot' succeeded. Teardown releases the lease.
+LEASEFILE="$STATE_DIR/lease"
 SIMFILE="$STATE_DIR/device"
+# Every ownership step (take the lease and boot; check the token, shut
+# down and release the lease) runs while this script holds LOCKDIR, a
+# directory that mkdir creates atomically (macOS has no flock command).
+LOCKDIR="$STATE_DIR/lock"
+LOCK_WAIT_SECONDS="${IWDP_SIM_LOCK_WAIT_SECONDS:-30}"
+HAVE_LOCK=""
 PORT=9221 # iwdp's listing port
 TOKEN_ENV=IWDP_SIM_START_TOKEN # carries the start token of the iwdp this script starts
 
@@ -101,7 +129,53 @@ sys.exit(0 if sys.argv[2].encode() in entries else 1)
 PY
 }
 
-# teardown stops only the ios_webkit_debug_proxy that this script started:
+# lock takes LOCKDIR, retrying every 0.1 s for LOCK_WAIT_SECONDS; it
+# fails with advice when the lock stays taken. unlock releases it.
+lock() {
+  local tries=$((LOCK_WAIT_SECONDS * 10)) i=0
+  until mkdir "$LOCKDIR" 2> /dev/null; do
+    if [ "$i" -eq 0 ]; then
+      echo "Waiting for $LOCKDIR: another setup or teardown of this user runs..." >&2
+    fi
+    i=$((i + 1))
+    if [ "$i" -ge "$tries" ]; then
+      echo "ERROR: $LOCKDIR stayed taken for $LOCK_WAIT_SECONDS s: another setup or teardown of this user runs, or one crashed. When none runs, remove it (rmdir $LOCKDIR) and try again." >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  HAVE_LOCK=1
+}
+
+unlock() {
+  if [ -n "$HAVE_LOCK" ]; then
+    rmdir "$LOCKDIR"
+    HAVE_LOCK=""
+  fi
+}
+
+# lease_token prints the token of the lease, empty when there is none or
+# it is not a private file.
+lease_token() {
+  local t=""
+  if [ -e "$LEASEFILE" ] || [ -L "$LEASEFILE" ]; then
+    if check_private file "$LEASEFILE"; then
+      read -r t < "$LEASEFILE" || true
+    else
+      echo "WARNING: $LEASEFILE is not trusted." >&2
+    fi
+  fi
+  printf '%s' "$t"
+}
+
+# teardown [RUN_TOKEN] runs under the lock (it takes it unless this
+# process holds it). With RUN_TOKEN, the automatic teardown of one run, it
+# acts only while the lease is that run's: it checks the token under the
+# lock first, again right before the shutdown and right before it removes
+# the lease, and does nothing for another run's lease or no lease. Without
+# RUN_TOKEN it is the manual recovery of a crashed run.
+#
+# It stops only the ios_webkit_debug_proxy that this script started:
 # $PIDFILE, a private file in the private STATE_DIR, holds its pid, its
 # start token and its start time. A record alone never authorizes a
 # signal, since another program of this user can write it: the live
@@ -112,6 +186,17 @@ PY
 # trusted. Another iwdp, such as the user's or another agent's, is never
 # stopped.
 teardown() {
+  local want="${1:-}" took=""
+  if [ -z "$HAVE_LOCK" ]; then
+    lock || return 1
+    took=1
+  fi
+  lease=$(lease_token)
+  if [ -n "$want" ] && [ "$lease" != "$want" ]; then
+    echo "The lease in $STATE_DIR is not this run's (or there is none); nothing was torn down." >&2
+    if [ -n "$took" ]; then unlock; fi
+    return 0
+  fi
   if [ -e "$PIDFILE" ] || [ -L "$PIDFILE" ]; then
     if check_private file "$PIDFILE"; then
       pid="" token="" started=""
@@ -133,15 +218,172 @@ teardown() {
     fi
     rm -f "$PIDFILE"
   fi
+  # Shut down only a Simulator that the lease holder's own 'simctl boot'
+  # booted ("booted"); one that someone else booted ("reused") may serve
+  # another task, and a record of another run is not this lease's.
   if [ -e "$SIMFILE" ] || [ -L "$SIMFILE" ]; then
     if check_private file "$SIMFILE"; then
-      xcrun simctl shutdown "$(cat "$SIMFILE")" 2>/dev/null || true
+      run="" udid="" owner=""
+      read -r run udid owner < "$SIMFILE" || true
+      case "$udid" in '' | *[!0-9A-Fa-f-]*) udid="" ;; esac
+      if [ -z "$lease" ] || [ "$run" != "$lease" ]; then
+        echo "WARNING: $SIMFILE was not written by the setup that holds the lease $LEASEFILE; no simulator was shut down." >&2
+      elif [ -n "$udid" ] && [ "$owner" = booted ] && [ "$(lease_token)" = "$lease" ]; then
+        xcrun simctl shutdown "$udid" || echo "WARNING: could not shut down the Simulator $udid that setup booted; shut it down by hand: xcrun simctl shutdown $udid" >&2
+      elif [ -n "$udid" ] && [ "$owner" = reused ]; then
+        echo "The Simulator $udid was not booted by setup; it stays booted." >&2
+      else
+        echo "WARNING: $SIMFILE does not name a Simulator that setup booted; no simulator was shut down." >&2
+      fi
     else
       echo "WARNING: $SIMFILE is not trusted; no simulator was shut down." >&2
     fi
     rm -f "$SIMFILE"
   fi
+  if [ -z "$want" ] || [ "$(lease_token)" = "$want" ]; then
+    rm -f "$LEASEFILE"
+  fi
+  if [ -n "$took" ]; then unlock; fi
 }
+
+# choose_simulator prints the UDID of an available iPhone
+# Simulator, read from 'xcrun simctl list devices available --json'.
+# Prefer iOS 18 or lower — iOS 19+ has breaking WebKit Inspector Protocol changes
+# where many domains (Runtime, DOM, etc.) return "domain was not found" through iwdp.
+choose_simulator() {
+  xcrun simctl list devices available --json | python3 -c "
+import json, sys, re
+data = json.load(sys.stdin)
+udid_re = re.compile(r'[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}')
+candidates = []
+for runtime, devs in data['devices'].items():
+    if 'iOS' not in runtime and 'SimRuntime.iOS' not in runtime:
+        continue
+    m = re.search(r'iOS[- ](\d+)', runtime)
+    ver = int(m.group(1)) if m else 0
+    for d in devs:
+        if 'iPhone' in d['name'] and d['isAvailable'] and udid_re.fullmatch(d['udid']):
+            candidates.append((ver, d['udid']))
+if not candidates:
+    sys.exit('no available iPhone simulator')
+# Sort: prefer iOS 18 and below (ver <= 18 first, descending), then 19+ as fallback
+candidates.sort(key=lambda x: (0 if x[0] <= 18 else 1, -x[0]))
+print(candidates[0][1])
+"
+}
+
+# sim_state UDID prints the state of the Simulator UDID ("Booted",
+# "Shutdown", ...), read from 'xcrun simctl list devices --json'; empty
+# when it is not listed.
+sim_state() {
+  xcrun simctl list devices --json | python3 -c "
+import json, sys
+for devs in json.load(sys.stdin)['devices'].values():
+    for d in devs:
+        if d.get('udid') == sys.argv[1]:
+            print(d.get('state', ''))
+            sys.exit(0)
+" "$1"
+}
+
+# boot_simulator chooses a Simulator, boots it, records it in $SIMFILE
+# with its owner, and waits until it has booted. SIM_UDID names it
+# afterwards. Ownership comes only from this run's own boot: "booted" when
+# 'xcrun simctl boot' succeeds, "reused" when the Simulator is not
+# Shutdown right before the boot, or the boot fails because it is already
+# booted or booting (someone else started it, also between our check and
+# our boot); teardown never shuts down a "reused" one. Any other boot
+# failure fails the setup with nothing recorded.
+boot_simulator() {
+  local boot_err state
+  if ! SIM_UDID=$(choose_simulator); then
+    echo "ERROR: No available iPhone simulator found." >&2
+    echo "Install one with: xcodebuild -downloadPlatform iOS" >&2
+    return 1
+  fi
+  echo "Booting simulator: $SIM_UDID" >&2
+  state=$(sim_state "$SIM_UDID")
+  if [ "$state" != Shutdown ]; then
+    write_state "$SIMFILE" "$RUN_TOKEN $SIM_UDID reused"
+    echo "The Simulator $SIM_UDID is already ${state:-in an unknown state}, not booted by this setup; teardown leaves it running." >&2
+  elif boot_err=$(xcrun simctl boot "$SIM_UDID" 2>&1); then
+    write_state "$SIMFILE" "$RUN_TOKEN $SIM_UDID booted"
+  else
+    state=$(sim_state "$SIM_UDID")
+    case "$state" in
+      Booted | Booting)
+        write_state "$SIMFILE" "$RUN_TOKEN $SIM_UDID reused"
+        echo "The Simulator $SIM_UDID is already $state, not booted by this setup; teardown leaves it running." >&2
+        ;;
+      *)
+        echo "ERROR: xcrun simctl boot $SIM_UDID failed (state now: ${state:-unknown}): $boot_err" >&2
+        return 1
+        ;;
+    esac
+  fi
+}
+
+# wait_boot waits until the Simulator SIM_UDID has booted.
+wait_boot() {
+  xcrun simctl bootstatus "$SIM_UDID" 2>&1 | while read -r line; do
+    echo "  [sim] $line" >&2
+  done
+}
+
+# select_page LISTING_URL PAGE_URL prints the webSocketDebuggerUrl of the
+# one page with the URL PAGE_URL on the one SIMULATOR entry of the iwdp
+# listing LISTING_URL. It fails, with the reason on stderr, when the
+# listing has no or several SIMULATOR entries, or the Simulator lists no
+# or several such pages: a page of another device or another tab is never
+# selected. iwdp 1.9.2 (ios_webkit_debug_proxy.c) lists the Simulator with
+# deviceId "SIMULATOR" and url "host:port", and each page with its url and
+# webSocketDebuggerUrl "ws://host:port/devtools/page/N".
+select_page() {
+  python3 - "$1" "$2" <<'PY'
+import json, re, sys, urllib.request
+listing, page_url = sys.argv[1].rstrip("/"), sys.argv[2]
+
+def get_list(url):
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            data = json.load(resp)
+    except (OSError, ValueError) as e:
+        sys.exit(f"{url}: {e}")
+    if not isinstance(data, list):
+        sys.exit(f"{url}: not a JSON list")
+    return [e for e in data if isinstance(e, dict)]
+
+sims = [d for d in get_list(listing + "/json") if d.get("deviceId") == "SIMULATOR"]
+if len(sims) != 1:
+    sys.exit(f"the iwdp listing {listing}/json has {len(sims)} SIMULATOR entries; want 1")
+dev = sims[0].get("url", "")
+if not dev.startswith("http"):
+    dev = "http://" + dev
+pages = [p for p in get_list(dev + "/json") if p.get("url") == page_url]
+if len(pages) != 1:
+    sys.exit(f"the SIMULATOR ({dev}/json) lists {len(pages)} pages with the URL {page_url}; want 1")
+ws = pages[0].get("webSocketDebuggerUrl", "")
+if not re.fullmatch(r"ws://[A-Za-z0-9.:\[\]-]+/devtools/page/[0-9]+", ws):
+    sys.exit(f"the SIMULATOR's page {page_url} has no usable webSocketDebuggerUrl: {ws!r}")
+print(ws)
+PY
+}
+
+case "${1:-}" in
+  --select-page)
+    [ "$#" -eq 3 ] || { echo "usage: $0 --select-page LISTING_URL PAGE_URL" >&2; exit 2; }
+    select_page "$2" "$3"
+    exit
+    ;;
+  --teardown-run)
+    [ "$#" -eq 2 ] || { echo "usage: $0 --teardown-run RUN_TOKEN (empty when the run took no lease)" >&2; exit 2; }
+    ;;
+  '' | --teardown | --boot-simulator) ;;
+  *)
+    echo "ERROR: unknown argument $1 (want --teardown-run, --teardown, --boot-simulator or --select-page)" >&2
+    exit 2
+    ;;
+esac
 
 mkdir -p "$STATE_BASE"
 mkdir -m 700 "$STATE_DIR" 2>/dev/null || true
@@ -150,13 +392,44 @@ if ! check_private dir "$STATE_DIR"; then
   exit 1
 fi
 
+if [ "${1:-}" = "--teardown-run" ]; then
+  if [ -z "$2" ]; then
+    echo "No run token: this run took no lease, so nothing is torn down." >&2
+    exit 0
+  fi
+  teardown "$2"
+  exit
+fi
 if [ "${1:-}" = "--teardown" ]; then
   teardown
-  exit 0
+  exit
 fi
 
-# Teardown any previous run.
-teardown
+# Take the lease. An earlier setup that is still recorded may still be in
+# use: never tear it down here; its owner runs the teardown. The lease
+# file is created with noclobber, so of two setups that start together
+# only one gets it.
+RUN_TOKEN=$(new_token)
+lock
+if [ -e "$PIDFILE" ] || [ -L "$PIDFILE" ] || [ -e "$SIMFILE" ] || [ -L "$SIMFILE" ] ||
+  ! (umask 077 && set -C && printf '%s\n' "$RUN_TOKEN" > "$LEASEFILE") 2> /dev/null; then
+  unlock
+  echo "ERROR: another Simulator run of this user holds the lease in $STATE_DIR (one run per user account at a time)." >&2
+  echo "Wait until that run has finished. Only after a crashed run, recover with 'make sim-teardown' (or $0 --teardown), then run the setup again." >&2
+  exit 1
+fi
+
+# From here on, every failure exit tears down what this run started, and
+# only that: the teardown checks this run's token.
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then echo "ERROR: setup failed (exit $rc); tearing down what it started." >&2; teardown "$RUN_TOKEN"; fi; unlock' EXIT
+
+if [ "${1:-}" = "--boot-simulator" ]; then
+  boot_simulator
+  unlock
+  wait_boot
+  echo "export IWDP_SIM_RUN_TOKEN='$RUN_TOKEN'"
+  exit 0
+fi
 
 # Never stop an iwdp that this script did not start: the user or another
 # agent may use it. Refuse while any process holds the listing port.
@@ -168,47 +441,16 @@ if ! why=$(port_free 2>&1); then
   exit 1
 fi
 
-# 1. Find an available iPhone simulator.
-# Prefer iOS 18 or lower — iOS 19+ has breaking WebKit Inspector Protocol changes
-# where many domains (Runtime, DOM, etc.) return "domain was not found" through iwdp.
-DEVICE_NAME=$(xcrun simctl list devices available --json | \
-  python3 -c "
-import json, sys, re
-data = json.load(sys.stdin)
-candidates = []
-for runtime, devs in data['devices'].items():
-    if 'iOS' not in runtime and 'SimRuntime.iOS' not in runtime:
-        continue
-    m = re.search(r'iOS[- ](\d+)', runtime)
-    ver = int(m.group(1)) if m else 0
-    for d in devs:
-        if 'iPhone' in d['name'] and d['isAvailable']:
-            candidates.append((ver, runtime, d['name']))
-if not candidates:
-    print('', end='')
-    sys.exit(0)
-# Sort: prefer iOS 18 and below (ver <= 18 first, descending), then 19+ as fallback
-candidates.sort(key=lambda x: (0 if x[0] <= 18 else 1, -x[0]))
-print(candidates[0][2])
-")
+# 1-2. Choose, boot and record under the lock; then wait for the boot.
+boot_simulator
+unlock
+wait_boot
 
-if [ -z "$DEVICE_NAME" ]; then
-  echo "ERROR: No available iPhone simulator found." >&2
-  echo "Install one with: xcodebuild -downloadPlatform iOS" >&2
-  exit 1
-fi
-
-echo "Booting simulator: $DEVICE_NAME" >&2
-write_state "$SIMFILE" "$DEVICE_NAME"
-
-# 2. Boot and wait.
-xcrun simctl bootstatus "$DEVICE_NAME" -b 2>&1 | while read -r line; do
-  echo "  [sim] $line" >&2
-done
-
-# 3. Open Safari to a test page.
-echo "Opening Safari..." >&2
-xcrun simctl openurl booted "https://example.com"
+# 3. Open Safari to a test page of this run: its random query tells it
+#    from every other tab and device.
+SIM_PAGE_URL="https://example.com/?iwdp-sim=$(new_token)"
+echo "Opening Safari at $SIM_PAGE_URL..." >&2
+xcrun simctl openurl "$SIM_UDID" "$SIM_PAGE_URL"
 sleep 3
 
 # 4. Find the webinspectord socket.
@@ -227,7 +469,6 @@ done
 if [ -z "$SOCKET_PATH" ]; then
   echo "ERROR: Could not find webinspectord_sim.socket" >&2
   echo "The simulator may not have Safari Web Inspector available." >&2
-  teardown
   exit 1
 fi
 echo "Found socket: $SOCKET_PATH" >&2
@@ -243,7 +484,6 @@ write_state "$PIDFILE" "$IWDP_PID $TOKEN $(proc_start "$IWDP_PID")"
 for i in $(seq 1 15); do
   if ! kill -0 "$IWDP_PID" 2>/dev/null; then
     echo "ERROR: ios_webkit_debug_proxy exited during its start" >&2
-    teardown
     exit 1
   fi
   if listing_owners | grep -qx "$IWDP_PID" && curl -sf -m 5 "http://127.0.0.1:$PORT/json" > /dev/null 2>&1; then
@@ -251,54 +491,34 @@ for i in $(seq 1 15); do
   fi
   if [ "$i" -eq 15 ]; then
     echo "ERROR: iwdp not responding on port 9221 after 15 seconds" >&2
-    teardown
     exit 1
   fi
   sleep 1
 done
 
-# 6. Find the WebSocket URL by scanning all device ports (not just 9222,
-#    since a physical device may also be connected and shift port assignments).
-WS_URL=""
+# 6. Wait until the Simulator lists the test page, and take its WebSocket
+#    URL; never a page of another device or another tab.
+WS_URL="" reason=""
 for i in $(seq 1 15); do
-  WS_URL=$(curl -sf http://localhost:9221/json 2>/dev/null | python3 -c "
-import json, sys, urllib.request
-try:
-    devices = json.load(sys.stdin)
-    for dev in devices:
-        url = dev.get('url', '')
-        if not url:
-            continue
-        if not url.startswith('http'):
-            url = 'http://' + url
-        try:
-            resp = urllib.request.urlopen(url + '/json', timeout=2)
-            pages = json.loads(resp.read())
-            for p in pages:
-                ws = p.get('webSocketDebuggerUrl', '')
-                if ws:
-                    print(ws)
-                    sys.exit(0)
-        except:
-            continue
-except:
-    pass
-print('', end='')
-" 2>/dev/null) || true
-  if [ -n "$WS_URL" ]; then
+  if out=$(select_page "http://127.0.0.1:$PORT" "$SIM_PAGE_URL" 2>&1); then
+    WS_URL=$out
     break
   fi
-  echo "  Waiting for debuggable page (attempt $i)..." >&2
+  reason=$out
+  echo "  Waiting for the test page (attempt $i): $reason" >&2
   sleep 2
 done
 
 if [ -z "$WS_URL" ]; then
-  echo "ERROR: No debuggable Safari page found" >&2
+  echo "ERROR: the Simulator did not list the test page $SIM_PAGE_URL: $reason" >&2
   echo "Devices:" >&2
-  curl -sf http://localhost:9221/json 2>/dev/null | python3 -m json.tool >&2 || true
-  teardown
+  curl -sf "http://127.0.0.1:$PORT/json" 2>/dev/null | python3 -m json.tool >&2 || true
   exit 1
 fi
 
 echo "Simulator ready. WebSocket URL: $WS_URL" >&2
-echo "export IWDP_SIM_WS_URL=\"$WS_URL\""
+# select_page allows only [A-Za-z0-9.:[]-] and "/" in WS_URL, and
+# SIM_PAGE_URL has a hex token: neither can hold a quote.
+echo "export IWDP_SIM_WS_URL='$WS_URL'"
+echo "export IWDP_SIM_PAGE_URL='$SIM_PAGE_URL'"
+echo "export IWDP_SIM_RUN_TOKEN='$RUN_TOKEN'"

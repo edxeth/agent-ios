@@ -34,7 +34,7 @@ func stdinPipe(t *testing.T, content string, closeWriter bool) {
 	}
 }
 
-// runCLIWithin runs args through RunCLI and fails the test when it has
+// runCLIWithin runs args through RunCLIStarted and fails the test when it has
 // not returned within limit. envBuilt reports whether the command got as
 // far as building its environment (a connection to the daemon).
 func runCLIWithin(t *testing.T, limit time.Duration, args []string, newEnv func(context.Context, *Invocation) (Env, error)) (code int, out string, envBuilt bool) {
@@ -47,10 +47,11 @@ func runCLIWithin(t *testing.T, limit time.Duration, args []string, newEnv func(
 	done := make(chan result, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		code := RunCLI(context.Background(), args, &stdout, &stderr, func(ctx context.Context, inv *Invocation) (Env, error) {
+		code := RunCLIStarted(context.Background(), args, &stdout, &stderr, nil, func(ctx context.Context, inv *Invocation) (Env, error) {
 			built <- struct{}{}
 			return newEnv(ctx, inv)
 		})
+
 		done <- result{code, stdout.String() + stderr.String()}
 	}()
 	select {

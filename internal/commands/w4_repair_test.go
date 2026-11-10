@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,8 +120,9 @@ func TestSetCredentialsStdinEndsAtTheDeadline(t *testing.T) {
 	start := time.Now()
 	go func() {
 		var out, errb bytes.Buffer
-		code := RunCLI(context.Background(), []string{"--timeout", "50ms", "set", "credentials", "--origin", "https://fixture.example", "alice"}, &out, &errb,
+		code := RunCLIStarted(context.Background(), []string{"--timeout", "50ms", "set", "credentials", "--origin", "https://fixture.example", "alice"}, &out, &errb, nil,
 			func(context.Context, *Invocation) (Env, error) { return dtEnv{h: h}, nil })
+
 		done <- result{code, out.String(), errb.String()}
 	}()
 	select {
@@ -278,13 +279,25 @@ func TestMaskRequestProperty(t *testing.T) {
 // Property (W0 tool set_cookie: expires is a number of seconds and the
 // cookie's expiry is expires*1000 ms, 0 a session cookie): any number in
 // decimal notation without exponent, as --expires takes it, gives the W0
-// tool's expiry.
+// tool's expiry when that is within the range of a JavaScript Date
+// (ECMA-262 "Time Values and Time Range": ±8.64e15 ms); beyond it (WS2
+// round-2 review F7: the milliseconds overflowed to +Inf, which JSON
+// cannot encode) it is a usage error. testing/quick draws most float64
+// values beyond that range, so each value is also tried reduced into it.
 func TestCookieExpiresNumberProperty(t *testing.T) {
+	const jsDateRangeMs = 8.64e15
 	f := func(x float64) bool {
 		text := strconv.FormatFloat(x, 'f', -1, 64)
 		session, ms, err := cookieExpiry(text)
 		if x == 0 {
 			return err == nil && session
+		}
+		if math.Abs(x*1000) > jsDateRangeMs {
+			if ExitCodeOf(err) != ExitUsage {
+				t.Logf("%v: text %q gives %v, %v, %v; want a usage error", x, text, session, ms, err)
+				return false
+			}
+			return true
 		}
 		if err != nil || session || ms != x*1000 {
 			t.Logf("%v: text %q gives %v, %v, %v; want %v ms", x, text, session, ms, err, x*1000)
@@ -295,7 +308,11 @@ func TestCookieExpiresNumberProperty(t *testing.T) {
 	if err := quick.Check(f, &quick.Config{MaxCount: 1000}); err != nil {
 		t.Fatal(err)
 	}
-	for _, x := range []float64{1893456000, 1893456000.5, -1, 1e-7, 1e21} {
+	inRange := func(x float64) bool { return f(math.Mod(x, jsDateRangeMs/1000)) }
+	if err := quick.Check(inRange, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range []float64{1893456000, 1893456000.5, -1, 1e-7, 1e21, 8.64e12, -8.64e12, 8.64e12 + 1, 1e306} {
 		if !f(x) {
 			t.Errorf("expires %v", x)
 		}
@@ -308,9 +325,8 @@ func TestCookieExpiresNumberProperty(t *testing.T) {
 
 // Property (design 2.11: global flags anywhere before "--"): for any
 // registry command and any global flags, with or without their values,
-// placed before, between and after its words, CommandWords finds the
-// command's words and Parse finds the command.
-func TestCommandWordsSkipGlobalFlagsProperty(t *testing.T) {
+// placed before, between and after its words, Parse finds the command.
+func TestParseSkipsGlobalFlagsProperty(t *testing.T) {
 	values := map[string]string{
 		"--session": "s1", "--page": "t1", "--timeout": "5s", "--transport": "iwdp", "--max-output": "100",
 		"--reservation": "me", "--wait-lease": "1s",
@@ -342,10 +358,6 @@ func TestCommandWordsSkipGlobalFlagsProperty(t *testing.T) {
 			line = append(line, w)
 		}
 		addGlobals()
-		if got := CommandWords(line); !slices.Equal(got, words) {
-			t.Logf("CommandWords(%q) = %q, want %q", line, got, words)
-			return false
-		}
 		inv, err := Parse(append(line, "--help"), func(string) string { return "" })
 		if err != nil || inv.Cmd != c {
 			t.Logf("Parse(%q): %v, %v; want %s", line, inv, err, c.Name)
@@ -356,12 +368,9 @@ func TestCommandWordsSkipGlobalFlagsProperty(t *testing.T) {
 	if err := quick.Check(f, &quick.Config{MaxCount: 500}); err != nil {
 		t.Fatal(err)
 	}
-	// A global flag without its value ends the line; the words before it
-	// are the command's, and Parse reports the missing value.
+	// A global flag without its value ends the line, and Parse reports the
+	// missing value.
 	line := []string{"network", "--json", "requests", "--page"}
-	if got := CommandWords(line); !slices.Equal(got, []string{"network", "requests"}) {
-		t.Fatalf("CommandWords(%q) = %q", line, got)
-	}
 	if _, err := Parse(line, func(string) string { return "" }); ExitCodeOf(err) != ExitUsage || !strings.Contains(err.Error(), "--page needs a value") {
 		t.Fatalf("Parse(%q): %v; want the usage error for --page", line, err)
 	}

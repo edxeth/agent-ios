@@ -105,13 +105,8 @@ func TestReviewPauseOnStartFailureMustNotBreakDaemonConnect(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := connect(t, o)
-			p, err := c.OpenPage(ctxFor(t, 3*time.Second), PageOptions{Page: PageReq{Page: wsURL}, Owner: Owner{Session: "s1"}, Name: "review"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = p.Close() }()
 			start := time.Now()
-			_, err = p.Send(ctxFor(t, 3*time.Second), "Runtime.evaluate", map[string]any{"expression": "1"})
+			_, err := c.Run(ctxFor(t, 3*time.Second), RunRequest{Argv: []string{"eval", "1"}, PageReq: PageReq{Page: wsURL}, Owner: Owner{Session: "s1"}}, nil)
 			if err != nil {
 				t.Fatalf("usable page rejected after %s solely because pause-on-start %s: %v", time.Since(start).Round(time.Millisecond), name, err)
 			}

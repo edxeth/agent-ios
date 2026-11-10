@@ -9,7 +9,7 @@ User documentation:
 | [synthetic-input.md](synthetic-input.md) | The synthetic-input statement and the features that iOS WebKit cannot support |
 | [cdp.md](cdp.md) | The CDP endpoint: get a tokenized URL, connect agent-browser, Puppeteer, Playwright or chrome-devtools-mcp, the method table, the limits per domain and the compatibility suite |
 | [device-runbook.md](device-runbook.md) | Work on a physical iPhone: reserve and release, iwdp ownership, restart-iwdp, a lost page, pause-on-start |
-| [migration.md](migration.md) | From the legacy commands to the registry commands, and from the removed MCP server to iwdp-cli |
+| [migration.md](migration.md) | From the removed commands of earlier versions and the removed MCP server to the registry commands |
 | [known-limits.md](known-limits.md) | Every accepted limit with its reason |
 | [commands.md](commands.md) | The command reference, generated from the command registry (`make docs`) |
 

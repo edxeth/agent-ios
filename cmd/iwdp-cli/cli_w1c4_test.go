@@ -14,23 +14,18 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
 )
 
-// L01 (w1c backlog): the legacy commands that read the document root
-// (dom with and without a selector, query-selector, query-selector-all and
-// the element screenshot) exit 1 with an error that names DOM.getDocument
-// when its reply has no "root", instead of a Go panic or a "null" result.
+// L01 (w1c backlog): the element screenshot, which reads the document
+// root, exits 1 with an error that names DOM.getDocument when its reply
+// has no "root", instead of a Go panic or a "null" result.
 func TestCLIDocumentWithoutRootIsAnError(t *testing.T) {
 	for _, args := range [][]string{
-		{"dom", "#card"},
-		{"dom"},
-		{"query-selector", "#card"},
-		{"query-selector-all", "#card"},
 		{"screenshot", "--selector", "#card", "-o", "card.png"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			mock := testutil.NewMockServer()
 			defer mock.Close()
 			mock.HandleFunc("DOM.getDocument", map[string]any{})
-			res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, args...)
+			res := runCLI(t, "", nil, append(args, "--page", mock.URL)...)
 			if res.code != 1 || !strings.Contains(res.stderr, "Error: ") || !strings.Contains(res.stderr, "DOM.getDocument") {
 				t.Fatalf("exit %d, stdout %q, stderr %q; want exit 1 and an error naming DOM.getDocument", res.code, res.stdout, res.stderr)
 			}
@@ -44,9 +39,9 @@ func TestCLIDocumentWithoutRootIsAnError(t *testing.T) {
 	}
 }
 
-// L03 (w1c backlog, decision L03): a legacy command that selects its page
-// by discovery prints no "Connecting to: <title>" line; the page title
-// never reaches stderr, and the result is unchanged.
+// L03 (w1c backlog, decision L03): a command that selects its page by
+// discovery prints no "Connecting to: <title>" line; the page title never
+// reaches stderr, and the result is unchanged.
 func TestCLIDiscoveredPagePrintsNoTitle(t *testing.T) {
 	env, _, _, pg := physicalPage(t, false, fakewebkit.Options{})
 	if res := runCLI(t, "", env, "device", "reserve", "--owner", "default"); res.code != 0 {
@@ -89,31 +84,6 @@ func TestCLIRegistrySignalPrintsNoCancelError(t *testing.T) {
 	}
 	if s := p.stderr.String(); strings.Contains(s, "Error:") {
 		t.Fatalf("stderr %q has an error line for the signal's own cancellation", s)
-	}
-}
-
-// L03, decision L03 ("errors still name the page"): connectToPage selects
-// the page by discovery without printing its title, and keeps the title
-// and key for the error messages of the command (here the deadline
-// message).
-func TestConnectToPageByDiscoveryNamesThePageForErrors(t *testing.T) {
-	env, _, _, pg := physicalPage(t, false, fakewebkit.Options{})
-	if res := runCLI(t, "", env, "device", "reserve", "--owner", "default"); res.code != 0 {
-		t.Fatalf("device reserve: exit %d, stderr %q", res.code, res.stderr)
-	}
-	t.Setenv("XDG_RUNTIME_DIR", strings.TrimPrefix(env[0], "XDG_RUNTIME_DIR="))
-	saved := current
-	current = &commandRun{name: "eval", start: time.Now()}
-	t.Cleanup(func() { current = saved })
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	client, err := connectToPage(ctx, nil)
-	if err != nil {
-		t.Fatalf("connectToPage by discovery: %v", err)
-	}
-	defer func() { _ = client.Close() }()
-	if msg := current.timeoutMessage(context.DeadlineExceeded); !strings.Contains(msg, "\""+pg.Title+"\"") {
-		t.Fatalf("deadline message %q does not name the page %q", msg, pg.Title)
 	}
 }
 

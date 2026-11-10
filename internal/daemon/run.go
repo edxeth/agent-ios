@@ -83,6 +83,13 @@ type RunOptions struct {
 	// request of the CDP endpoint with the status it got. Tests use it
 	// (the CDP compatibility suite records client requests); nil: none.
 	CDPObserve func(r *http.Request, status int)
+	// Executable is the path of the executable whose identity and SHA-256
+	// the daemon reports in its hello, read at its start; clients reuse
+	// the daemon only when they run the same content (Hello.Executable).
+	// "" is the daemon's own executable. A process that embeds the daemon
+	// for clients of another binary (a test harness that builds iwdp-cli)
+	// names that binary.
+	Executable string
 }
 
 // Run is "daemon run": it checks the socket directory (design 2.2), serves
@@ -122,6 +129,17 @@ func Run(ctx context.Context, o RunOptions) error {
 	}
 	logger := log.New(o.Log, "", log.LstdFlags|log.Lmicroseconds)
 	logf := logger.Printf
+	if o.Executable == "" {
+		p, err := selfExe()
+		if err != nil {
+			return err
+		}
+		o.Executable = p
+	}
+	exe, err := identify(o.Executable)
+	if err != nil {
+		return fmt.Errorf("daemon: %w", err)
+	}
 	if err := EnsureDir(o.Dir); err != nil {
 		return err
 	}
@@ -150,6 +168,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	}
 	m, srv, tr := newCore(o, logf)
 	defer tr.close()
+	srv.exe = exe
 	if o.CDPPort != 0 {
 		if _, err := srv.cdp.Start(o.CDPPort, nil); err != nil {
 			_ = l.Close()

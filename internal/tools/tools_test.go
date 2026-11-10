@@ -2,9 +2,7 @@ package tools_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -31,31 +29,6 @@ func setup(t *testing.T) (*testutil.MockServer, *webkit.Client) {
 	})
 
 	return mock, client
-}
-
-func TestNavigate(t *testing.T) {
-	mock, client := setup(t)
-
-	var receivedURL string
-	mock.Handle("Page.navigate", func(_ string, params json.RawMessage) (interface{}, error) {
-		var p struct {
-			URL string `json:"url"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, err
-		}
-		receivedURL = p.URL
-		return map[string]interface{}{}, nil
-	})
-
-	ctx := context.Background()
-	err := tools.Navigate(ctx, client, "https://example.com")
-	if err != nil {
-		t.Fatalf("Navigate returned error: %v", err)
-	}
-	if receivedURL != "https://example.com" {
-		t.Errorf("expected URL %q, got %q", "https://example.com", receivedURL)
-	}
 }
 
 func TestEvaluateScript(t *testing.T) {
@@ -140,23 +113,6 @@ func TestQuerySelectorNotFound(t *testing.T) {
 	}
 }
 
-func TestGetOuterHTML(t *testing.T) {
-	mock, client := setup(t)
-
-	mock.HandleFunc("DOM.getOuterHTML", map[string]interface{}{
-		"outerHTML": "<div>test</div>",
-	})
-
-	ctx := context.Background()
-	html, err := tools.GetOuterHTML(ctx, client, 42)
-	if err != nil {
-		t.Fatalf("GetOuterHTML returned error: %v", err)
-	}
-	if html != "<div>test</div>" {
-		t.Errorf("expected %q, got %q", "<div>test</div>", html)
-	}
-}
-
 func TestGetCookies(t *testing.T) {
 	mock, client := setup(t)
 
@@ -199,92 +155,5 @@ func TestGetCookies(t *testing.T) {
 	}
 	if !c.Secure {
 		t.Errorf("expected cookie to be secure")
-	}
-}
-
-func TestClick(t *testing.T) {
-	mock, client := setup(t)
-
-	mock.HandleFunc("Runtime.evaluate", map[string]interface{}{
-		"result": map[string]interface{}{
-			"type": "undefined",
-		},
-		"wasThrown": false,
-	})
-
-	ctx := context.Background()
-	err := tools.Click(ctx, client, "button")
-	if err != nil {
-		t.Fatalf("Click returned error: %v", err)
-	}
-
-	// Verify that the mock received a Runtime.evaluate call (handler was invoked).
-	// If the handler were missing, the default empty result would still succeed,
-	// so the fact that we registered it and got no error is sufficient.
-	_ = mock
-}
-
-func TestFill(t *testing.T) {
-	mock, client := setup(t)
-
-	mock.HandleFunc("Runtime.evaluate", map[string]interface{}{
-		"result": map[string]interface{}{
-			"type": "undefined",
-		},
-		"wasThrown": false,
-	})
-
-	ctx := context.Background()
-	err := tools.Fill(ctx, client, "input", "test")
-	if err != nil {
-		t.Fatalf("Fill returned error: %v", err)
-	}
-	_ = mock
-}
-
-func TestConsoleCollector(t *testing.T) {
-	mock, client := setup(t)
-
-	// Register handler for Console.enable so Start() succeeds.
-	mock.HandleFunc("Console.enable", map[string]interface{}{})
-
-	collector := tools.NewConsoleCollector()
-	ctx := context.Background()
-	if err := collector.Start(ctx, client); err != nil {
-		t.Fatalf("ConsoleCollector.Start: %v", err)
-	}
-
-	// Send a Console.messageAdded event from the mock server.
-	err := mock.SendEvent("Console.messageAdded", map[string]interface{}{
-		"message": map[string]interface{}{
-			"source": "console-api",
-			"level":  "log",
-			"text":   "hello from console",
-			"url":    "https://example.com",
-			"line":   10,
-			"column": 5,
-		},
-	})
-	if err != nil {
-		t.Fatalf("SendEvent: %v", err)
-	}
-
-	// Allow time for the event handler to process.
-	time.Sleep(100 * time.Millisecond)
-
-	messages := collector.GetMessages()
-	if len(messages) != 1 {
-		t.Fatalf("expected 1 console message, got %d", len(messages))
-	}
-
-	msg := messages[0]
-	if msg.Source != "console-api" {
-		t.Errorf("expected source %q, got %q", "console-api", msg.Source)
-	}
-	if msg.Level != "log" {
-		t.Errorf("expected level %q, got %q", "log", msg.Level)
-	}
-	if msg.Text != "hello from console" {
-		t.Errorf("expected text %q, got %q", "hello from console", msg.Text)
 	}
 }

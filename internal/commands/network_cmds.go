@@ -16,8 +16,7 @@ import (
 // the daemon's network log and request routes (design
 // docs/design/agentic-parity.md, section 4.2 "Network", 7.7 tests 1, 3
 // and 8). The log starts with the lease: WebKit replays no network events
-// (MAP 1.8). The legacy stream "network -d <duration>" stays a legacy
-// command.
+// (MAP 1.8).
 func init() {
 	Register(&Command{
 		Name:    "network requests",

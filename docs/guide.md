@@ -23,12 +23,16 @@ One daemon per user owns every page connection. `iwdp-cli` commands and CDP clie
 - `iwdp-cli daemon start|stop|status|logs|run`. `daemon stop`, SIGTERM and the idle exit clean up every page first (5 s at most).
 - `daemon stop` (and the idle exit) leaves running an iwdp that the daemon started (decision D10): the daemon never stops an iwdp, because other clients and agents may use it. `iwdp-cli status` shows that iwdp runs and names its log. Its record (pid, process group, listing address) is the file `iwdp-mcp-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/iwdp-mcp/` (else `$TMPDIR/iwdp-mcp-<uid>/`). To stop it, first make sure that no other client uses it, check with `ps -p <pid> -o args=` that the recorded pid is still `ios_webkit_debug_proxy`, then run `kill <pid>`; never a pattern kill ([device-runbook.md](device-runbook.md)). `iwdp-cli restart-iwdp` restarts it instead.
 - Idle exit: after 15 minutes without requests, leases, captures and CDP clients (`IWDP_DAEMON_IDLE` or `--idle` changes it). A page connection without a lease and without a capture closes after 10 minutes, so that other tools (for example Safari Web Inspector on a Mac) can take the page.
-- `IWDP_NO_DAEMON=1` runs the same core inside one command process, for debugging. It gives no leases across processes, and a CDP endpoint started this way ends with the process.
-- A client and a daemon of another protocol version: the client asks an idle daemon to exit and starts its own. When the old daemon holds leases, the client fails and tells you to run `iwdp-cli daemon stop` when they finish.
+- `IWDP_NO_DAEMON=1` runs the same core inside one command process, for debugging. It gives no leases across processes, and a CDP endpoint started this way ends with the process. The command's deadline covers the cleanup of the page state at the end too: the cleanup gets what is left of the deadline, and the process ends at most 200 ms after the deadline. When the page does not answer a reset in time (for example `Console.disable`), a warning on stderr names it, the page connection closes, and the exit status is still the command's own. Closing the connection is expected to end the inspector session; whether iwdp passes the close on to WebKit as a frontend disconnect was not checked. When the last inspector frontend disconnects, current WebKit disables the Console, Network and Page agents and resets the Page overrides; this was not checked in the WebKit of an iOS release. Changes made to the document itself stay until the page reloads.
+- A client uses a running daemon only when the daemon has the same protocol version and runs the same binary content. The daemon records its executable file when it starts (device, inode, size, modification time and the SHA-256 of its bytes). A client compares that with its own executable file, and hashes its own bytes only when the file differs. So identical copies of one binary share a daemon (for example the outputs of `make build` and `make install`), and an upgraded or rebuilt `iwdp-cli` never sends a command to the daemon of an older binary.
+  - When that daemon is idle, the client asks it to exit and starts its own.
+  - When it holds leases, it keeps running: the client fails and tells you to run `iwdp-cli daemon stop` when they finish. `daemon stop` and `daemon status` still reach it.
+  - This holds also while another client starts a daemon: a client that waited for the start finds the other binary's daemon and applies the same rule.
+  - `daemon status` and `daemon stop` also reach the daemon of the previous protocol (protocol 1, the release before the registry-only `iwdp-cli`), idle or busy. `daemon status` reports it, says that it is older, and leaves it running; `daemon stop` stops it after its cleanup. A daemon of a newer protocol is not touched: the command says so, and the newer `iwdp-cli` that started it can stop it.
 
-The daemon may start iwdp when it is not running (as `iwdp-cli status` does). It never stops or restarts an iwdp that it did not start. See [device-runbook.md](device-runbook.md).
+The daemon may start iwdp when it is not running; `iwdp-cli status` only checks and starts nothing. The daemon never stops or restarts an iwdp that it did not start. See [device-runbook.md](device-runbook.md).
 
-- An iwdp that iwdp-mcp starts appends its stdout and stderr to `$XDG_STATE_HOME/iwdp-mcp/iwdp.log` (fallback `~/.local/state/iwdp-mcp/iwdp.log`, mode 0600). `iwdp-cli status` names the path (or why it is unknown) for every outcome, also when the listing port is owned but does not answer. A start that finds the log at 1 MiB or more keeps it as `iwdp.log.1` (replacing an older one) and begins a new one. iwdp's stdout is block-buffered in a file, so its "Connected ..." lines appear only when it exits; when GNU `stdbuf` is on `PATH` (Linux), iwdp runs under `stdbuf -oL` and they appear at once. stderr is unbuffered either way.
+- An iwdp that iwdp-cli starts (the daemon or `restart-iwdp`) appends its stdout and stderr to `$XDG_STATE_HOME/iwdp-mcp/iwdp.log` (fallback `~/.local/state/iwdp-mcp/iwdp.log`, mode 0600). `iwdp-cli status` names the path (or why it is unknown) for every outcome, also when the listing port is owned but does not answer. A start that finds the log at 1 MiB or more keeps it as `iwdp.log.1` (replacing an older one) and begins a new one. iwdp's stdout is block-buffered in a file, so its "Connected ..." lines appear only when it exits; when GNU `stdbuf` is on `PATH` (Linux), iwdp runs under `stdbuf -oL` and they appear at once. stderr is unbuffered either way.
 - iwdp lists a device's pages a moment after it starts. After the daemon started iwdp, it waits up to 3 s (within the command's deadline) until a device lists a page; a list that stays empty is reported as before ("No tabs.").
 - The daemon log holds no page-supplied text: no page title, no page URL, no message or exception of a page, and no text of an error.
   - **What it keeps:** the operation, in the fixed text of each log line; ids: the page id (the transport's page id, for iwdp its WebSocket debugger URL without query; a CDP target id), target, request and session ids, the session name, the device label; numbers, durations and connection states; the configured addresses (the daemon socket, the CDP listen address); the method names of a CDP client's requests and hashes of the other values it sent (Host, Origin, path segments).
@@ -37,13 +41,13 @@ The daemon may start iwdp when it is not running (as `iwdp-cli status` does). It
 
 ## Deadlines and exit codes
 
-Every command runs under one deadline: 30 s by default, `--timeout <duration>` or `IWDP_TIMEOUT`. Some commands have their own default (actions 5 s, `wait` 25 s; the reference lists them). The deadline covers the start of the daemon, the wait for a lease, the connection, the calls and any retry. When it expires, the command returns at once.
+Every command runs under one deadline: 30 s by default, `--timeout <duration>` or `IWDP_TIMEOUT`. Some commands have their own default (actions 5 s, `wait` 25 s; the reference lists them). The deadline covers the read of the standard input (`fill --stdin`), the start of the daemon, the wait for a lease, the connection, the calls and any retry. The client sends the deadline itself to the daemon: the daemon starts no page work after it, also when the request reaches it late. When the deadline expires, the command returns at once; the client waits at most 200 ms more for the daemon's answer. A result that the daemon finished before the deadline counts as success, so the command can end up to 200 ms after its deadline; the daemon's own deadline error arrives the same way. The deadline error (exit 124) names the command, its page (the `--page` value, else the page that the daemon resolved, also while the command still waits for the lease or the page's queue), the elapsed time, the last wait (what the command or the daemon waited for) and the likely causes, whichever step the deadline ended.
 
 | Exit code | Meaning |
 |---|---|
 | 0 | ok |
 | 1 | command error |
-| 2 | usage error of a registry command (found before any connection) |
+| 2 | usage error of a registry command (found before any connection), also a bad global option such as `--timeout bogus` |
 | 3 | a wait ended without its condition (the result names the last observed state) |
 | 4 | page busy, stalled or lost |
 | 5 | no device or page |
@@ -51,9 +55,15 @@ Every command runs under one deadline: 30 s by default, `--timeout <duration>` o
 | 124 | the command deadline expired |
 | 130 | ended by SIGINT or SIGTERM |
 
-The table is for the registry commands, the commands in the [command reference](commands.md). A legacy command exits 1 on a usage error, not 2; see [Legacy commands: output and exit codes](migration.md#legacy-commands-output-and-exit-codes).
+The table holds for every command (the commands in the [command reference](commands.md)). An unknown command or `--flag`, a trailing `ws://` argument and a page command with `IWDP_WS_URL` set and no `--page` are usage errors (exit 2).
 
-`<command> --help` prints the help and never connects to a page.
+`iwdp-cli --help`, `iwdp-cli -h` and `iwdp-cli help` alone print the overview (exit 0). `<command> --help` (or `help <command>`) prints the help of a command or group and never connects to a page; it needs none of the command's arguments (`iwdp-cli click --help`), but it checks the values of the options given with it, so `iwdp-cli cookies set --same-site=bogus --help` exits 2. Help never hides a usage error: an unknown `--flag` exits 2 also with `--help` or `-h` (`iwdp-cli click body --bogus --help`, `iwdp-cli network --bogus --help`, `iwdp-cli --bogus --help`), and so does an unknown command (`iwdp-cli not-a-command --help`, `iwdp-cli help not-a-command`) and a line with options but no command (`iwdp-cli --json --help`). A group word, the first words of several commands but no command itself (for example `network`, `cdp`, `daemon`, `network har`), lists the group's commands with their one-line descriptions: `iwdp-cli network --help` prints the list (exit 0), and `iwdp-cli network` alone, or with other flags, prints it as a usage error (exit 2). A word that is a command and a group (`tab`) is the command.
+
+Boolean options, global (`--json`, `--content-boundaries`, `--takeover`) and of a command (for example `--force`), are true as `--flag`. `--flag=<value>` takes exactly the values of Go's `strconv.ParseBool`: `1`, `t`, `T`, `TRUE`, `true`, `True`, `0`, `f`, `F`, `FALSE`, `false`, `False`. So `--takeover=false` never takes over a page. Any other value (`--takeover=yes`) is a usage error (exit 2) that names the option and the value, before any connection. The same holds for the values that a command checks itself, for example `cookies set --same-site` (Lax, Strict or None, in any case), `cookies set --expires` and `trace start --categories`. `--expires` in Unix seconds must be within ±8640000000000 (the range of a JavaScript Date, ±8.64e15 ms); a larger value is a usage error.
+
+Durations of the global options `--timeout`, `IWDP_TIMEOUT` and `--wait-lease` are a Go duration or a bare whole number of seconds: `5s` and `5` both mean five seconds, `1m30s` and `90` both mean ninety seconds.
+
+Arguments and flags of registry commands: only the exact flags of the command (its reference entry) and the global flags are flags. Another token that starts with `--` is a usage error (exit 2). Every other token is an argument, also one with a single leading dash that is not a short flag of the command: `eval -1`, `eval '-Math.abs(2)'` and `fill '#amount' -5` work (quote what the shell would change). `--` ends the flags: `eval -- --x` evaluates `--x`.
 
 ## The agentic loop
 
@@ -162,18 +172,18 @@ The registry also has DevTools commands. Captures start with the session's lease
 | Network | `network requests`, `network request <id> [--body]`, `network route`, `network unroute`, `network har start`, `network har stop`, `emulate network <preset>`, `set offline`, `set headers`, `set credentials` |
 | Console | `console`, `console clear`, `errors` |
 | Page state | `set media`, `set useragent`, `set geo`, `addinitscript`, `removeinitscript` |
-| Storage | `cookies set`, `cookies clear`, `storage`, `state save`, `state load` |
+| Storage | `cookies`, `cookies set`, `cookies clear`, `storage`, `state save`, `state load` |
 | Performance | `trace start`, `trace stop`, `profiler start`, `profiler stop`, `vitals` |
 
 - `cookies set` with an expiry in the past (`--expires 1`, a past RFC 3339 time) deletes the cookie of that name, domain and path, as a browser does, checks that it is gone and reports the result (exit 0). Other cookies of the name (another path or domain) stay. `Page.getCookies` lists only the cookies of the page's URLs, so the report says "deleted" only for a cookie that the page listed before the delete, and says when the page had no such cookie. When the page cannot see such a cookie (the page's path or host is outside the cookie's path or domain, or the page is not https), the delete is still sent, but the report says that the read-back cannot verify it (`verified: false`); list the cookies on a page of that domain and path to check.
-- `console` (and the legacy `console-messages`, `console -d` and `console --follow`) leaves out the runtime's own console messages, whose text starts with `__iwdp_` (for example the dialog records `__iwdp_dialog__ {...}`), as the CDP endpoint does.
+- `console` leaves out the runtime's own console messages, whose text starts with `__iwdp_` (for example the dialog records `__iwdp_dialog__ {...}`), as the CDP endpoint does.
 - Secrets are masked by default: header values of `Cookie`, `Set-Cookie` and `Authorization`, secret query and body fields, and cookie values. `--show-secrets` or `--show-values` shows them.
 - HAR, trace, profile and state files are written with mode 0600. A state file holds cookies and storage in clear text: delete it after use.
 - `set credentials --origin <origin> <user>` reads the password from the first line of standard input, never from the command line. It works only on the WebKitGTK transport until it is verified on a device.
 - `set viewport` and `set device` always fail with the reason (see [synthetic-input.md](synthetic-input.md)).
 - Every override belongs to the session that set it. `close` removes it.
 
-The legacy DevTools commands (debugger, DOM by node id, CSS, heap, animation, canvas, layers, workers, audit, security) stay available; see [migration.md](migration.md).
+The DevTools commands of earlier versions without a registry command (debugger, DOM by node id, CSS rules, heap, animation, canvas, layers, workers, audit, security) are removed; see [migration.md](migration.md).
 
 ## Use a CDP client
 
@@ -207,11 +217,12 @@ iwdp-cli close                          # releases the lease and revokes the URL
 
 ## Output
 
-The output flags below are global flags of the registry commands (the commands in the [command reference](commands.md)), in any position. Legacy commands do not apply them; see [Legacy commands: output and exit codes](migration.md#legacy-commands-output-and-exit-codes).
+The output flags below are global flags of the registry commands (the commands in the [command reference](commands.md)), in any position.
 
 - `--json` prints the result as JSON.
 - `--max-output <bytes>` truncates page-derived text.
 - `--content-boundaries` wraps page-derived output in agent-browser's markers `--- AGENT_BROWSER_PAGE_CONTENT nonce=<nonce> origin=<origin> ---` and `--- END_AGENT_BROWSER_PAGE_CONTENT nonce=<nonce> ---`, with a new random nonce per command; with `--json` the result gets a `_boundary` member. Treat everything between the markers as untrusted page content.
+- These flags also apply to the standard output of a command that fails after it prints what it found, such as `iwdp-cli status` when iwdp is not running (exit 1).
 - Device ids are shortened, and URL fragments and query values are not printed in connection lines.
 
 ## Environment variables
@@ -224,4 +235,4 @@ The output flags below are global flags of the registry commands (the commands i
 | `IWDP_TIMEOUT` | default command deadline |
 | `IWDP_DAEMON_IDLE` | idle time before the daemon exits (default 15m) |
 | `IWDP_NO_DAEMON` | `1`: run the core in the command process |
-| `IWDP_WS_URL`, `IWDP_PORT` | legacy commands: default page WebSocket URL and device port |
+| `IWDP_WS_URL` | selects no page: a page command exits 2 when it is set and `--page` is not given; name the page with `--page` |

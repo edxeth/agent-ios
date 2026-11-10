@@ -206,7 +206,6 @@ func (c bpPage) Send(ctx context.Context, method string, params any) (json.RawMe
 	return bpTarget{c.b, c.b.active}.Send(ctx, method, params)
 }
 func (c bpPage) ActiveTarget() string                       { return c.b.active }
-func (bpPage) OnEvent(string, webkit.EventHandler)          {}
 func (bpPage) Subscribe(string, webkit.EventHandler) func() { return func() {} }
 func (bpPage) IsTargetRouted() bool                         { return true }
 func (bpPage) Done() <-chan struct{}                        { return nil }

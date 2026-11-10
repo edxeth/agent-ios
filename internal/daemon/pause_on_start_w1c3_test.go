@@ -103,15 +103,8 @@ func TestDaemonTurnsOnPauseOnStartOnEveryConnection(t *testing.T) {
 
 	open := func(takeover bool) {
 		t.Helper()
-		p, err := c.OpenPage(ctxFor(t, 10*time.Second), PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: "s1", Takeover: takeover}, Name: "test"})
-		if err != nil {
-			t.Fatalf("OpenPage (takeover %v): %v", takeover, err)
-		}
-		if _, err := p.Send(ctxFor(t, 10*time.Second), "Runtime.evaluate", map[string]any{"expression": "1"}); err != nil {
-			t.Fatalf("Runtime.evaluate (takeover %v): %v", takeover, err)
-		}
-		if err := p.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
+		if _, err := c.Run(ctxFor(t, 10*time.Second), RunRequest{Argv: []string{"eval", "1"}, PageReq: PageReq{Page: f.URL}, Owner: Owner{Session: "s1", Takeover: takeover}}, nil); err != nil {
+			t.Fatalf("eval (takeover %v): %v", takeover, err)
 		}
 	}
 
@@ -180,13 +173,8 @@ func TestDaemonLogsPauseOnStartOffAndStillSetsUpProvisionalTargets(t *testing.T)
 		t.Fatal(err)
 	}
 	c := connect(t, o)
-	p, err := c.OpenPage(ctxFor(t, 10*time.Second), PageOptions{Page: PageReq{Page: wsURL}, Owner: Owner{Session: "s1"}, Name: "test"})
-	if err != nil {
-		t.Fatalf("OpenPage with Target.setPauseOnStart refused: %v", err)
-	}
-	defer func() { _ = p.Close() }()
-	if _, err := p.Send(ctxFor(t, 10*time.Second), "Runtime.evaluate", map[string]any{"expression": "1"}); err != nil {
-		t.Fatalf("Runtime.evaluate: %v", err)
+	if _, err := c.Run(ctxFor(t, 10*time.Second), RunRequest{Argv: []string{"eval", "1"}, PageReq: PageReq{Page: wsURL}, Owner: Owner{Session: "s1"}}, nil); err != nil {
+		t.Fatalf("eval with Target.setPauseOnStart refused: %v", err)
 	}
 	const line = "pause on start is off: the endpoint refused it"
 	if n := strings.Count(logBuf.String(), line); n != 1 {

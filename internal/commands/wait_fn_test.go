@@ -27,7 +27,6 @@ func (c *evalCaller) Send(ctx context.Context, method string, _ any) (json.RawMe
 	<-ctx.Done()
 	return nil, fmt.Errorf("%s: no response: %w", method, ctx.Err())
 }
-func (*evalCaller) OnEvent(string, webkit.EventHandler)          {}
 func (*evalCaller) Subscribe(string, webkit.EventHandler) func() { return func() {} }
 func (*evalCaller) IsTargetRouted() bool                         { return false }
 func (*evalCaller) Done() <-chan struct{}                        { return nil }

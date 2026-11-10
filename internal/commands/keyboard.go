@@ -35,9 +35,8 @@ func init() {
 		ClientStep: fillStdin,
 		Run:        runFill,
 	})
-	// type has no "type-text" alias: the legacy command of that name takes
-	// <text> [ws-url], which this command would read as <target> <text>, so
-	// type-text stays the legacy command.
+	// type has no "type-text" alias: the removed command of that name took
+	// <text> [ws-url], which this command would read as <target> <text>.
 	registerAction(&Command{
 		Name:    "type",
 		Summary: "Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) into an element, or with only <text> into the focused element.",

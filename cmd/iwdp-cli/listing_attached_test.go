@@ -64,8 +64,8 @@ func wantEval2(t *testing.T, res cliResult, what string) {
 
 // The device's failure (F1): after the first attach, plain "eval 1+1"
 // failed with exit 5 every time, because each command read the listing.
-// The session's page is attached, so later commands, registry and legacy
-// forms, run without the listing.
+// The session's page is attached, so later commands run without the
+// listing.
 func TestCLIAttachedPageCommandsNeedNoListing(t *testing.T) {
 	env, l, a, b := silentListingPages(t)
 	wantEval2(t, runCLI(t, "", env, "eval", "1+1"), "the first eval (cold attach)")
@@ -74,9 +74,6 @@ func TestCLIAttachedPageCommandsNeedNoListing(t *testing.T) {
 	}
 	for range 3 {
 		wantEval2(t, runCLI(t, "", env, "eval", "1+1"), "eval on the attached page")
-	}
-	if res := runCLI(t, "", env, "hide-highlight"); res.code != 0 {
-		t.Fatalf("legacy hide-highlight on the attached page: exit %d, stderr %q", res.code, res.stderr)
 	}
 	if res := runCLI(t, "", env, strings.Fields(heldRegistryCommand)...); res.code != 0 {
 		t.Fatalf("registry command %q on the attached page: exit %d, stdout %q, stderr %q", heldRegistryCommand, res.code, res.stdout, res.stderr)

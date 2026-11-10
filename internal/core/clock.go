@@ -29,57 +29,6 @@ func (c *RealClock) After(d time.Duration) <-chan struct{} {
 	return ch
 }
 
-// ManualClock is a Clock that moves only when a test sets it.
-type ManualClock struct {
-	mu      sync.Mutex
-	now     time.Duration
-	waiters []manualWaiter
-}
-
-type manualWaiter struct {
-	at time.Duration
-	ch chan struct{}
-}
-
-// NewManualClock returns a clock that shows now.
-func NewManualClock(now time.Duration) *ManualClock { return &ManualClock{now: now} }
-
-func (c *ManualClock) Now() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *ManualClock) After(d time.Duration) <-chan struct{} {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	ch := make(chan struct{})
-	if d <= 0 {
-		close(ch)
-		return ch
-	}
-	c.waiters = append(c.waiters, manualWaiter{at: c.now + d, ch: ch})
-	return ch
-}
-
-// Set moves the clock to t (never backwards) and fires due waiters.
-func (c *ManualClock) Set(t time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if t > c.now {
-		c.now = t
-	}
-	keep := c.waiters[:0]
-	for _, w := range c.waiters {
-		if w.at <= c.now {
-			close(w.ch)
-		} else {
-			keep = append(keep, w)
-		}
-	}
-	c.waiters = keep
-}
-
 // Rho is the assumed bound on the page clock rate relative to the daemon
 // clock: 100 ppm (design 2.6). It is an operating assumption, not a
 // measured device fact.

@@ -165,11 +165,11 @@ func TestShortLeaseReleaseCleansUpWhenThePageRuntimeIsSilent(t *testing.T) {
 			})
 			c := connect(t, o)
 			b := Owner{Session: "B"}
-			if _, err := c.Raw(ctxFor(t, 5*time.Second), RawRequest{Method: "Network.enable", PageReq: PageReq{Page: f.URL}, Owner: b}); err != nil {
+			if err := leasePage(t, c, f.URL, b, 5*time.Second, "Network.enable"); err != nil {
 				t.Fatalf("Network.enable of B: %v", err)
 			}
 			start := time.Now()
-			_, err := c.Lease(ctxFor(t, deadline), LeaseRequest{Op: "release", TimeoutMs: deadline.Milliseconds(), Owner: b})
+			_, err := c.Run(ctxFor(t, deadline), RunRequest{Argv: []string{"session", "release"}, Deadline: time.Now().Add(deadline), Owner: b}, nil)
 			if err != nil {
 				t.Fatalf("release of B with a %v deadline after %v: %v, want success", deadline, time.Since(start), err)
 			}

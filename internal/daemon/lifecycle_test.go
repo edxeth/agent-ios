@@ -224,6 +224,14 @@ type fakeOldDaemon struct {
 
 func startFakeOldDaemon(t *testing.T, dir string, leases int) *fakeOldDaemon {
 	t.Helper()
+	return startFakeDaemonOf(t, dir, Protocol+1, leases)
+}
+
+// startFakeDaemonOf serves a daemon of protocol on the socket of dir whose
+// hello names no executable (a daemon of protocol 1, or one that runs
+// another executable), with leases leases; it exits on POST /v1/shutdown.
+func startFakeDaemonOf(t *testing.T, dir string, protocol, leases int) *fakeOldDaemon {
+	t.Helper()
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -233,19 +241,22 @@ func startFakeOldDaemon(t *testing.T, dir string, leases int) *fakeOldDaemon {
 	}
 	f := &fakeOldDaemon{leases: leases, l: l}
 	mux := http.NewServeMux()
+	srv := &http.Server{Handler: mux}
 	mux.HandleFunc("GET /v1/hello", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(Hello{Version: "0.4.0", Protocol: Protocol + 1, PID: 1, Leases: f.leases})
+		_ = json.NewEncoder(w).Encode(Hello{Version: "0.4.0", Protocol: protocol, PID: 1, Leases: f.leases})
 	})
 	mux.HandleFunc("POST /v1/shutdown", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		f.shutdown++
 		f.mu.Unlock()
 		_, _ = w.Write([]byte("{\"ok\":true}\n"))
-		go func() { _ = l.Close() }() // removes the socket file
+		// As the real daemon's HTTP shutdown: close the listener (which
+		// removes the socket file) and every kept-alive connection, so
+		// that no client reaches this daemon after it exited.
+		go func() { _ = srv.Shutdown(context.Background()) }()
 	})
-	srv := &http.Server{Handler: mux}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	return f
@@ -282,21 +293,44 @@ func TestProtocolMismatch(t *testing.T) {
 	}
 }
 
-// openLeasedPage leases a fake page for session s1 through the daemon and
-// ends the operation; the lease stays.
-func openLeasedPage(t *testing.T, c *Client, f *fakewebkit.Server, sends ...string) {
-	t.Helper()
-	pc, err := c.OpenPage(ctxFor(t, 5*time.Second), PageOptions{Page: PageReq{Page: f.URL}, Owner: Owner{Session: "s1"}, Name: "test"})
+// Review ws2a-r2-c F8 (WS2a round 4): a running daemon of this protocol
+// that runs another executable, which can lack commands (eval and the
+// cookie listing) and the page item of /v1/run, is not reused. A busy one
+// stays and the client fails with the advice to run 'iwdp-cli daemon
+// stop', which (NoStart) still reaches it; an idle one is asked to exit
+// and replaced by a daemon of this executable.
+func TestBuildMismatchReplacesAnIdleDaemon(t *testing.T) {
+	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	f := startFakeDaemonOf(t, o.Dir, Protocol, 2)
+	_, err := Connect(ctxFor(t, 5*time.Second), o)
+	want := fmt.Sprintf("daemon version 0.4.0 (protocol %d, another executable) is running with active sessions; run 'iwdp-cli daemon stop' when they finish", Protocol)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Connect with a busy daemon of an older build: %v; want %q", err, want)
+	}
+	stop := o
+	stop.NoStart = true
+	c, err := Connect(ctxFor(t, 5*time.Second), stop)
+	if err != nil || c.Hello.PID != 1 {
+		t.Fatalf("Connect with NoStart (daemon stop) to the busy daemon of an older build: hello %+v, %v; want that daemon", c, err)
+	}
+	c.Close()
+	f.mu.Lock()
+	f.leases = 0
+	n := f.shutdown
+	f.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("client asked a daemon with leases to exit")
+	}
+	c, err = Connect(ctxFor(t, 8*time.Second), o)
 	if err != nil {
-		t.Fatalf("OpenPage: %v", err)
+		t.Fatalf("Connect with an idle daemon of an older build: %v", err)
 	}
-	for _, m := range sends {
-		if _, err := pc.Send(ctxFor(t, 5*time.Second), m, nil); err != nil {
-			t.Fatalf("%s: %v", m, err)
-		}
-	}
-	if err := pc.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	defer c.Close()
+	f.mu.Lock()
+	n = f.shutdown
+	f.mu.Unlock()
+	if n != 1 || c.Hello.Protocol != Protocol || c.Hello.PID == 1 {
+		t.Fatalf("shutdown requests %d, hello %+v; want one request and a daemon of this build", n, c.Hello)
 	}
 }
 
@@ -312,13 +346,15 @@ func TestIdleExitWaitsForLeases(t *testing.T) {
 	}
 	defer c.Close()
 	pid := c.Hello.PID
-	openLeasedPage(t, c, f)
+	if err := leasePage(t, c, f.URL, Owner{Session: "s1"}, 5*time.Second); err != nil {
+		t.Fatalf("leasing the page: %v", err)
+	}
 	time.Sleep(1200 * time.Millisecond)
 	if !alive(pid) {
 		t.Fatalf("daemon exited while session s1 held a lease")
 	}
-	if _, err := c.Lease(ctxFor(t, 5*time.Second), LeaseRequest{Op: "release", Owner: Owner{Session: "s1"}}); err != nil {
-		t.Fatalf("lease release: %v", err)
+	if _, err := c.Run(ctxFor(t, 5*time.Second), RunRequest{Argv: []string{"session", "release"}, Owner: Owner{Session: "s1"}}, nil); err != nil {
+		t.Fatalf("session release: %v", err)
 	}
 	waitGone(t, pid, 5*time.Second)
 	if _, err := os.Lstat(SocketPath(o.Dir)); !errors.Is(err, os.ErrNotExist) {
@@ -338,7 +374,9 @@ func TestSIGTERMRunsCleanupWithin5s(t *testing.T) {
 	}
 	defer c.Close()
 	pid := c.Hello.PID
-	openLeasedPage(t, c, f, "Network.enable")
+	if err := leasePage(t, c, f.URL, Owner{Session: "s1"}, 5*time.Second, "Network.enable"); err != nil {
+		t.Fatalf("leasing the page with Network enabled: %v", err)
+	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}

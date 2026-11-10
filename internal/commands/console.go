@@ -14,15 +14,13 @@ import (
 // docs/design/agentic-parity.md, section 4.2 "Console and errors", 7.7
 // test 4). The capture starts with the lease: WebKit replays its last 100
 // messages on Console.enable (MAP 1.7), so the buffer holds at most those
-// plus everything since the lease.
-//
-// The legacy streaming forms "console -d <duration>", "console --follow"
-// and "console <ws-url>" stay with the legacy command: the registry's
-// "console" has no such flags, so iwdp-cli routes those lines there.
+// plus everything since the lease. There is no live stream: run
+// console --since "$last_id" again, with the id of the last message seen,
+// for the messages after it.
 func init() {
 	Register(&Command{
 		Name:    "console",
-		Summary: "Print the console messages captured since the lease (and up to 100 that WebKit replays). For a live stream use 'console -d <duration>' or 'console --follow'.",
+		Summary: "Print the console messages captured since the lease (and up to 100 that WebKit replays). For new messages only, run it again as console --since \"$last_id\", with the id of the last message that it printed.",
 		Flags: []Flag{
 			{Name: "clear", Type: FlagBool, Help: "empty the buffer after printing"},
 			{Name: "level", Type: FlagEnum, Enum: []string{"debug", "log", "info", "warning", "error"}, Help: "print only messages of this level or above"},
@@ -135,19 +133,6 @@ const runtimeMarker = "__iwdp_"
 // IsRuntimeMessage reports whether a console message text is one of the
 // runtime's own messages, which the console commands leave out.
 func IsRuntimeMessage(text string) bool { return strings.HasPrefix(text, runtimeMarker) }
-
-// PageConsoleMessages returns msgs without the runtime's own messages
-// (IsRuntimeMessage), in order, for the legacy console outputs that read a
-// tools.ConsoleCollector (iwdp-cli console-messages). It is never nil, so an empty result encodes as [].
-func PageConsoleMessages(msgs []webkit.ConsoleMessage) []webkit.ConsoleMessage {
-	out := make([]webkit.ConsoleMessage, 0, len(msgs))
-	for _, m := range msgs {
-		if !IsRuntimeMessage(m.Text) {
-			out = append(out, m)
-		}
-	}
-	return out
-}
 
 // formatConsoleMessage renders one message as "#id [level] text (url:line)"
 // with its stack, if any, on the following lines.

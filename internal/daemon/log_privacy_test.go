@@ -26,20 +26,10 @@ func TestDaemonLogNamesNoPageTitleOrURL(t *testing.T) {
 	c := connect(t, startInProcess(t, RunOptions{Transport: "iwdp", Addr: l.Addr(), Log: &log}))
 	mustRunOn(t, c, "s1", "", "cdp", "start", "--port", "0")
 	mustRunOn(t, c, "s1", "", "get", "cdp-url")
-	pc, err := c.OpenPage(ctxFor(t, 10*time.Second), PageOptions{Page: PageReq{Page: title}, Owner: Owner{Session: "s1"}, Name: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = pc.Close() }()
-	if _, err := pc.Send(ctxFor(t, 5*time.Second), "Runtime.evaluate", map[string]any{"expression": "1"}); err != nil {
+	if err := leasePage(t, c, title, Owner{Session: "s1"}, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	f.CloseConnections()
-	select {
-	case <-pc.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("the page connection loss was not reported")
-	}
 	for end := time.Now().Add(5 * time.Second); !strings.Contains(log.String(), "page connection closed unexpectedly"); time.Sleep(20 * time.Millisecond) {
 		if time.Now().After(end) {
 			t.Fatalf("no connection-loss line in the daemon log:\n%s", log.String())

@@ -109,13 +109,6 @@ func (r *PageRuntime) Navigate() {
 	r.newDoc()
 }
 
-// Doc returns the current document's id.
-func (r *PageRuntime) Doc() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.doc
-}
-
 // Handler adapts the runtime to Server.SetRuntime.
 func (r *PageRuntime) Handler() RuntimeHandler {
 	return func(_ Call, fn string, args json.RawMessage) any {

@@ -155,15 +155,12 @@ func TestGetCDPURLPageTakesATabID(t *testing.T) {
 func TestGetCDPURLUsesTheSessionsDefaultPage(t *testing.T) {
 	d := newTwoPageDaemon(t)
 	d.dev.RemovePage(d.pFix) // the listing: Other
-	p, err := d.c.OpenPage(ctxFor(t, 10*time.Second), PageOptions{Owner: Owner{Session: "s3"}, Name: "test"})
-	if err != nil {
+	var ran PageInfo
+	if _, err := d.c.RunWithPage(ctxFor(t, 10*time.Second), RunRequest{Argv: leaseFixture, Owner: Owner{Session: "s3"}}, nil, func(p PageInfo) { ran = p }); err != nil {
 		t.Fatalf("a command of s3 without a page: %v", err)
 	}
-	if p.Info().Title != "Other" {
-		t.Fatalf("the command without a page ran on %q, want Other (the only listed page)", p.Info().Title)
-	}
-	if err := p.Close(); err != nil {
-		t.Fatal(err)
+	if ran.Title != "Other" {
+		t.Fatalf("the command without a page ran on %q, want Other (the only listed page)", ran.Title)
 	}
 	// The listing again: Fixture first, then Other.
 	d.dev.RemovePage(d.pOther)
@@ -192,7 +189,7 @@ func TestGetCDPURLWithoutTheSessionsPageExits5(t *testing.T) {
 	d.other.CloseConnections()
 	waitPageState(t, d.c, core.ConnLost)
 
-	if _, err := d.c.OpenPage(ctxFor(t, 10*time.Second), PageOptions{Owner: Owner{Session: "s1"}, Name: "test"}); commands.ExitCodeOf(err) != 5 {
+	if err := leasePage(t, d.c, "", Owner{Session: "s1"}, 10*time.Second); commands.ExitCodeOf(err) != 5 {
 		t.Fatalf("a command of s1 after its tab left: %v (exit %d), want exit 5", err, commands.ExitCodeOf(err))
 	}
 	e, err := d.issue(t, "s1", "")

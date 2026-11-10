@@ -74,8 +74,9 @@ func runBehindChange(t *testing.T, h *rtHarness, blocked func() string, args ...
 	res := make(chan cliRun, 1)
 	go func() {
 		var out, errb bytes.Buffer
-		code := RunCLI(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb,
+		code := RunCLIStarted(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb, nil,
 			func(context.Context, *Invocation) (Env, error) { return opEnv{pageEnv{h.ps}, op}, nil })
+
 		res <- cliRun{code, errb.String()}
 	}()
 	select {

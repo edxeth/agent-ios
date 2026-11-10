@@ -36,7 +36,7 @@ import (
 // is provisional at an event when it is not the delivering connection's
 // active target at that event's position (staging.go); the commit signal
 // is the outer Target event of the same stream, the one that core uses
-// (DesiredState.followTargets, the scheduler's holds). The translators
+// (DesiredState.followCommits, the scheduler's holds). The translators
 // also check that a frame, context or lifecycle event comes from the
 // target that reported the frame or document it names (reportedBy),
 // because WIP frame ids are numbered per process.

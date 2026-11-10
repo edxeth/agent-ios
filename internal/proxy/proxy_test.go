@@ -1,10 +1,10 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
@@ -84,7 +84,7 @@ func TestListDevicesFromURL(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := listDevicesFromURL(ts.URL + "/json")
+	got, err := listDevicesFromURL(context.Background(), ts.URL+"/json")
 	if err != nil {
 		t.Fatalf("listDevicesFromURL: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestListDevicesFromURL_Empty(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := listDevicesFromURL(ts.URL + "/json")
+	got, err := listDevicesFromURL(context.Background(), ts.URL+"/json")
 	if err != nil {
 		t.Fatalf("listDevicesFromURL: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestListDevicesFromURL_Empty(t *testing.T) {
 }
 
 func TestListDevicesFromURL_ConnectionRefused(t *testing.T) {
-	_, err := listDevicesFromURL("http://localhost:1/json")
+	_, err := listDevicesFromURL(context.Background(), "http://localhost:1/json")
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
 	}
@@ -131,7 +131,7 @@ func TestListDevicesFromURL_NonOKStatus(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := listDevicesFromURL(ts.URL + "/json")
+	_, err := listDevicesFromURL(context.Background(), ts.URL+"/json")
 	if err == nil {
 		t.Fatal("expected error for non-200 status")
 	}
@@ -144,142 +144,9 @@ func TestListDevicesFromURL_InvalidJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := listDevicesFromURL(ts.URL + "/json")
+	_, err := listDevicesFromURL(context.Background(), ts.URL+"/json")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-func TestListPages_MockServer(t *testing.T) {
-	pages := []webkit.PageEntry{
-		{
-			Title:                "Example",
-			URL:                  "https://example.com",
-			WebSocketDebuggerURL: "ws://localhost:9222/devtools/page/1",
-			PageID:               1,
-			Type:                 "WIRTypeWeb",
-		},
-		{
-			Title:                "Google",
-			URL:                  "https://google.com",
-			WebSocketDebuggerURL: "ws://localhost:9222/devtools/page/2",
-			PageID:               2,
-			Type:                 "WIRTypeWeb",
-		},
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/json" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(pages)
-	}))
-	defer ts.Close()
-
-	port := extractPort(ts.URL)
-
-	got, err := ListPages(port)
-	if err != nil {
-		t.Fatalf("ListPages: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 pages, got %d", len(got))
-	}
-	if got[0].Title != "Example" {
-		t.Errorf("page[0].Title = %q, want %q", got[0].Title, "Example")
-	}
-	if got[0].WebSocketDebuggerURL != "ws://localhost:9222/devtools/page/1" {
-		t.Errorf("page[0].WebSocketDebuggerURL = %q", got[0].WebSocketDebuggerURL)
-	}
-	if got[1].PageID != 2 {
-		t.Errorf("page[1].PageID = %d, want 2", got[1].PageID)
-	}
-}
-
-func TestListPages_NonOKStatus(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer ts.Close()
-
-	port := extractPort(ts.URL)
-	_, err := ListPages(port)
-	if err == nil {
-		t.Fatal("expected error for non-200 status")
-	}
-}
-
-func TestListPages_InvalidJSON(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{bad json"))
-	}))
-	defer ts.Close()
-
-	port := extractPort(ts.URL)
-	_, err := ListPages(port)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-func TestListPages_EmptyList(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]webkit.PageEntry{})
-	}))
-	defer ts.Close()
-
-	port := extractPort(ts.URL)
-	got, err := ListPages(port)
-	if err != nil {
-		t.Fatalf("ListPages: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("expected 0 pages, got %d", len(got))
-	}
-}
-
-// extractPort extracts the port number from an httptest server URL.
-func extractPort(serverURL string) int {
-	var port int
-	for i := len(serverURL) - 1; i >= 0; i-- {
-		if serverURL[i] == ':' {
-			p := serverURL[i+1:]
-			for _, c := range p {
-				port = port*10 + int(c-'0')
-			}
-			break
-		}
-	}
-	return port
-}
-
-func TestIsRunning_NoServer(t *testing.T) {
-	// With no server on the listing address, IsRunning returns false; with
-	// a listing that answers, true. std points at private loopback
-	// addresses, never at port 9221 of the host.
-	old := std
-	t.Cleanup(func() { std = old })
-	std = NewStarter(freeAddr(t))
-	if IsRunning() {
-		t.Fatalf("IsRunning with nothing on %s = true", std.addr)
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("[]")) }))
-	t.Cleanup(srv.Close)
-	std = NewStarter(strings.TrimPrefix(srv.URL, "http://"))
-	if !IsRunning() {
-		t.Fatalf("IsRunning with a listing on %s = false", std.addr)
-	}
-}
-
-func TestListPages_ConnectionRefused(t *testing.T) {
-	// Port 1 is unlikely to have anything listening
-	_, err := ListPages(1)
-	if err == nil {
-		t.Fatal("expected error when connecting to port 1")
 	}
 }
 

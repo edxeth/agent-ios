@@ -180,7 +180,6 @@ func (c *holdConn) Send(_ context.Context, method string, params any) (json.RawM
 	return json.RawMessage("{}"), nil
 }
 
-func (c *holdConn) OnEvent(method string, h webkit.EventHandler) { c.Subscribe(method, h) }
 func (c *holdConn) Subscribe(method string, h webkit.EventHandler) func() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

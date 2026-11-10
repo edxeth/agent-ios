@@ -32,13 +32,14 @@ import (
 
 const miniBrowser = "/usr/lib/webkit2gtk-4.1/MiniBrowser"
 
-// startProcess starts a command in its own process group and kills the
-// group at cleanup, so no MiniBrowser or broadwayd survives the test.
+// startProcess starts a command in its own process group (ownedProcAttr)
+// and kills the group at cleanup, so no MiniBrowser survives the test, also
+// when the test process ends without its cleanup.
 func startProcess(t *testing.T, env []string, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Env = append(os.Environ(), env...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = ownedProcAttr()
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting %s: %v", name, err)
 	}
@@ -123,7 +124,7 @@ func runBroadwayd(display string, port int) (func(), string, error) {
 	var out bytes.Buffer // read only after Wait returned
 	cmd := exec.Command("broadwayd", display)
 	cmd.Stdout, cmd.Stderr = &out, &out
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = ownedProcAttr()
 	if err := cmd.Start(); err != nil {
 		return nil, "", fmt.Errorf("starting broadwayd: %w", err)
 	}
@@ -488,6 +489,15 @@ type gtk struct {
 // test: WebKitGTK refuses quick reconnects to a page (spike A step B).
 func startGTK(t *testing.T, start string) *gtk {
 	t.Helper()
+	s, addr := startMiniBrowser(t, start)
+	return &gtk{endpoint: startDaemonOn(t, "webkitgtk", addr), site: s}
+}
+
+// startMiniBrowser starts the fixture server, broadwayd and MiniBrowser
+// (with the DPI shim) on start, and waits until MiniBrowser lists the page
+// with a title. It returns the site and MiniBrowser's inspector address.
+func startMiniBrowser(t *testing.T, start string) (*site, string) {
+	t.Helper()
 	if _, err := os.Stat(miniBrowser); err != nil {
 		t.Fatalf("WebKitGTK MiniBrowser not found at %s: %v; the client scenarios need MiniBrowser, broadwayd, gcc and pkg-config gdk-3.0 (README.md)", miniBrowser, err)
 	}
@@ -514,5 +524,5 @@ func startGTK(t *testing.T, start string) *gtk {
 	if !listed {
 		t.Fatalf("MiniBrowser did not list the page %s with a title at %s within %v", start, addr, browserStart)
 	}
-	return &gtk{endpoint: startDaemonOn(t, "webkitgtk", addr), site: s}
+	return s, addr
 }

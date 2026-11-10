@@ -78,7 +78,7 @@ func TestNetlogMarksTheGapOfANewConnection(t *testing.T) {
 				}
 				r.f.StallConnection(1)
 				callCtx, callCancel := context.WithTimeout(ctx, time.Second)
-				_, _ = r.m.Raw(callCtx, mo.ID, "Runtime.evaluate", json.RawMessage(`{"expression":"document.title"}`))
+				_, _ = r.m.RawAs(callCtx, mo, core.SessionOwner("legacy", mo.Session), "Runtime.evaluate", json.RawMessage(`{"expression":"document.title"}`))
 				callCancel()
 				r.m.End(mo.ID)
 				deadline := time.Now().Add(15 * time.Second)

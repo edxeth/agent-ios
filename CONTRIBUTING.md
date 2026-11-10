@@ -28,9 +28,10 @@ An older golangci-lint binary cannot read Go 1.27 export data and reports type e
 ## Testing
 
 - **Unit tests** (`make test`) — no device needed, uses mock WebSocket server
-- **E2E tests** (`make test-e2e`) — builds the CLI binary and tests it
+- **E2E tests** (`go test ./e2e/`, part of `make test`) — builds the CLI binary and tests it against fake listings and pages
 - **WebKitGTK tests** (`go test -tags=webkitgtk ./e2e/webkitgtk/`) — local MiniBrowser under broadwayd, no phone
-- **Simulator tests** (`make test-e2e`) — boots iOS Simulator, tests the commands against real Safari
+- **Simulator tests** (`make test-e2e`, macOS) — boots iOS Simulator, tests the shared helpers of internal/tools and the proxy listing against real Safari
+- **CDP compatibility** (`make test-cdpcompat`) — the pinned CDP clients against the CDP endpoint (e2e/cdpcompat/README.md)
 - **Coverage** (`make coverage-all`) — unit tests plus the WebKitGTK suites
 - Tests never start, stop or read the real iwdp; never run device tests without the device owner's approval ([docs/device-runbook.md](docs/device-runbook.md)).
 
@@ -58,7 +59,7 @@ refactor/proxy-port-parsing
 ## Architecture
 
 - `internal/webkit/` — WebKit Inspector Protocol client (WebSocket + Target routing)
-- `internal/tools/` — WebKit Inspector Protocol helpers of the legacy commands
+- `internal/tools/` — shared WebKit Inspector Protocol helpers (evaluation, screenshots, DOM lookup, cookies)
 - `internal/proxy/` — iwdp process detection and management
 - `cmd/iwdp-cli/` — CLI binary
 
@@ -67,7 +68,7 @@ refactor/proxy-port-parsing
 - `internal/runtime/`, `internal/refs/` — the injected agent runtime and refs
 - `internal/devtools/`, `internal/cdp/`, `internal/transport/` — DevTools extras, CDP endpoint, transports
 
-A new command is a new file in `internal/commands` whose `init()` calls `Register`. Legacy tools return structured results; formatting is done by the caller. User docs live in docs/ (see docs/README.md); docs/notes/ is history.
+A new command is a new file in `internal/commands` whose `init()` calls `Register`. Helpers return structured results; formatting is done by the caller. User docs live in docs/ (see docs/README.md); docs/notes/ is history.
 
 ## License
 

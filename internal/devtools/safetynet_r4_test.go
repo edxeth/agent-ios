@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,7 +33,10 @@ import (
 // addInterception appends a rule unless an equal one exists, and
 // removeInterception removes every equal rule or answers its error for an
 // unknown rule; setInterceptionEnabled turns pausing on and off;
-// Network.disable clears both (InspectorNetworkAgent::disable). A test can
+// Network.disable clears both and continues every request that the target
+// holds (InspectorNetworkAgent::disable and continuePendingRequests,
+// webkitgtk-2.54.2 InspectorNetworkAgent.cpp:848-867, 898-910), as the
+// fake's own Network.disable does. A test can
 // make a target refuse removals (a provisional target), or fail the next
 // removal once with another error.
 type wkRules struct {
@@ -42,12 +47,16 @@ type wkRules struct {
 	refuse   map[string]bool // target -> refuse every removal
 	failOnce map[string]bool // target -> fail the next removal
 	removals map[string]int  // target -> removal attempts
+	// disabled holds the requests that a Network.disable of their target
+	// continued.
+	disabled map[reqKey]bool
 }
 
 func newWKRules(f *fakewebkit.Server) *wkRules {
 	m := &wkRules{
 		f: f, rules: map[string][]core.InterceptRule{}, enabled: map[string]bool{},
 		refuse: map[string]bool{}, failOnce: map[string]bool{}, removals: map[string]int{},
+		disabled: map[reqKey]bool{},
 	}
 	decode := func(c fakewebkit.Call) core.InterceptRule {
 		// WebKit's defaults: caseSensitive true, isRegex false.
@@ -114,6 +123,9 @@ func newWKRules(f *fakewebkit.Server) *wkRules {
 		m.mu.Lock()
 		delete(m.rules, c.Target)
 		delete(m.enabled, c.Target)
+		for _, id := range f.ContinueHolds(c.Target) {
+			m.disabled[reqKey{c.Target, id}] = true
+		}
 		m.mu.Unlock()
 		return nil, nil
 	})
@@ -157,6 +169,14 @@ func (m *wkRules) set(field map[string]bool, target string, on bool) {
 	} else {
 		delete(field, target)
 	}
+}
+
+// continuedByDisable reports whether a Network.disable of target continued
+// request id.
+func (m *wkRules) continuedByDisable(target, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.disabled[reqKey{target, id}]
 }
 
 func (m *wkRules) removalCount(target string) int {
@@ -682,132 +702,24 @@ type safetyStep struct {
 // replaced by a commit) may get no answer, because WebKit drops its paused
 // requests with it and webkit.Session sends nothing to a destroyed
 // target; it never gets an answer on another target.
+// A request that a Network.disable of its target continued (a reset of
+// the target's Network agent) got its one answer from WebKit
+// (InspectorNetworkAgent::disable), and no successful completion; the
+// scheduler records its hold as reset (core DesiredState.networkDisabled).
 func TestEveryPausedRequestGetsExactlyOneAnswerProperty(t *testing.T) {
 	credentialsVerified[transport.KindIWDP] = true
 	t.Cleanup(func() { delete(credentialsVerified, transport.KindIWDP) })
-	kinds := ruleKinds()
-	// ops are weighted so that refused removals before a commit, with a
-	// keeper route that leaves Network enabled, are frequent.
-	ops := []string{"add", "add", "keep", "remove", "remove", "provisional", "provisional", "refuse", "refuse", "commit", "abort", "release", "request", "request", "request", "request"}
-	var continued, onProvisional atomic.Int64
-	// run runs plan, one random draw or the fixed plan below; seed names
-	// the draw in the log.
-	run := func(seed int64, plan []safetyStep) bool {
-		r := newPausingRig(t)
-		m := newWKRules(r.f)
-		ps := r.page(t).ps
-		provisional, nTargets, nReqs := "", 0, 0
-		var reqs []string
-		reqTarget := map[string]string{}
-		var trace []string
-		for _, st := range plan {
-			op, k := st.op, kinds[st.kind]
-			switch op {
-			case "add":
-				trace = append(trace, "add "+k.name)
-				_ = r.do(t, k.add)
-			case "keep":
-				trace = append(trace, "keeper route")
-				_ = r.do(t, keepRoute)
-			case "remove":
-				trace = append(trace, "remove "+k.name)
-				_ = r.do(t, k.remove)
-			case "provisional":
-				if provisional == "" {
-					nTargets++
-					provisional = fmt.Sprintf("p%d", nTargets)
-					trace = append(trace, "provisional "+provisional)
-					<-r.f.Provisional(provisional)
-				}
-			case "refuse":
-				if provisional != "" {
-					trace = append(trace, "refuse "+provisional)
-					m.set(m.refuse, provisional, true)
-				}
-			case "commit":
-				if provisional != "" {
-					trace = append(trace, "commit "+provisional)
-					m.set(m.refuse, provisional, false)
-					r.f.Commit(provisional)
-					provisional = ""
-				}
-			case "abort":
-				if provisional != "" {
-					trace = append(trace, "abort "+provisional)
-					r.f.DestroyTarget(provisional)
-					provisional = ""
-				}
-			case "release":
-				trace = append(trace, "release")
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				_, err := r.m.ReleaseSession(ctx, "s1")
-				cancel()
-				if err != nil {
-					t.Logf("seed %d: release: %v", seed, err)
-				}
-			case "request":
-				target := r.f.ActiveTarget()
-				if provisional != "" && st.provisional {
-					target = provisional
-				}
-				if m.pauses(target, k.url) {
-					nReqs++
-					id := fmt.Sprintf("q%d", nReqs)
-					trace = append(trace, "request "+id+" "+k.name+" on "+target)
-					reqTarget[id] = target
-					interceptOn(r.f, target, id, k.url)
-					reqs = append(reqs, id)
-					// The next step (a release, a commit) comes after the
-					// scheduler recorded the hold, or after its answer.
-					for end := time.Now().Add(3 * time.Second); !heldBy(ps, target, id) && len(answers(r.f, id)) == 0 && time.Now().Before(end); {
-						time.Sleep(time.Millisecond)
-					}
-				}
-			}
+	var n safetyCounts
+	check := func(seed int64) bool { return runSafetyPlan(t, seed, safetyPlan(seed), &n, safetyHooks{}) }
+	if s := os.Getenv("IWDP_SAFETYNET_SEED"); s != "" {
+		seed, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			t.Fatalf("IWDP_SAFETYNET_SEED=%q: want an integer", s)
 		}
-		live := map[string]bool{r.f.ActiveTarget(): true, provisional: provisional != ""}
-		deadline := time.Now().Add(3 * time.Second)
-		for _, id := range reqs {
-			for live[reqTarget[id]] && len(answersFor(r.f, id)) == 0 && time.Now().Before(deadline) {
-				time.Sleep(10 * time.Millisecond)
-			}
+		if !check(seed) {
+			t.Fatalf("seed %d fails", seed)
 		}
-		time.Sleep(100 * time.Millisecond)
-		for _, id := range reqs {
-			got := answersFor(r.f, id)
-			for _, a := range got {
-				if a.Target != reqTarget[id] {
-					t.Logf("seed %d: request %s of %s was answered on %s; ops: %s", seed, id, reqTarget[id], a.Target, strings.Join(trace, ", "))
-					return false
-				}
-			}
-			if len(got) == 1 && got[0].Method == "Network.interceptContinue" {
-				continued.Add(1)
-			}
-			if !live[reqTarget[id]] {
-				if len(got) > 1 {
-					t.Logf("seed %d: request %s of the destroyed target %s got %d answers; ops: %s", seed, id, reqTarget[id], len(got), strings.Join(trace, ", "))
-					return false
-				}
-				continue // its target was destroyed with its paused requests
-			}
-			if len(got) != 1 || len(answers(r.f, id)) != 1 {
-				t.Logf("seed %d: request %s of %s got %d successful completions and %d completion commands, want 1 and 1; ops: %s", seed, id, reqTarget[id], len(got), len(answers(r.f, id)), strings.Join(trace, ", "))
-				return false
-			}
-			if reqTarget[id] == provisional {
-				onProvisional.Add(1)
-			}
-		}
-		return true
-	}
-	check := func(seed int64) bool {
-		rnd := rand.New(rand.NewSource(seed))
-		var plan []safetyStep
-		for range 8 + rnd.Intn(17) {
-			plan = append(plan, safetyStep{ops[rnd.Intn(len(ops))], rnd.Intn(len(kinds)), rnd.Intn(2) == 0})
-		}
-		return run(seed, plan)
+		return
 	}
 	// The fixed plan reaches the case under test on every run (W4 round 9;
 	// random draws reach it in most runs only): a provisional target
@@ -815,14 +727,245 @@ func TestEveryPausedRequestGetsExactlyOneAnswerProperty(t *testing.T) {
 	// that the route matches. The safety net answers it on that target
 	// with one unchanged continue.
 	fixed := []safetyStep{{op: "keep"}, {op: "add"}, {op: "provisional"}, {op: "refuse"}, {op: "remove"}, {op: "request", provisional: true}}
-	if !run(0, fixed) || continued.Load() != 1 || onProvisional.Load() != 1 {
-		t.Fatalf("fixed plan: %d unchanged continues and %d answered requests of the live provisional target, want 1 and 1", continued.Load(), onProvisional.Load())
+	if !runSafetyPlan(t, 0, fixed, &n, safetyHooks{}) || n.continued.Load() != 1 || n.onProvisional.Load() != 1 {
+		t.Fatalf("fixed plan: %d unchanged continues and %d answered requests of the live provisional target, want 1 and 1", n.continued.Load(), n.onProvisional.Load())
 	}
 	if err := quick.Check(check, &quick.Config{MaxCount: 50}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v (the input is the case's seed; replay it with IWDP_SAFETYNET_SEED)", err)
 	}
-	t.Logf("%d paused requests were answered with an unchanged continue; %d requests of a live provisional target were answered on it", continued.Load(), onProvisional.Load())
-	if onProvisional.Load() == 0 {
+	t.Logf("%d paused requests were answered with an unchanged continue; %d requests of a live provisional target were answered on it; a Network.disable continued %d", n.continued.Load(), n.onProvisional.Load(), n.byDisable.Load())
+	if n.onProvisional.Load() == 0 {
 		t.Fatal("no case answered a request of a live provisional target; the generator does not reach the case under test")
+	}
+}
+
+// safetyCounts counts the requests of TestEveryPausedRequestGetsExactlyOneAnswerProperty
+// that got one unchanged continue, those of a live provisional target that
+// were answered on it, and those of a live target that a Network.disable
+// continued.
+type safetyCounts struct{ continued, onProvisional, byDisable atomic.Int64 }
+
+// safetyPlan draws the plan of one case of the property from seed: 8 to
+// 24 steps. The ops are weighted so that refused removals before a commit,
+// with a keeper route that leaves Network enabled, are frequent.
+func safetyPlan(seed int64) []safetyStep {
+	ops := []string{"add", "add", "keep", "remove", "remove", "provisional", "provisional", "refuse", "refuse", "commit", "abort", "release", "request", "request", "request", "request"}
+	kinds := len(ruleKinds())
+	rnd := rand.New(rand.NewSource(seed))
+	var plan []safetyStep
+	for range 8 + rnd.Intn(17) {
+		plan = append(plan, safetyStep{ops[rnd.Intn(len(ops))], rnd.Intn(kinds), rnd.Intn(2) == 0})
+	}
+	return plan
+}
+
+// safetyHooks let a test order the steps of a plan against the daemon's
+// sends; the property uses none.
+type safetyHooks struct {
+	prepare func(f *fakewebkit.Server) // runs before the first step
+	// pause makes target pause request id for rawURL (interceptOn when nil).
+	pause func(f *fakewebkit.Server, target, id, rawURL string)
+}
+
+// runSafetyPlan runs plan, a random draw or a fixed plan, on a new rig
+// and reports whether the property holds; seed names the plan in the log.
+func runSafetyPlan(t *testing.T, seed int64, plan []safetyStep, n *safetyCounts, hooks safetyHooks) bool {
+	kinds := ruleKinds()
+	r := newPausingRig(t)
+	m := newWKRules(r.f)
+	if hooks.prepare != nil {
+		hooks.prepare(r.f)
+	}
+	ps := r.page(t).ps
+	provisional, nTargets, nReqs := "", 0, 0
+	var reqs []string
+	reqTarget := map[string]string{}
+	var trace []string
+	for _, st := range plan {
+		op, k := st.op, kinds[st.kind]
+		switch op {
+		case "add":
+			trace = append(trace, "add "+k.name)
+			_ = r.do(t, k.add)
+		case "keep":
+			trace = append(trace, "keeper route")
+			_ = r.do(t, keepRoute)
+		case "remove":
+			trace = append(trace, "remove "+k.name)
+			_ = r.do(t, k.remove)
+		case "provisional":
+			if provisional == "" {
+				nTargets++
+				provisional = fmt.Sprintf("p%d", nTargets)
+				trace = append(trace, "provisional "+provisional)
+				<-r.f.Provisional(provisional)
+			}
+		case "refuse":
+			if provisional != "" {
+				trace = append(trace, "refuse "+provisional)
+				m.set(m.refuse, provisional, true)
+			}
+		case "commit":
+			if provisional != "" {
+				trace = append(trace, "commit "+provisional)
+				m.set(m.refuse, provisional, false)
+				r.f.Commit(provisional)
+				provisional = ""
+			}
+		case "abort":
+			if provisional != "" {
+				trace = append(trace, "abort "+provisional)
+				r.f.DestroyTarget(provisional)
+				provisional = ""
+			}
+		case "release":
+			trace = append(trace, "release")
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err := r.m.ReleaseSession(ctx, "s1")
+			cancel()
+			if err != nil {
+				t.Logf("seed %d: release: %v", seed, err)
+			}
+		case "request":
+			target := r.f.ActiveTarget()
+			if provisional != "" && st.provisional {
+				target = provisional
+			}
+			if m.pauses(target, k.url) {
+				nReqs++
+				id := fmt.Sprintf("q%d", nReqs)
+				trace = append(trace, "request "+id+" "+k.name+" on "+target)
+				reqTarget[id] = target
+				if hooks.pause != nil {
+					hooks.pause(r.f, target, id, k.url)
+				} else {
+					interceptOn(r.f, target, id, k.url)
+				}
+				reqs = append(reqs, id)
+				// The next step (a release, a commit) comes after the
+				// scheduler recorded the hold, or after its answer.
+				for end := time.Now().Add(3 * time.Second); !heldBy(ps, target, id) && len(answers(r.f, id)) == 0 && !m.continuedByDisable(target, id) && time.Now().Before(end); {
+					time.Sleep(time.Millisecond)
+				}
+			}
+		}
+	}
+	live := map[string]bool{r.f.ActiveTarget(): true, provisional: provisional != ""}
+	deadline := time.Now().Add(3 * time.Second)
+	for _, id := range reqs {
+		for live[reqTarget[id]] && len(answersFor(r.f, id)) == 0 && !m.continuedByDisable(reqTarget[id], id) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	for _, id := range reqs {
+		got := answersFor(r.f, id)
+		for _, a := range got {
+			if a.Target != reqTarget[id] {
+				t.Logf("seed %d: request %s of %s was answered on %s; ops: %s", seed, id, reqTarget[id], a.Target, strings.Join(trace, ", "))
+				return false
+			}
+		}
+		if len(got) == 1 && got[0].Method == "Network.interceptContinue" {
+			n.continued.Add(1)
+		}
+		if !live[reqTarget[id]] {
+			if len(got) > 1 {
+				t.Logf("seed %d: request %s of the destroyed target %s got %d answers; ops: %s", seed, id, reqTarget[id], len(got), strings.Join(trace, ", "))
+				return false
+			}
+			continue // its target was destroyed with its paused requests
+		}
+		if m.continuedByDisable(reqTarget[id], id) {
+			// WebKit answered it: the fake ended its hold, so no completion
+			// took it. A completion that the daemon wrote before it read the
+			// Network.disable's reply reaches WebKit after the disable and is
+			// refused ("Missing pending intercept ..."); only the reply makes
+			// the scheduler refuse later ones (networkDisabled). Such a
+			// completion must still go to the request's own target.
+			for _, rec := range answers(r.f, id) {
+				if rec.Target != reqTarget[id] {
+					t.Logf("seed %d: request %s of %s, which a Network.disable continued, got a completion on %s; ops: %s", seed, id, reqTarget[id], rec.Target, strings.Join(trace, ", "))
+					return false
+				}
+			}
+			n.byDisable.Add(1)
+			continue
+		}
+		if len(got) != 1 || len(answers(r.f, id)) != 1 {
+			t.Logf("seed %d: request %s of %s got %d successful completions and %d completion commands, want 1 and 1; ops: %s", seed, id, reqTarget[id], len(got), len(answers(r.f, id)), strings.Join(trace, ", "))
+			return false
+		}
+		if reqTarget[id] == provisional {
+			n.onProvisional.Add(1)
+		}
+	}
+	return true
+}
+
+// The counterexample of the property that worker 1b-a logged (seed
+// 7917047387415046709, about 2 runs in 10). After the commit of the
+// provisional target p1, core applies the page state to p1 again with a
+// reset of its Network agent (DesiredState.applyResetting): it continues
+// the requests that p1 holds through the control lane, then sends
+// Network.disable. In the failing runs p1
+// paused the plan's request q1 between those two steps, so WebKit
+// continued q1 with the Network.disable (InspectorNetworkAgent::disable),
+// the scheduler recorded its hold as reset (DesiredState.networkDisabled)
+// and the daemon sent q1 no completion. Here the fake pauses q1 when that
+// Network.disable arrives, just before it handles it, which makes that
+// order the order of every run.
+func TestEveryPausedRequestGetsExactlyOneAnswerSeed7917047387415046709(t *testing.T) {
+	credentialsVerified[transport.KindIWDP] = true
+	t.Cleanup(func() { delete(credentialsVerified, transport.KindIWDP) })
+	const seed = 7917047387415046709
+	q1 := make(chan func()) // pauses q1
+	paused, done := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(done) }) // runs before the fake closes
+	var once sync.Once
+	hooks := safetyHooks{
+		prepare: func(f *fakewebkit.Server) {
+			f.BeforeRecord("Target.sendMessageToTarget", func(params json.RawMessage) {
+				var outer struct{ TargetID, Message string }
+				_ = json.Unmarshal(params, &outer)
+				var inner struct{ Method string }
+				_ = json.Unmarshal([]byte(outer.Message), &inner)
+				if inner.Method != "Network.disable" || outer.TargetID != "p1" || f.ActiveTarget() != "p1" {
+					return
+				}
+				once.Do(func() {
+					select {
+					case pause := <-q1:
+						pause()
+						close(paused)
+					case <-done:
+					}
+				})
+			})
+			t.Cleanup(func() { f.BeforeRecord("Target.sendMessageToTarget", nil) })
+		},
+		pause: func(f *fakewebkit.Server, target, id, rawURL string) {
+			if id != "q1" {
+				interceptOn(f, target, id, rawURL)
+				return
+			}
+			var atDeadline <-chan time.Time // nil without a deadline: wait for the event
+			if d, ok := t.Deadline(); ok {
+				atDeadline = time.After(time.Until(d))
+			}
+			select {
+			case q1 <- func() { interceptOn(f, target, id, rawURL) }:
+				<-paused
+			case <-atDeadline:
+				t.Fatal("no Network.disable reached p1 after its commit: the plan no longer reaches the case")
+			}
+		},
+	}
+	var n safetyCounts
+	if !runSafetyPlan(t, seed, safetyPlan(seed), &n, hooks) {
+		t.Fatalf("seed %d fails", seed)
+	}
+	if n.byDisable.Load() != 1 {
+		t.Fatalf("%d requests were continued by a Network.disable, want 1 (q1): the run did not reach the case", n.byDisable.Load())
 	}
 }

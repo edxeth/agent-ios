@@ -10,10 +10,9 @@ import (
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
 )
 
-// routeProbe is a registry command under the legacy word "dom" that only
-// this test binary has. It shows that the routing rule of main reaches
-// registry commands under a legacy word without naming them (W4-2b's
-// "cookies" subcommands are such commands).
+// routeProbe is a registry command under the word "dom", which names no
+// command alone (it named a removed command), that only this test binary
+// has. It shows that the registry finds a command by all its words.
 func init() {
 	reg.Register(&reg.Command{
 		Name:    "dom zz-route-probe",
@@ -32,13 +31,12 @@ func init() {
 }
 
 // cookiesProbe stands in for W4-2b's "cookies clear": a registry
-// subcommand under the legacy word "cookies", while the registry has no
-// bare "cookies". The name avoids a clash with the real command when
-// W4-2b's files are merged.
+// subcommand under the word "cookies", which is a command alone too. The
+// name avoids a clash with the real command.
 func init() {
 	reg.Register(&reg.Command{
 		Name:    "cookies zz-clear-probe",
-		Summary: "test fixture: a registry subcommand of the legacy cookies command",
+		Summary: "test fixture: a registry subcommand of the cookies command",
 		Flags:   []reg.Flag{{Name: "domain", Type: reg.FlagString, Help: "printed back"}},
 		Local:   true,
 		Run: func(_ context.Context, _ reg.Env, in reg.Input) (reg.Result, error) {
@@ -48,12 +46,12 @@ func init() {
 	})
 }
 
-// Orchestrator note on W4-2b: the routing rule checks that the line's
-// words name a registry command, not only that the registry has some
-// command under the first word. With a registry "cookies <sub>" next to
-// the legacy "cookies", bare "cookies" and its legacy flags stay with
-// the legacy listing; "cookies <sub>" goes to the registry.
-func TestRoutingKeepsBareCookiesLegacy(t *testing.T) {
+// Orchestrator note on W4-2b: the line's words name the command, not only
+// its first word: "cookies <sub>" is the subcommand. The bare "cookies" is
+// the listing (TestBareCookiesRunsTheRegistryListing): a line that names
+// its page by URL (IWDP_WS_URL here, or a ws:// argument) is a usage error
+// (exit 2) that names --page, before any connection and without a value.
+func TestRoutingSendsCookiesByURLToTheRegistry(t *testing.T) {
 	mock := testutil.NewMockServer()
 	defer mock.Close()
 	mock.HandleFunc("Page.getCookies", map[string]any{"cookies": []webkit.Cookie{
@@ -65,16 +63,20 @@ func TestRoutingKeepsBareCookiesLegacy(t *testing.T) {
 	}
 	for _, args := range [][]string{{"cookies"}, {"cookies", "--show-values"}, {"cookies", mock.URL}} {
 		r := runCLI(t, "", env, args...)
-		if r.code != 0 || !strings.Contains(r.stdout, "sid=") || strings.Contains(r.stdout, "cookies-probe") {
-			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the legacy cookie listing", args, r.code, r.stdout, r.stderr)
+		if r.code != 2 || !strings.Contains(r.stderr, "--page") || strings.Contains(r.stdout+r.stderr, "s3cr") || strings.Contains(r.stdout, "cookies-probe") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the registry usage error that names --page (exit 2)", args, r.code, r.stdout, r.stderr)
 		}
+	}
+	if n := mock.ConnectionCount(); n != 0 {
+		t.Errorf("the refused cookies lines connected to the page %d times, want 0", n)
 	}
 }
 
-// W4-2a decision 2 (design 2.10, 7.3 test 13): a first word that names a
-// legacy command and registry commands goes to the registry when the
-// registry owns the line, and to the legacy command otherwise.
-func TestRoutingBetweenLegacyAndRegistryCommands(t *testing.T) {
+// W4-2a decision 2 (design 2.10) and WS2b: iwdp-cli runs registry
+// commands only. A registry command under a word that named a removed
+// command runs; a malformed line or a removed command is the registry's
+// usage error (exit 2) before any connection.
+func TestRoutingRunsOnlyRegistryCommands(t *testing.T) {
 	mock := testutil.NewMockServer()
 	defer mock.Close()
 	env := []string{"IWDP_WS_URL=" + mock.URL}
@@ -97,26 +99,28 @@ func TestRoutingBetweenLegacyAndRegistryCommands(t *testing.T) {
 			t.Errorf("%v: exit %d, stdout %q; want the registry help of %q", args, r.code, r.stdout, name)
 		}
 	}
+	// The removed forms: the stream flags of "console" are unknown flags,
+	// and "dom <selector>" and the other removed commands are unknown
+	// commands.
+	if r := runCLI(t, "", env, "console", "--forever"); r.code != 2 || !strings.Contains(r.stderr, "unknown flag --forever") {
+		t.Errorf("console --forever: exit %d, stderr %q; want the registry usage error (exit 2)", r.code, r.stderr)
+	}
+	for _, args := range [][]string{{"--timeout", "5s", "dom", "body"}, {"pages"}, {"set-breakpoint", "https://fixture.example/app.js", "3"}, {"console-messages", "-d", "1"}} {
+		if r := runCLI(t, "", env, args...); r.code != 2 || !strings.Contains(r.stderr, "unknown command") || strings.Contains(r.stdout, "probe") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the unknown-command usage error (exit 2)", args, r.code, r.stdout, r.stderr)
+		}
+	}
 	if n := mock.ConnectionCount(); n != 0 {
 		t.Fatalf("usage errors and help opened %d page connections, want 0", n)
-	}
-	// Legacy lines stay legacy: the legacy "console" rejects its unknown
-	// option with exit 1 (pinned by TestStreamRejectsUnknownOptionBeforeConnecting),
-	// and "dom <selector>" is the legacy DOM command, which connects.
-	if r := runCLI(t, "", env, "console", "--forever"); r.code != 1 || !strings.Contains(r.stderr, "Usage: iwdp-cli console [-d 10s] [--follow] [ws-url]") {
-		t.Errorf("console --forever: exit %d, stderr %q; want the legacy usage error", r.code, r.stderr)
-	}
-	mock.HandleFunc("DOM.getDocument", map[string]any{"root": map[string]any{"nodeId": 1, "nodeName": "#document", "nodeType": 9}})
-	if r := runCLI(t, "", env, "--timeout", "5s", "dom", "body"); strings.Contains(r.stdout+r.stderr, "probe") || mock.ConnectionCount() == 0 {
-		t.Errorf("dom body: exit %d, stdout %q, stderr %q, connections %d; want the legacy DOM command", r.code, r.stdout, r.stderr, mock.ConnectionCount())
 	}
 }
 
 // Design 2.11: the registry's global flags may stand anywhere before
 // "--", also before or between the command words. "network --json
 // requests" is the registry command "network requests", not the legacy
-// stream "network" (W4 command review, finding main.go:203). Lines
-// without registry command words stay legacy.
+// stream "network" (W4 command review, finding main.go:203). Since WS2b
+// "network" alone names no command but a group of commands, so its help
+// lists the group (TestCommandGroupWordListsItsCommands).
 func TestRoutingWithGlobalFlagsBetweenCommandWords(t *testing.T) {
 	mock := testutil.NewMockServer()
 	defer mock.Close()
@@ -136,10 +140,9 @@ func TestRoutingWithGlobalFlagsBetweenCommandWords(t *testing.T) {
 	if r := runCLI(t, "", env, "network", "--json", "requests", "--bogus"); r.code != 2 || !strings.Contains(r.stderr, "iwdp-cli network requests --help") {
 		t.Errorf("network --json requests --bogus: exit %d, stderr %q; want the registry usage error (exit 2)", r.code, r.stderr)
 	}
-	// The legacy stream keeps its help and its own flags.
 	for _, args := range [][]string{{"network", "--help"}, {"network", "-d", "1", "--help"}} {
-		if r := runCLI(t, "", env, args...); r.code != 0 || !strings.HasPrefix(r.stdout, "Usage: iwdp-cli network [-d 10s]") {
-			t.Errorf("%v: exit %d, stdout %q; want the legacy network help", args, r.code, r.stdout)
+		if r := runCLI(t, "", env, args...); r.code != 0 || !strings.Contains(r.stdout, `Commands of "network"`) || !strings.Contains(r.stdout, "network requests") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the list of the group network (exit 0)", args, r.code, r.stdout, r.stderr)
 		}
 	}
 	if n := mock.ConnectionCount(); n != 0 {

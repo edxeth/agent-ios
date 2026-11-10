@@ -186,13 +186,6 @@ func fromCookieParam(p cookieParam, now time.Time) (c webkit.Cookie, expired boo
 	return c, expired, nil
 }
 
-// cookieID is a cookie's identity in the jar: name, path, and domain with
-// its leading dot (the kind), case aside (W4, commit a6d3142:
-// tools.SetCookieVerified, devtools.DeleteCookies).
-type cookieID struct{ name, domain, path string }
-
-func idOf(c webkit.Cookie) cookieID { return cookieID{c.Name, strings.ToLower(c.Domain), c.Path} }
-
 // epochExpiryMs is the expiry, in milliseconds since the Unix epoch, that
 // setCookie sends for an expired cookie whose expiry is the epoch itself:
 // the earliest one that tools.SetCookie sends as an expiry.

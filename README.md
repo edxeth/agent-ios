@@ -9,7 +9,7 @@
 
 <video src="https://github.com/user-attachments/assets/dcc0dc05-3a1f-4454-88a8-51ee28da9fd2" poster="https://github.com/user-attachments/assets/3901f7ff-6531-4866-b49e-cf5d17304327" autoplay loop muted playsinline></video>
 
-An agentic loop in the style of agent-browser (snapshots with `@eN` refs, actions, waits, dialogs, tabs, frames), DevTools extras (network log, routes, HAR, console, overrides, storage state, traces, profiles, Web Vitals), an opt-in CDP endpoint for agent-browser, Puppeteer, Playwright and chrome-devtools-mcp, and the legacy commands across the WebKit Inspector Protocol domains. A background daemon owns every page connection, so CLI commands and CDP clients share sessions, leases and refs.
+An agentic loop in the style of agent-browser (snapshots with `@eN` refs, actions, waits, dialogs, tabs, frames), DevTools extras (network log, routes, HAR, console, overrides, storage state, traces, profiles, Web Vitals), and an opt-in CDP endpoint for agent-browser, Puppeteer, Playwright and chrome-devtools-mcp. A background daemon owns every page connection, so CLI commands and CDP clients share sessions, leases and refs.
 
 Documentation: [docs/README.md](docs/README.md) (user guide, sessions and leases, synthetic input, CDP, device runbook, migration, known limits) and the generated [command reference](docs/commands.md).
 
@@ -63,35 +63,37 @@ ios_webkit_debug_proxy --no-frontend &
 # List connected devices (port 9221)
 iwdp-cli devices
 
-# List Safari tabs on the first device (port 9224)
-iwdp-cli pages
-
 # Page commands on a physical device need a session and a device reservation
 # (docs/sessions.md); the reservation owner defaults to the session name
 export IWDP_SESSION=my-run
 iwdp-cli device reserve --owner my-run
 
-# Evaluate JavaScript (exceptions print message and stack and exit 1)
+# List the Safari tabs of the reserved devices (t1, t2, ...)
+iwdp-cli tab list
+
+# Evaluate JavaScript in the session's page, or in a tab named with --page
+# (a returned Promise is awaited; an exception prints message and stack and exits 1)
 iwdp-cli eval "document.title"
-iwdp-cli eval --await "fetch('/api/me').then(r => r.status)"
+iwdp-cli --page t2 eval "fetch('/api/me').then(r => r.status)"
 
 # Take a screenshot: viewport by default, or --full-page, or --selector <css>.
 # Without -o the PNG goes to $TMPDIR/iwdp-screenshot-<timestamp>.png.
 iwdp-cli screenshot
 iwdp-cli screenshot --selector '#checkout' -o checkout.png
 
-# Show all cookies (including httpOnly); values are redacted unless --show-values
+# Show all cookies (including httpOnly); values are hidden unless --show-values
 iwdp-cli cookies
 
 # Set a cookie (SameSite defaults to Lax) and verify it by reading it back
-iwdp-cli set-cookie session abc123 example.com --same-site Lax --secure --http-only --expires 24h
+iwdp-cli cookies set session abc123 --domain example.com --same-site Lax --secure --http-only --expires 2030-01-01T00:00:00Z
 
-# Print console messages or network requests for 10s (-d 30s, or --follow to stream)
+# Print the console messages and the network requests since the session leased the page
 iwdp-cli console
-iwdp-cli network -d 30s
+iwdp-cli network requests
 
-# Help for one command (never connects to a page)
+# Help for one command, or the list of a command group (never connects to a page)
 iwdp-cli screenshot --help
+iwdp-cli network --help
 
 # End the session and release the device
 iwdp-cli close && iwdp-cli device release --owner my-run
@@ -113,7 +115,7 @@ iwdp-cli close && iwdp-cli device release --owner my-agent
 
 All input is synthetic (`isTrusted=false`); see [docs/synthetic-input.md](docs/synthetic-input.md). Sessions, leases and reservations: [docs/sessions.md](docs/sessions.md). A CDP URL for other clients: `iwdp-cli get cdp-url` ([docs/cdp.md](docs/cdp.md)).
 
-Every command runs under a deadline: 30 s by default, set with `--timeout <duration>` (any position) or `IWDP_TIMEOUT`. Recording commands add their `-d` duration; `heap-snapshot` defaults to 5 min. On expiry the command exits 124 and prints the page, the elapsed time and the likely causes (another inspector session holds the page, the page is stalled or shows a dialog, the device is locked).
+Every command runs under a deadline: 30 s by default, set with `--timeout <duration>` (any position) or `IWDP_TIMEOUT`, a duration such as `10s` or whole seconds such as `10`. On expiry the command exits 124 and prints the page, the elapsed time and the likely causes (another inspector session holds the page, the page is stalled or shows a dialog, the device is locked).
 
 ## How It Works
 
@@ -133,14 +135,14 @@ Every command runs under a deadline: 30 s by default, set with `--timeout <durat
 
 ## Commands
 
-[docs/commands.md](docs/commands.md) lists every registry command with its arguments and flags. `iwdp-cli --help` lists every command, including the legacy commands of the WebKit Inspector Protocol domains (DOM, CSS, network, storage, debugger, timeline, heap and CPU profiling), and `iwdp-cli <command> --help` prints the usage of one command without connecting to a page.
+[docs/commands.md](docs/commands.md) lists every registry command with its arguments and flags. `iwdp-cli --help` lists every command, [docs/migration.md](docs/migration.md) maps the removed commands of earlier versions, and `iwdp-cli <command> --help` prints the usage of one command without connecting to a page. `iwdp-cli <group> --help` lists the commands of a group, for example `network` or `cdp`.
 
 ## Development
 
 ```bash
 make build              # Build iwdp-cli
 make test               # Run unit + smoke tests
-make test-e2e           # E2E tests (boots iOS Simulator, tests all commands)
+make test-e2e           # Simulator tests (macOS: boots iOS Simulator, tests the shared helpers against Safari)
 make test-coverage      # Tests with coverage report
 make lint               # golangci-lint
 make fmt                # gofumpt formatting
@@ -149,23 +151,24 @@ make docs               # regenerate docs/commands.md from the command registry
 
 ### Testing
 
-Unit tests use a mock WebSocket server (`internal/webkit/testutil/`) that simulates the WebKit Inspector Protocol. E2E tests boot an iOS Simulator and run the commands against real Safari.
+Unit tests use a mock WebSocket server (`internal/webkit/testutil/`) that simulates the WebKit Inspector Protocol. The e2e tests in `e2e/` run the CLI binary against fake listings and pages. The WebKitGTK suite (`e2e/webkitgtk`, build tag `webkitgtk`) runs the commands against a real WebKit browser, and `make test-cdpcompat` runs the pinned CDP clients against the CDP endpoint (e2e/cdpcompat/README.md).
 
 ```bash
 # Unit + smoke tests (no device needed)
 make test
 
-# E2E tests — boots iOS Simulator + iwdp, tests the commands against real Safari
+# Simulator tests (macOS) — boots iOS Simulator + iwdp, tests the shared
+# WebKit Inspector Protocol helpers and the proxy listing against real Safari
 make test-e2e
-
-# Or manually for debugging:
-make sim-setup          # Prints IWDP_SIM_WS_URL
-export IWDP_SIM_WS_URL=ws://localhost:9222/devtools/page/1
-go test -tags=simulator ./e2e/ -v -run TestSim_Navigate
-make sim-teardown
 ```
 
-> **Note:** E2E tests require macOS with Xcode and `ios-webkit-debug-proxy` installed. GitHub Actions `macos-latest` runners have Xcode and iOS Simulator runtimes pre-installed.
+The supported model is one Simulator run per user account at a time: setup takes a lease, and every other run is refused while the lease is held. When setup refuses because an earlier run holds the lease, wait until that run has finished; that run tears itself down. Run `make sim-teardown` only after a crashed run, as the manual recovery: it tears down whatever run holds the lease.
+
+To debug one simulator test by hand, run `make sim-setup`. Only when it succeeds, export the variables that it prints (`IWDP_SIM_WS_URL`, `IWDP_SIM_PAGE_URL` and `IWDP_SIM_RUN_TOKEN`) and run the test, for example `go test -tags=simulator ./e2e/ -v -run TestSim_EvaluateBasic`. When you are done, tear down this run only: `./scripts/sim-setup.sh --teardown-run "$IWDP_SIM_RUN_TOKEN"`. A failed setup prints no variables; do not run the tests with values from an earlier setup.
+
+> **Note:** the simulator tests require macOS with Xcode and `ios-webkit-debug-proxy` installed. GitHub Actions `macos-latest` runners have Xcode and iOS Simulator runtimes pre-installed.
+>
+> Setup opens a test page of its own (`IWDP_SIM_PAGE_URL`, unique by a random query) in the Simulator, and the tests run only against that page. Teardown (at the end of `make test-e2e`, in CI, or `make sim-teardown` after a crashed run) shuts down the Simulator only when setup's own boot started it; a Simulator that was already running stays booted. On macOS teardown does not stop the iwdp that setup started: it cannot verify that process, so it prints `kill <pid>`. Check that the pid is that iwdp, then run the command yourself; until then the next setup refuses because port 9221 is in use (docs/device-runbook.md).
 
 ### Project Structure
 
@@ -179,7 +182,11 @@ iwdp-mcp/
 │   │   ├── types.go       # Protocol type definitions
 │   │   ├── domains.go     # Domain enable/disable helpers
 │   │   └── testutil/      # Mock WebSocket server
-│   ├── tools/             # WebKit Inspector Protocol helpers of the legacy commands
+│   ├── commands/          # Command registry (one file per command)
+│   ├── daemon/            # Per-user daemon that owns the page connections
+│   ├── core/              # Sessions, leases, scheduler, desired state
+│   ├── cdp/               # Opt-in CDP endpoint
+│   ├── tools/             # Shared helpers: evaluation, screenshots, DOM lookup, cookies
 │   └── proxy/             # iwdp process detection + management
 └── skills/                # Agent skill (iwdp-cli skills get iwdp)
 ```

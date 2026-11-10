@@ -19,9 +19,10 @@ import (
 // creation, loading and the Go runtime start come before that time.
 //
 // The same process also writes, to the file's path plus exitFileSuffix,
-// how long its command ran: the time from the start that current.begin
-// recorded (when the command's deadline is fixed) to the call of
-// os.Exit by exits, measured on the process's monotonic clock.
+// how long its command ran: the time from the start that current.begin,
+// or for a registry command current.watch or current.started, recorded
+// (when the command's deadline is fixed) to the call of os.Exit by exits,
+// measured on the process's monotonic clock.
 const startFileEnv = "IWDP_CLI_TEST_START_FILE"
 
 // exitFileSuffix names the file of the command's run time (startFileEnv).

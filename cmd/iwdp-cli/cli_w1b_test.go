@@ -125,15 +125,15 @@ func TestCLILeasesWaitLeaseAndClose(t *testing.T) {
 	defer mock.Close()
 	mock.HandleFunc("Runtime.evaluate", map[string]any{"result": map[string]any{"type": "number", "value": 1}})
 	e := with(env, "IWDP_WS_URL="+mock.URL)
-	if res := runCLI(t, "", e, "--session", "s1", "eval", "1"); res.code != 0 {
+	if res := runCLI(t, "", e, "--session", "s1", "eval", "1", "--page", mock.URL); res.code != 0 {
 		t.Fatalf("s1 eval: exit %d, stderr %q", res.code, res.stderr)
 	}
-	res := runCLI(t, "", e, "--session", "s2", "eval", "1")
+	res := runCLI(t, "", e, "--session", "s2", "eval", "1", "--page", mock.URL)
 	wantExit(t, res, 4, "leased by session \"s1\"")
 	if res.elapsed > 3*time.Second {
 		t.Fatalf("the lease error took %v", res.elapsed)
 	}
-	res = runCLI(t, "", e, "--session", "s2", "--wait-lease", "5s", "--timeout", "700ms", "eval", "1")
+	res = runCLI(t, "", e, "--session", "s2", "--wait-lease", "5s", "--timeout", "700ms", "eval", "1", "--page", mock.URL)
 	wantExit(t, res, 124, "timed out")
 	if res.elapsed > 3*time.Second {
 		t.Fatalf("--wait-lease past the deadline ended after %v", res.elapsed)
@@ -142,7 +142,7 @@ func TestCLILeasesWaitLeaseAndClose(t *testing.T) {
 	if info := runCLI(t, "", e, "--session", "s1", "session", "info"); !strings.Contains(info.stdout, "1 leased page") {
 		t.Fatalf("close --all changed s1: %q", info.stdout)
 	}
-	waiter := startCLI(t, e, "--session", "s2", "--wait-lease", "6s", "eval", "1")
+	waiter := startCLI(t, e, "--session", "s2", "--wait-lease", "6s", "eval", "1", "--page", mock.URL)
 	time.Sleep(500 * time.Millisecond)
 	if res := runCLI(t, "", e, "--session", "s1", "close"); res.code != 0 || !strings.Contains(res.stdout, "released 1 page lease") {
 		t.Fatalf("s1 close: exit %d, stdout %q, stderr %q", res.code, res.stdout, res.stderr)
@@ -194,7 +194,7 @@ func TestCLIEvalDeadlineWithDeadProbe(t *testing.T) {
 	if res := runCLI(t, "", e, "session"); res.code != 0 { // starts the daemon
 		t.Fatalf("session: exit %d, stderr %q", res.code, res.stderr)
 	}
-	res, times := runCLITimed(t, e, "eval", "--timeout", "1s", "6*7")
+	res, times := runCLITimed(t, e, "eval", "--timeout", "1s", "--page", f.URL, "6*7")
 	wantExit(t, res, 124, "Runtime.evaluate")
 	t.Logf("eval --timeout 1s: %v from the command's start to its exit call, %v from package initialization to the end of the process, %v including the process start", times.command, times.fromInit, res.elapsed)
 	if times.command > 1200*time.Millisecond {

@@ -13,18 +13,32 @@ import (
 )
 
 // Protocol is the socket API version (design 2.2). A client that sees
-// another number asks an idle daemon to exit and starts its own.
-const Protocol = 1
+// another number, or a daemon that runs another executable
+// (Hello.Executable), asks an idle daemon to exit and starts its own.
+// Protocol 2: /v1/op, /v1/raw, /v1/events and /v1/lease are gone, and
+// RunRequest carries the absolute Deadline instead of a remaining time.
+const Protocol = 2
+
+// previousProtocol is the protocol of the daemons of the release before
+// Protocol 2 (base 70e525d). Its GET /v1/hello, GET /v1/status and POST
+// /v1/shutdown have the request and answer shapes of Protocol 2 (Hello
+// without Executable), so 'daemon status' and 'daemon stop' (Options.NoStart)
+// reach such a daemon after an upgrade.
+const previousProtocol = 1
 
 // Hello is the answer of GET /v1/hello.
 type Hello struct {
-	ID         string    `json:"id"` // random per daemon process (core.Manager.DaemonID)
-	Version    string    `json:"version"`
-	Protocol   int       `json:"protocol"`
-	PID        int       `json:"pid"`
-	StartedAt  time.Time `json:"startedAt"`
-	Transports []string  `json:"transports"`
-	Leases     int       `json:"leases"`
+	ID       string `json:"id"` // random per daemon process (core.Manager.DaemonID)
+	Version  string `json:"version"`
+	Protocol int    `json:"protocol"`
+	// Executable is the executable that the daemon runs, recorded at
+	// its start (reusable); the in-process core of IWDP_NO_DAEMON has
+	// none.
+	Executable Executable `json:"executable,omitzero"`
+	PID        int        `json:"pid"`
+	StartedAt  time.Time  `json:"startedAt"`
+	Transports []string   `json:"transports"`
+	Leases     int        `json:"leases"`
 }
 
 // PageReq selects a page (core.PageRequest on the wire).
@@ -42,50 +56,10 @@ type Owner struct {
 	Takeover    bool   `json:"takeover,omitempty"`
 }
 
-// OpRequest is the body of POST /v1/op.
-type OpRequest struct {
-	Op        string `json:"op"` // begin or end
-	OpID      string `json:"opId,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Class     string `json:"class,omitempty"` // read, mutate, exclusive (default)
-	TimeoutMs int64  `json:"timeoutMs,omitempty"`
-	PageReq
-	Owner
-}
-
 // PageInfo describes the page an operation runs on.
 type PageInfo struct {
-	Key    string `json:"key"`
-	Title  string `json:"title"`
-	Routed bool   `json:"routed"`
-	// Epoch is the lease epoch that the caller acquired (a lease or an
-	// operation); control messages outside an operation carry it.
-	Epoch uint64 `json:"epoch,omitempty"`
-}
-
-// OpReply is the first item of the begin stream.
-type OpReply struct {
-	OpID     string    `json:"opId"`
-	Epoch    uint64    `json:"epoch"`
-	Deadline time.Time `json:"deadline"`
-	Page     PageInfo  `json:"page"`
-}
-
-// RawRequest is the body of POST /v1/raw. Without OpID the daemon runs the
-// call as its own exclusive operation on the selected page. A control-lane
-// message (design 2.10) runs in no queued operation: it names the open
-// operation it was sent from (OpID), or the attached page (Key) and the
-// lease epoch its caller acquired (Epoch); the scheduler refuses it when
-// that epoch is not the page's current one.
-type RawRequest struct {
-	OpID      string          `json:"opId,omitempty"`
-	Key       string          `json:"key,omitempty"`
-	Epoch     uint64          `json:"epoch,omitempty"`
-	Method    string          `json:"method"`
-	Params    json.RawMessage `json:"params,omitempty"`
-	TimeoutMs int64           `json:"timeoutMs,omitempty"`
-	PageReq
-	Owner
+	Key   string `json:"key"`
+	Title string `json:"title"`
 }
 
 // ErrorReply is an error on the wire.
@@ -96,41 +70,32 @@ type ErrorReply struct {
 	Timeout bool   `json:"timeout,omitempty"`
 }
 
-// RawReply is the answer of POST /v1/raw.
-type RawReply struct {
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *ErrorReply     `json:"error,omitempty"`
-}
-
-// LeaseRequest is the body of POST /v1/lease.
-type LeaseRequest struct {
-	Op        string `json:"op"` // acquire, release, break, renew, takeover
-	TimeoutMs int64  `json:"timeoutMs,omitempty"`
-	PageReq
-	Owner
-}
-
-// Item is one NDJSON line of a stream.
+// Item is one NDJSON line of the /v1/run stream.
 type Item struct {
-	Type    string          `json:"type"` // op, subscribed, event, line, result, error, closed
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Text    string          `json:"text,omitempty"`
-	Data    json.RawMessage `json:"data,omitempty"`
-	Op      *OpReply        `json:"op,omitempty"`
-	Page    *PageInfo       `json:"page,omitempty"`
-	Error   *ErrorReply     `json:"error,omitempty"`
-	Dropped int64           `json:"dropped,omitempty"`
+	Type  string          `json:"type"` // line, page (the operation's page), result, error
+	Text  string          `json:"text,omitempty"`
+	Data  json.RawMessage `json:"data,omitempty"`
+	Page  *PageInfo       `json:"page,omitempty"`
+	Error *ErrorReply     `json:"error,omitempty"`
 }
 
 // RunRequest is the body of POST /v1/run (a registry command, design 2.2).
 // Argv is the command line after the global flags; the daemon parses it
 // with the same registry spec as the client.
+//
+// Deadline is the caller's absolute deadline of the command: the daemon
+// runs the operation under it, so a request that reaches the daemon late
+// does not get more time, and one that arrives after it does no page
+// work. The zero value means DefaultCommandTimeout from the request's
+// arrival. Client and daemon run on one machine and read the same wall
+// clock (the monotonic reading does not cross the socket); a step of
+// that clock while a request is in flight shifts its deadline by the
+// step. That limit is accepted.
 type RunRequest struct {
-	Argv      []string `json:"argv"`
-	TimeoutMs int64    `json:"timeoutMs"`
-	Cwd       string   `json:"cwd"`
-	JSON      bool     `json:"json,omitempty"`
+	Argv     []string  `json:"argv"`
+	Deadline time.Time `json:"deadline,omitzero"`
+	Cwd      string    `json:"cwd"`
+	JSON     bool      `json:"json,omitempty"`
 	PageReq
 	Owner
 }
@@ -166,8 +131,6 @@ func toErrorReply(err error) *ErrorReply {
 	}
 	return r
 }
-
-func ms(d time.Duration) int64 { return int64(d / time.Millisecond) }
 
 func durMs(v int64, def time.Duration) time.Duration {
 	if v <= 0 {

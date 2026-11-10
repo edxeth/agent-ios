@@ -127,12 +127,14 @@ func freeAddr(t *testing.T) string {
 }
 
 // startProcess starts a command in its own process group and kills the
-// group at cleanup, so no MiniBrowser or broadwayd survives the test.
+// group at cleanup, so no MiniBrowser or broadwayd survives the test; on
+// Linux the command also ends when the test process ends without its
+// cleanup (ownedProcAttr).
 func startProcess(t *testing.T, env []string, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Env = append(os.Environ(), env...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = ownedProcAttr()
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting %s: %v", name, err)
 	}
@@ -217,7 +219,7 @@ func runBroadwayd(display string, port int) (func(), string, error) {
 	var out bytes.Buffer // read only after Wait returned
 	cmd := exec.Command("broadwayd", display)
 	cmd.Stdout, cmd.Stderr = &out, &out
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = ownedProcAttr()
 	if err := cmd.Start(); err != nil {
 		return nil, "", fmt.Errorf("starting broadwayd: %w", err)
 	}

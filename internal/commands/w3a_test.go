@@ -138,8 +138,9 @@ func (h *rtHarness) setGen(g uint64) {
 
 func (h *rtHarness) run(args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
-	code := RunCLI(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb,
+	code := RunCLIStarted(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb, nil,
 		func(context.Context, *Invocation) (Env, error) { return pageEnv{h.ps}, nil })
+
 	return code, strings.TrimRight(out.String(), "\n"), errb.String()
 }
 
@@ -486,30 +487,30 @@ func TestReadURL(t *testing.T) {
 	defer srv.Close()
 	var out, errb bytes.Buffer
 	noPage := func(context.Context, *Invocation) (Env, error) { return fakeEnv{}, nil }
-	if code := RunCLI(context.Background(), []string{"read", srv.URL + "/"}, &out, &errb, noPage); code != 0 {
+	if code := RunCLIStarted(context.Background(), []string{"read", srv.URL + "/"}, &out, &errb, nil, noPage); code != 0 {
 		t.Fatalf("read url: exit %d: %s", code, errb.String())
 	}
 	if got, want := strings.TrimRight(out.String(), "\n"), "Main title\n\nHello world !\n\nOne\nTwo\n\nSub"; got != want {
 		t.Fatalf("read url =\n%q\nwant\n%q", got, want)
 	}
 	out.Reset()
-	if code := RunCLI(context.Background(), []string{"read", "--outline", srv.URL + "/"}, &out, &errb, noPage); code != 0 {
+	if code := RunCLIStarted(context.Background(), []string{"read", "--outline", srv.URL + "/"}, &out, &errb, nil, noPage); code != 0 {
 		t.Fatalf("read --outline url: exit %d: %s", code, errb.String())
 	}
 	if got := strings.TrimRight(out.String(), "\n"); got != "# Main title\n### Sub" {
 		t.Fatalf("read --outline url = %q", got)
 	}
 	errb.Reset()
-	if code := RunCLI(context.Background(), []string{"read", srv.URL + "/missing"}, &out, &errb, noPage); code != ExitError || !strings.Contains(errb.String(), "404") {
+	if code := RunCLIStarted(context.Background(), []string{"read", srv.URL + "/missing"}, &out, &errb, nil, noPage); code != ExitError || !strings.Contains(errb.String(), "404") {
 		t.Fatalf("read of a 404: exit %d, %q", code, errb.String())
 	}
 	// Plain text is returned as it is; other content types are an error.
 	out.Reset()
-	if code := RunCLI(context.Background(), []string{"read", srv.URL + "/plain"}, &out, &errb, noPage); code != 0 || out.String() != "just text\n" {
+	if code := RunCLIStarted(context.Background(), []string{"read", srv.URL + "/plain"}, &out, &errb, nil, noPage); code != 0 || out.String() != "just text\n" {
 		t.Fatalf("read of text/plain: exit %d, %q", code, out.String())
 	}
 	errb.Reset()
-	if code := RunCLI(context.Background(), []string{"read", srv.URL + "/image"}, &out, &errb, noPage); code != ExitError || !strings.Contains(errb.String(), "image/png") {
+	if code := RunCLIStarted(context.Background(), []string{"read", srv.URL + "/image"}, &out, &errb, nil, noPage); code != ExitError || !strings.Contains(errb.String(), "image/png") {
 		t.Fatalf("read of an image: exit %d, %q", code, errb.String())
 	}
 }
@@ -542,14 +543,16 @@ func TestDiffSnapshot(t *testing.T) {
 // an actionable error, not a nil dereference.
 func TestRuntimeCommandsNeedRuntime(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := RunCLI(context.Background(), []string{"get", "title"}, &out, &errb,
+	code := RunCLIStarted(context.Background(), []string{"get", "title"}, &out, &errb, nil,
 		func(context.Context, *Invocation) (Env, error) { return pageEnv{&core.PageSession{}}, nil })
+
 	if code != ExitError || !strings.Contains(errb.String(), "agent runtime") {
 		t.Fatalf("exit %d, %q", code, errb.String())
 	}
 	errb.Reset()
-	code = RunCLI(context.Background(), []string{"diff", "snapshot"}, &out, &errb,
+	code = RunCLIStarted(context.Background(), []string{"diff", "snapshot"}, &out, &errb, nil,
 		func(context.Context, *Invocation) (Env, error) { return pageEnv{&core.PageSession{}}, nil })
+
 	if code != ExitError || !strings.Contains(errb.String(), "agent runtime") {
 		t.Fatalf("diff snapshot without refs: exit %d, %q", code, errb.String())
 	}

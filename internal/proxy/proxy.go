@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -40,28 +39,25 @@ const (
 	DefaultLastDevicePort = 9229
 )
 
-// listingHost is used for all proxy HTTP requests. Use 127.0.0.1, not
-// localhost: localhost resolves to ::1 first, and some hosts' firewalls drop
-// ::1, turning probes into multi-second hangs instead of fast dials.
-const listingHost = "127.0.0.1"
-
-// listingAddr is iwdp's listing address, listingHost:DefaultListingPort.
-// It is a variable only so that the e2e tests can link their binaries
-// with a private fake listing (-ldflags -X, e2e/listing_w1c6_test.go);
-// no flag or environment variable sets it.
+// listingAddr is iwdp's listing address, 127.0.0.1:DefaultListingPort.
+// Use 127.0.0.1, not localhost: localhost resolves to ::1 first, and some
+// hosts' firewalls drop ::1, turning probes into multi-second hangs instead
+// of fast dials. It is a variable only so that the e2e tests can link their
+// binaries with a private fake listing (-ldflags -X,
+// e2e/listing_w1c6_test.go); no flag or environment variable sets it.
 var listingAddr = "127.0.0.1:9221"
 
-// ListingAddr is iwdp's default listing address (host:port), which
-// IsRunning, Start, ListDevices and the iwdp transport use.
+// ListingAddr is iwdp's default listing address (host:port), which Start,
+// ListDevicesContext and the iwdp transport use.
 func ListingAddr() string { return listingAddr }
 
-// ProbeBudget bounds one check whether iwdp's listing answers (CheckListing,
-// IsRunning and the daemon's check). iwdp is a single-threaded event loop;
+// ProbeBudget bounds one check whether iwdp's listing answers (CheckListing
+// and the daemon's check). iwdp is a single-threaded event loop;
 // under heavy WebKit inspector traffic or a loaded host its /json can stall
 // past 2 s, and a shorter probe reports a running iwdp as stopped.
 const ProbeBudget = 5 * time.Second
 
-// readTimeout bounds one read of a listing (ListDevices, ListPages).
+// readTimeout bounds one read of the device list (ListDevicesContext).
 const readTimeout = 5 * time.Second
 
 // StartBackoff is how long Start returns the error of a failed start
@@ -108,9 +104,9 @@ func CheckListing(ctx context.Context, addr string) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("checking ios_webkit_debug_proxy on %s: %w", addr, ctx.Err())
 	}
-	var limit time.Duration
+	limit := ""
 	if errors.Is(pctx.Err(), context.DeadlineExceeded) {
-		limit = ProbeBudget
+		limit = "within " + ProbeBudget.String()
 	}
 	return ownerFailure(addr, err, bindErr, limit)
 }
@@ -132,24 +128,29 @@ func ReadFailure(ctx context.Context, addr string, err error) error {
 	}
 	// Only the request's own failure (*url.Error) is a failed request; the
 	// read wraps it with its own advice ("Is ios_webkit_debug_proxy
-	// running?", ListDevices and ListPages), which is dropped.
+	// running?", ListDevicesContext), which is dropped.
 	var ue *url.Error
 	if !errors.As(err, &ue) {
 		return logcause.Errorf("ios_webkit_debug_proxy on %s answered GET /json, but its answer is not a usable list (%v). A process owns the port, so no second iwdp is started", addr, err)
 	}
 	err = ue
-	var limit time.Duration
+	limit := ""
 	var ne net.Error
-	if errors.As(err, &ne) && ne.Timeout() {
-		limit = readTimeout
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		// The caller's deadline (the command's) ended the read, not
+		// readTimeout, which may be longer.
+		limit = "before the command deadline"
+	case errors.As(err, &ne) && ne.Timeout():
+		limit = "within " + readTimeout.String()
 	}
 	return ownerFailure(addr, err, bindErr, limit)
 }
 
 // ownerFailure describes err, a failed GET /json on addr, which a process
-// owns (bindErr is why addr cannot be bound). limit is the time limit that
-// ended the request, or 0 when no limit was hit.
-func ownerFailure(addr string, err, bindErr error, limit time.Duration) error {
+// owns (bindErr is why addr cannot be bound). limit names the time limit
+// that ended the request ("within 5s"), or is empty when no limit was hit.
+func ownerFailure(addr string, err, bindErr error, limit string) error {
 	var status statusError
 	if errors.As(err, &status) {
 		return fmt.Errorf("the process on %s answers GET /json with HTTP %d, which is not ios_webkit_debug_proxy's device list; no second iwdp is started while it owns the port", addr, int(status))
@@ -158,15 +159,15 @@ func ownerFailure(addr string, err, bindErr error, limit time.Duration) error {
 		return logcause.Errorf("%s refuses connections but cannot be bound (%v): another process holds the port without listening, or the address is not local; no second iwdp is started", addr, bindErr)
 	}
 	const owned = "A process owns the port, so no second iwdp is started"
-	const restart = "'iwdp-cli restart-iwdp' restarts it only when iwdp-cli, or an earlier iwdp-mcp, started and recorded it; it refuses another program's iwdp"
+	const restart = "'iwdp-cli restart-iwdp' restarts it only when iwdp-cli started and recorded it; it refuses another program's iwdp"
 	switch {
 	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET):
 		// The second device check saw this from an iwdp while a page
 		// WebSocket was open (docs/known-limits.md); the cause is unknown.
 		return logcause.Errorf("ios_webkit_debug_proxy on %s closed the connection without an answer to GET /json (an empty reply: %v). An iwdp has been seen to do this while a WebSocket to one of its pages is open, for example the iwdp-cli daemon's: run 'iwdp-cli daemon stop' to close the daemon's page connections, or restart that iwdp. %s. %s",
 			addr, err, owned, restart)
-	case limit > 0:
-		return logcause.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json within %s (%v): it is busy or stuck. %s; wait and try again. %s",
+	case limit != "":
+		return logcause.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json %s (%v): it is busy or stuck. %s; wait and try again. %s",
 			addr, limit, err, owned, restart)
 	}
 	return logcause.Errorf("GET /json on %s failed (%v), so ios_webkit_debug_proxy does not answer there. %s. %s", addr, err, owned, restart)
@@ -223,16 +224,8 @@ func NewStarter(addr string) *Starter {
 	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens, identify: readIdentity, kill: syscall.Kill}
 }
 
-// std is the Starter of iwdp's default listing address, used by IsRunning
-// and Start.
+// std is the Starter of iwdp's default listing address, used by Start.
 var std = NewStarter(listingAddr)
-
-// IsRunning checks if ios_webkit_debug_proxy answers on the listing port
-// (9221) within ProbeBudget. This is the canonical way to detect a running
-// proxy.
-func IsRunning() bool {
-	return CheckListing(context.Background(), std.addr) == nil
-}
 
 // Start starts ios_webkit_debug_proxy on the default listing port unless it
 // already runs (Starter.Start).
@@ -511,16 +504,19 @@ func stopGroup(pgid int, exited <-chan struct{}) {
 	}
 }
 
-// ListDevices fetches connected devices from the listing port (9221).
-// Each device entry contains a URL like "localhost:9224" indicating
-// which port to query for that device's pages.
-func ListDevices() ([]webkit.DeviceEntry, error) {
-	return listDevicesFromURL("http://" + listingAddr + "/json")
+// ListDevicesContext is ListDevices that also ends when ctx ends (a
+// command deadline); the read stays bounded by readTimeout.
+func ListDevicesContext(ctx context.Context) ([]webkit.DeviceEntry, error) {
+	return listDevicesFromURL(ctx, "http://"+listingAddr+"/json")
 }
 
-func listDevicesFromURL(u string) ([]webkit.DeviceEntry, error) {
+func listDevicesFromURL(ctx context.Context, u string) ([]webkit.DeviceEntry, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building the device list request for %s: %w", u, err)
+	}
 	client := &http.Client{Timeout: readTimeout}
-	resp, err := client.Get(u)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to iwdp: %w\nIs ios_webkit_debug_proxy running?", err)
 	}
@@ -535,67 +531,6 @@ func listDevicesFromURL(u string) ([]webkit.DeviceEntry, error) {
 		return nil, fmt.Errorf("decoding device list: %w", err)
 	}
 	return devices, nil
-}
-
-// DeviceAddr is the address (host:port) of the device port devicePort,
-// whose GET /json ListPages reads.
-func DeviceAddr(devicePort int) string {
-	return net.JoinHostPort(listingHost, strconv.Itoa(devicePort))
-}
-
-// ListPages fetches open pages/tabs from a device-specific port.
-// The port comes from DeviceEntry.URL (e.g., "localhost:9224").
-func ListPages(devicePort int) ([]webkit.PageEntry, error) {
-	u := "http://" + DeviceAddr(devicePort) + "/json"
-	client := &http.Client{Timeout: readTimeout}
-	resp, err := client.Get(u)
-	if err != nil {
-		return nil, fmt.Errorf("connecting to device on port %d: %w\nCheck the device port from 'list_devices' output", devicePort, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("device on port %d returned HTTP %d", devicePort, resp.StatusCode)
-	}
-
-	var pages []webkit.PageEntry
-	if err := json.NewDecoder(resp.Body).Decode(&pages); err != nil {
-		return nil, fmt.Errorf("decoding page list: %w", err)
-	}
-	return pages, nil
-}
-
-// ListAllPages fetches pages from all connected devices.
-// It first lists devices on port 9221, then queries each device's port for pages.
-// If some devices fail but others succeed, partial results are returned.
-// If ALL devices fail, a combined error is returned.
-func ListAllPages() ([]webkit.PageEntry, error) {
-	devices, err := ListDevices()
-	if err != nil {
-		return nil, err
-	}
-
-	var allPages []webkit.PageEntry
-	var errs []error
-	for _, d := range devices {
-		port, err := DevicePort(d)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("device %q: %w", d.DeviceName, err))
-			continue
-		}
-		pages, err := ListPages(port)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("device %q (port %d): %w", d.DeviceName, port, err))
-			continue
-		}
-		allPages = append(allPages, pages...)
-	}
-
-	// If all devices failed, return a combined error.
-	if len(allPages) == 0 && len(errs) > 0 {
-		return nil, fmt.Errorf("all devices failed: %w", errors.Join(errs...))
-	}
-	return allPages, nil
 }
 
 // DevicePort extracts the port number from a DeviceEntry's URL field.

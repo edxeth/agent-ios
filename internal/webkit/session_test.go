@@ -533,7 +533,7 @@ func TestSessionCloseStopsSubscriberWorkers(t *testing.T) {
 	// goroutine of the process, so other tests cannot disturb it.
 	const n = 50
 	for i := 0; i < n; i++ {
-		s.OnEvent("Test.event", func(string, json.RawMessage) {})
+		s.Subscribe("Test.event", func(string, json.RawMessage) {})
 	}
 	if w := s.workers.Load(); w != n {
 		t.Fatalf("subscriber workers = %d after %d subscriptions, want %d", w, n, n)

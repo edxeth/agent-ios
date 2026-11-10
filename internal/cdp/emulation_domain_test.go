@@ -30,7 +30,7 @@ func (w *w5b2Page) cliOverride(t *testing.T, method, params string) {
 		t.Fatal(err)
 	}
 	defer w.r.m.End(mo.ID)
-	if _, err := w.r.m.Raw(ctxFor(t, 5*time.Second), mo.ID, method, []byte(params)); err != nil {
+	if _, err := w.r.m.RawAs(ctxFor(t, 5*time.Second), mo, core.SessionOwner("legacy", mo.Session), method, []byte(params)); err != nil {
 		t.Fatal(err)
 	}
 }

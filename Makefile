@@ -42,23 +42,49 @@ $(CDPCOMPAT)/node_modules/.package-lock.json: $(CDPCOMPAT)/package.json $(CDPCOM
 	cd $(CDPCOMPAT) && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund
 	chmod +x $(CDPCOMPAT)/node_modules/agent-browser/bin/agent-browser-*
 
-# E2E tests — boots iOS Simulator + iwdp, runs all tools against real Safari.
+# iOS Simulator tests (macOS only) — boots an iOS Simulator and starts iwdp,
+# then runs the e2e suite with the simulator tests (the shared helpers of
+# internal/tools against real Safari, and the proxy listing tests).
+# Setup's exit status is checked before its output is evaluated: a failed
+# setup, or one that sets no URL, fails the target instead of letting the
+# simulator tests skip.
+# The automatic teardown passes the run token that setup printed, so it
+# acts only on this run's lease: never on another run's Simulator, also
+# when this setup was refused. One Simulator run per user account at a
+# time; another run is refused through the lease.
 # Usage: make test-e2e
-#   or:  make sim-setup && go test -tags=simulator ./e2e/ -v && make sim-teardown
+# To debug one test by hand: run make sim-setup; only when it succeeds,
+# export the variables that it prints and run go test with
+# -tags=simulator and -run for that test; then tear down with the setup
+# script's --teardown-run mode and the printed IWDP_SIM_RUN_TOKEN.
+# make sim-teardown is the manual recovery after a crashed run only.
 sim-setup:
-	@eval "$$(./scripts/sim-setup.sh)" && echo "IWDP_SIM_WS_URL=$$IWDP_SIM_WS_URL"
+	@unset IWDP_SIM_WS_URL IWDP_SIM_PAGE_URL IWDP_SIM_RUN_TOKEN; \
+		out=$$(./scripts/sim-setup.sh) || { rc=$$?; echo "sim-setup.sh failed (exit $$rc); see its messages above" >&2; exit $$rc; }; \
+		eval "$$out"; \
+		if [ -z "$$IWDP_SIM_WS_URL" ] || [ -z "$$IWDP_SIM_PAGE_URL" ]; then \
+			echo "sim-setup.sh set no IWDP_SIM_WS_URL or IWDP_SIM_PAGE_URL" >&2; ./scripts/sim-setup.sh --teardown-run "$$IWDP_SIM_RUN_TOKEN"; exit 1; \
+		fi; \
+		echo "$$out"
 
+# Manual recovery after a crashed run: tears down whatever run holds the
+# lease. Never run it while another run may still be active.
 sim-teardown:
 	@./scripts/sim-setup.sh --teardown
 
 test-e2e:
 	@echo "==> Setting up iOS Simulator..."
-	@eval "$$(./scripts/sim-setup.sh)" && \
-		echo "==> Running e2e tests..." && \
-		go test -tags=simulator ./e2e/ -v -count=1 -timeout=300s && \
-		echo "==> Tearing down..." && \
-		./scripts/sim-setup.sh --teardown
-	@./scripts/sim-setup.sh --teardown 2>/dev/null || true
+	@unset IWDP_SIM_WS_URL IWDP_SIM_PAGE_URL IWDP_SIM_RUN_TOKEN; \
+		out=$$(./scripts/sim-setup.sh) || { rc=$$?; echo "sim-setup.sh failed (exit $$rc); see its messages above" >&2; exit $$rc; }; \
+		eval "$$out"; \
+		if [ -z "$$IWDP_SIM_WS_URL" ] || [ -z "$$IWDP_SIM_PAGE_URL" ]; then \
+			echo "sim-setup.sh set no IWDP_SIM_WS_URL or IWDP_SIM_PAGE_URL" >&2; ./scripts/sim-setup.sh --teardown-run "$$IWDP_SIM_RUN_TOKEN"; exit 1; \
+		fi; \
+		echo "==> Running e2e tests..."; \
+		go test -tags=simulator ./e2e/ -v -count=1 -timeout=300s; rc=$$?; \
+		echo "==> Tearing down..."; \
+		./scripts/sim-setup.sh --teardown-run "$$IWDP_SIM_RUN_TOKEN"; \
+		exit $$rc
 
 # Command reference (docs/commands.md) from the command registry
 docs:

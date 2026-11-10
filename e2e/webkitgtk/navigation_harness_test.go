@@ -193,19 +193,19 @@ func (e *navEnv) run(session string, argv ...string) (string, int, string) {
 func (e *navEnv) runAs(owner daemon.Owner, argv ...string) (string, int, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	timeout := int64(30000)
+	timeout := 30 * time.Second
 	for i := 0; i+1 < len(argv); i++ {
 		if argv[i] == "--timeout" {
 			d, err := time.ParseDuration(argv[i+1])
 			if err != nil {
 				return "", 0, "", err
 			}
-			timeout = d.Milliseconds()
+			timeout = d
 			argv = append(append([]string{}, argv[:i]...), argv[i+2:]...)
 			break
 		}
 	}
-	r, err := e.c.Run(ctx, daemon.RunRequest{Argv: argv, TimeoutMs: timeout, Owner: owner}, nil)
+	r, err := e.c.Run(ctx, daemon.RunRequest{Argv: argv, Deadline: time.Now().Add(timeout), Owner: owner}, nil)
 	if err != nil {
 		var re *daemon.RemoteError
 		if errors.As(err, &re) {

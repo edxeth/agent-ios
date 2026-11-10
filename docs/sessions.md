@@ -41,16 +41,16 @@ The daemon cannot see every inspector client: another agent's script, an older i
    ```
 
    Without `--device` the reservation covers every device. It fails when another owner holds a live reservation. The reservation is renewed while the owner holds leases. A page command without a matching reservation fails with exit 6.
-2. The reservation owner of a command is `--reservation <owner>` or `IWDP_DEVICE_RESERVATION`, else the session name. An orchestrator can reserve once and give its workers `IWDP_DEVICE_RESERVATION=<owner>`.
+2. The reservation owner of a command is `--reservation <owner>` or `IWDP_DEVICE_RESERVATION`, else the session name. An orchestrator can reserve once and give its workers its owner name in `IWDP_DEVICE_RESERVATION` (for example `export IWDP_DEVICE_RESERVATION="$OWNER"`).
 3. Release at the end of the run: `iwdp-cli device release --owner <owner>`. `device list` shows the live reservations.
 4. Local targets (WebKitGTK, simulators) need no reservation.
-5. Before the first attach to a page, the daemon checks the reservation and then a busy hint: iwdp lists an empty `devtoolsFrontendUrl` for a page that already has a client, but only when iwdp runs with its frontend. With `--no-frontend` (how iwdp-mcp starts it) ownership is unknown, and the attach is accepted only inside a reservation.
+5. Before the first attach to a page, the daemon checks the reservation and then a busy hint: iwdp lists an empty `devtoolsFrontendUrl` for a page that already has a client, but only when iwdp runs with its frontend. With `--no-frontend` (how iwdp-cli starts it) ownership is unknown, and the attach is accepted only inside a reservation.
 6. **Hints and reservations are not locks.** They do not stop a client that ignores reservations (another tool, a raw script, Safari Web Inspector).
 7. Tab discovery (`tab list`) and the CDP endpoint list only pages of devices that the owner reserved.
 
 ## Operations on one page
 
-All entry points (CLI, legacy commands, CDP messages) are operations in one scheduler per page. Commands that change the page (actions, snapshots, which allocate refs) run one at a time in arrival order; reads run in parallel with at most 8 protocol calls in flight. A cancelled command (Ctrl+C) is cancelled in the daemon at once; an action step that was already sent may still have run, and the error says so ("the page may have run step 2 of 3 of type before the reply was lost").
+All entry points (CLI commands and CDP messages) are operations in one scheduler per page. Commands that change the page (actions, snapshots, which allocate refs) run one at a time in arrival order; reads run in parallel with at most 8 protocol calls in flight. A cancelled command (Ctrl+C) is cancelled in the daemon at once; an action step that was already sent may still have run, and the error says so ("the page may have run step 2 of 3 of type before the reply was lost").
 
 ## Rules for agents
 

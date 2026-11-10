@@ -210,13 +210,20 @@ func (p *Page) dropReleased(session string) {
 func owner(kind, session string) core.Owner { return core.SessionOwner(kind, session) }
 
 // acquireDomain makes o an owner of domain and sends domain.enable when o
-// is the first owner. A failed enable removes the ownership again.
+// is the first owner. A failed enable removes the ownership again only
+// when it provably changed nothing (noEffect). When the enable may have
+// reached the page (its reply lost to a cancellation, a deadline or a
+// lost connection), o keeps the domain, so that the release of o sends
+// domain.disable, as core's releaseFailedAcquire does (review finding
+// R6-6).
 func acquireDomain(ctx context.Context, ps *core.PageSession, c webkit.Caller, o core.Owner, domain string) error {
 	if !ps.State.Acquire(o, domain) {
 		return nil
 	}
 	if _, err := c.Send(ctx, domain+".enable", nil); err != nil {
-		ps.State.ReleaseDomain(o, domain)
+		if noEffect(err) {
+			ps.State.ReleaseDomain(o, domain)
+		}
 		return fmt.Errorf("%s.enable: %w", domain, err)
 	}
 	return nil

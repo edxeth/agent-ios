@@ -48,7 +48,15 @@ func fixtureDir() string {
 	return filepath.Join(filepath.Dir(file), "..", "fixtures", "runtime")
 }
 
+// lifetimeHelperEnv makes the test binary the child process of
+// TestBrowserEndsWithItsTestProcess (Linux): TestMain then runs only the
+// tests (that one), without the suite's browser and CLI.
+const lifetimeHelperEnv = "IWDP_GTK_LIFETIME_HELPER"
+
 func TestMain(m *testing.M) {
+	if os.Getenv(lifetimeHelperEnv) != "" {
+		os.Exit(m.Run()) // the child of TestBrowserEndsWithItsTestProcess
+	}
 	cleanup, err := setupCLISuite()
 	if err != nil {
 		log.Printf("webkitgtk suite: %v", err)
@@ -88,7 +96,7 @@ func runSuite(m *testing.M) (int, error) {
 	start := func(env []string, name string, args ...string) error {
 		c := exec.Command(name, args...)
 		c.Env = append(os.Environ(), env...)
-		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		c.SysProcAttr = ownedProcAttr()
 		if err := c.Start(); err != nil {
 			return fmt.Errorf("starting %s: %w", name, err)
 		}
@@ -250,8 +258,9 @@ func (env) ResolvePath(p string) string                       { return p }
 func run(t *testing.T, ps *core.PageSession, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := commands.RunCLI(context.Background(), append([]string{"--timeout", "20s"}, args...), &out, &errb,
+	code := commands.RunCLIStarted(context.Background(), append([]string{"--timeout", "20s"}, args...), &out, &errb, nil,
 		func(context.Context, *commands.Invocation) (commands.Env, error) { return env{ps}, nil })
+
 	return code, strings.TrimRight(out.String(), "\n"), errb.String()
 }
 

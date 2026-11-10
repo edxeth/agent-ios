@@ -109,7 +109,16 @@ func notRunning(err error) bool {
 // it starts one (design 2.3): an exclusive flock on daemon.lock, a second
 // check, then "<exe> daemon run" in its own session with stdin closed and
 // output appended to the daemon log, polled every 20 ms for up to 3 s. A
-// daemon of another protocol is asked to exit when it has no leases.
+// daemon of another protocol or another executable (reusable) is asked to
+// exit when it has no leases (retire), only under the lock and after the
+// second check, so that two clients never both replace it: the second
+// one waits for the lock and then reuses the daemon that the first one
+// started. The new daemon starts only when the old one is gone
+// (WaitGone). With o.NoStart (daemon
+// status, daemon stop) no daemon is ever asked to exit: a daemon of this
+// protocol or of previousProtocol is used whatever executable it runs, so
+// that 'daemon status' reports and 'daemon stop' stops the daemon of an
+// older binary, idle or busy.
 // The socket directory is checked (lstat: no symlink, this user's, mode
 // 0700) before any connection, so a socket that another user placed is
 // never trusted. With IWDP_NO_DAEMON=1 the core runs in this process.
@@ -134,13 +143,22 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 	c := newClient(o.Dir)
 	h, err := c.hello(ctx)
 	if err == nil {
-		if h.Protocol == Protocol {
+		if o.NoStart {
+			if h.Protocol != Protocol && h.Protocol != previousProtocol {
+				return nil, fmt.Errorf("daemon version %s (protocol %d) is running at %s; this iwdp-cli speaks protocol %d and cannot inspect or stop it: use the iwdp-cli that started it", h.Version, h.Protocol, SocketPath(o.Dir), Protocol)
+			}
 			c.Hello = h
 			return c, nil
 		}
-		if err := c.retire(ctx, h); err != nil {
+		ok, err := reusable(h)
+		if err != nil {
 			return nil, err
 		}
+		if ok {
+			c.Hello = h
+			return c, nil
+		}
+		// Another protocol or executable: retired under the lock below.
 	} else if !notRunning(err) {
 		return nil, fmt.Errorf("connecting to the iwdp daemon at %s: %w", SocketPath(o.Dir), err)
 	}
@@ -152,9 +170,46 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 		return nil, err
 	}
 	defer unlock()
-	if h, err := c.hello(ctx); err == nil && h.Protocol == Protocol {
-		c.Hello = h // another client started it while this one waited
-		return c, nil
+	h, err = c.hello(ctx)
+	for waited := false; err != nil; waited = true {
+		// No daemon answers. One may still hold run.lock: an exiting
+		// daemon closes its listener before it releases the lock (idle
+		// exit, a 'daemon stop' of another client), and one that starts
+		// takes the lock before it listens. A daemon started now would
+		// exit at once ("already running"), so wait until the lock is
+		// free or a daemon answers.
+		free, ferr := runLockFree(o.Dir)
+		if ferr != nil {
+			return nil, ferr
+		}
+		if free {
+			break
+		}
+		if !waited && runLockWaiting != nil {
+			runLockWaiting()
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("starting the iwdp daemon: a daemon that does not answer holds %s: %w", filepath.Join(o.Dir, "run.lock"), ctx.Err())
+		case <-time.After(startPoll):
+		}
+		c.Close() // a kept-alive connection would still reach the old daemon
+		h, err = c.hello(ctx)
+	}
+	if err == nil {
+		ok, err := reusable(h)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			c.Hello = h // another client started it while this one waited
+			return c, nil
+		}
+		// The daemon of the first hello, or one that another binary
+		// started while this client waited for the lock.
+		if err := c.retire(ctx, h); err != nil {
+			return nil, err
+		}
 	}
 	exited, logPath, err := spawn(o)
 	if err != nil {
@@ -163,9 +218,16 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 	start := time.Now()
 	for {
 		h, err := c.hello(ctx)
-		if err == nil && h.Protocol == Protocol {
-			c.Hello = h
-			return c, nil
+		if err == nil {
+			ok, rerr := reusable(h)
+			if rerr != nil {
+				return nil, rerr
+			}
+			if ok {
+				c.Hello = h
+				return c, nil
+			}
+			err = fmt.Errorf("the daemon that answers (pid %d) runs another executable", h.PID)
 		}
 		select {
 		case werr := <-exited:
@@ -180,11 +242,25 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 	}
 }
 
-// retire asks a daemon of another protocol to exit when it has no leases
-// (design 2.2) and waits until its socket is gone. The daemon checks the
-// leases again when the request arrives (ifIdle).
+// reusable reports whether a client may use the running daemon that
+// answered h: the same protocol, and the same executable content as this
+// process (runsThisExecutable).
+func reusable(h Hello) (bool, error) {
+	if h.Protocol != Protocol {
+		return false, nil
+	}
+	return runsThisExecutable(h.Executable)
+}
+
+// retire asks a daemon of another protocol or executable to exit when it
+// has no leases (design 2.2) and waits until its socket is gone. The
+// daemon checks the leases again when the request arrives (ifIdle).
 func (c *Client) retire(ctx context.Context, h Hello) error {
-	busy := fmt.Errorf("daemon version %s (protocol %d) is running with active sessions; run 'iwdp-cli daemon stop' when they finish", h.Version, h.Protocol)
+	build := ""
+	if h.Protocol == Protocol {
+		build = ", another executable"
+	}
+	busy := fmt.Errorf("daemon version %s (protocol %d%s) is running with active sessions; run 'iwdp-cli daemon stop' when they finish", h.Version, h.Protocol, build)
 	if h.Leases > 0 {
 		return busy
 	}
@@ -195,20 +271,38 @@ func (c *Client) retire(ctx context.Context, h Hello) error {
 	if out.Error != nil {
 		return fmt.Errorf("%w (%s)", busy, out.Error.Message)
 	}
+	if retireReplied != nil {
+		retireReplied()
+	}
 	c.Close()
 	return c.WaitGone(ctx, stopWait)
 }
 
-// WaitGone waits until no daemon answers on the socket.
+// retireReplied, when set, is called when the daemon that retire asked
+// to exit has replied. Tests set it to hold a client there.
+var retireReplied func()
+
+// WaitGone waits until no daemon answers on the socket and the daemon
+// that answered has ended: it closes its listener before it releases
+// run.lock (Run), and a daemon started before that release exits at
+// once ("already running").
 func (c *Client) WaitGone(ctx context.Context, limit time.Duration) error {
 	end := time.Now().Add(limit)
 	for {
 		c.Close() // a kept-alive connection would still reach the old daemon
+		still := "answering"
 		if _, err := c.hello(ctx); err != nil && notRunning(err) {
-			return nil
+			free, err := runLockFree(c.dir)
+			if err != nil {
+				return err
+			}
+			if free {
+				return nil
+			}
+			still = "holding " + filepath.Join(c.dir, "run.lock")
 		}
 		if time.Now().After(end) {
-			return fmt.Errorf("the iwdp daemon at %s is still answering after %s", SocketPath(c.dir), limit)
+			return fmt.Errorf("the iwdp daemon at %s is still %s after %s", SocketPath(c.dir), still, limit)
 		}
 		select {
 		case <-ctx.Done():
@@ -218,13 +312,46 @@ func (c *Client) WaitGone(ctx context.Context, limit time.Duration) error {
 	}
 }
 
+// runLockFree reports whether no daemon holds run.lock of dir (runLock):
+// it takes the lock without waiting and releases it at once. A missing
+// lock file is free.
+func runLockFree(dir string) (bool, error) {
+	path := filepath.Join(dir, "run.lock")
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("daemon run lock: %w", err)
+	}
+	defer func() { _ = f.Close() }() // closing also releases the lock
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("daemon run lock %s: %w", path, err)
+	}
+	return true, nil
+}
+
+// runLockWaiting, when set, is called once when Connect finds run.lock
+// held while no daemon answers, before it polls. Tests set it to learn
+// that a client waits for that lock.
+var runLockWaiting func()
+
+// lockWaiting, when set, is called once when lockFile finds the lock
+// held, before it polls. Tests set it to learn that a client waits for
+// the startup lock.
+var lockWaiting func()
+
 // lockFile takes an exclusive flock on path, polling until ctx ends.
 func lockFile(ctx context.Context, path string) (func(), error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("daemon lock: %w", err)
 	}
-	for {
+	for waited := false; ; waited = true {
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
 			return func() {
@@ -235,6 +362,9 @@ func lockFile(ctx context.Context, path string) (func(), error) {
 		if !errors.Is(err, syscall.EWOULDBLOCK) {
 			_ = f.Close()
 			return nil, fmt.Errorf("daemon lock %s: %w", path, err)
+		}
+		if !waited && lockWaiting != nil {
+			lockWaiting()
 		}
 		select {
 		case <-ctx.Done():
@@ -383,37 +513,6 @@ func (c *Client) Shutdown(ctx context.Context, force bool) error {
 	return nil
 }
 
-// Lease runs a lease operation (design 2.5) and returns the page status.
-func (c *Client) Lease(ctx context.Context, req LeaseRequest) ([]core.PageStatus, error) {
-	var out struct {
-		Pages []core.PageStatus `json:"pages"`
-		Error *ErrorReply       `json:"error"`
-	}
-	if err := c.call(ctx, http.MethodPost, "/v1/lease", req, &out); err != nil {
-		return nil, err
-	}
-	if out.Error != nil {
-		return nil, &RemoteError{*out.Error}
-	}
-	return out.Pages, nil
-}
-
-// Raw sends one protocol call (design 2.10). A deadline of ctx is sent as
-// the call's timeout.
-func (c *Client) Raw(ctx context.Context, req RawRequest) (json.RawMessage, error) {
-	if dl, ok := ctx.Deadline(); ok && req.TimeoutMs == 0 {
-		req.TimeoutMs = max(ms(time.Until(dl)), 1)
-	}
-	var out RawReply
-	if err := c.call(ctx, http.MethodPost, "/v1/raw", req, &out); err != nil {
-		return nil, err
-	}
-	if out.Error != nil {
-		return nil, &RemoteError{*out.Error}
-	}
-	return out.Result, nil
-}
-
 // RunResult is the result item of a registry command.
 type RunResult struct {
 	Text string
@@ -423,8 +522,15 @@ type RunResult struct {
 // Run runs a registry command in the daemon (POST /v1/run); onLine gets
 // each streamed line before the result.
 func (c *Client) Run(ctx context.Context, req RunRequest, onLine func(string)) (RunResult, error) {
-	if dl, ok := ctx.Deadline(); ok && req.TimeoutMs == 0 {
-		req.TimeoutMs = max(ms(time.Until(dl)), 1)
+	return c.RunWithPage(ctx, req, onLine, nil)
+}
+
+// RunWithPage is Run; onPage, when not nil, gets the page that the
+// command's operation runs on as soon as the daemon has it (a "page"
+// item), so that a later error can name the page.
+func (c *Client) RunWithPage(ctx context.Context, req RunRequest, onLine func(string), onPage func(PageInfo)) (RunResult, error) {
+	if dl, ok := ctx.Deadline(); ok && req.Deadline.IsZero() {
+		req.Deadline = dl
 	}
 	resp, err := c.request(ctx, http.MethodPost, "/v1/run", req)
 	if err != nil {
@@ -444,6 +550,10 @@ func (c *Client) Run(ctx context.Context, req RunRequest, onLine func(string)) (
 		case it.Type == "line":
 			if onLine != nil {
 				onLine(it.Text)
+			}
+		case it.Type == "page" && it.Page != nil:
+			if onPage != nil {
+				onPage(*it.Page)
 			}
 		case it.Type == "result":
 			return RunResult{Text: it.Text, Data: it.Data}, nil

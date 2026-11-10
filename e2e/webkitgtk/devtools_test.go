@@ -19,8 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
-	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
 )
 
@@ -497,93 +495,56 @@ func TestCredentialsStayOnTheirOrigin(t *testing.T) {
 }
 
 // 7.7 test 8: with a netlog capture and a route active, extra headers set
-// and then removed ('{}') are absent from the next request on the wire;
-// the route still applies; the netlog shows the gap and closes the request
-// in flight as capture_reset; an earlier body is reported as gone. The
-// header owner is the registry command or the legacy set_extra_headers
-// tool (through the daemon's legacy bridge).
+// with 'set headers' and then removed ('{}') are absent from the next
+// request on the wire; the route still applies; the netlog shows the gap
+// and closes the request in flight as capture_reset; an earlier body is
+// reported as gone.
 func TestHeaderRemovalOnTheWire(t *testing.T) {
-	for _, owner := range []string{"set headers", "legacy set_extra_headers"} {
-		t.Run(strings.ReplaceAll(owner, " ", "_"), func(t *testing.T) {
-			a := newSite(t, "127.0.0.1")
-			a.html("/", "<!doctype html><title>A</title><p>site A")
-			release := make(chan struct{})
-			a.handle("/slow", func(w http.ResponseWriter, _ *http.Request) {
-				select {
-				case <-release:
-				case <-time.After(20 * time.Second):
-				}
-				_, _ = io.WriteString(w, "slow")
-			})
-			devtoolsBrowser(t, a.url+"/")
-			setHeaders := func(h map[string]string, cmdJSON string) {
-				t.Helper()
-				if owner == "set headers" {
-					mustCLI(t, "set", "headers", cmdJSON)
-					return
-				}
-				legacySetHeaders(t, h)
-			}
-			mustCLI(t, "network", "requests")
-			mustCLI(t, "network", "route", "**/routed*", "--body", "routed")
-			setHeaders(map[string]string{"X-A": "1"}, `{"X-A":"1"}`)
-			js(t, `fetch("/echo?1").then(r => r.text())`)
-			if got := a.waitGot(t, "/echo?1").header.Get("X-A"); got != "1" {
-				t.Fatalf("X-A on the wire after set: %q, want 1", got)
-			}
-			js(t, `window.__slow = fetch("/slow").then(r => r.text(), e => "error: " + e); "started"`)
-			a.waitGot(t, "/slow")
-
-			setHeaders(map[string]string{}, `{}`)
-			close(release)
-			js(t, `fetch("/echo?2").then(r => r.text())`)
-			if v, ok := a.waitGot(t, "/echo?2").header["X-A"]; ok {
-				t.Fatalf("X-A on the wire after removal: %q, want no X-A field", v)
-			}
-			if got := js(t, `fetch("/routed").then(r => r.text())`); got != "routed" {
-				t.Fatalf("the route after the reset: %q, want routed", got)
-			}
-			if n := len(a.got("/routed")); n != 0 {
-				t.Fatalf("the server got the routed request")
-			}
-			out := mustCLI(t, "network", "requests")
-			if !strings.Contains(out, "-- network reset") {
-				t.Fatalf("network requests shows no gap marker:\n%s", out)
-			}
-			slowID := requestID(t, out, a.url+"/slow")
-			if !strings.Contains(out, slowID+" GET 200 capture_reset") {
-				t.Fatalf("the request in flight across the reset (%s) is not closed as capture_reset:\n%s", slowID, out)
-			}
-			earlier := requestID(t, out, a.url+"/echo?1")
-			r := cli(t, "network", "request", earlier, "--body")
-			if r.code == 0 || !strings.Contains(r.stderr, "no longer available") {
-				t.Fatalf("network request %s --body after the reset: exit %d, stdout %q, stderr %q; want the body reported as gone", earlier, r.code, r.stdout, r.stderr)
-			}
-		})
-	}
-}
-
-// legacySetHeaders runs the legacy set_extra_headers tool through the
-// daemon's legacy bridge for the default session (design 2.10).
-func legacySetHeaders(t *testing.T, h map[string]string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	c, err := daemon.Connect(ctx, daemon.Options{NoStart: true})
-	if err != nil {
-		t.Fatalf("connecting to the daemon: %v", err)
-	}
-	pc, err := c.OpenPage(ctx, daemon.PageOptions{Owner: daemon.Owner{Session: "default"}, Name: "set_extra_headers"})
-	if err != nil {
-		t.Fatalf("opening the page through the legacy bridge: %v", err)
-	}
-	defer func() {
-		if err := pc.Close(); err != nil {
-			t.Errorf("closing the legacy bridge page: %v", err)
+	a := newSite(t, "127.0.0.1")
+	a.html("/", "<!doctype html><title>A</title><p>site A")
+	release := make(chan struct{})
+	a.handle("/slow", func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case <-release:
+		case <-time.After(20 * time.Second):
 		}
-	}()
-	if err := tools.SetExtraHeaders(ctx, pc, h); err != nil {
-		t.Fatalf("legacy set_extra_headers %v: %v", h, err)
+		_, _ = io.WriteString(w, "slow")
+	})
+	devtoolsBrowser(t, a.url+"/")
+	mustCLI(t, "network", "requests")
+	mustCLI(t, "network", "route", "**/routed*", "--body", "routed")
+	mustCLI(t, "set", "headers", `{"X-A":"1"}`)
+	js(t, `fetch("/echo?1").then(r => r.text())`)
+	if got := a.waitGot(t, "/echo?1").header.Get("X-A"); got != "1" {
+		t.Fatalf("X-A on the wire after set: %q, want 1", got)
+	}
+	js(t, `window.__slow = fetch("/slow").then(r => r.text(), e => "error: " + e); "started"`)
+	a.waitGot(t, "/slow")
+
+	mustCLI(t, "set", "headers", `{}`)
+	close(release)
+	js(t, `fetch("/echo?2").then(r => r.text())`)
+	if v, ok := a.waitGot(t, "/echo?2").header["X-A"]; ok {
+		t.Fatalf("X-A on the wire after removal: %q, want no X-A field", v)
+	}
+	if got := js(t, `fetch("/routed").then(r => r.text())`); got != "routed" {
+		t.Fatalf("the route after the reset: %q, want routed", got)
+	}
+	if n := len(a.got("/routed")); n != 0 {
+		t.Fatalf("the server got the routed request")
+	}
+	out := mustCLI(t, "network", "requests")
+	if !strings.Contains(out, "-- network reset") {
+		t.Fatalf("network requests shows no gap marker:\n%s", out)
+	}
+	slowID := requestID(t, out, a.url+"/slow")
+	if !strings.Contains(out, slowID+" GET 200 capture_reset") {
+		t.Fatalf("the request in flight across the reset (%s) is not closed as capture_reset:\n%s", slowID, out)
+	}
+	earlier := requestID(t, out, a.url+"/echo?1")
+	r := cli(t, "network", "request", earlier, "--body")
+	if r.code == 0 || !strings.Contains(r.stderr, "no longer available") {
+		t.Fatalf("network request %s --body after the reset: exit %d, stdout %q, stderr %q; want the body reported as gone", earlier, r.code, r.stdout, r.stderr)
 	}
 }
 

@@ -615,14 +615,9 @@ func (ps *PageSession) ReleaseFrameContexts(ctx context.Context, epoch uint64, s
 	return errors.Join(errs...)
 }
 
-// unreportedFrames returns the frames of the lease epoch, recorded on an
-// earlier connection or target, that have no context in the current
-// connection's inventory, sorted.
-func (s *Scheduler) unreportedFrames(epoch uint64) []string {
-	return s.unreportedIn(epoch, s.inventory())
-}
-
-// unreportedIn is unreportedFrames on the inventory inv.
+// unreportedIn returns the frames of the lease epoch, recorded on an
+// earlier connection or target, that have no context in the connection's
+// inventory inv, sorted.
 func (s *Scheduler) unreportedIn(epoch uint64, inv inventory) []string {
 	b := &s.ctxs
 	b.mu.Lock()

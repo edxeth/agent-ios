@@ -8,23 +8,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
 	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
 // DefaultCommandTimeout is the deadline of a request that names none
 // (design 2.6, W0 default).
 const DefaultCommandTimeout = 30 * time.Second
-
-// eventQueue bounds the events buffered for one /v1/events stream; a slow
-// client loses events (counted) instead of blocking the page connection.
-const eventQueue = 4096
 
 // Server serves the socket API of design 2.2 for one Manager.
 type Server struct {
@@ -44,6 +38,7 @@ type Server struct {
 	stopOnce sync.Once
 
 	cdp *cdp.Server // the CDP endpoint (design 5.1); set by newCore
+	exe Executable  // the executable the daemon runs (Hello); set by Run
 }
 
 // NewServer returns the API server of m.
@@ -100,10 +95,6 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/hello", s.hello)
 	mux.HandleFunc("GET /v1/status", s.status)
-	mux.HandleFunc("POST /v1/op", s.op)
-	mux.HandleFunc("POST /v1/raw", s.raw)
-	mux.HandleFunc("GET /v1/events", s.events)
-	mux.HandleFunc("POST /v1/lease", s.lease)
 	mux.HandleFunc("POST /v1/run", s.run)
 	mux.HandleFunc("POST /v1/shutdown", s.shutdownReq)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +151,7 @@ func (s *Server) hello(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) helloValue() Hello {
 	return Hello{
-		ID: s.m.DaemonID(), Version: s.version, Protocol: Protocol, PID: os.Getpid(), StartedAt: s.started,
+		ID: s.m.DaemonID(), Version: s.version, Protocol: Protocol, Executable: s.exe, PID: os.Getpid(), StartedAt: s.started,
 		Transports: []string{"iwdp", "direct", "webkitgtk"}, Leases: s.m.ActiveLeases(),
 	}
 }
@@ -186,357 +177,6 @@ func pageRequest(p PageReq) core.PageRequest {
 
 func acquireOptions(o Owner) core.AcquireOptions {
 	return core.AcquireOptions{Session: o.Session, Reservation: o.Reservation, WaitLease: durMs(o.WaitLeaseMs, 0), Takeover: o.Takeover}
-}
-
-func classOf(name string) (core.Class, error) {
-	switch name {
-	case "", "exclusive":
-		return core.ClassExclusive, nil
-	case "read":
-		return core.ClassRead, nil
-	case "mutate":
-		return core.ClassMutate, nil
-	}
-	return 0, fmt.Errorf("unknown operation class %q", name)
-}
-
-func pageInfo(mo *core.ManagedOp) PageInfo {
-	return PageInfo{Key: mo.Page.Key, Title: mo.Page.Title(), Routed: mo.Page.PS.Caller.IsTargetRouted(), Epoch: mo.Epoch}
-}
-
-// op serves POST /v1/op. begin answers with a stream that holds the
-// operation open: its first item is the operation, and the operation ends
-// when the client ends it or closes the stream (a killed client cancels
-// its operation at once, design 2.6). A "closed" item reports that the page
-// connection ended while the operation was open.
-func (s *Server) op(w http.ResponseWriter, r *http.Request) {
-	var req OpRequest
-	if err := readJSON(r, &req); err != nil {
-		writeJSON(w, RawReply{Error: errorf(2, "%v", err)})
-		return
-	}
-	if req.Op == "end" {
-		s.endOp(req.OpID)
-		writeJSON(w, map[string]bool{"ok": true})
-		return
-	}
-	if req.Op != "begin" {
-		writeJSON(w, RawReply{Error: errorf(2, "op %q: want begin or end", req.Op)})
-		return
-	}
-	class, err := classOf(req.Class)
-	if err != nil {
-		writeJSON(w, RawReply{Error: errorf(2, "%v", err)})
-		return
-	}
-	timeout := durMs(req.TimeoutMs, DefaultCommandTimeout)
-	// The operation outlives this request's admission wait, so it gets
-	// its own context with the command deadline.
-	opCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	stop := context.AfterFunc(r.Context(), cancel)
-	name := req.Name
-	if name == "" {
-		name = "legacy"
-	}
-	mo, err := s.m.Begin(opCtx, pageRequest(req.PageReq), acquireOptions(req.Owner), name, class)
-	stop()
-	if err != nil {
-		cancel()
-		writeJSON(w, RawReply{Error: toErrorReply(err)})
-		return
-	}
-	s.mu.Lock()
-	s.opCancel[mo.ID] = cancel
-	s.mu.Unlock()
-	defer s.endOp(mo.ID)
-	dl, _ := opCtx.Deadline()
-	st := newStream(w)
-	info := pageInfo(mo)
-	if err := st.send(Item{Type: "op", Op: &OpReply{OpID: mo.ID, Epoch: mo.Epoch, Deadline: dl, Page: info}}); err != nil {
-		return
-	}
-	select {
-	case <-r.Context().Done(): // the client ended or went away
-		return
-	case <-mo.Op.Context().Done(): // ended, canceled (release or a lost page) or expired
-	case <-mo.Page.PS.Caller.Done():
-	}
-	select {
-	case <-mo.Page.PS.Caller.Done():
-		_ = st.send(Item{Type: "closed", Error: toErrorReply(&core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf("page %q: %w", info.Title, core.ErrLost)})})
-	default:
-	}
-}
-
-func (s *Server) endOp(id string) {
-	s.mu.Lock()
-	cancel := s.opCancel[id]
-	delete(s.opCancel, id)
-	s.mu.Unlock()
-	s.m.End(id)
-	if cancel != nil {
-		cancel()
-	}
-}
-
-// raw serves POST /v1/raw: one protocol call inside an operation (design
-// 2.10), or a one-call operation when no operation id is given.
-func (s *Server) raw(w http.ResponseWriter, r *http.Request) {
-	var req RawRequest
-	if err := readJSON(r, &req); err != nil {
-		writeJSON(w, RawReply{Error: errorf(2, "%v", err)})
-		return
-	}
-	ctx := r.Context()
-	if req.TimeoutMs > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, durMs(req.TimeoutMs, 0))
-		defer cancel()
-	}
-	if kind, ok := core.ControlKindOf(req.Method); ok {
-		res, err := s.control(ctx, req, kind)
-		if err != nil {
-			writeJSON(w, RawReply{Error: toErrorReply(err)})
-			return
-		}
-		if res == nil {
-			res = json.RawMessage("{}")
-		}
-		writeJSON(w, RawReply{Result: res})
-		return
-	}
-	id := req.OpID
-	if id == "" {
-		if _, ok := ctx.Deadline(); !ok {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, DefaultCommandTimeout)
-			defer cancel()
-		}
-		mo, err := s.m.Begin(ctx, pageRequest(req.PageReq), acquireOptions(req.Owner), req.Method, core.ClassExclusive)
-		if err != nil {
-			writeJSON(w, RawReply{Error: toErrorReply(err)})
-			return
-		}
-		defer s.m.End(mo.ID)
-		id = mo.ID
-	} else if mo, err := s.m.Op(id); err == nil {
-		// A call never outlives its operation's deadline.
-		if dl, ok := mo.Op.Context().Deadline(); ok {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithDeadline(ctx, dl)
-			defer cancel()
-		}
-	}
-	res, err := s.m.Raw(ctx, id, req.Method, req.Params)
-	if err != nil {
-		writeJSON(w, RawReply{Error: toErrorReply(err)})
-		return
-	}
-	if res == nil {
-		res = json.RawMessage("{}")
-	}
-	writeJSON(w, RawReply{Result: res})
-}
-
-// control sends a control-lane message (design 2.10): Debugger.resume, a
-// completion of a held request or Target.resume. It never waits behind
-// ordinary operations, and the scheduler validates it (current epoch, the
-// lease holder's session, an open pending item, completed at most once).
-// The sender's authority is the open operation it names (an ended one is
-// refused), else the page key and the lease epoch that its caller acquired:
-// a message never takes the epoch of a later lease, so a resume or a
-// completion retained from an ended lease cannot act on the next one.
-func (s *Server) control(ctx context.Context, req RawRequest, kind core.ControlKind) (json.RawMessage, error) {
-	var pg *core.Page
-	var session string
-	var epoch uint64
-	switch {
-	case req.OpID != "":
-		mo, err := s.m.Op(req.OpID)
-		if err != nil {
-			return nil, notSentError{err}
-		}
-		pg, session, epoch = mo.Page, mo.Session, mo.Epoch
-	case req.Key != "" && req.Epoch != 0:
-		if pg = s.m.LookupPage(req.Key); pg == nil {
-			return nil, notSentError{&core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("%s: %w: page %q is no longer attached", req.Method, core.ErrNoPage, req.Key)}}
-		}
-		session, epoch = req.Session, req.Epoch
-		if session == "" {
-			session = "default"
-		}
-	default:
-		return nil, notSentError{&core.CodedError{Code: 2, Err: fmt.Errorf("%s: a control message needs its operation or the page key and lease epoch of its caller", req.Method)}}
-	}
-	msg := core.ControlMsg{Kind: kind, Session: session, Epoch: epoch, Method: req.Method}
-	if len(req.Params) > 0 && string(req.Params) != "null" {
-		if err := json.Unmarshal(req.Params, &msg.Params); err != nil {
-			return nil, &core.CodedError{Code: 2, Err: fmt.Errorf("%s: bad params: %w", req.Method, err)}
-		}
-	}
-	msg.RequestID, _ = msg.Params["requestId"].(string)
-	msg.TargetID, _ = msg.Params["targetId"].(string)
-	delete(msg.Params, "requestId")
-	res, err := pg.PS.Sched.Control(ctx, msg)
-	if errors.Is(err, core.ErrControlRefused) {
-		err = notSentError{err}
-	}
-	return res, err
-}
-
-// notSentError marks a refused control message: it was never sent.
-type notSentError struct{ error }
-
-func (e notSentError) Unwrap() []error { return []error{e.error, webkit.ErrNotSent} }
-
-// events serves GET /v1/events: the page's events for the session that
-// holds its lease, until the client closes the stream, the page ends or the
-// lease ends (release, break, expiry or takeover; design 2.5).
-func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	pr := PageReq{Transport: q.Get("transport"), Addr: q.Get("addr"), Page: q.Get("page")}
-	ow := Owner{Session: q.Get("session"), Reservation: q.Get("reservation")}
-	methods := strings.Split(q.Get("methods"), ",")
-	ctx, cancel := context.WithTimeout(r.Context(), DefaultCommandTimeout)
-	pg, epoch, err := s.m.Touch(ctx, pageRequest(pr), acquireOptions(ow))
-	cancel()
-	var leaseEnded <-chan struct{}
-	if err == nil {
-		leaseEnded, err = s.m.LeaseEnded(pg, ow.Session, epoch)
-	}
-	if err != nil {
-		writeJSON(w, Item{Type: "error", Error: toErrorReply(err)})
-		return
-	}
-	// The open stream keeps the session's lease from the idle TTL (design
-	// 2.6 heartbeat).
-	defer s.m.HoldLease(pg, acquireOptions(ow))()
-	type ev struct {
-		method string
-		params json.RawMessage
-	}
-	queue := make(chan ev, eventQueue)
-	var dropped int64
-	var dmu sync.Mutex
-	var unsubs []func()
-	var done <-chan struct{}
-	for _, m := range methods {
-		if m = strings.TrimSpace(m); m == "" {
-			continue
-		}
-		unsub, d := s.m.Subscribe(pg, m, func(method string, params json.RawMessage) {
-			select {
-			case queue <- ev{method, params}:
-			default:
-				dmu.Lock()
-				dropped++
-				dmu.Unlock()
-			}
-		})
-		unsubs = append(unsubs, unsub)
-		done = d
-	}
-	defer func() {
-		for _, u := range unsubs {
-			u()
-		}
-	}()
-	st := newStream(w)
-	info := PageInfo{Key: pg.Key, Title: pg.Title(), Routed: pg.PS.Caller.IsTargetRouted()}
-	if err := st.send(Item{Type: "subscribed", Page: &info}); err != nil {
-		return
-	}
-	if done == nil {
-		done = pg.PS.Caller.Done()
-	}
-	for {
-		select {
-		case e := <-queue:
-			dmu.Lock()
-			d := dropped
-			dropped = 0
-			dmu.Unlock()
-			if err := st.send(Item{Type: "event", Method: e.method, Params: e.params, Dropped: d}); err != nil {
-				return
-			}
-		case <-done:
-			s.endStream(st, info.Title, core.ErrLost)
-			return
-		case <-leaseEnded:
-			s.endStream(st, info.Title, fmt.Errorf("the lease of session %q ended (release, lease break, idle expiry or takeover); the stream stops", ow.Session))
-			return
-		case <-s.stopping:
-			s.endStream(st, info.Title, errShuttingDown)
-			return
-		case <-r.Context().Done():
-			return
-		}
-	}
-}
-
-// errShuttingDown is the reason of the final item of an event stream when
-// the daemon shuts down (design 2.6).
-var errShuttingDown = errors.New("the iwdp daemon is shutting down; select the page again")
-
-// endStream sends the final "closed" item of an event stream of the page
-// titled title, with the reason why the stream ends. A daemon that shuts
-// down closes s.stopping before it releases the leases and closes the page
-// connections (Run), so a page or lease end that the shutdown caused finds
-// s.stopping closed here: the item then names the shutdown, whichever of
-// its ready cases the stream's select picked.
-func (s *Server) endStream(st *stream, title string, reason error) {
-	select {
-	case <-s.stopping:
-		reason = errShuttingDown
-	default:
-	}
-	_ = st.send(Item{Type: "closed", Error: toErrorReply(&core.CodedError{Code: core.CodeBusy, Err: fmt.Errorf("page %q: %w", title, reason)})})
-}
-
-// lease serves POST /v1/lease (design 2.5).
-func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
-	var req LeaseRequest
-	if err := readJSON(r, &req); err != nil {
-		writeJSON(w, RawReply{Error: errorf(2, "%v", err)})
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), durMs(req.TimeoutMs, DefaultCommandTimeout))
-	defer cancel()
-	ao := acquireOptions(req.Owner)
-	if ao.Session == "" {
-		ao.Session = "default"
-	}
-	var err error
-	switch req.Op {
-	case "acquire", "renew", "takeover":
-		ao.Takeover = ao.Takeover || req.Op == "takeover"
-		var pg *core.Page
-		var epoch uint64
-		if pg, epoch, err = s.m.Touch(ctx, pageRequest(req.PageReq), ao); err == nil {
-			writeJSON(w, map[string]any{"pages": s.m.Status(), "page": PageInfo{Key: pg.Key, Title: pg.Title(), Routed: pg.PS.Caller.IsTargetRouted(), Epoch: epoch}})
-			return
-		}
-	case "release":
-		if req.Page == "" {
-			_, err = s.m.ReleaseSession(ctx, ao.Session)
-		} else if pg := s.m.FindAttached(req.Page); pg != nil {
-			err = s.m.Release(ctx, ao.Session, pg.Key)
-		}
-	case "break":
-		pg := s.m.FindAttached(req.Page)
-		if pg == nil {
-			err = &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("%w: no attached page matches %q", core.ErrNoPage, req.Page)}
-		} else {
-			err = s.m.Break(ctx, pg.Key)
-		}
-	default:
-		err = &core.CodedError{Code: 2, Err: fmt.Errorf("lease op %q: want acquire, release, break, renew or takeover", req.Op)}
-	}
-	if err != nil {
-		writeJSON(w, map[string]any{"error": toErrorReply(err)})
-		return
-	}
-	writeJSON(w, map[string]any{"pages": s.m.Status()})
 }
 
 func (s *Server) shutdownReq(w http.ResponseWriter, r *http.Request) {
@@ -610,6 +250,17 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inv, err := commands.Parse(req.Argv, func(string) string { return "" })
+	if err == nil && inv.Help {
+		// A help request runs nothing; the client prints the help: of a
+		// command, of a group (no Cmd) or the overview (no Cmd). Parse has
+		// checked the option values of a command (Command.Check).
+		name := "iwdp-cli"
+		if inv.Cmd != nil {
+			name = inv.Cmd.Name
+		}
+		writeJSON(w, Item{Type: "error", Error: errorf(2, "%s --help: the client prints the help; the daemon runs no help request", name)})
+		return
+	}
 	if err != nil || inv.Cmd == nil {
 		if err == nil {
 			err = fmt.Errorf("no command")
@@ -627,13 +278,30 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	if g.Session == "" {
 		g.Session = "default"
 	}
-	g.Timeout = durMs(req.TimeoutMs, DefaultCommandTimeout)
-	ctx, cancel := context.WithTimeout(r.Context(), durMs(req.TimeoutMs, DefaultCommandTimeout))
+	deadline := req.Deadline
+	if deadline.IsZero() {
+		deadline = time.Now().Add(DefaultCommandTimeout)
+	}
+	g.Timeout = time.Until(deadline)
+	if g.Timeout <= 0 {
+		// The request reached the daemon after the caller's deadline:
+		// no attach, lease or queue admission happens for it.
+		writeJSON(w, Item{Type: "error", Error: toErrorReply(&core.CodedError{Code: core.CodeTimeout, Err: fmt.Errorf("%s: the request reached the daemon %s after the command's deadline: %w", inv.Cmd.Name, (-g.Timeout).Round(time.Millisecond), context.DeadlineExceeded)})})
+		return
+	}
+	ctx, cancel := context.WithDeadline(r.Context(), deadline)
 	defer cancel()
 	// Registry commands start the lease hooks (the network capture of the
-	// lease, design 4.2); legacy operations (/v1/op) do not.
+	// lease, design 4.2).
 	ctx = core.WithLeaseHooks(ctx)
 	st := newStream(w)
+	// The client names the page in a deadline error: it is sent as soon as
+	// the command's operation resolved it, before the attach, the lease
+	// and the queue; commands without a page that open operations of
+	// their own (tab, tab new, tab close) send the page of each.
+	ctx = core.WithPageObserver(ctx, func(key, title string) {
+		_ = st.send(Item{Type: "page", Page: &PageInfo{Key: key, Title: title}})
+	})
 	env := &runEnv{s: s, req: req, st: st}
 	var res commands.Result
 	runCmd := func(ctx context.Context) error {

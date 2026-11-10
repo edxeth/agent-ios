@@ -447,8 +447,6 @@ func (w *lifeWebKit) Send(ctx context.Context, method string, params any) (json.
 	}
 	return nil, errors.New("No resource with given identifier found")
 }
-
-func (*lifeWebKit) OnEvent(string, webkit.EventHandler)          {}
 func (*lifeWebKit) Subscribe(string, webkit.EventHandler) func() { return func() {} }
 func (*lifeWebKit) IsTargetRouted() bool                         { return true }
 func (*lifeWebKit) Done() <-chan struct{}                        { return nil }

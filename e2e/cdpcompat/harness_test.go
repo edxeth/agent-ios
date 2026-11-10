@@ -112,6 +112,13 @@ func TestMain(m *testing.M) {
 	os.Exit(run(m))
 }
 
+// lifetimeHelperMode is the helperVar value of the child process of
+// TestBrowserEndsWithItsTestProcess (Linux). TestMain runs only the tests
+// in that child (that one), without the isolation and the iwdp-cli build:
+// the child starts no daemon and no client, and its SIGKILL would leave
+// the temp dirs of the isolation behind.
+const lifetimeHelperMode = "browser-lifetime"
+
 func run(m *testing.M) int {
 	if mode, ok := os.LookupEnv(fakeAgentBrowserVar); ok {
 		return fakeAgentBrowser(mode) // this binary runs as a test's fake agent-browser
@@ -119,6 +126,9 @@ func run(m *testing.M) int {
 	if os.Getenv(gateEnv) != "1" {
 		fmt.Fprintf(os.Stderr, "the CDP compatibility suite runs only with %s=1; run it with 'make test-cdpcompat' (docs: e2e/cdpcompat/README.md)\n", gateEnv)
 		return 2
+	}
+	if os.Getenv(helperVar) == lifetimeHelperMode {
+		return m.Run() // the child of TestBrowserEndsWithItsTestProcess
 	}
 	var err error
 	if nodeDir, err = os.Getwd(); err != nil {
@@ -260,7 +270,9 @@ type endpoint struct {
 
 // startDaemon runs the daemon in this process with the CDP endpoint on a
 // free port and request recording, and stops it at cleanup. The iwdp-cli
-// runs of the test reach it through the shared socket directory.
+// runs of the test reach it through the shared socket directory: the
+// daemon reports cliBin as its executable (RunOptions.Executable), so
+// they reuse it instead of replacing it with a daemon of their own.
 func startDaemon(t *testing.T) *endpoint {
 	t.Helper()
 	return startDaemonOn(t, "", "")
@@ -279,7 +291,7 @@ func startDaemonOn(t *testing.T, transport, addr string) *endpoint {
 	}
 	log := &redactingWriter{w: logf, e: e}
 	go func() {
-		done <- daemon.Run(ctx, daemon.RunOptions{Version: "cdpcompat", Transport: transport, Addr: addr, CDPPort: e.port, CDPObserve: e.rec.observe, Log: log})
+		done <- daemon.Run(ctx, daemon.RunOptions{Version: "cdpcompat", Executable: cliBin, Transport: transport, Addr: addr, CDPPort: e.port, CDPObserve: e.rec.observe, Log: log})
 	}()
 	t.Cleanup(func() {
 		cancel()

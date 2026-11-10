@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // emptyReplyListing accepts each request on its listing and closes the
@@ -102,7 +103,7 @@ func TestCheckListingNamesTheObservedFailure(t *testing.T) {
 func TestReadFailureClassifiesAFailedRead(t *testing.T) {
 	read := func(addr string) error {
 		t.Helper()
-		_, err := listDevicesFromURL("http://" + addr + "/json")
+		_, err := listDevicesFromURL(context.Background(), "http://"+addr+"/json")
 		if err == nil {
 			t.Fatalf("reading %s succeeded", addr)
 		}
@@ -136,6 +137,20 @@ func TestReadFailureClassifiesAFailedRead(t *testing.T) {
 		err := ReadFailure(context.Background(), addr, read(addr))
 		check(t, err, []string{addr, "does not answer GET /json within " + readTimeout.String(), "busy or stuck"}, []string{"without an answer", "running?"})
 	})
+	// Review ws2a-r2-a F7: a read that the caller's deadline ended names
+	// that deadline, not the read's own limit (readTimeout).
+	t.Run("command deadline", func(t *testing.T) {
+		t.Parallel()
+		addr := silentListing(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		_, rerr := listDevicesFromURL(ctx, "http://"+addr+"/json")
+		if rerr == nil {
+			t.Fatalf("reading %s succeeded", addr)
+		}
+		err := ReadFailure(ctx, addr, rerr)
+		check(t, err, []string{addr, "does not answer GET /json before the command deadline", "busy or stuck"}, []string{"within", "running?"})
+	})
 	t.Run("unowned", func(t *testing.T) {
 		t.Parallel()
 		l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -157,48 +172,33 @@ func TestReadFailureClassifiesAFailedRead(t *testing.T) {
 // request: ReadFailure names the decoding failure, never an empty reply,
 // and gives no advice about open page WebSockets.
 func TestReadFailureNamesADecodingFailure(t *testing.T) {
-	for _, kind := range []string{"device", "page"} {
-		for _, body := range []string{"", "["} {
-			t.Run(kind+" list, body "+strconv.Quote(body), func(t *testing.T) {
-				t.Parallel()
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(body))
-				}))
-				t.Cleanup(srv.Close)
-				addr := strings.TrimPrefix(srv.URL, "http://")
-				var err error
-				if kind == "device" {
-					_, err = listDevicesFromURL(srv.URL + "/json")
-				} else {
-					_, p, splitErr := net.SplitHostPort(addr)
-					if splitErr != nil {
-						t.Fatal(splitErr)
-					}
-					n, convErr := strconv.Atoi(p)
-					if convErr != nil {
-						t.Fatal(convErr)
-					}
-					_, err = ListPages(n)
+	for _, body := range []string{"", "["} {
+		t.Run("device list, body "+strconv.Quote(body), func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(srv.Close)
+			addr := strings.TrimPrefix(srv.URL, "http://")
+			_, err := listDevicesFromURL(context.Background(), srv.URL+"/json")
+			if err == nil {
+				t.Fatalf("reading the device list of body %q succeeded", body)
+			}
+			got := ReadFailure(context.Background(), addr, err)
+			if got == nil || errors.Is(got, ErrNotListening) {
+				t.Fatalf("ReadFailure = %v, want an error of an owned port", got)
+			}
+			for _, want := range []string{addr, "answered GET /json", "decoding device list", "no second iwdp"} {
+				if !strings.Contains(got.Error(), want) {
+					t.Errorf("error %q does not contain %q", got, want)
 				}
-				if err == nil {
-					t.Fatalf("reading the %s list of body %q succeeded", kind, body)
+			}
+			for _, bad := range []string{"without an answer", "empty reply", "WebSocket", "daemon stop", "within"} {
+				if strings.Contains(got.Error(), bad) {
+					t.Errorf("error %q contains %q, but an answer was received and could not be decoded", got, bad)
 				}
-				got := ReadFailure(context.Background(), addr, err)
-				if got == nil || errors.Is(got, ErrNotListening) {
-					t.Fatalf("ReadFailure = %v, want an error of an owned port", got)
-				}
-				for _, want := range []string{addr, "answered GET /json", "decoding " + kind + " list", "no second iwdp"} {
-					if !strings.Contains(got.Error(), want) {
-						t.Errorf("error %q does not contain %q", got, want)
-					}
-				}
-				for _, bad := range []string{"without an answer", "empty reply", "WebSocket", "daemon stop", "within"} {
-					if strings.Contains(got.Error(), bad) {
-						t.Errorf("error %q contains %q, but an answer was received and could not be decoded", got, bad)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }

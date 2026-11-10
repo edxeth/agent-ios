@@ -325,12 +325,12 @@ func TestNavigationCommandsHelpAndUnknownFlag(t *testing.T) {
 			return nil, errors.New("no connection in this test")
 		}
 		var out, errb bytes.Buffer
-		if code := RunCLI(context.Background(), append(append([]string{}, words...), "--help"), &out, &errb, factory); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli ") {
+		if code := RunCLIStarted(context.Background(), append(append([]string{}, words...), "--help"), &out, &errb, nil, factory); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli ") {
 			t.Errorf("%s --help: exit %d, stdout %q", name, code, out.String())
 		}
 		out.Reset()
 		errb.Reset()
-		if code := RunCLI(context.Background(), append(append([]string{}, words...), "--no-such-flag"), &out, &errb, factory); code != ExitUsage {
+		if code := RunCLIStarted(context.Background(), append(append([]string{}, words...), "--no-such-flag"), &out, &errb, nil, factory); code != ExitUsage {
 			t.Errorf("%s --no-such-flag: exit %d, want %d (%q)", name, code, ExitUsage, errb.String())
 		}
 		if connected {

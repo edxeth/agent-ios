@@ -102,7 +102,6 @@ type nopCaller struct{}
 func (nopCaller) Send(context.Context, string, any) (json.RawMessage, error) {
 	return json.RawMessage(`{}`), nil
 }
-func (nopCaller) OnEvent(string, webkit.EventHandler)          {}
 func (nopCaller) Subscribe(string, webkit.EventHandler) func() { return func() {} }
 func (nopCaller) IsTargetRouted() bool                         { return true }
 func (nopCaller) Done() <-chan struct{}                        { return nil }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"image/png"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -46,8 +47,38 @@ func init() {
 		Page:    LeasedPage,
 		Mutates: true, // --annotate draws into the page, and refs are allocated
 		Output:  OutputFile,
-		Run:     runScreenshot,
+		// The usage errors of the options end the command before the
+		// daemon attaches the page.
+		ClientStep: func(_ context.Context, in *Input, _ io.Reader) error {
+			_, _, _, err := screenshotOptions(*in)
+			return err
+		},
+		Run: runScreenshot,
 	})
+}
+
+// screenshotOptions returns the file (path or -o), --full-page (or
+// --full) and --selector of a screenshot, or the usage error of a
+// conflicting combination. A page URL as the file is a usage error that
+// names --page: earlier iwdp-cli versions took "screenshot <ws:// URL>"
+// as the page, and that line must not capture the session's page instead.
+func screenshotOptions(in Input) (out string, full bool, sel string, err error) {
+	out = arg(in, 0)
+	if o := flagString(in, "output"); o != "" {
+		if out != "" {
+			return "", false, "", usagef("screenshot: give the file once, as path or with -o")
+		}
+		out = o
+	}
+	if isPageURL(out) {
+		return "", false, "", usagef("screenshot: %q is a page URL, not a file; pass the page with --page <ws:// URL>", out)
+	}
+	full = flagBool(in, "full-page") || flagBool(in, "full")
+	sel = flagString(in, "selector")
+	if full && sel != "" {
+		return "", false, "", usagef("screenshot: use either --full-page or --selector, not both")
+	}
+	return out, full, sel, nil
 }
 
 // overlayCleanupBudget bounds the cleanup that removes the overlay after
@@ -73,17 +104,9 @@ type shotLabel struct {
 }
 
 func runScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
-	out := arg(in, 0)
-	if o := flagString(in, "output"); o != "" {
-		if out != "" {
-			return Result{}, usagef("screenshot: give the file once, as path or with -o")
-		}
-		out = o
-	}
-	full := flagBool(in, "full-page") || flagBool(in, "full")
-	sel := flagString(in, "selector")
-	if full && sel != "" {
-		return Result{}, usagef("screenshot: use either --full-page or --selector, not both")
+	out, full, sel, err := screenshotOptions(in)
+	if err != nil {
+		return Result{}, err
 	}
 	w, err := openPage(ctx, env, "screenshot")
 	if err != nil {

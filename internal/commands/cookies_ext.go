@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"regexp"
@@ -21,8 +22,8 @@ import (
 // cookies clear and cookies set (design docs/design/agentic-parity.md,
 // section 4.2; agent-browser "cookies clear", "cookies set <name> <value>"
 // and "cookies set --curl <file>"). Cookie values never appear in the
-// output or in errors (W0, design R17). The listing "cookies" stays the
-// legacy W0 command.
+// output or in errors (W0, design R17). The listing "cookies" is
+// cookies_list.go.
 func init() {
 	Register(&Command{
 		Name:    "cookies clear",
@@ -54,6 +55,7 @@ func init() {
 		Page:    LeasedPage,
 		Mutates: true,
 		Output:  OutputText,
+		Check:   checkCookieValues,
 		Run:     runCookiesSet,
 	})
 }
@@ -95,26 +97,54 @@ var singleCookieFlags = []string{"path", "expires", "http-only", "secure", "same
 // fraction.
 var unixSeconds = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
+// maxExpiryMs bounds --expires in milliseconds from the Unix epoch: the
+// range of a JavaScript Date (ECMA-262, "Time Values and Time Range":
+// 8.64e15 ms, 100 000 000 days, on each side of the epoch). Beyond it
+// seconds*1000 can also overflow to an infinity that JSON cannot encode.
+const maxExpiryMs = 8.64e15
+
 // cookieExpiry reads --expires as the W0 tool set_cookie read its
 // expires: Unix seconds, where 0 is a session cookie, returned as
 // seconds*1000 milliseconds (WebKit's Page.Cookie.expires); the CLI also
-// takes an RFC 3339 time.
+// takes an RFC 3339 time. A value whose milliseconds are outside
+// ±maxExpiryMs is a usage error.
 func cookieExpiry(v string) (session bool, ms float64, err error) {
 	if unixSeconds.MatchString(v) {
 		s, err := strconv.ParseFloat(v, 64)
 		if err != nil { // only a value out of the float64 range
 			return false, 0, usagef("--expires %q: %v", v, err)
 		}
-		if s == 0 {
+		// Only a zero written as zero is a session cookie: a tiny
+		// nonzero value that rounds to 0 is a time in the past.
+		if strings.Trim(v, "-0.") == "" {
 			return true, 0, nil
 		}
-		return false, s * 1000, nil
+		ms := s * 1000
+		if math.Abs(ms) > maxExpiryMs { // also an infinity
+			return false, 0, usagef("--expires %q: out of range; want Unix seconds within ±%.0f", v, maxExpiryMs/1000)
+		}
+		return false, ms, nil
 	}
 	t, err := time.Parse(time.RFC3339, v)
 	if err != nil {
 		return false, 0, usagef("--expires %q: want Unix seconds or an RFC 3339 time such as 2030-01-02T03:04:05Z", v)
 	}
 	return false, float64(t.UnixMilli()), nil
+}
+
+// checkCookieValues is the value check of "cookies set" (Command.Check):
+// a known --same-site and a valid --expires. runCookiesSet reads them
+// with the same functions.
+func checkCookieValues(in Input) error {
+	if _, err := tools.NormalizeSameSite(flagString(in, "same-site")); err != nil {
+		return usagef("--same-site: %v", err)
+	}
+	if v := flagString(in, "expires"); v != "" {
+		if _, _, err := cookieExpiry(v); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runCookiesSet(ctx context.Context, env Env, in Input) (Result, error) {

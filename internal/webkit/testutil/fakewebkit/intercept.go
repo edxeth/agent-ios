@@ -125,12 +125,20 @@ func (s *Server) takeHold(call Call) *Error {
 
 // ContinueHolds ends every hold of target, as Network.disable does without
 // a handler: a Network.disable handler that models the backend calls it.
-func (s *Server) ContinueHolds(target string) {
+// It returns the ids of the requests whose holds it ended, sorted.
+func (s *Server) ContinueHolds(target string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.intercepts != nil {
-		delete(s.intercepts.held, target)
+	if s.intercepts == nil {
+		return nil
 	}
+	var ids []string
+	for id := range s.intercepts.held[target] {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	delete(s.intercepts.held, target)
+	return ids
 }
 
 // continueHolds ends every hold of target (Network.disable continues the

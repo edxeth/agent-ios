@@ -42,8 +42,9 @@ func TestRuntimeCallsAreFencedByTheOperation(t *testing.T) {
 	}
 	run := func(op *core.Op) (int, string) {
 		var out, errb bytes.Buffer
-		code := RunCLI(context.Background(), []string{"--timeout", "5s", "get", "title"}, &out, &errb,
+		code := RunCLIStarted(context.Background(), []string{"--timeout", "5s", "get", "title"}, &out, &errb, nil,
 			func(context.Context, *Invocation) (Env, error) { return opEnv{pageEnv{h.ps}, op}, nil })
+
 		return code, errb.String()
 	}
 

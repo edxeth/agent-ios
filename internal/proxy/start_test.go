@@ -333,7 +333,7 @@ func TestStartNeverStartsWhileTheListingPortIsOwned(t *testing.T) {
 // of the daemon, within the 5 s budget) counts as running.
 func TestCheckListingWaitsForTheSharedBudget(t *testing.T) {
 	if ProbeBudget != 5*time.Second {
-		t.Fatalf("ProbeBudget is %s, want 5s (the budget IsRunning documents)", ProbeBudget)
+		t.Fatalf("ProbeBudget is %s, want 5s (the budget ProbeBudget documents)", ProbeBudget)
 	}
 	srv := slowListing(t, 3*time.Second)
 	if err := CheckListing(context.Background(), srv); err != nil {

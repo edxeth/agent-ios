@@ -827,9 +827,6 @@ func (s *Session) Close() error {
 	return nil
 }
 
-// OnEvent registers a handler for the life of the session.
-func (s *Session) OnEvent(method string, h EventHandler) { s.Subscribe(method, h) }
-
 // Subscribe registers h for method (AllEvents for every event). Each
 // subscriber has its own bounded queue and goroutine, so a slow handler
 // never delays replies or other subscribers. An event that arrived before a

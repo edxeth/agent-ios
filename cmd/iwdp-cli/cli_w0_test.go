@@ -11,14 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
 	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
 )
 
@@ -175,25 +173,24 @@ func dirEntries(t *testing.T, dir string) []string {
 
 // --- Help (criterion 3) ---
 
+// TestEveryCommandHasHelp pins that the overview lists every registry
+// command with its summary and that "help <command>" prints the command's
+// own usage: iwdp-cli runs only registry commands, so the registry is the
+// only source of commands and help.
 func TestEveryCommandHasHelp(t *testing.T) {
-	seen := map[string]bool{}
-	for _, s := range helpSections {
-		for _, c := range s.commands {
-			if seen[c.name] {
-				t.Errorf("duplicate help entry %q", c.name)
-			}
-			seen[c.name] = true
-			if _, ok := commands[c.name]; !ok {
-				t.Errorf("help entry %q has no command", c.name)
-			}
-			if !strings.HasPrefix(c.synopsis, c.name) {
-				t.Errorf("synopsis %q does not start with %q", c.synopsis, c.name)
-			}
-		}
+	var overview bytes.Buffer
+	printUsage(&overview)
+	all := reg.All()
+	if len(all) == 0 {
+		t.Fatal("the registry has no commands")
 	}
-	for name := range commands {
-		if !seen[name] {
-			t.Errorf("command %q has no help entry", name)
+	for _, c := range all {
+		if !strings.Contains(overview.String(), "  "+c.Name+" ") || !strings.Contains(overview.String(), c.Summary) {
+			t.Errorf("the overview does not list %q with its summary", c.Name)
+		}
+		var help bytes.Buffer
+		if !printCommandHelp(&help, c.Name) || !strings.HasPrefix(help.String(), "Usage: iwdp-cli "+c.Name) {
+			t.Errorf("help %s = %q, want its usage", c.Name, help.String())
 		}
 	}
 }
@@ -208,15 +205,11 @@ func TestHelpNeverConnectsOrWrites(t *testing.T) {
 	cwd := t.TempDir()
 	env := []string{"IWDP_WS_URL=" + mock.URL, "TMPDIR=" + tmp}
 
-	names := make([]string, 0, len(commands))
-	for name := range commands {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, c := range reg.All() {
+		name := c.Name
 		for _, flag := range []string{"--help", "-h"} {
 			// Put the flag after a plausible argument, as agents do.
-			res := runCLI(t, cwd, env, name, "x", flag)
+			res := runCLI(t, cwd, env, append(strings.Fields(name), "x", flag, "--page", mock.URL)...)
 			if res.code != 0 {
 				t.Errorf("%s %s: exit %d, stderr %q", name, flag, res.code, res.stderr)
 			}
@@ -248,9 +241,9 @@ func TestHelpCommandForms(t *testing.T) {
 	}
 }
 
-// The help of restart-iwdp states which iwdp it may stop: iwdp-cli and an
-// earlier iwdp-mcp write the same record (internal/proxy/restart.go), so
-// the iwdp of either one is stopped (review WS1 S2 F1 and F2).
+// The help of restart-iwdp states which iwdp it may stop: only one that
+// iwdp-cli started and recorded (internal/proxy/restart.go; review WS1 S2
+// F1 and F2).
 func TestRestartIWDPHelpStatesTheOwnershipRule(t *testing.T) {
 	res := runCLI(t, "", nil, "restart-iwdp", "--help")
 	if res.code != 0 {
@@ -258,8 +251,8 @@ func TestRestartIWDPHelpStatesTheOwnershipRule(t *testing.T) {
 	}
 	help := strings.Join(strings.Fields(res.stdout), " ")
 	for _, want := range []string{
-		"Restart the ios_webkit_debug_proxy that iwdp-cli or an earlier iwdp-mcp started",
-		"Stops only an iwdp that iwdp-cli, or an earlier iwdp-mcp, started and recorded",
+		"Restart the ios_webkit_debug_proxy that iwdp-cli started.",
+		"Stops only an iwdp that iwdp-cli started and recorded,",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("restart-iwdp --help does not state %q:\n%s", want, res.stdout)
@@ -269,72 +262,17 @@ func TestRestartIWDPHelpStatesTheOwnershipRule(t *testing.T) {
 
 // --- Deadlines (criterion 1) ---
 
-func TestParseGlobalOptions(t *testing.T) {
-	args, opts, err := parseGlobalOptions([]string{"eval", "1"}, "")
-	if err != nil || opts.timeout != 30*time.Second || opts.timeoutSet || len(args) != 2 {
-		t.Errorf("default: args=%v opts=%+v err=%v; want 30s default", args, opts, err)
-	}
-	_, opts, err = parseGlobalOptions([]string{"eval", "1"}, "7s")
-	if err != nil || opts.timeout != 7*time.Second || !opts.timeoutSet {
-		t.Errorf("env: opts=%+v err=%v", opts, err)
-	}
-	args, opts, err = parseGlobalOptions([]string{"--timeout", "2m", "eval", "1", "--timeout=45"}, "7s")
-	if err != nil || opts.timeout != 45*time.Second || strings.Join(args, " ") != "eval 1" {
-		t.Errorf("flags: args=%v opts=%+v err=%v; last flag wins over env", args, opts, err)
-	}
-	for _, bad := range [][]string{{"--timeout"}, {"--timeout", "soon"}, {"--timeout=0"}, {"--timeout", "-5s"}} {
-		if _, _, err := parseGlobalOptions(bad, ""); err == nil {
-			t.Errorf("parseGlobalOptions(%v): expected an error", bad)
-		}
-	}
-	if _, _, err := parseGlobalOptions(nil, "never"); err == nil || !strings.Contains(err.Error(), "IWDP_TIMEOUT") {
-		t.Errorf("bad IWDP_TIMEOUT: err = %v", err)
-	}
-}
-
-func TestCommandBudget(t *testing.T) {
-	def := globalOptions{timeout: 30 * time.Second}
-	explicit := globalOptions{timeout: 10 * time.Second, timeoutSet: true}
-	tests := []struct {
-		name      string
-		command   string
-		args      []string
-		opts      globalOptions
-		want      time.Duration
-		unlimited bool
-	}{
-		{"plain command", "eval", []string{"1"}, def, 30 * time.Second, false},
-		{"console default capture", "console", nil, def, 40 * time.Second, false},
-		{"network custom capture", "network", []string{"-d", "5s"}, def, 35 * time.Second, false},
-		{"console follow", "console", []string{"--follow"}, def, 0, true},
-		{"recording seconds", "timeline-record", []string{"-d", "7"}, def, 37 * time.Second, false},
-		{"heap snapshot default", "heap-snapshot", nil, def, tools.HeapSnapshotTimeout, false},
-		{"heap snapshot explicit", "heap-snapshot", nil, explicit, 10 * time.Second, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, unlimited, err := commandBudget(tt.command, tt.args, tt.opts)
-			if err != nil || got != tt.want || unlimited != tt.unlimited {
-				t.Errorf("commandBudget = %v, %v, %v; want %v, %v", got, unlimited, err, tt.want, tt.unlimited)
-			}
-		})
-	}
-	if _, _, err := commandBudget("console", []string{"-d", "x"}, def); err == nil {
-		t.Error("expected an error for an invalid duration")
-	}
-}
-
 func TestEvalTimeoutNamesCommandPageAndCauses(t *testing.T) {
 	mock := testutil.NewMockServer()
 	defer mock.Close()
 	mock.NeverRespond("Runtime.evaluate")
 
 	for name, env := range map[string][]string{
-		"flag": {"IWDP_WS_URL=" + mock.URL},
-		"env":  {"IWDP_WS_URL=" + mock.URL, "IWDP_TIMEOUT=1s"},
+		"flag": nil,
+		"env":  {"IWDP_TIMEOUT=1s"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			args := []string{"eval", "document.title"}
+			args := []string{"eval", "document.title", "--page", mock.URL}
 			if name == "flag" {
 				args = append(args, "--timeout", "1s")
 			}
@@ -390,380 +328,9 @@ type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
-// --- Bounded streaming (criterion 2) ---
-
-func TestConsoleStopsAfterDurationWithSummary(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	mock.Handle("Console.enable", func(string, json.RawMessage) (interface{}, error) {
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			for _, text := range []string{"first", "second"} {
-				_ = mock.SendEvent("Console.messageAdded", map[string]interface{}{
-					"message": map[string]interface{}{"level": "log", "text": text},
-				})
-			}
-		}()
-		return map[string]interface{}{}, nil
-	})
-
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "console", "-d", "1s")
-	if res.code != 0 {
-		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
-	}
-	if !strings.Contains(res.stdout, "[log] first") || !strings.Contains(res.stdout, "[log] second") {
-		t.Errorf("stdout lacks the messages: %q", res.stdout)
-	}
-	if !strings.Contains(res.stderr, "Captured 2 console messages") {
-		t.Errorf("stderr lacks the summary: %q", res.stderr)
-	}
-	if res.elapsed > 8*time.Second {
-		t.Errorf("console -d 1s ran %v", res.elapsed)
-	}
-	if !contains(mock.ReceivedMethods(), "Console.disable") {
-		t.Error("console did not disable the Console domain at the end")
-	}
-}
-
-// Device check 3, P3-H: the stream leaves out the injected runtime's own
-// console.debug messages (the dialog override's "__iwdp_dialog__ {...}"),
-// as the registry "console" does, and does not count them.
-func TestConsoleStreamLeavesOutTheRuntimesMarkers(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	mock.Handle("Console.enable", func(string, json.RawMessage) (interface{}, error) {
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			for _, text := range []string{"first", `__iwdp_dialog__ {"id":"d1","type":"confirm","message":"Sure?","result":true}`, "second"} {
-				_ = mock.SendEvent("Console.messageAdded", map[string]interface{}{
-					"message": map[string]interface{}{"level": "debug", "text": text},
-				})
-			}
-		}()
-		return map[string]interface{}{}, nil
-	})
-
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "console", "-d", "1s")
-	if res.code != 0 {
-		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
-	}
-	if !strings.Contains(res.stdout, "[debug] first") || !strings.Contains(res.stdout, "[debug] second") || strings.Contains(res.stdout, "__iwdp_dialog__") {
-		t.Errorf("stdout = %q, want the page's messages without the runtime's marker", res.stdout)
-	}
-	if !strings.Contains(res.stderr, "Captured 2 console messages") {
-		t.Errorf("stderr lacks the summary of the 2 page messages: %q", res.stderr)
-	}
-}
-
-func TestNetworkStopsAfterDurationWithSummary(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	mock.Handle("Network.enable", func(string, json.RawMessage) (interface{}, error) {
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			_ = mock.SendEvent("Network.requestWillBeSent", map[string]interface{}{
-				"requestId": "1", "request": map[string]string{"method": "GET", "url": "https://example.com/a"},
-			})
-			_ = mock.SendEvent("Network.responseReceived", map[string]interface{}{
-				"requestId": "1", "response": map[string]interface{}{"url": "https://example.com/a", "status": 200, "statusText": "OK", "mimeType": "text/html"},
-			})
-		}()
-		return map[string]interface{}{}, nil
-	})
-
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "network", "--duration=1s")
-	if res.code != 0 {
-		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
-	}
-	if !strings.Contains(res.stdout, "GET https://example.com/a") {
-		t.Errorf("stdout lacks the request: %q", res.stdout)
-	}
-	if !strings.Contains(res.stderr, "Captured 1 requests, 1 responses, 0 failures") {
-		t.Errorf("stderr lacks the summary: %q", res.stderr)
-	}
-	if res.elapsed > 8*time.Second {
-		t.Errorf("network --duration=1s ran %v", res.elapsed)
-	}
-}
-
-// streamCases are the two streaming commands with their domain and one event
-// that each prints on stdout.
-var streamCases = []struct {
-	command, domain, event string
-	params                 map[string]interface{}
-	printed                string
-}{
-	{"console", "Console", "Console.messageAdded", map[string]interface{}{"message": map[string]interface{}{"level": "log", "text": "late"}}, "[log] late"},
-	{"network", "Network", "Network.requestWillBeSent", map[string]interface{}{"requestId": "1", "request": map[string]string{"method": "GET", "url": "https://example.com/late"}}, "GET https://example.com/late"},
-}
-
-// TestStreamDeadlineExitsWithTimeout pins that a bounded stream cut short by
-// its command deadline is a deadline error (exit 124, CLAUDE.md "Deadlines"),
-// not a success. Slow setup uses up part of the --timeout allowance, so the
-// deadline ends the -d window early.
-func TestStreamDeadlineExitsWithTimeout(t *testing.T) {
-	for _, tc := range streamCases {
-		t.Run(tc.command, func(t *testing.T) {
-			mock := testutil.NewMockServer()
-			defer mock.Close()
-			mock.Handle(tc.domain+".enable", func(string, json.RawMessage) (interface{}, error) {
-				time.Sleep(500 * time.Millisecond)
-				return map[string]interface{}{}, nil
-			})
-			startTestDaemon(t) // the 200ms allowance is for the page, not the daemon's start
-			res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, tc.command, "--timeout", "200ms", "-d", "1s")
-			if res.code != exitTimeout {
-				t.Fatalf("exit %d, want %d; stderr %q", res.code, exitTimeout, res.stderr)
-			}
-			for _, want := range []string{"iwdp-cli " + tc.command + " timed out after", "Captured"} {
-				if !strings.Contains(res.stderr, want) {
-					t.Errorf("stderr lacks %q: %s", want, res.stderr)
-				}
-			}
-			if !contains(mock.ReceivedMethods(), tc.domain+".disable") {
-				t.Errorf("%s did not disable the %s domain after the deadline", tc.command, tc.domain)
-			}
-			if res.elapsed > 8*time.Second {
-				t.Errorf("%s ran %v with a 1.2s deadline", tc.command, res.elapsed)
-			}
-		})
-	}
-}
-
-// TestStreamTeardownDeadlineExitsWithTimeout pins that a disable call that
-// stalls at the end of a bounded stream ends at the command deadline with the
-// deadline error naming that call, instead of running on until the watchdog.
-func TestStreamTeardownDeadlineExitsWithTimeout(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	mock.NeverRespond("Console.disable")
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "console", "--timeout", "1s", "-d", "500ms")
-	if res.code != exitTimeout {
-		t.Fatalf("exit %d, want %d; stderr %q", res.code, exitTimeout, res.stderr)
-	}
-	if !strings.Contains(res.stderr, "Console.disable") || strings.Contains(res.stderr, "watchdog") {
-		t.Errorf("stderr = %q, want the deadline error naming Console.disable, not the watchdog", res.stderr)
-	}
-}
-
-// TestFollowOutlivesSetupTimeoutUntilSignal pins the --follow lifecycle
-// (CLAUDE.md "Deadlines", usage of console and network): --timeout bounds only
-// connect and enable, the stream keeps printing events after it, and an
-// interrupt disables the domain and exits 0 with the summary.
-func TestFollowOutlivesSetupTimeoutUntilSignal(t *testing.T) {
-	for _, tc := range streamCases {
-		t.Run(tc.command, func(t *testing.T) {
-			mock := testutil.NewMockServer()
-			defer mock.Close()
-			// The setup timeout bounds connect and enable, so it must exceed
-			// their latency, which is not what this test pins: through the
-			// daemon they take about 130 ms on an idle host, 100 ms of it
-			// the legacy client's wait for a Target.targetCreated that the
-			// mock never sends, and they took over 300 ms, the earlier
-			// value, under -race on a loaded host (docs/notes/w1b.md,
-			// "core-events r2: the --follow setup timeout of a CLI test").
-			// A cold daemon start is kept out of it too (R6-5).
-			const setupTimeout = 2 * time.Second
-			startTestDaemon(t)
-			start := time.Now()
-			p := startCLI(t, []string{"IWDP_WS_URL=" + mock.URL}, tc.command, "--follow", "--timeout", setupTimeout.String())
-			exited := func(what string) {
-				select {
-				case <-p.done:
-					t.Fatalf("iwdp-cli exited %d %s; stderr %q", p.code, what, p.stderr.String())
-				default:
-				}
-			}
-			eventually(t, setupTimeout+5*time.Second, "the stream after "+tc.domain+".enable", func() bool {
-				exited("before streaming")
-				return contains(mock.ReceivedMethods(), tc.domain+".enable") && strings.Contains(p.stderr.String(), "(Ctrl+C to stop)")
-			})
-
-			// Well past the setup timeout, which the CLI started after start.
-			time.Sleep(time.Until(start.Add(setupTimeout * 3 / 2)))
-			if err := mock.SendEvent(tc.event, tc.params); err != nil {
-				t.Fatal(err)
-			}
-			eventually(t, 5*time.Second, "the event on stdout", func() bool {
-				exited("before printing the event")
-				return strings.Contains(p.stdout.String(), tc.printed)
-			})
-
-			if err := p.cmd.Process.Signal(os.Interrupt); err != nil {
-				t.Fatal(err)
-			}
-			if code := p.wait(t, 8*time.Second); code != 0 {
-				t.Fatalf("exit %d after interrupt, want 0; stderr %q", code, p.stderr.String())
-			}
-			if !strings.Contains(p.stderr.String(), "(interrupted)") {
-				t.Errorf("stderr lacks the interrupted summary: %q", p.stderr.String())
-			}
-			if !contains(mock.ReceivedMethods(), tc.domain+".disable") {
-				t.Errorf("%s --follow did not disable the %s domain on interrupt", tc.command, tc.domain)
-			}
-		})
-	}
-}
-
-// TestFollowSetupStillTimesOut pins that --follow keeps a deadline on its
-// setup: a stalled enable ends with exit 124 at the --timeout value.
-func TestFollowSetupStillTimesOut(t *testing.T) {
-	for _, tc := range streamCases {
-		t.Run(tc.command, func(t *testing.T) {
-			mock := testutil.NewMockServer()
-			defer mock.Close()
-			mock.NeverRespond(tc.domain + ".enable")
-			mock.HandleFunc("Runtime.evaluate", map[string]any{"result": map[string]any{"type": "number", "value": 1}})
-			// The 500 ms --timeout must end the command while it waits for
-			// the stalled enable, so the daemon's start and the page's
-			// attach, which are not what this test pins, happen before it:
-			// startTestDaemon waits until the daemon answers, and an eval
-			// attaches the page in the daemon, whose connection the command
-			// below reuses.
-			startTestDaemon(t)
-			if res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "eval", "1"); res.code != 0 {
-				t.Fatalf("attaching the page: exit %d, stderr %q", res.code, res.stderr)
-			}
-			res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, tc.command, "--follow", "--timeout", "500ms")
-			if res.code != exitTimeout || !strings.Contains(res.stderr, tc.domain+".enable") {
-				t.Errorf("exit %d stderr %q; want %d and an error naming %s.enable", res.code, res.stderr, exitTimeout, tc.domain)
-			}
-			if res.elapsed > 8*time.Second {
-				t.Errorf("%s --follow ran %v with a 500ms setup timeout", tc.command, res.elapsed)
-			}
-		})
-	}
-}
-
-func TestConsoleMessagesDurationStillWorks(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "console-messages", "-d", "1")
-	if res.code != 0 || strings.TrimSpace(res.stdout) != "[]" {
-		t.Errorf("console-messages -d 1: exit %d stdout %q stderr %q", res.code, res.stdout, res.stderr)
-	}
-}
-
-func TestStreamRejectsUnknownOptionBeforeConnecting(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "console", "--forever")
-	if res.code != 1 || mock.ConnectionCount() != 0 {
-		t.Errorf("exit %d, connections %d; want 1 and 0", res.code, mock.ConnectionCount())
-	}
-}
-
 // --- Cookies (criterion 4) ---
 
 const secretValue = "s3cr3t-session-token-1234567890"
-
-func TestCookiesRedactValuesByDefault(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	mock.HandleFunc("Page.getCookies", map[string]interface{}{"cookies": []webkit.Cookie{
-		{Name: "sid", Value: secretValue, Domain: ".example.com", Path: "/", HTTPOnly: true, Secure: true, Session: true, SameSite: "Lax"},
-	}})
-	env := []string{"IWDP_WS_URL=" + mock.URL}
-
-	res := runCLI(t, "", env, "cookies")
-	if res.code != 0 {
-		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
-	}
-	if strings.Contains(res.stdout+res.stderr, secretValue) {
-		t.Errorf("cookies printed the value: %q", res.stdout)
-	}
-	if !strings.Contains(res.stdout, "sid=s3cr...(redacted, 31 chars)") || !strings.Contains(res.stdout, "sameSite=Lax") {
-		t.Errorf("stdout = %q, want the redacted value with length and prefix", res.stdout)
-	}
-
-	res = runCLI(t, "", env, "cookies", "--show-values")
-	if res.code != 0 || !strings.Contains(res.stdout, "sid="+secretValue) {
-		t.Errorf("--show-values: exit %d stdout %q", res.code, res.stdout)
-	}
-}
-
-func TestSetCookieSendsAttributesAndVerifies(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	var mu sync.Mutex
-	var sent []webkit.Cookie
-	mock.Handle("Page.setCookie", func(_ string, params json.RawMessage) (interface{}, error) {
-		var p struct {
-			Cookie webkit.Cookie `json:"cookie"`
-		}
-		_ = json.Unmarshal(params, &p)
-		mu.Lock()
-		sent = append(sent, p.Cookie)
-		mu.Unlock()
-		return map[string]interface{}{}, nil
-	})
-	mock.Handle("Page.getCookies", func(string, json.RawMessage) (interface{}, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		return map[string]interface{}{"cookies": sent[len(sent)-1:]}, nil
-	})
-	env := []string{"IWDP_WS_URL=" + mock.URL}
-
-	res := runCLI(t, "", env, "set-cookie", "sid", secretValue, "example.com",
-		"--same-site", "strict", "--secure", "--http-only", "--path", "/app", "--expires", "2030-01-01T00:00:00Z")
-	if res.code != 0 {
-		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
-	}
-	mu.Lock()
-	got := sent[0]
-	mu.Unlock()
-	wantExpires := float64(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-	if got.SameSite != "Strict" || !got.Secure || !got.HTTPOnly || got.Path != "/app" || got.Expires != wantExpires || got.Session {
-		t.Errorf("Page.setCookie cookie = %+v", got)
-	}
-	if !strings.Contains(res.stdout, "verified") || strings.Contains(res.stdout+res.stderr, secretValue) {
-		t.Errorf("stdout = %q, want a verified message without the value", res.stdout)
-	}
-
-	res = runCLI(t, "", env, "set-cookie", "plain", "v", "example.com")
-	mu.Lock()
-	got = sent[len(sent)-1]
-	mu.Unlock()
-	if res.code != 0 || got.SameSite != "Lax" || !got.Session {
-		t.Errorf("default set-cookie: exit %d, cookie %+v; want sameSite Lax session cookie", res.code, got)
-	}
-}
-
-func TestSetCookieFailsWhenNotReadBack(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	mock.HandleFunc("Page.getCookies", map[string]interface{}{"cookies": []webkit.Cookie{}})
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "set-cookie", "sid", "v", "example.com")
-	if res.code != 1 || !strings.Contains(res.stderr, "not found") {
-		t.Errorf("exit %d stderr %q; want 1 and a not-found error", res.code, res.stderr)
-	}
-}
-
-func TestSetCookieRejectsBadSameSiteBeforeConnecting(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "set-cookie", "sid", "v", "example.com", "--same-site", "sometimes")
-	if res.code != 1 || mock.ConnectionCount() != 0 || !strings.Contains(res.stderr, "sometimes") {
-		t.Errorf("exit %d, connections %d, stderr %q", res.code, mock.ConnectionCount(), res.stderr)
-	}
-}
-
-func TestParseCookieExpiry(t *testing.T) {
-	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
-	for in, want := range map[string]time.Time{
-		"1893456000":           time.Unix(1893456000, 0),
-		"2030-01-01T00:00:00Z": time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC),
-		"24h":                  now.Add(24 * time.Hour),
-	} {
-		got, err := parseCookieExpiry(in, now)
-		if err != nil || !got.Equal(want) {
-			t.Errorf("parseCookieExpiry(%q) = %v, %v; want %v", in, got, err, want)
-		}
-	}
-	if _, err := parseCookieExpiry("tomorrow", now); err == nil {
-		t.Error("expected an error for an unparseable expiry")
-	}
-}
 
 // --- eval (criterion 5) ---
 
@@ -777,7 +344,7 @@ func TestEvalExceptionPrintsMessageAndStack(t *testing.T) {
 	mock.HandleFunc("Runtime.callFunctionOn", map[string]interface{}{
 		"result": map[string]interface{}{"type": "string", "value": "global code@\nevaluateWithScopeExtension@[native code]"},
 	})
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "eval", "nope")
+	res := runCLI(t, "", nil, "eval", "nope", "--page", mock.URL)
 	if res.code != 1 {
 		t.Fatalf("exit %d, want 1; stdout %q", res.code, res.stdout)
 	}
@@ -798,7 +365,7 @@ func TestEvalAwaitPrintsSettledValueAsJSON(t *testing.T) {
 	mock.HandleFunc("Runtime.awaitPromise", map[string]interface{}{
 		"result": map[string]interface{}{"type": "object", "value": map[string]interface{}{"ok": true, "n": 2}},
 	})
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "eval", "--await", "Promise.resolve({ok: true, n: 2})")
+	res := runCLI(t, "", nil, "eval", "--await", "--page", mock.URL, "Promise.resolve({ok: true, n: 2})")
 	if res.code != 0 {
 		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
 	}
@@ -843,7 +410,7 @@ func TestScreenshotDefaultsToViewportInTMPDIR(t *testing.T) {
 	})
 	cwd, tmp := t.TempDir(), t.TempDir()
 
-	res := runCLI(t, cwd, []string{"IWDP_WS_URL=" + mock.URL, "TMPDIR=" + tmp}, "screenshot")
+	res := runCLI(t, cwd, []string{"TMPDIR=" + tmp}, "screenshot", "--page", mock.URL)
 	if res.code != 0 {
 		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
 	}
@@ -879,58 +446,12 @@ func TestScreenshotSelectorAndOutput(t *testing.T) {
 	mock.HandleFunc("Page.snapshotNode", map[string]string{"dataURL": pngDataURL(t, 4, 4)})
 	out := filepath.Join(t.TempDir(), "card.png")
 
-	res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, "screenshot", "--selector", "#card", "-o", out)
+	res := runCLI(t, "", nil, "screenshot", "--selector", "#card", "-o", out, "--page", mock.URL)
 	if res.code != 0 || !strings.Contains(res.stdout, out) || !strings.Contains(res.stdout, "4x4 px") {
 		t.Fatalf("exit %d stdout %q stderr %q", res.code, res.stdout, res.stderr)
 	}
 	if _, err := os.Stat(out); err != nil {
 		t.Errorf("output file: %v", err)
-	}
-}
-
-// TestSnapshotNodeDefaultsToTMPDIR pins the snapshot-node default output
-// (usage of snapshot-node): without -o it writes only a new
-// iwdp-snapshot-<timestamp>.png under TMPDIR and prints its path and size.
-func TestSnapshotNodeDefaultsToTMPDIR(t *testing.T) {
-	mock := testutil.NewMockServer()
-	defer mock.Close()
-	var mu sync.Mutex
-	var nodeID float64
-	mock.Handle("Page.snapshotNode", func(_ string, params json.RawMessage) (interface{}, error) {
-		var p struct {
-			NodeID float64 `json:"nodeId"`
-		}
-		_ = json.Unmarshal(params, &p)
-		mu.Lock()
-		nodeID = p.NodeID
-		mu.Unlock()
-		return map[string]string{"dataURL": pngDataURL(t, 5, 3)}, nil
-	})
-	cwd, tmp := t.TempDir(), t.TempDir()
-
-	res := runCLI(t, cwd, []string{"IWDP_WS_URL=" + mock.URL, "TMPDIR=" + tmp}, "snapshot-node", "7")
-	if res.code != 0 {
-		t.Fatalf("exit %d; stderr %q", res.code, res.stderr)
-	}
-	if files := dirEntries(t, cwd); len(files) != 0 {
-		t.Errorf("snapshot-node wrote into the current directory: %v", files)
-	}
-	files := dirEntries(t, tmp)
-	if len(files) != 1 || !strings.HasPrefix(files[0], "iwdp-snapshot-") || !strings.HasSuffix(files[0], ".png") {
-		t.Fatalf("TMPDIR holds %v, want one iwdp-snapshot-<timestamp>.png", files)
-	}
-	path := filepath.Join(tmp, files[0])
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "Snapshot saved to " + path + " (5x3 px, " + itoa(info.Size()) + " bytes)"; !strings.Contains(res.stdout, want) {
-		t.Errorf("stdout %q lacks %q", res.stdout, want)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if nodeID != 7 {
-		t.Errorf("Page.snapshotNode nodeId = %v, want 7", nodeID)
 	}
 }
 
@@ -942,9 +463,9 @@ func TestScreenshotRejectsConflictingOptionsBeforeConnecting(t *testing.T) {
 		{"screenshot", "--fullpage"},
 		{"screenshot", "-o"},
 	} {
-		res := runCLI(t, "", []string{"IWDP_WS_URL=" + mock.URL}, args...)
-		if res.code != 1 {
-			t.Errorf("%v: exit %d, want 1", args, res.code)
+		res := runCLI(t, "", nil, append(args, "--page", mock.URL)...)
+		if res.code != 2 {
+			t.Errorf("%v: exit %d, want 2 (usage); stderr %q", args, res.code, res.stderr)
 		}
 	}
 	if n := mock.ConnectionCount(); n != 0 {

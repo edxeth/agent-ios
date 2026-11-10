@@ -17,52 +17,58 @@ import (
 // Regression tests for the W1b closure review of tree dce71d4d (P1): under
 // IWDP_NO_DAEMON=1 the deadline watchdog ended the process with exit 124
 // while the in-process cleanup still ran, so the page state the command set
-// was never reset. Every exit path (main, fatal, the signal handler and the
+// was never reset. Every exit path (main, the signal handler and the
 // watchdog) waits for the one cleanup; a signal makes the exit code 130, an
-// expired deadline 124 (processExit in daemon_cli.go).
+// expired deadline 124 (processExit in daemon_cli.go). Since WS2 round-1
+// review S1 F2, the command's deadline bounds that cleanup (processExit.window):
+// a cleanup still running at the deadline plus deadlineGrace is cut off.
 
-// cleanupPastDeadline holds the page's reply to the cleanup's first reset
-// longer than the command's deadline plus watchdogGrace, and less than
-// daemon.ShutdownBudget, so the watchdog fires while the cleanup runs and
-// the cleanup still ends within its budget.
+// cleanupPastDeadline holds a page reply longer than shortDeadline plus
+// watchdogGrace, and less than daemon.ShutdownBudget. A reply of the
+// cleanup held this long is past the cleanup's budget, which the
+// command's deadline bounds (processExit.window).
 const cleanupPastDeadline = 3500 * time.Millisecond
 
-// shortDeadline is the --timeout of three tests below. In the two
-// set-breakpoint tests, the command must connect, enable and set its
-// breakpoint before it, or no breakpoint exists for the cleanup to remove;
-// 500 ms was too short on a loaded host. Their cleanup starts when that
-// setup ends, at most shortDeadline after the start. In
-// TestCLINoDaemonRegistryWatchdogWaitsForTheCleanup, the idle command waits
-// for its deadline, so its cleanup starts at shortDeadline. In all three,
-// the page holds a reply of the cleanup for cleanupPastDeadline. So the
-// cleanup runs at the deadline (shortDeadline) or starts there, the
-// watchdog (shortDeadline + watchdogGrace, 3 s) fires while it runs, and
-// the cleanup still ends within daemon.ShutdownBudget.
+// shortDeadline is the --timeout of two tests below. In
+// TestCLINoDaemonDeadlineCutsAHeldCleanup, the command must connect and
+// enable its domains before it, or no state exists for the cleanup to
+// reset; 500 ms was too short on a loaded host. In
+// TestCLINoDaemonTimedOutCommandStillSendsItsCleanup, the idle command
+// waits for its deadline, so its cleanup starts at shortDeadline. In both,
+// the page holds a reply of the cleanup for cleanupPastDeadline, so the
+// deadline cuts the cleanup off.
 const shortDeadline = "1s"
 
-// startHeldCleanup starts set-breakpoint under IWDP_NO_DAEMON=1 with
-// --timeout shortDeadline and waits until main's cleanup sent
-// Debugger.removeBreakpoint, whose reply the page holds for
-// cleanupPastDeadline.
-func startHeldCleanup(t *testing.T) (*fakewebkit.Server, *runningCLI) {
+// startHeldCleanup starts setRegistryCommand under IWDP_NO_DAEMON=1 with
+// --timeout timeout and waits until main's cleanup sent Console.disable,
+// whose reply the page holds for hold; Debugger.disable comes after it.
+func startHeldCleanup(t *testing.T, timeout string, hold time.Duration) (*fakewebkit.Server, *runningCLI) {
 	t.Helper()
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
-	f.Result("Debugger.setBreakpointByUrl", map[string]any{"breakpointId": "bp-1", "locations": []any{}})
-	f.DelayReplies("Debugger.removeBreakpoint", cleanupPastDeadline)
-	p := startCLI(t, []string{"IWDP_NO_DAEMON=1"}, "set-breakpoint", "https://fixture.example/app.js", "3", f.URL, "--timeout", shortDeadline)
-	eventually(t, cleanupLimit, "main's cleanup to remove the breakpoint", func() bool {
-		return len(f.ReceivedMethod("Debugger.removeBreakpoint")) == 1
+	f.DelayReplies("Console.disable", hold)
+	p := startCLI(t, []string{"IWDP_NO_DAEMON=1"}, append(strings.Fields(setRegistryCommand), "--page", f.URL, "--timeout", timeout)...)
+	eventually(t, cleanupLimit, "main's cleanup to disable Console", func() bool {
+		return len(f.ReceivedMethod("Console.disable")) == 1
 	})
 	return f, p
 }
 
-// Reviewer's counterexample: SIGINT during main's cleanup, which runs past
-// the deadline. The watchdog exited 124 at 2.5 s, before the cleanup sent
-// Debugger.disable. The watchdog must wait for the running cleanup, and the
-// signal makes the exit code 130.
-func TestCLINoDaemonSignalDuringCleanupPastTheDeadline(t *testing.T) {
-	f, p := startHeldCleanup(t)
+// signalDeadline and signalHold: a deadline that leaves main's cleanup
+// time for the held Console.disable, so that the signal arrives while the
+// cleanup runs within its budget.
+const (
+	signalDeadline = "10s"
+	signalHold     = 1500 * time.Millisecond
+)
+
+// Reviewer's counterexample: SIGINT during main's cleanup. The exit path of
+// the signal must wait for the running cleanup, which then sends
+// Debugger.disable, and the signal makes the exit code 130. (Before WS2
+// round-1 review S1 F2 the cleanup ran past the deadline; now the deadline
+// bounds it, so the cleanup here fits in a longer deadline.)
+func TestCLINoDaemonSignalDuringAHeldCleanupWaitsForIt(t *testing.T) {
+	f, p := startHeldCleanup(t, signalDeadline, signalHold)
 	if err := p.cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
@@ -74,49 +80,71 @@ func TestCLINoDaemonSignalDuringCleanupPastTheDeadline(t *testing.T) {
 	}
 }
 
-// Deadline only: the same held cleanup without a signal. The deadline
-// expired while the cleanup ran, so the exit code is 124, but only after
-// the cleanup reset the page state.
-func TestCLINoDaemonDeadlineDuringCleanupWaitsForIt(t *testing.T) {
-	f, p := startHeldCleanup(t)
-	if code := p.wait(t, cleanupLimit); code != exitTimeout {
-		t.Errorf("exit %d after the deadline expired during the cleanup, want %d; stderr %q", code, exitTimeout, p.stderr.String())
+// Deadline only: a held cleanup past the deadline without a signal. WS2
+// round-1 review S1 F2: the deadline bounds the cleanup, so the process
+// does not wait for the held Console.disable; it exits with the command's
+// own status (0: the command succeeded) and a warning that names the reset
+// that did not finish, before the watchdog, and sends no reset after the
+// cut. The bound itself is checked by TestNoDaemonCleanupStaysWithinTheDeadline.
+func TestCLINoDaemonDeadlineCutsAHeldCleanup(t *testing.T) {
+	f, p := startHeldCleanup(t, shortDeadline, cleanupPastDeadline)
+	if code := p.wait(t, cleanupLimit); code != 0 {
+		t.Errorf("exit %d after the deadline cut the cleanup, want the command's own 0; stderr %q", code, p.stderr.String())
 	}
-	if n := len(f.ReceivedMethod("Debugger.disable")); n != 1 {
-		t.Errorf("Debugger.disable sent %d times before the exit, want 1: the watchdog preempted the cleanup; stderr %q", n, p.stderr.String())
+	if n := len(f.ReceivedMethod("Debugger.disable")); n != 0 {
+		t.Errorf("Debugger.disable sent %d times, want 0: no reset after the cleanup's budget; stderr %q", n, p.stderr.String())
 	}
-	if s := p.stderr.String(); !strings.Contains(s, "iwdp-cli set-breakpoint timed out") {
-		t.Errorf("stderr %q lacks the deadline error", s)
+	if s := p.stderr.String(); !strings.Contains(s, "warning: cleanup of the page state") || !strings.Contains(s, "Console.disable") || strings.Contains(s, errWatchdog.Error()) {
+		t.Errorf("stderr %q: want the warning that names Console.disable, and no watchdog error", s)
 	}
 }
 
 // heldRegistryCommand is a registry command for the tests below: it
 // acquires Console for its session's owner, enables it and then evaluates,
 // as an ordinary registry command that sets page state does.
-// idleRegistryCommand enables Console the same way, then waits for its
-// deadline without a call in flight.
+// idleRegistryCommand enables Console the same way, prints idleLine and
+// waits for its deadline without a call in flight. setRegistryCommand enables Console
+// and Debugger and succeeds; the cleanup disables them in that order
+// (sorted by domain). failRegistryCommand enables Console and fails.
 const (
 	heldRegistryCommand = "test hold console"
 	idleRegistryCommand = "test idle console"
+	setRegistryCommand  = "test set console debugger"
+	failRegistryCommand = "test fail console"
 )
 
+// idleLine is what idleRegistryCommand prints when it starts to wait.
+const idleLine = "idle after Console.enable"
+
+// errFixtureFailure is the error of failRegistryCommand.
+var errFixtureFailure = errors.New("test fixture failure after Console.enable")
+
 func init() {
-	for _, name := range []string{heldRegistryCommand, idleRegistryCommand} {
+	for _, name := range []string{heldRegistryCommand, idleRegistryCommand, setRegistryCommand, failRegistryCommand} {
 		reg.Register(&reg.Command{
-			Name: name, Summary: "Test fixture: enable Console, then evaluate or wait.", Page: reg.AnyPage, Mutates: true,
+			Name: name, Summary: "Test fixture: enable Console, then evaluate, wait, enable Debugger or fail.", Page: reg.AnyPage, Mutates: true,
 			Run: func(ctx context.Context, env reg.Env, in reg.Input) (reg.Result, error) {
 				ps, err := env.Page(ctx)
 				if err != nil {
 					return reg.Result{}, err
 				}
-				ps.State.Acquire(core.SessionOwner("test", in.Global.Session), "Console")
+				owner := core.SessionOwner("test", in.Global.Session)
+				ps.State.Acquire(owner, "Console")
 				c := env.(interface{ Op() *core.Op }).Op().Caller()
 				if _, err := c.Send(ctx, "Console.enable", nil); err != nil {
 					return reg.Result{}, err
 				}
-				if name == idleRegistryCommand {
+				switch name {
+				case idleRegistryCommand:
+					env.Emit(idleLine)
 					<-ctx.Done()
 					return reg.Result{}, ctx.Err()
+				case setRegistryCommand:
+					ps.State.Acquire(owner, "Debugger")
+					_, err = c.Send(ctx, "Debugger.enable", nil)
+					return reg.Result{Text: "set"}, err
+				case failRegistryCommand:
+					return reg.Result{}, errFixtureFailure
 				}
 				_, err = c.Send(ctx, "Runtime.evaluate", map[string]string{"expression": "1"})
 				return reg.Result{}, err
@@ -128,8 +156,8 @@ func init() {
 // Reviewer's counterexample (registry part): SIGINT while a registry
 // command of IWDP_NO_DAEMON=1 waits for its evaluate. Registry commands had
 // no signal cleanup, so the signal ended the process at once and Console
-// stayed enabled. They get the same cleanup as legacy commands: exit 130
-// after Console.disable.
+// stayed enabled. They get the signal cleanup: exit 130 after
+// Console.disable.
 func TestCLINoDaemonRegistrySignalRunsCleanup(t *testing.T) {
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
@@ -155,14 +183,15 @@ func TestCLINoDaemonRegistrySignalRunsCleanup(t *testing.T) {
 	}
 }
 
-// A registry command of IWDP_NO_DAEMON=1 gets the watchdog of legacy
-// commands: the command ends at its deadline, shortDeadline (exit 124 from
-// the command; no call is in flight then, so no liveness probe can mark the
-// page stalled before the cleanup), main's cleanup then waits for the held
-// Console.disable past the deadline plus watchdogGrace, and the watchdog
-// fires during it. The watchdog waits for the cleanup and reports the
-// expired deadline.
-func TestCLINoDaemonRegistryWatchdogWaitsForTheCleanup(t *testing.T) {
+// A registry command of IWDP_NO_DAEMON=1 that ends at its deadline,
+// shortDeadline (exit 124 from the command; no call is in flight then, so
+// no liveness probe can mark the page stalled before the cleanup), still
+// gets its cleanup: main's cleanup sends Console.disable within the first
+// part of deadlineGrace. WS2 round-1 review S1 F2: the page holds the
+// reply past that budget, so the cleanup is cut off and the process exits
+// 124 with the command's deadline error and a warning that names
+// Console.disable, before the watchdog.
+func TestCLINoDaemonTimedOutCommandStillSendsItsCleanup(t *testing.T) {
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
 	f.DelayReplies("Console.disable", cleanupPastDeadline)
@@ -174,8 +203,8 @@ func TestCLINoDaemonRegistryWatchdogWaitsForTheCleanup(t *testing.T) {
 	if n := len(f.ReceivedMethod("Console.disable")); n != 1 {
 		t.Errorf("Console.disable sent %d times before the exit, want 1; stderr %q", n, p.stderr.String())
 	}
-	if s := p.stderr.String(); !strings.Contains(s, errWatchdog.Error()) || !strings.Contains(s, "iwdp-cli "+idleRegistryCommand+" timed out") {
-		t.Errorf("stderr %q lacks the watchdog's deadline error for the registry command", s)
+	if s := p.stderr.String(); strings.Contains(s, errWatchdog.Error()) || !strings.Contains(s, "iwdp-cli "+idleRegistryCommand+" timed out") || !strings.Contains(s, "Console.disable") {
+		t.Errorf("stderr %q: want the command's deadline error and the warning that names Console.disable, without the watchdog", s)
 	}
 }
 

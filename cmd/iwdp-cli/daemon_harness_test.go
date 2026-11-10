@@ -103,19 +103,6 @@ func testRuntime(t *testing.T) string {
 	return dir
 }
 
-// startTestDaemon starts t's own daemon (testRuntime) and returns when it
-// answers. A command's deadline covers the daemon's start (design 2.3:
-// the client starts it on demand). Tests whose short --timeout must cover
-// only the connect and enable steps of a page call it first, so the cold
-// start of a daemon built with -race on a loaded host does not use up that
-// timeout (review finding R6-5).
-func startTestDaemon(t *testing.T) {
-	t.Helper()
-	if res := runCLI(t, "", nil, "daemon", "start"); res.code != 0 {
-		t.Fatalf("daemon start: exit %d, stderr %q", res.code, res.stderr)
-	}
-}
-
 // fakeIWDPBin holds the fake iwdp executables (testutil.InstallFakeIWDP).
 var fakeIWDPBin string
 

@@ -446,7 +446,6 @@ func (c wkConn) AgentStates(target string) map[string]webkit.AgentState {
 	defer c.p.mu.Unlock()
 	return maps.Clone(c.p.rec[target])
 }
-func (wkConn) OnEvent(string, webkit.EventHandler)          {}
 func (wkConn) Subscribe(string, webkit.EventHandler) func() { return func() {} }
 func (wkConn) IsTargetRouted() bool                         { return true }
 func (wkConn) Done() <-chan struct{}                        { return nil }

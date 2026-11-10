@@ -21,9 +21,7 @@ type leaseHooksKey struct{}
 
 // WithLeaseHooks marks ctx as the context of a registry command (design
 // 2.10): a lease that such a call acquires or uses first runs the lease
-// hooks. Legacy commands do not carry the mark, so a lease that only they
-// use keeps exactly the WebKit domain state that they set themselves
-// (design 7.3 test 13: their behavior does not change).
+// hooks. Calls without the mark (a CDP attachment's) do not run them.
 func WithLeaseHooks(ctx context.Context) context.Context {
 	return context.WithValue(ctx, leaseHooksKey{}, true)
 }

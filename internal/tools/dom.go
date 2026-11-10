@@ -56,66 +56,6 @@ func QuerySelector(ctx context.Context, client webkit.Caller, nodeID int, select
 	return resp.NodeID, nil
 }
 
-// QuerySelectorAll finds all elements matching a CSS selector.
-func QuerySelectorAll(ctx context.Context, client webkit.Caller, nodeID int, selector string) ([]int, error) {
-	result, err := client.Send(ctx, "DOM.querySelectorAll", map[string]interface{}{
-		"nodeId":   nodeID,
-		"selector": selector,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		NodeIDs []int `json:"nodeIds"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, fmt.Errorf("decoding querySelectorAll: %w", err)
-	}
-	return resp.NodeIDs, nil
-}
-
-// GetOuterHTML returns the outer HTML for a node.
-func GetOuterHTML(ctx context.Context, client webkit.Caller, nodeID int) (string, error) {
-	result, err := client.Send(ctx, "DOM.getOuterHTML", map[string]interface{}{
-		"nodeId": nodeID,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	var resp struct {
-		OuterHTML string `json:"outerHTML"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return "", fmt.Errorf("decoding outerHTML: %w", err)
-	}
-	return resp.OuterHTML, nil
-}
-
-// GetAttributes returns attributes of a node as key-value pairs.
-func GetAttributes(ctx context.Context, client webkit.Caller, nodeID int) (map[string]string, error) {
-	result, err := client.Send(ctx, "DOM.getAttributes", map[string]interface{}{
-		"nodeId": nodeID,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		Attributes []string `json:"attributes"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, fmt.Errorf("decoding attributes: %w", err)
-	}
-
-	attrs := make(map[string]string)
-	for i := 0; i+1 < len(resp.Attributes); i += 2 {
-		attrs[resp.Attributes[i]] = resp.Attributes[i+1]
-	}
-	return attrs, nil
-}
-
 // EventListenerInfo describes an event listener on a node.
 type EventListenerInfo struct {
 	Type        string `json:"type"`
@@ -123,43 +63,4 @@ type EventListenerInfo struct {
 	IsAttribute bool   `json:"isAttribute"`
 	NodeID      int    `json:"nodeId,omitempty"`
 	HandlerBody string `json:"handlerBody,omitempty"`
-}
-
-// GetEventListeners returns event listeners registered on a node.
-func GetEventListeners(ctx context.Context, client webkit.Caller, nodeID int) ([]EventListenerInfo, error) {
-	result, err := client.Send(ctx, "DOM.getEventListenersForNode", map[string]interface{}{
-		"nodeId": nodeID,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		Listeners []EventListenerInfo `json:"listeners"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, fmt.Errorf("decoding event listeners: %w", err)
-	}
-	return resp.Listeners, nil
-}
-
-// HighlightNode highlights a node in the browser.
-func HighlightNode(ctx context.Context, client webkit.Caller, nodeID int) error {
-	_, err := client.Send(ctx, "DOM.highlightNode", map[string]interface{}{
-		"nodeId": nodeID,
-		"highlightConfig": map[string]interface{}{
-			"showInfo":     true,
-			"contentColor": map[string]int{"r": 111, "g": 168, "b": 220, "a": 66},
-			"paddingColor": map[string]int{"r": 147, "g": 196, "b": 125, "a": 55},
-			"borderColor":  map[string]int{"r": 255, "g": 229, "b": 153, "a": 66},
-			"marginColor":  map[string]int{"r": 246, "g": 178, "b": 107, "a": 66},
-		},
-	})
-	return err
-}
-
-// HideHighlight removes the current DOM highlight.
-func HideHighlight(ctx context.Context, client webkit.Caller) error {
-	_, err := client.Send(ctx, "DOM.hideHighlight", nil)
-	return err
 }

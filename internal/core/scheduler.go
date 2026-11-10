@@ -111,7 +111,7 @@ type SchedulerOptions struct {
 }
 
 // Scheduler is the per-page operation scheduler of design 2.10. Every entry
-// point (registry command, legacy operation, CDP message) is an operation.
+// point (registry command, CDP message) is an operation.
 // Mutations and exclusive operations run one at a time in FIFO order and
 // exclude reads; reads run in parallel with at most MaxInFlight protocol
 // calls. Control-lane messages that let a running operation finish never
@@ -464,7 +464,6 @@ func (c attemptCaller) Send(ctx context.Context, method string, params any) (jso
 	return c.op.s.c.Send(ctx, method, params)
 }
 
-func (c attemptCaller) OnEvent(method string, h webkit.EventHandler) { c.op.s.c.OnEvent(method, h) }
 func (c attemptCaller) Subscribe(method string, h webkit.EventHandler) func() {
 	return c.op.s.c.Subscribe(method, h)
 }
@@ -751,7 +750,6 @@ func (c opCaller) Send(ctx context.Context, method string, params any) (json.Raw
 	return op.s.c.Send(callCtx, method, params)
 }
 
-func (c opCaller) OnEvent(method string, h webkit.EventHandler) { c.op.s.c.OnEvent(method, h) }
 func (c opCaller) Subscribe(method string, h webkit.EventHandler) func() {
 	return c.op.s.c.Subscribe(method, h)
 }
@@ -802,20 +800,6 @@ var interceptCompletions = map[string]string{
 func isInterceptCompletion(method string) bool {
 	_, ok := interceptCompletions[method]
 	return ok
-}
-
-// ControlKindOf reports whether method is a control-lane message (design
-// 2.10) and its kind. Every other method is an ordinary operation.
-func ControlKindOf(method string) (ControlKind, bool) {
-	switch {
-	case isInterceptCompletion(method):
-		return ControlCompleteRequest, true
-	case method == "Debugger.resume":
-		return ControlDebuggerResume, true
-	case method == "Target.resume":
-		return ControlTargetResume, true
-	}
-	return 0, false
 }
 
 // ControlMsg is a control-lane message.
@@ -1197,25 +1181,6 @@ func (s *Scheduler) markResetLocked(k holdKey) {
 		s.resetReqs = map[holdKey]bool{}
 	}
 	s.resetReqs[k] = true
-}
-
-// pauseOpen reports whether a debugger pause of any target is an open
-// pending item.
-func (s *Scheduler) pauseOpen() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.openPausesLocked()) > 0
-}
-
-// openPausesLocked returns the targets whose pause is an open pending item.
-func (s *Scheduler) openPausesLocked() []string {
-	var out []string
-	for t, p := range s.pauses {
-		if p.open() {
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 // controlCaller sends on the control lane of the page connection. A

@@ -98,7 +98,6 @@ func (c leaseCaller) current() error {
 	return nil
 }
 
-func (c leaseCaller) OnEvent(method string, h webkit.EventHandler) { c.op.s.c.OnEvent(method, h) }
 func (c leaseCaller) Subscribe(method string, h webkit.EventHandler) func() {
 	return c.op.s.c.Subscribe(method, h)
 }

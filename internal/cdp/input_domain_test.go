@@ -124,7 +124,7 @@ func TestInputCleanupSurvivesReconnect(t *testing.T) {
 		cancel()
 		t.Fatal(err)
 	}
-	_, err = w.r.m.Raw(ctx, mo.ID, "Runtime.evaluate", json.RawMessage(`{"expression":"1"}`))
+	_, err = w.r.m.RawAs(ctx, mo, core.SessionOwner("legacy", mo.Session), "Runtime.evaluate", json.RawMessage(`{"expression":"1"}`))
 	w.r.m.End(mo.ID)
 	cancel()
 	if err == nil {

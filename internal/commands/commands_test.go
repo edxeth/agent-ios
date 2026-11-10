@@ -60,13 +60,14 @@ func (fakeEnv) ResolvePath(p string) string                     { return p }
 
 func runCLI(args ...string) (code int, stdout, stderr string, envCalls int) {
 	var out, errb bytes.Buffer
-	code = RunCLI(context.Background(), args, &out, &errb, func(ctx context.Context, _ *Invocation) (Env, error) {
+	code = RunCLIStarted(context.Background(), args, &out, &errb, nil, func(ctx context.Context, _ *Invocation) (Env, error) {
 		if _, ok := ctx.Deadline(); !ok {
 			return nil, errors.New("newEnv got a context without the command deadline")
 		}
 		envCalls++
 		return fakeEnv{}, nil
 	})
+
 	return code, out.String(), errb.String(), envCalls
 }
 
@@ -85,9 +86,10 @@ func TestHelpNeverRunsACommand(t *testing.T) {
 				t.Fatalf("%v: code %d, env calls %d, output %q", args, code, env, out)
 			}
 		}
-		// Help also wins over a command line that would fail to parse.
-		if code, _, _, env := runCLI(append(strings.Fields(c.Name), "--no-such-flag", "-h")...); code != ExitOK || env != 0 {
-			t.Fatalf("%s: help with a bad flag gave code %d, env calls %d", c.Name, code, env)
+		// Help never hides an unknown flag: the line is a usage error
+		// (criterion 3; WS2 round-1 review S1 F1 and S3 F2).
+		if code, _, _, env := runCLI(append(strings.Fields(c.Name), "--no-such-flag", "-h")...); code != ExitUsage || env != 0 {
+			t.Fatalf("%s: help with a bad flag gave code %d, env calls %d; want exit 2 without a connection", c.Name, code, env)
 		}
 	}
 	if runs != 0 {

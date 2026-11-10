@@ -33,8 +33,6 @@ func (c *resumeCaller) Send(ctx context.Context, method string, _ any) (json.Raw
 	<-ctx.Done()
 	return nil, fmt.Errorf("%s: no response: %w", method, ctx.Err())
 }
-
-func (c *resumeCaller) OnEvent(string, webkit.EventHandler)          {}
 func (c *resumeCaller) Subscribe(string, webkit.EventHandler) func() { return func() {} }
 func (c *resumeCaller) IsTargetRouted() bool                         { return true }
 func (c *resumeCaller) Done() <-chan struct{}                        { return c.done }

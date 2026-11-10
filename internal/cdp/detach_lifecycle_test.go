@@ -125,7 +125,7 @@ func TestDetachDuringRecoveryDoesNotStrandSibling(t *testing.T) {
 		cancel()
 		t.Fatal(err)
 	}
-	_, err = r.m.Raw(ctx, mo.ID, "Runtime.evaluate", json.RawMessage(`{"expression":"1"}`))
+	_, err = r.m.RawAs(ctx, mo, core.SessionOwner("legacy", mo.Session), "Runtime.evaluate", json.RawMessage(`{"expression":"1"}`))
 	r.m.End(mo.ID)
 	cancel()
 	if err == nil {

@@ -150,14 +150,14 @@ func TestRunCLIRunsRemoteEnvCommandsRemotely(t *testing.T) {
 	env := &remoteEnv{}
 	newEnv := func(context.Context, *Invocation) (Env, error) { return env, nil }
 	var out, errb bytes.Buffer
-	if code := RunCLI(context.Background(), []string{"--session", "s1", "fixture", "click", "--force", "@e1"}, &out, &errb, newEnv); code != 0 {
+	if code := RunCLIStarted(context.Background(), []string{"--session", "s1", "fixture", "click", "--force", "@e1"}, &out, &errb, nil, newEnv); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 	if out.String() != "remote ran\n" || runs != 0 || strings.Join(env.got, " ") != "fixture click --button=left --force=true -- @e1" {
 		t.Fatalf("stdout %q, local runs %d, remote argv %q", out.String(), runs, env.got)
 	}
 	out.Reset()
-	if code := RunCLI(context.Background(), []string{"fixture", "local"}, &out, &errb, newEnv); code != 0 || out.String() != "local ran\n" {
+	if code := RunCLIStarted(context.Background(), []string{"fixture", "local"}, &out, &errb, nil, newEnv); code != 0 || out.String() != "local ran\n" {
 		t.Fatalf("local command: exit %d, stdout %q", code, out.String())
 	}
 }

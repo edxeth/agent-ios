@@ -28,6 +28,7 @@ func init() {
 		Page:    LeasedPage,
 		Mutates: true,
 		Output:  OutputText,
+		Check:   func(in Input) error { _, err := traceScript(in); return err },
 		Run:     runTraceStart,
 	})
 	Register(&Command{
@@ -41,7 +42,9 @@ func init() {
 	})
 }
 
-func runTraceStart(ctx context.Context, env Env, in Input) (Result, error) {
+// traceScript reads --categories of "trace start": whether it names
+// script; a category other than timeline or script is a usage error.
+func traceScript(in Input) (bool, error) {
 	script := false
 	for _, cat := range strings.Split(flagString(in, "categories"), ",") {
 		switch strings.TrimSpace(cat) {
@@ -49,8 +52,16 @@ func runTraceStart(ctx context.Context, env Env, in Input) (Result, error) {
 		case "script":
 			script = true
 		default:
-			return Result{}, usagef("--categories: %q is not timeline or script", cat)
+			return false, usagef("--categories: %q is not timeline or script", cat)
 		}
+	}
+	return script, nil
+}
+
+func runTraceStart(ctx context.Context, env Env, in Input) (Result, error) {
+	script, err := traceScript(in)
+	if err != nil {
+		return Result{}, err
 	}
 	d, err := devtoolsForCommand(ctx, env)
 	if err != nil {

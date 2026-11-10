@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
+	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
 	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
 )
 
 // bfcacheUA is the user-agent override of TestBackAndForwardAcrossSites.
@@ -86,10 +88,49 @@ func TestBackAcrossAConnectionChange(t *testing.T) {
 	backAndForward(t, true)
 }
 
+// bfcachePage is the page of backAndForward in an in-process core over the
+// WebKitGTK inspector at addr. Each call runs as its own exclusive
+// operation of session bfcache through Manager.RawAs, with the session's
+// "bfcache" owner as the desired-state owner of the call.
+type bfcachePage struct{ m *core.Manager }
+
+func newBFCachePage(addr string) *bfcachePage {
+	tr := webkitgtk.New(addr)
+	return &bfcachePage{m: core.NewManager(core.ManagerOptions{
+		Transport: func(context.Context, string, string) (transport.Transport, error) { return tr, nil },
+		Session:   webkit.SessionOptions{TargetWait: 12 * time.Second},
+		DaemonID:  "bfcache-test",
+	})}
+}
+
+func (p *bfcachePage) Send(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("%s params: %w", method, err)
+	}
+	var res json.RawMessage
+	err = p.m.Do(ctx, core.PageRequest{}, core.AcquireOptions{Session: "bfcache"}, method, core.ClassExclusive, false,
+		func(ctx context.Context, mo *core.ManagedOp) error {
+			var err error
+			res, err = p.m.RawAs(ctx, mo, core.SessionOwner("bfcache", mo.Session), method, raw)
+			return err
+		})
+	return res, err
+}
+
+// Close releases the session with its cleanup and closes the page
+// connection, as a daemon that stops does.
+func (p *bfcachePage) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return p.m.Close(ctx)
+}
+
 // backAndForward runs the back and forward checks on its own broadway
-// display (broadway). With reconnect, the page caller, its daemon connection and the
-// daemon end while A is in the back/forward cache and B is active; a new
-// daemon attaches B and the same desired state is set again before back.
+// display (broadway). With reconnect, the core that set the desired state
+// ends (its release cleanup runs and its page connection closes) while A
+// is in the back/forward cache and B is active; a new core attaches B and
+// the same desired state is set again before back.
 func backAndForward(t *testing.T, reconnect bool) {
 	sites := &twoSites{reqs: map[string][2]string{}}
 	sites.a, sites.b = sites.serve(t, "127.0.0.1"), sites.serve(t, "localhost")
@@ -108,25 +149,9 @@ func backAndForward(t *testing.T, reconnect bool) {
 			t.Fatalf("MiniBrowser did not list a page at %s within %v", addr, browserStart)
 		}
 	}
-	if r := cli(t, "daemon", "start", "--transport", "webkitgtk", "--addr", addr); r.code != 0 {
-		t.Fatalf("daemon start: exit %d, stderr %q", r.code, r.stderr)
-	}
-	t.Cleanup(func() {
-		if r := cli(t, "daemon", "stop"); r.code != 0 {
-			t.Errorf("daemon stop: exit %d, stderr %q", r.code, r.stderr)
-		}
-	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	dc, err := daemon.Connect(ctx, daemon.Options{NoStart: true})
-	if err != nil {
-		t.Fatalf("connecting to the daemon: %v", err)
-	}
-	defer func() { dc.Close() }()
-	pc, err := dc.AttachPage(ctx, daemon.PageOptions{Page: daemon.PageReq{Transport: "webkitgtk", Addr: addr}, Owner: daemon.Owner{Session: "bfcache"}})
-	if err != nil {
-		t.Fatalf("attaching the page: %v", err)
-	}
+	pc := newBFCachePage(addr)
 	defer func() { _ = pc.Close() }()
 	call := func(method string, params any) {
 		t.Helper()
@@ -240,22 +265,10 @@ func backAndForward(t *testing.T, reconnect bool) {
 	if reconnect {
 		// A is cached; the connection that enabled its agents ends.
 		if err := pc.Close(); err != nil {
-			t.Fatalf("closing the first page caller: %v", err)
+			t.Fatalf("ending the first core: %v", err)
 		}
-		dc.Close()
-		if r := cli(t, "daemon", "stop"); r.code != 0 {
-			t.Fatalf("stopping the first daemon: exit %d, stderr %q", r.code, r.stderr)
-		}
-		if r := cli(t, "daemon", "start", "--transport", "webkitgtk", "--addr", addr); r.code != 0 {
-			t.Fatalf("starting the second daemon: exit %d, stderr %q", r.code, r.stderr)
-		}
-		if dc, err = daemon.Connect(ctx, daemon.Options{NoStart: true}); err != nil {
-			t.Fatalf("connecting to the second daemon: %v", err)
-		}
-		if pc, err = dc.AttachPage(ctx, daemon.PageOptions{Page: daemon.PageReq{Transport: "webkitgtk", Addr: addr}, Owner: daemon.Owner{Session: "bfcache"}}); err != nil {
-			t.Fatalf("attaching site B through the second daemon: %v", err)
-		}
-		marker("B", "site B under the second daemon")
+		pc = newBFCachePage(addr)
+		marker("B", "site B under the second core")
 		setState()
 	}
 

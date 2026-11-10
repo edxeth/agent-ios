@@ -166,8 +166,9 @@ func (fh *frameHarness) run(args ...string) (int, string, string) {
 	op := fh.begin(t)
 	defer op.End()
 	var out, errb bytes.Buffer
-	code := RunCLI(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb,
+	code := RunCLIStarted(context.Background(), append([]string{"--timeout", "5s"}, args...), &out, &errb, nil,
 		func(context.Context, *Invocation) (Env, error) { return opEnv{pageEnv{fh.h.ps}, op}, nil })
+
 	return code, strings.TrimRight(out.String(), "\n"), errb.String()
 }
 

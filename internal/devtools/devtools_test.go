@@ -303,7 +303,7 @@ func TestHeaderRemovalWithOtherNetworkOwners(t *testing.T) {
 				}
 				defer r.m.End(mo.ID)
 				raw, _ := json.Marshal(map[string]any{"headers": h})
-				if _, err := r.m.Raw(ctx, mo.ID, "Network.setExtraHTTPHeaders", raw); err != nil {
+				if _, err := r.m.RawAs(ctx, mo, core.SessionOwner("legacy", mo.Session), "Network.setExtraHTTPHeaders", raw); err != nil {
 					t.Fatal(err)
 				}
 			}

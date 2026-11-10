@@ -36,8 +36,9 @@ var spCommands = []string{
 // spRun runs a command line against page session ps (no daemon).
 func spRun(ps *core.PageSession, dir string, args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
-	code := RunCLI(context.Background(), append([]string{"--timeout", "10s"}, args...), &out, &errb,
+	code := RunCLIStarted(context.Background(), append([]string{"--timeout", "10s"}, args...), &out, &errb, nil,
 		func(context.Context, *Invocation) (Env, error) { return spEnv{ps: ps, dir: dir}, nil })
+
 	return code, strings.TrimRight(out.String(), "\n"), errb.String()
 }
 
@@ -79,13 +80,13 @@ func TestStoragePerfCommandsHelpAndFlags(t *testing.T) {
 		called := false
 		newEnv := func(context.Context, *Invocation) (Env, error) { called = true; return nil, fmt.Errorf("no env") }
 		args := append(strings.Fields(name), "--help")
-		if code := RunCLI(context.Background(), args, &out, &errb, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli "+name) || called {
+		if code := RunCLIStarted(context.Background(), args, &out, &errb, nil, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli "+name) || called {
 			t.Errorf("%s --help: exit %d, called %v, out %q", name, code, called, out.String())
 		}
 		out.Reset()
 		errb.Reset()
 		args = append(strings.Fields(name), "--no-such-flag")
-		if code := RunCLI(context.Background(), args, &out, &errb, newEnv); code != ExitUsage || called || !strings.Contains(errb.String(), "unknown flag --no-such-flag") {
+		if code := RunCLIStarted(context.Background(), args, &out, &errb, nil, newEnv); code != ExitUsage || called || !strings.Contains(errb.String(), "unknown flag --no-such-flag") {
 			t.Errorf("%s --no-such-flag: exit %d, called %v, stderr %q; want exit 2 before any connection", name, code, called, errb.String())
 		}
 	}
@@ -333,9 +334,10 @@ func (r *spRig) run(t *testing.T, dir string, args ...string) (int, string, stri
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := r.m.Do(ctx, r.req, r.ao, "test", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
-		code = RunCLI(ctx, args, &out, &errb, func(context.Context, *Invocation) (Env, error) {
+		code = RunCLIStarted(ctx, args, &out, &errb, nil, func(context.Context, *Invocation) (Env, error) {
 			return spEnv{ps: mo.Page.PS, mo: mo, dir: dir}, nil
 		})
+
 		return nil
 	})
 	if err != nil {

@@ -60,26 +60,22 @@ func TestEveryExpiredCommandDeadlineIsATimeout(t *testing.T) {
 		run     func(ctx context.Context, page string) error
 		timeout bool
 	}{
-		{"legacy call", func(ctx context.Context, page string) error {
-			_, err := c.Raw(ctx, RawRequest{Method: "Runtime.evaluate", Params: []byte(`{"expression":"3"}`), TimeoutMs: ms(deadline), PageReq: PageReq{Page: page}, Owner: Owner{Session: "legacy"}})
-			return err
-		}, true},
 		{"registry call", func(ctx context.Context, page string) error {
-			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "call"}, TimeoutMs: ms(deadline), PageReq: PageReq{Page: page}, Owner: Owner{Session: "registry"}}, nil)
+			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "call"}, Deadline: time.Now().Add(deadline), PageReq: PageReq{Page: page}, Owner: Owner{Session: "registry"}}, nil)
 			return err
 		}, true},
 		{"stream setup", func(ctx context.Context, page string) error {
-			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "stream"}, TimeoutMs: ms(deadline), PageReq: PageReq{Page: page}, Owner: Owner{Session: "stream"}}, nil)
+			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "stream"}, Deadline: time.Now().Add(deadline), PageReq: PageReq{Page: page}, Owner: Owner{Session: "stream"}}, nil)
 			return err
 		}, true},
 		{"call waiting for its reply", func(ctx context.Context, page string) error {
-			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "reply"}, TimeoutMs: ms(deadline), PageReq: PageReq{Page: page}, Owner: Owner{Session: "reply"}}, nil)
+			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "reply"}, Deadline: time.Now().Add(deadline), PageReq: PageReq{Page: page}, Owner: Owner{Session: "reply"}}, nil)
 			return err
 		}, true},
 		{"client cancellation", func(ctx context.Context, page string) error {
 			ctx, cancel := context.WithCancel(ctx)
 			time.AfterFunc(deadline, cancel)
-			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "call"}, TimeoutMs: 5000, PageReq: PageReq{Page: page}, Owner: Owner{Session: "cancel"}}, nil)
+			_, err := c.Run(ctx, RunRequest{Argv: []string{"fixture", "deadline", "call"}, Deadline: time.Now().Add(5 * time.Second), PageReq: PageReq{Page: page}, Owner: Owner{Session: "cancel"}}, nil)
 			return err
 		}, false},
 	} {
