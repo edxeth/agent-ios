@@ -147,24 +147,41 @@ func TestEveryBooleanFlagParsesItsValueStrictly(t *testing.T) {
 	}
 }
 
+// exitAfterDeadline is the contract for the end of a command: the process
+// ends at most 200 ms after the command's deadline (docs/guide.md,
+// "Deadlines and exit codes": "the command can end up to 200 ms after its
+// deadline"; under IWDP_NO_DAEMON=1 "the process ends at most 200 ms after
+// the deadline"). It is the tests' own value, not the product's
+// deadlineGrace, so that a change of that constant fails them.
+const exitAfterDeadline = 200 * time.Millisecond
+
 // WS2 round-1 review S1 F2 (ported from TestReviewNoDaemonDeadlineBound):
 // under IWDP_NO_DAEMON=1 the page-state cleanup runs within the command's
 // remaining budget; a cleanup that the page delays past it is cut off, the
 // page connection closes, the process says which cleanup did not finish
 // and exits with the command's own status, within the deadline plus the
 // 200 ms grace.
+//
+// The bound is measured inside the CLI process (runCLITimed), from the
+// deadline of the command's context to its call of os.Exit, as in
+// TestCLIEvalDeadlineWithDeadProbe: the deadline counts from the start of
+// the command, after the program has started (docs/guide.md, "Deadlines
+// and exit codes"). Process creation, the Go runtime start and the
+// process teardown are not part of it; under -race and a loaded host they
+// took up to 0.3 s and 0.1 s.
 func TestNoDaemonCleanupStaysWithinTheDeadline(t *testing.T) {
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
 	f.DelayReplies("Console.disable", 2*time.Second)
 	// GORACE: a binary built with -race sleeps 1 s at exit by default
 	// (atexit_sleep_ms); the bound is the command's, not the detector's.
-	r := runCLI(t, "", []string{"IWDP_NO_DAEMON=1", "GORACE=atexit_sleep_ms=0"}, "console", "--page", f.URL, "--timeout", "1s")
+	r, times := runCLITimed(t, []string{"IWDP_NO_DAEMON=1", "GORACE=atexit_sleep_ms=0"}, "console", "--page", f.URL, "--timeout", "1s")
 	if len(f.ReceivedMethod("Console.disable")) != 1 {
 		t.Fatalf("cleanup not reached: exit %d stderr=%q", r.code, r.stderr)
 	}
-	if r.elapsed > 1200*time.Millisecond {
-		t.Errorf("console --timeout 1s took %v, exit %d stderr=%q", r.elapsed, r.code, strings.TrimSpace(r.stderr))
+	t.Logf("console --timeout 1s: exit call %v after the command's deadline, %v from package initialization to the end of the process, %v including the process start", times.pastDeadline, times.fromInit, r.elapsed)
+	if times.pastDeadline > exitAfterDeadline {
+		t.Errorf("console --timeout 1s exited %v after its deadline, want at most %v (exitAfterDeadline); exit %d stderr=%q", times.pastDeadline, exitAfterDeadline, r.code, strings.TrimSpace(r.stderr))
 	}
 	if r.code != 0 || !strings.Contains(r.stderr, "Console.disable") || !strings.Contains(r.stderr, "did not finish") {
 		t.Errorf("console --timeout 1s: exit %d, stderr %q; want exit 0 (the command's result) and a warning that names the unfinished Console.disable", r.code, r.stderr)
@@ -172,8 +189,9 @@ func TestNoDaemonCleanupStaysWithinTheDeadline(t *testing.T) {
 }
 
 // With a command deadline (bound), the cleanup's context ends closeWait
-// before the deadline plus deadlineGrace, a cleanup that ignores its context is given up at the deadline
-// plus deadlineGrace, and the exit keeps the path's own code. After that
+// before the deadline plus exitAfterDeadline (the contract's 200 ms), a
+// cleanup that ignores its context is given up at the deadline plus
+// exitAfterDeadline, and the exit keeps the path's own code. After that
 // point (the watchdog), the wait is only closeWait.
 func TestBoundCleanupEndsByTheDeadlinePlusGrace(t *testing.T) {
 	const ahead = 300 * time.Millisecond
@@ -190,8 +208,8 @@ func TestBoundCleanupEndsByTheDeadlinePlusGrace(t *testing.T) {
 	if code := f.exitCode(t); code != 3 {
 		t.Errorf("exit %d, want the path's own 3", code)
 	}
-	if dl, want := <-got, limit.Add(deadlineGrace-closeWait); !dl.Equal(want) {
-		t.Errorf("cleanup context deadline %v, want %v (the command deadline %v plus deadlineGrace less closeWait)", dl, want, limit)
+	if dl, want := <-got, limit.Add(exitAfterDeadline-closeWait); !dl.Equal(want) {
+		t.Errorf("cleanup context deadline %v, want %v (the command deadline %v plus exitAfterDeadline less closeWait)", dl, want, limit)
 	}
 
 	for name, tc := range map[string]struct {
@@ -200,7 +218,7 @@ func TestBoundCleanupEndsByTheDeadlinePlusGrace(t *testing.T) {
 		code  int
 		least time.Duration
 	}{
-		"main":     {ahead, func(f *fakeExit) { go f.finish(func() int { return 0 }) }, 0, ahead + deadlineGrace},
+		"main":     {ahead, func(f *fakeExit) { go f.finish(func() int { return 0 }) }, 0, ahead + exitAfterDeadline},
 		"watchdog": {-watchdogGrace, func(f *fakeExit) { go f.deadlineExpired() }, exitTimeout, closeWait},
 	} {
 		t.Run(name, func(t *testing.T) {

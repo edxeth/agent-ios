@@ -236,8 +236,16 @@ func TestFrameReleaseHoldsRuntimeTemporarily(t *testing.T) {
 	})
 }
 
+// runtimeReleaseLimit is the contract for the page-side runtime release
+// of a lease: it waits at most 1 s for the page's answer
+// (docs/notes/w3a-wiring.md, "Release budget rule": "waits at most
+// min(runtimeReleaseBudget = 1 s, ...)"). It is the tests' own value, not
+// the product's runtimeReleaseBudget, so that a change of that constant
+// fails them.
+const runtimeReleaseLimit = time.Second
+
 // The wait for a frame's report is bounded within the release's budget
-// (runtimeReleaseBudget): a frame that reports no context after the
+// (runtimeReleaseLimit): a frame that reports no context after the
 // temporary owner's Runtime.enable is gone and counts as released, and a
 // Runtime.enable that the page never answers leaves the frame recorded for
 // the next owner. Both end the release within its budget, are logged, and
@@ -247,8 +255,8 @@ func TestFrameReleaseWaitIsBounded(t *testing.T) {
 	const slack = 300 * time.Millisecond
 	t.Run("no report", func(t *testing.T) {
 		fr := newFrameReleaseRig(t, 0, "")
-		if took := fr.release(t); took > runtimeReleaseBudget+slack {
-			t.Fatalf("the release took %v, want at most the runtime release budget %v", took, runtimeReleaseBudget)
+		if took := fr.release(t); took > runtimeReleaseLimit+slack {
+			t.Fatalf("the release took %v, want at most the runtime release budget %v", took, runtimeReleaseLimit)
 		}
 		if en, dis := fr.onSecond("Runtime.enable"), fr.onSecond("Runtime.disable"); en != 1 || dis != 1 {
 			t.Fatalf("second connection: Runtime.enable %d, Runtime.disable %d; want 1 and 1 (the temporary owner)", en, dis)
@@ -268,8 +276,8 @@ func TestFrameReleaseWaitIsBounded(t *testing.T) {
 	t.Run("no answer", func(t *testing.T) {
 		fr := newFrameReleaseRig(t, 17, "")
 		fr.f.Stall("Runtime.enable")
-		if took := fr.release(t); took > runtimeReleaseBudget+slack {
-			t.Fatalf("the release took %v, want at most the runtime release budget %v", took, runtimeReleaseBudget)
+		if took := fr.release(t); took > runtimeReleaseLimit+slack {
+			t.Fatalf("the release took %v, want at most the runtime release budget %v", took, runtimeReleaseLimit)
 		}
 		if en := fr.onSecond("Runtime.enable"); en != 1 {
 			t.Fatalf("second connection: Runtime.enable %d, want 1", en)

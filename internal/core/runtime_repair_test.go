@@ -319,8 +319,8 @@ func TestOwnerCanceledRuntimeReleaseIsNoStall(t *testing.T) {
 	if err := r.m.Release(rctx, agent.Session, mo.Page.Key); err != nil {
 		t.Fatalf("Release canceled during the runtime release: %v, want success (the cleanup was done)", err)
 	}
-	if d := time.Since(start); d >= runtimeReleaseBudget {
-		t.Fatalf("Release returned after %v, want at the owner's cancellation, before the %v budget", d, runtimeReleaseBudget)
+	if d := time.Since(start); d >= runtimeReleaseLimit {
+		t.Fatalf("Release returned after %v, want at the owner's cancellation, before the %v budget", d, runtimeReleaseLimit)
 	}
 	if len(runtimeReleases(r.f)) != 1 {
 		t.Fatal("the runtime release was not sent")

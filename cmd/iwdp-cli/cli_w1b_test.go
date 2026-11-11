@@ -176,11 +176,13 @@ func TestCLICloseAllNeverConnects(t *testing.T) {
 // stalled. Recovery is checked at core level
 // (TestDeadProbeStallsThenRecoversOnce).
 //
-// The 1.2 s bound is measured inside the CLI process, from the start of
-// the command (current.begin, which fixes the deadline) to its call of
-// os.Exit (runCLITimed). Design 2.6, "One absolute deadline per
-// operation": the command deadline "is fixed when the request arrives"
-// and covers everything from there; "when it expires the command returns
+// The bound, an exit at most exitAfterDeadline (200 ms, the contract in
+// docs/guide.md, "Deadlines and exit codes") after the deadline (1.2 s
+// after the command started), is measured inside the CLI process, from
+// the deadline of the command's context to its call of os.Exit
+// (runCLITimed). Design 2.6, "One absolute deadline per operation": the
+// command deadline "is fixed when the request arrives" and covers
+// everything from there; "when it expires the command returns
 // at once with exit code 124". Process creation, the Go runtime start and
 // the test's own work (the start file it has the process write, its wait
 // for the process to end) come before or after the command, so they are
@@ -196,9 +198,9 @@ func TestCLIEvalDeadlineWithDeadProbe(t *testing.T) {
 	}
 	res, times := runCLITimed(t, e, "eval", "--timeout", "1s", "--page", f.URL, "6*7")
 	wantExit(t, res, 124, "Runtime.evaluate")
-	t.Logf("eval --timeout 1s: %v from the command's start to its exit call, %v from package initialization to the end of the process, %v including the process start", times.command, times.fromInit, res.elapsed)
-	if times.command > 1200*time.Millisecond {
-		t.Fatalf("eval --timeout 1s exited %v after the command started, want at most 1.2 s", times.command)
+	t.Logf("eval --timeout 1s: exit call %v after the command's deadline, %v from package initialization to the end of the process, %v including the process start", times.pastDeadline, times.fromInit, res.elapsed)
+	if times.pastDeadline > exitAfterDeadline {
+		t.Fatalf("eval --timeout 1s exited %v after its deadline, want at most %v (exitAfterDeadline)", times.pastDeadline, exitAfterDeadline)
 	}
 	n := 0
 	for _, r := range f.ReceivedMethod("Runtime.evaluate") {

@@ -79,7 +79,11 @@ func (r *commandRun) setPage(page string) {
 }
 
 // deadlineHit reports whether err, or the command context, shows that the
-// command ran out of time.
+// command ran out of time. A command context that nothing canceled counts
+// once the clock has reached its deadline, before its deadline timer has
+// run: an error caused by the deadline (an expiry in the in-process core,
+// or the daemon's answer) can arrive in that instant, and the exit code
+// must not depend on which of them ran first.
 func (r *commandRun) deadlineHit(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
@@ -87,7 +91,17 @@ func (r *commandRun) deadlineHit(err error) bool {
 	r.mu.Lock()
 	ctx := r.ctx
 	r.mu.Unlock()
-	return ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded)
+	if ctx == nil {
+		return false
+	}
+	switch cerr := ctx.Err(); {
+	case errors.Is(cerr, context.DeadlineExceeded):
+		return true
+	case cerr != nil:
+		return false // canceled before its deadline, for example by a signal
+	}
+	dl, ok := ctx.Deadline()
+	return ok && !time.Now().Before(dl)
 }
 
 // timeoutMessage explains a deadline error: the command, the page, the

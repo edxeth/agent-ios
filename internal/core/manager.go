@@ -1235,7 +1235,8 @@ func (pg *Page) holds(l *lease) bool {
 // Do runs fn inside an operation and ends it. A retrySafe fn (a pure read,
 // design 2.6) that fails with ErrSessionStalled or ErrTargetSwapped runs
 // once more after the page is attached again, inside the same deadline;
-// every other command is never retried automatically.
+// every other command is never retried automatically. An error of fn that
+// the operation's own deadline caused is a deadline error (deadlineCaused).
 func (m *Manager) Do(ctx context.Context, req PageRequest, ao AcquireOptions, name string, class Class, retrySafe bool, fn func(context.Context, *ManagedOp) error) error {
 	var pg *Page
 	attempt := func() error {
@@ -1245,7 +1246,7 @@ func (m *Manager) Do(ctx context.Context, req PageRequest, ao AcquireOptions, na
 		}
 		pg = mo.Page
 		defer m.End(mo.ID)
-		return fn(mo.Op.Context(), mo)
+		return deadlineCaused(mo.Op.Context(), fn(mo.Op.Context(), mo))
 	}
 	err := attempt()
 	if retrySafe && pg != nil && (errors.Is(err, webkit.ErrSessionStalled) || errors.Is(err, webkit.ErrTargetSwapped)) {
@@ -1255,6 +1256,22 @@ func (m *Manager) Do(ctx context.Context, req PageRequest, ao AcquireOptions, na
 		return attempt()
 	}
 	return err
+}
+
+// deadlineCaused returns err, the error of a function that ran under ctx,
+// an operation's context, with ErrDeadline in its chain when it is
+// context.Canceled and the operation's deadline canceled ctx. The scheduler
+// ends an operation at its deadline with the cause ErrDeadline
+// (Op.watch), and ctx.Err() is then context.Canceled: a function that
+// returns ctx.Err() would fail as a cancellation (exit 1) instead of a
+// deadline (exit 124, decision D9). The operation's expiry and the
+// deadline timer of the caller's context fire at the same instant in
+// either order, so the result must not depend on which runs first.
+func deadlineCaused(ctx context.Context, err error) error {
+	if !errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || !errors.Is(context.Cause(ctx), ErrDeadline) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", err, ErrDeadline)
 }
 
 // WaitRecovered waits until the page is attached again after a stall, at

@@ -19,13 +19,18 @@ import (
 // creation, loading and the Go runtime start come before that time.
 //
 // The same process also writes, to the file's path plus exitFileSuffix,
-// how long its command ran: the time from the start that current.begin,
-// or for a registry command current.watch or current.started, recorded
-// (when the command's deadline is fixed) to the call of os.Exit by exits,
-// measured on the process's monotonic clock.
+// how long after the command's deadline exits called os.Exit, in
+// nanoseconds (negative before the deadline): time.Since of the deadline
+// of the command's context (ctx.Deadline() of the context that
+// current.watch or current.started recorded, which
+// commands.RunCLIStarted created). The deadline is the context's own, so a
+// delay between its creation and its recording does not shift it, and it
+// keeps its monotonic clock reading, so a step of the wall clock does not
+// change the result.
 const startFileEnv = "IWDP_CLI_TEST_START_FILE"
 
-// exitFileSuffix names the file of the command's run time (startFileEnv).
+// exitFileSuffix names the file of the command's exit time after its
+// deadline (startFileEnv).
 const exitFileSuffix = ".exit"
 
 func init() {
@@ -48,10 +53,13 @@ func init() {
 	exit := exits.exit
 	exits.exit = func(code int) {
 		current.mu.Lock()
-		start := current.start
+		ctx := current.ctx
 		current.mu.Unlock()
-		if !start.IsZero() {
-			_ = os.WriteFile(path+exitFileSuffix, []byte(strconv.FormatInt(int64(time.Since(start)), 10)), 0o600)
+		if ctx != nil {
+			if dl, ok := ctx.Deadline(); ok {
+				past := time.Since(dl)
+				_ = os.WriteFile(path+exitFileSuffix, []byte(strconv.FormatInt(int64(past), 10)), 0o600)
+			}
 		}
 		exit(code)
 	}
@@ -64,10 +72,11 @@ type cliTimes struct {
 	// Go runtime start, and includes the process teardown and the test's
 	// wait for it.
 	fromInit time.Duration
-	// command is the time from the command's start (current.begin, when
-	// its deadline is fixed) to the process's call of os.Exit, as the
-	// process measured it.
-	command time.Duration
+	// pastDeadline is the time from the command's deadline (its
+	// context's ctx.Deadline()) to the process's call of os.Exit, as the
+	// process measured it on its monotonic clock; negative when it exited
+	// before the deadline.
+	pastDeadline time.Duration
 }
 
 // runCLITimed runs iwdp-cli like runCLI and also returns its run times
@@ -100,6 +109,6 @@ func runCLITimed(t *testing.T, env []string, args ...string) (cliResult, cliTime
 		return ns
 	}
 	initNs := readNs(startFile, "its start")
-	cmdNs := readNs(startFile+exitFileSuffix, fmt.Sprintf("its command time (%s)", exitFileSuffix))
-	return res, cliTimes{fromInit: end.Sub(time.Unix(0, initNs)), command: time.Duration(cmdNs)}
+	pastNs := readNs(startFile+exitFileSuffix, fmt.Sprintf("its exit time after the deadline (%s)", exitFileSuffix))
+	return res, cliTimes{fromInit: end.Sub(time.Unix(0, initNs)), pastDeadline: time.Duration(pastNs)}
 }
