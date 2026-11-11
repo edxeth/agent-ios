@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
 )
 
 // Regression tests for the second W1b review (docs/notes/w1b.md, "Review

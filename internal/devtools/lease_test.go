@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // registryOp runs one operation of session s1 as a registry command does

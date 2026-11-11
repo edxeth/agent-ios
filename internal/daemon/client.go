@@ -18,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
 )
 
 // Auto-start timing (design 2.3): poll the socket every 20 ms for up to 3 s.

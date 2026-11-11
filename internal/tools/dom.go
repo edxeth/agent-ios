@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // GetDocument returns the root DOM node. A reply without a root (a page

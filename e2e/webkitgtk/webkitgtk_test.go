@@ -26,9 +26,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // Latency target of design 8.5: p50 of 50 warm CLI evals at or below

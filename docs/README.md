@@ -1,4 +1,4 @@
-# iwdp-mcp documentation
+# iwdp-cli documentation
 
 User documentation:
 

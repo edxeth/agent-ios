@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // The Emulation domain (design docs/design/agentic-parity.md 5.3, tier 1).

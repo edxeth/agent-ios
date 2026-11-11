@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 5.2 (review of the session-page fix, F1 and F2): an endpoint

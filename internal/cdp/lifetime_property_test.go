@@ -10,8 +10,8 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // lifeStep is one step of a random interleaving on one browser connection.

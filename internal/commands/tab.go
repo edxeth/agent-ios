@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Tabs (design docs/design/agentic-parity.md, sections 3.8 and 4.2;

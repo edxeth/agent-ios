@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/tools"
 )
 
 // diff screenshot (design docs/design/agentic-parity.md, section 4.2): a

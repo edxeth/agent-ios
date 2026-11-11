@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // W3b rebase repair round 1, finding F2 (docs/notes/w3b.md; the pending

@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Protocol is the socket API version (design 2.2). A client that sees

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // realIWDPListing is the device list of a real iwdp, which no test reads.

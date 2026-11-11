@@ -1,7 +1,7 @@
 // Package skills serves the agent skills that are embedded in the binary
 // (design docs/design/agentic-parity.md, sections 4.2 "skills get|list|path"
 // and 7.9). The source files are skills/<name>/SKILL.md in the repository
-// (package github.com/nnemirovsky/iwdp-mcp/skills).
+// (package github.com/nnemirovsky/iwdp-cli/skills).
 package skills
 
 import (
@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	files "github.com/nnemirovsky/iwdp-mcp/skills"
+	files "github.com/nnemirovsky/iwdp-cli/skills"
 )
 
 // FileName is the file of a skill inside its directory.

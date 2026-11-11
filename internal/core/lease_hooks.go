@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
 )
 
 // LeaseHook runs when a session's lease on a page starts: a new grant or a

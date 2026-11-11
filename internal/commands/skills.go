@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/skills"
+	"github.com/nnemirovsky/iwdp-cli/internal/skills"
 )
 
 // listDescriptionRunes is where "skills list" cuts a description, as

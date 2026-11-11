@@ -1,4 +1,4 @@
-# Contributing to iwdp-mcp
+# Contributing to iwdp-cli
 
 Thanks for your interest in contributing!
 
@@ -6,8 +6,8 @@ Thanks for your interest in contributing!
 
 ```bash
 # Clone and build
-git clone https://github.com/nnemirovsky/iwdp-mcp.git
-cd iwdp-mcp
+git clone https://github.com/nnemirovsky/iwdp-cli.git
+cd iwdp-cli
 make build
 
 # Install ios-webkit-debug-proxy (macOS)

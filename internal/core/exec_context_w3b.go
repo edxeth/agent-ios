@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Execution contexts of operations (design docs/design/agentic-parity.md,

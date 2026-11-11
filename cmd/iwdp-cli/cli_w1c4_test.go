@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	reg "github.com/nnemirovsky/iwdp-cli/internal/commands"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // L01 (w1c backlog): the element screenshot, which reads the document

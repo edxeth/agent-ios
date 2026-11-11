@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // The pending-cleanup transaction (core-events round 4): the reviewer's

@@ -26,6 +26,27 @@ import (
 // address it names.
 const fakeServeEnv = "IWDP_PROXY_TEST_FAKE_SERVE"
 
+// fakeNetworkEnv names the network of the serve fake's listener (net.Listen):
+// "tcp" without it, as before; "tcp4" for an IPv4-only socket, "tcp6" for
+// an IPV6_V6ONLY socket.
+const fakeNetworkEnv = "IWDP_PROXY_TEST_FAKE_NETWORK"
+
+// fakeReadyEnv names the file descriptor on which the serve fake reports
+// the result of its listen call, one line (reportListen): "listening
+// <local address>", or "listen error: <error>". Without it the fake
+// reports nothing.
+const fakeReadyEnv = "IWDP_PROXY_TEST_FAKE_READY_FD"
+
+// Prefixes of the serve fake's listen report (fakeReadyEnv).
+const (
+	fakeListening   = "listening "
+	fakeListenError = "listen error: "
+	// fakeNoFamily follows fakeListenError when the system has no socket of
+	// the address family (EAFNOSUPPORT, for example IPv6 on a kernel
+	// without it).
+	fakeNoFamily = "address family not supported: "
+)
+
 // fakeParentEnv is the pid of the test process that starts a fake that
 // runs the test binary (fakeParent); the fake ends when that process ends
 // (exitWithParent).
@@ -69,16 +90,49 @@ func TestFakeIWDPProcess(t *testing.T) {
 		return
 	}
 	exitWithParent(func() {})
-	l, err := net.Listen("tcp", addr)
+	network := os.Getenv(fakeNetworkEnv)
+	if network == "" {
+		network = "tcp"
+	}
+	l, err := net.Listen(network, addr)
 	if err != nil {
+		msg := fakeListenError
+		if errors.Is(err, syscall.EAFNOSUPPORT) {
+			msg += fakeNoFamily
+		}
+		reportListen(msg + err.Error())
 		fmt.Fprintln(os.Stderr, "fake iwdp:", err)
 		os.Exit(3)
 	}
+	reportListen(fakeListening + l.Addr().String())
 	err = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("[]"))
 	}))
 	fmt.Fprintln(os.Stderr, "fake iwdp:", err)
 	os.Exit(3)
+}
+
+// reportListen writes msg as one line to the file descriptor of
+// fakeReadyEnv and closes it; without the variable it does nothing.
+func reportListen(msg string) {
+	v := os.Getenv(fakeReadyEnv)
+	if v == "" {
+		return
+	}
+	fd, err := strconv.Atoi(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake iwdp: %s=%q is not a file descriptor\n", fakeReadyEnv, v)
+		os.Exit(3)
+	}
+	f := os.NewFile(uintptr(fd), "listen report")
+	_, err = fmt.Fprintln(f, msg)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fake iwdp: writing the listen report:", err)
+		os.Exit(3)
+	}
 }
 
 // fakeIWDP is a fake ios_webkit_debug_proxy installed first on PATH.

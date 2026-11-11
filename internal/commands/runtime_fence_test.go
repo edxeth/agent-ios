@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // opEnv is the daemon's Env of a command that runs inside an operation

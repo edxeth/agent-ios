@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // The backend premise of the pending ScriptProfiler stop (W4 rebase review,

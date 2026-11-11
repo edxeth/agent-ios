@@ -1,4 +1,4 @@
-module github.com/nnemirovsky/iwdp-mcp
+module github.com/nnemirovsky/iwdp-cli
 
 go 1.26.0
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/dialogpolicy"
+	"github.com/nnemirovsky/iwdp-cli/internal/dialogpolicy"
 )
 
 // dialog: the dialog bridge of design 3.7 (agent-browser "dialog"). WIP

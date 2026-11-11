@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 const (
@@ -159,12 +159,12 @@ func ownerFailure(addr string, err, bindErr error, limit string) error {
 		return logcause.Errorf("%s refuses connections but cannot be bound (%v): another process holds the port without listening, or the address is not local; no second iwdp is started", addr, bindErr)
 	}
 	const owned = "A process owns the port, so no second iwdp is started"
-	const restart = "'iwdp-cli restart-iwdp' restarts it only when iwdp-cli started and recorded it; it refuses another program's iwdp"
+	const restart = "'iwdp-cli restart-iwdp' restarts it only when iwdp-cli started and recorded it, and refuses another program's iwdp: only whoever started that iwdp, and only when nobody else uses it, may stop it, with the procedure of docs/device-runbook.md (Stopping an iwdp by hand)"
 	switch {
 	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET):
 		// The second device check saw this from an iwdp while a page
 		// WebSocket was open (docs/known-limits.md); the cause is unknown.
-		return logcause.Errorf("ios_webkit_debug_proxy on %s closed the connection without an answer to GET /json (an empty reply: %v). An iwdp has been seen to do this while a WebSocket to one of its pages is open, for example the iwdp-cli daemon's: run 'iwdp-cli daemon stop' to close the daemon's page connections, or restart that iwdp. %s. %s",
+		return logcause.Errorf("ios_webkit_debug_proxy on %s closed the connection without an answer to GET /json (an empty reply: %v). An iwdp has been seen to do this while a WebSocket to one of its pages is open, for example the iwdp-cli daemon's: run 'iwdp-cli daemon stop' to close the daemon's page connections, or have that iwdp restarted. %s. %s",
 			addr, err, owned, restart)
 	case limit != "":
 		return logcause.Errorf("ios_webkit_debug_proxy on %s does not answer GET /json %s (%v): it is busy or stuck. %s; wait and try again. %s",
@@ -284,19 +284,19 @@ func (s *Starter) startLocked(ctx context.Context, fresh bool) error {
 // this plus one run's output.
 const maxIWDPLog = 1 << 20
 
-// LogPath is the log of an iwdp that iwdp-mcp starts:
-// $XDG_STATE_HOME/iwdp-mcp/iwdp.log, else ~/.local/state/iwdp-mcp/iwdp.log.
-// It is iwdp-mcp's own file: the user's iwdpctl writes and truncates
-// ~/.local/state/iwdp/iwdp.log.
+// LogPath is the log of an iwdp that iwdp-cli starts:
+// $XDG_STATE_HOME/iwdp-cli/iwdp.log, else ~/.local/state/iwdp-cli/iwdp.log.
+// It is iwdp-cli's own file: another tool that starts iwdp may write and
+// truncate ~/.local/state/iwdp/iwdp.log.
 func LogPath() (string, error) {
 	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "iwdp-mcp", "iwdp.log"), nil
+		return filepath.Join(d, "iwdp-cli", "iwdp.log"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("the iwdp log: no XDG_STATE_HOME and no home directory: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "iwdp-mcp", "iwdp.log"), nil
+	return filepath.Join(home, ".local", "state", "iwdp-cli", "iwdp.log"), nil
 }
 
 // openIWDPLog opens the iwdp log (LogPath) for appending, with mode 0600

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // W3b final repair round 5 (round 4, acceptance criterion 3: every

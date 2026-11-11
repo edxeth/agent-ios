@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // The Log domain (design docs/design/agentic-parity.md, section 5.3):

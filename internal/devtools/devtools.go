@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // ErrNoDaemonState: the page session has no scheduler or desired state, so

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp/cdptest"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
 )
 
 func gtkEpoch(t *testing.T, session string) uint64 {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // W3b final repair round 4: an operation's own refusals (lease, capacity,

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // storagePage makes the fake page answer the bridge's clear function with

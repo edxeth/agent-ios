@@ -1,6 +1,6 @@
 # Sessions, leases and device reservations
 
-Safari allows one inspector connection per tab, and a new connection takes the tab from the old one. iwdp-mcp therefore has three layers of ownership. This page states the rules; agents must follow them.
+Safari allows one inspector connection per tab, and a new connection takes the tab from the old one. iwdp-cli therefore has three layers of ownership. This page states the rules; agents must follow them.
 
 ## Sessions
 
@@ -32,7 +32,7 @@ A page that stops answering is different: it is **stalled**. The daemon then tri
 
 ## Device reservations
 
-The daemon cannot see every inspector client: another agent's script, an older iwdp-cli, or Safari Web Inspector on a Mac can hold a page, and iwdp gives a page to the newest client. Reservations are the cooperative rule that prevents this between users of iwdp-mcp.
+The daemon cannot see every inspector client: another agent's script, an older iwdp-cli, or Safari Web Inspector on a Mac can hold a page, and iwdp gives a page to the newest client. Reservations are the cooperative rule that prevents this between users of iwdp-cli.
 
 1. **No page connection to a physical device without a reservation.** Reserve the device before the first page command:
 

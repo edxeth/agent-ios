@@ -3,7 +3,7 @@ package commands
 import (
 	"errors"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // errNeedsDaemon: a session, lease or device command ran outside the daemon.

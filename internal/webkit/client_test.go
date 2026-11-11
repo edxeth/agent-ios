@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 func TestClient_Send(t *testing.T) {

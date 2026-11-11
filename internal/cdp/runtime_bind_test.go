@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // Context-bound Runtime calls (design 5.3; W5b-1 review F2) and the reset

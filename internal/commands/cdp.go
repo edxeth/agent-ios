@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
 )
 
 // cdp start|stop|status|log: the CDP endpoint of the daemon (design

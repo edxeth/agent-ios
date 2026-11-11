@@ -27,13 +27,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/refs"
-	iwdpruntime "github.com/nnemirovsky/iwdp-mcp/internal/runtime"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/refs"
+	iwdpruntime "github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 const miniBrowser = "/usr/lib/webkit2gtk-4.1/MiniBrowser"

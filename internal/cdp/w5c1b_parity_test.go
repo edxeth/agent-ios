@@ -15,12 +15,12 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // W4 parity of the CDP recording lifecycle (W5c-1b finish brief, item

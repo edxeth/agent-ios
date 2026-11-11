@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 )
 
 // lifetimeReady is the line that the child prints when its MiniBrowser

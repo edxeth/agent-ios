@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
 )
 
 // W3b rebase onto the committed core (docs/notes/w3b.md, "W3b rebase onto

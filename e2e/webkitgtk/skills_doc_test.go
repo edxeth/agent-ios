@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 )
 
 // Design 7.9 acceptance 2: the command examples of the skills run against

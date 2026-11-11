@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/tools"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // cookies clear and cookies set (design docs/design/agentic-parity.md,

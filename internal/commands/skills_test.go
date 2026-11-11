@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/skills"
+	"github.com/nnemirovsky/iwdp-cli/internal/skills"
 )
 
 // repoSkill reads skills/<name>/SKILL.md from the repository checkout.

@@ -27,13 +27,13 @@ import (
 // loopback address; the tests run inside unshare -rn.
 
 // recordPath is where Starter records the iwdp it started for addr: a
-// file in the private directory iwdp-mcp of XDG_RUNTIME_DIR (private to the
+// file in the private directory iwdp-cli of XDG_RUNTIME_DIR (private to the
 // test after installFakeIWDP, else TestMain's), named like the start lock.
 // It creates the directory.
 func recordPath(addr string) string {
-	dir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "iwdp-mcp")
+	dir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "iwdp-cli")
 	_ = os.Mkdir(dir, 0o700)
-	return filepath.Join(dir, fmt.Sprintf("iwdp-mcp-started-%d-%s.json", os.Getuid(), strings.ReplaceAll(addr, ":", "_")))
+	return filepath.Join(dir, fmt.Sprintf("iwdp-cli-started-%d-%s.json", os.Getuid(), strings.ReplaceAll(addr, ":", "_")))
 }
 
 // writeRecord writes a record of an iwdp with pid and process group pgid
@@ -287,7 +287,8 @@ func TestStartReplacesARecordLeftWithAnotherMode(t *testing.T) {
 
 // L02: an iwdp that this program did not start is never signaled, also
 // when its command name is ios_webkit_debug_proxy. Restart refuses and
-// names the address, the owner pid and the manual restart command.
+// names the address, the owner pid, the checked stop of the runbook and
+// the manual start command, and prints no kill command (WS3 round 3).
 func TestRestartNeverSignalsAnotherProgramsIWDP(t *testing.T) {
 	addr := freeAddr(t)
 	f := installFakeIWDP(t, fakeFail, addr)
@@ -299,10 +300,13 @@ func TestRestartNeverSignalsAnotherProgramsIWDP(t *testing.T) {
 		t.Fatal("Restart succeeded against an iwdp that this program did not start")
 	}
 	t.Logf("refusal: %v", err)
-	for _, want := range []string{addr, "pid " + strconv.Itoa(foreign), "kill " + strconv.Itoa(foreign), wantManualIWDP()} {
+	for _, want := range []string{addr, "pid " + strconv.Itoa(foreign), "Stopping an iwdp by hand", wantManualIWDP()} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q does not contain %q", err, want)
 		}
+	}
+	if strings.Contains(err.Error(), "kill") {
+		t.Errorf("refusal %q prints a kill command", err)
 	}
 }
 

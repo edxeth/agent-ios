@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	reg "github.com/nnemirovsky/iwdp-cli/internal/commands"
 )
 
 // helpWords are the help requests of criterion 3a'.

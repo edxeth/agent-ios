@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	reg "github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // Regression tests for the W1b closure review of tree dce71d4d (P1): under

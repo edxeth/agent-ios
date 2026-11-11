@@ -44,7 +44,11 @@ LOCKDIR="$STATE_DIR/lock"
 LOCK_WAIT_SECONDS="${IWDP_SIM_LOCK_WAIT_SECONDS:-30}"
 HAVE_LOCK=""
 PORT=9221 # iwdp's listing port
-TOKEN_ENV=IWDP_SIM_START_TOKEN # carries the start token of the iwdp this script starts
+# iwdp-owner-check.sh proves that a recorded process is the iwdp that this
+# script started; teardown signals nothing without its "verified".
+OWNER_CHECK="$(dirname "${BASH_SOURCE[0]}")/iwdp-owner-check.sh"
+# How long teardown waits for its iwdp to exit after SIGTERM.
+STOP_WAIT_SECONDS="${IWDP_SIM_STOP_WAIT_SECONDS:-5}"
 
 # check_private dir|file PATH fails unless PATH (not followed when it is a
 # symlink) is this user's directory with mode 0700, or this user's regular
@@ -66,10 +70,16 @@ if not ok or st.st_uid != os.getuid():
 PY
 }
 
-# write_state FILE TEXT writes TEXT to a new file of mode 0600 in STATE_DIR.
+# write_state FILE TEXT replaces FILE with TEXT, mode 0600. It writes a
+# new temporary file next to FILE and renames it to FILE, so FILE always
+# holds either its old or its new text, never a partial one or none.
 write_state() {
-  rm -f "$1"
-  (umask 077 && set -C && printf '%s\n' "$2" > "$1")
+  local tmp
+  tmp=$(umask 077 && mktemp "$1.XXXXXX") || return 1
+  if ! printf '%s\n' "$2" > "$tmp" || ! mv -f "$tmp" "$1"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 # port_free succeeds only when 127.0.0.1:$PORT and 0.0.0.0:$PORT can both be
@@ -106,27 +116,6 @@ proc_start() {
 # new_token prints a random start token (128 bits, hex).
 new_token() {
   python3 -c 'import secrets; print(secrets.token_hex(16))'
-}
-
-# proc_has_token succeeds only when one entry of the environment of
-# process $1 is exactly $TOKEN_ENV=$2. Only Linux gives the environment
-# alone with exact entry boundaries: /proc/<pid>/environ, NUL-separated,
-# readable only for this user's processes. A token text in an argument, or
-# inside another variable's value, is not that entry. On macOS, 'ps -E'
-# prints the arguments and the environment in one space-separated column,
-# so an argument cannot be told from an environment entry: the check
-# fails there, and so does any read error.
-proc_has_token() {
-  [ "$(uname -s)" = Linux ] || return 1
-  python3 - "$1" "$TOKEN_ENV=$2" <<'PY'
-import sys
-try:
-    with open("/proc/%s/environ" % sys.argv[1], "rb") as f:
-        entries = f.read().split(b"\0")
-except OSError:
-    sys.exit(1)
-sys.exit(0 if sys.argv[2].encode() in entries else 1)
-PY
 }
 
 # lock takes LOCKDIR, retrying every 0.1 s for LOCK_WAIT_SECONDS; it
@@ -168,6 +157,74 @@ lease_token() {
   printf '%s' "$t"
 }
 
+# stop_iwdp stops the ios_webkit_debug_proxy that setup started and
+# recorded in $PIDFILE ("<pid> <start token> <start time>"), and only that
+# process. A record alone never authorizes a signal, since another program
+# of this user can write it. 'iwdp-owner-check.sh --terminate' checks the
+# process from one read of the record (the live process has the recorded
+# start time, carries the start token in its environment and runs
+# ios_webkit_debug_proxy) and, only on "verified", sends SIGTERM to that
+# process itself; this function never reads a pid for a signal. Then it
+# runs the plain check until it reports "gone", for up to
+# STOP_WAIT_SECONDS. When a check reports "gone", forget_iwdp_record
+# removes the record (see there).
+# In every other case (no match, a check that cannot be made, a process
+# that still runs after SIGTERM) the record stays, so the next teardown
+# checks it again, and a warning gives the check's reason, which never
+# holds a token or another process's command line.
+stop_iwdp() {
+  local out rc=0 end
+  out=$(bash "$OWNER_CHECK" --terminate "$PIDFILE") || rc=$?
+  case "$rc" in
+    3) forget_iwdp_record || true; return 0 ;;
+    0) ;;
+    *)
+      echo "WARNING: the ios_webkit_debug_proxy that setup started was left running, and no signal was sent (${out:-the identity check failed}). Its record stays in $PIDFILE; the next teardown checks it again." >&2
+      return 0
+      ;;
+  esac
+  end=$((SECONDS + STOP_WAIT_SECONDS))
+  while :; do
+    rc=0
+    out=$(bash "$OWNER_CHECK" "$PIDFILE") || rc=$?
+    if [ "$rc" -eq 3 ]; then
+      if forget_iwdp_record; then
+        echo "Stopped the ios_webkit_debug_proxy that setup started (SIGTERM)." >&2
+      fi
+      return 0
+    fi
+    if [ "$SECONDS" -ge "$end" ]; then break; fi
+    sleep 0.1
+  done
+  echo "WARNING: the ios_webkit_debug_proxy that setup started got SIGTERM but did not exit within $STOP_WAIT_SECONDS s ($out). Its record stays in $PIDFILE; the next teardown checks it again. Report it; do not stop it with a command of your own." >&2
+}
+
+# forget_iwdp_record removes $PIDFILE after a check said "gone", with
+# 'iwdp-owner-check.sh --forget': that reads the record again and removes
+# it only when the process that this read names is gone and the path
+# still names the same file with the same content. A record that names a
+# live process stays, and so does one that changed after that read; one
+# that replaced the checked record before that read is removed when its
+# process is gone, too. It fails, with a warning, when nothing was
+# removed. When another file took the path during the comparison,
+# --forget keeps the changed record under a private name, which its
+# reason gives ("it was kept as <path>"); no teardown checks that file,
+# so the warning says to check it by hand.
+forget_iwdp_record() {
+  local out rc=0
+  out=$(bash "$OWNER_CHECK" --forget "$PIDFILE") || rc=$?
+  if [ "$rc" -eq 3 ]; then return 0; fi
+  case "$out" in
+    *"; it was kept as "*)
+      echo "WARNING: the ios_webkit_debug_proxy that setup started is gone, but its record was not removed ($out). The next teardown does not check that file, and the next setup does not refuse because of it: check it by hand as docs/device-runbook.md (Stopping an iwdp by hand) describes. The file that now has the record's name stays in $PIDFILE; the next teardown checks it again." >&2
+      ;;
+    *)
+      echo "WARNING: the ios_webkit_debug_proxy that setup started is gone, but $PIDFILE was not removed (${out:-the identity check failed}): the record that the removal read names a live process, changed after that read, or cannot be checked. The record stays in $PIDFILE; the next teardown checks it again." >&2
+      ;;
+  esac
+  return 1
+}
+
 # teardown [RUN_TOKEN] runs under the lock (it takes it unless this
 # process holds it). With RUN_TOKEN, the automatic teardown of one run, it
 # acts only while the lease is that run's: it checks the token under the
@@ -175,16 +232,9 @@ lease_token() {
 # the lease, and does nothing for another run's lease or no lease. Without
 # RUN_TOKEN it is the manual recovery of a crashed run.
 #
-# It stops only the ios_webkit_debug_proxy that this script started:
-# $PIDFILE, a private file in the private STATE_DIR, holds its pid, its
-# start token and its start time. A record alone never authorizes a
-# signal, since another program of this user can write it: the live
-# process must have the recorded start time and carry the token in its
-# environment (proc_has_token). Otherwise nothing is stopped and the
-# manual command is printed; on macOS, where the environment cannot be
-# read exactly, that is always the case. A state file that is not private is not
-# trusted. Another iwdp, such as the user's or another agent's, is never
-# stopped.
+# It stops only the ios_webkit_debug_proxy that this script started
+# (stop_iwdp). Another iwdp, such as the user's or another agent's, is
+# never stopped.
 teardown() {
   local want="${1:-}" took=""
   if [ -z "$HAVE_LOCK" ]; then
@@ -198,25 +248,7 @@ teardown() {
     return 0
   fi
   if [ -e "$PIDFILE" ] || [ -L "$PIDFILE" ]; then
-    if check_private file "$PIDFILE"; then
-      pid="" token="" started=""
-      read -r pid token started < "$PIDFILE" || true
-      case "$pid" in '' | *[!0-9]*) pid="" ;; esac
-      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        if [ -n "$token" ] && [ -n "$started" ] && [ "$(proc_start "$pid")" = "$started" ] && proc_has_token "$pid" "$token"; then
-          kill "$pid" 2>/dev/null || true
-        elif [ "$(uname -s)" = Darwin ]; then
-          echo "WARNING: on macOS this script cannot read the environment of process $pid exactly, so it cannot verify that process as the ios_webkit_debug_proxy it started; nothing was stopped." >&2
-          echo "If it is yours, stop it by hand: kill $pid" >&2
-        else
-          echo "WARNING: process $pid is not verified as the ios_webkit_debug_proxy this script started (its start time or start token in $PIDFILE does not match, or its environment cannot be read); nothing was stopped." >&2
-          echo "If it is yours, stop it by hand: kill $pid" >&2
-        fi
-      fi
-    else
-      echo "WARNING: $PIDFILE is not trusted; no process was stopped." >&2
-    fi
-    rm -f "$PIDFILE"
+    stop_iwdp
   fi
   # Shut down only a Simulator that the lease holder's own 'simctl boot'
   # booted ("booted"); one that someone else booted ("reused") may serve
@@ -437,7 +469,7 @@ if ! why=$(port_free 2>&1); then
   owners=$(listing_owners | xargs)
   echo "ERROR: port $PORT is in use ($why; owner pid: ${owners:-unknown})." >&2
   echo "It may be the iwdp of the user or another agent, so this script does not stop it." >&2
-  echo "If it is yours, stop it (kill <pid>) and run this script again." >&2
+  echo "Wait until the port is free, or ask whoever started that process; stop it only when you started it yourself and nobody else uses it, as docs/device-runbook.md (Stopping an iwdp by hand) describes. Then run this script again." >&2
   exit 1
 fi
 
@@ -475,8 +507,12 @@ echo "Found socket: $SOCKET_PATH" >&2
 
 # 5. Start ios_webkit_debug_proxy (redirect stdout/stderr to stderr to avoid
 #    contaminating the eval-able output on stdout).
+#    The start token goes into iwdp's environment by an assignment, never
+#    in an argument that ps would show. The record holds the pid, the
+#    token and the start time, which exec does not change; teardown proves
+#    the process with iwdp-owner-check.sh before it signals it.
 TOKEN=$(new_token)
-env "$TOKEN_ENV=$TOKEN" ios_webkit_debug_proxy -s "unix:$SOCKET_PATH" --no-frontend >&2 2>&1 &
+IWDP_SIM_START_TOKEN=$TOKEN ios_webkit_debug_proxy -s "unix:$SOCKET_PATH" --no-frontend >&2 2>&1 &
 IWDP_PID=$!
 write_state "$PIDFILE" "$IWDP_PID $TOKEN $(proc_start "$IWDP_PID")"
 

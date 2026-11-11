@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp/cdptest"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
 )
 
 // W5c-1a on WebKitGTK (design 2.10, 5.2 "Navigation identity", 5.3;

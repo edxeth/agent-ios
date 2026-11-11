@@ -82,7 +82,7 @@ func TestCLI_LegacyListingCommandsOnAHealthyListing(t *testing.T) {
 		want []string
 	}{
 		{[]string{"devices"}, []string{e2eDeviceName, e2eDeviceID, "(pages on " + device.Addr() + ")"}},
-		{[]string{"status"}, []string{"ios_webkit_debug_proxy is running", "iwdp log of an iwdp that iwdp-mcp starts: "}},
+		{[]string{"status"}, []string{"ios_webkit_debug_proxy is running", "iwdp log of an iwdp that iwdp-cli starts: "}},
 	} {
 		before := listing.hits.Load()
 		output, code := runBin(t, bin, c.args...)
@@ -198,7 +198,7 @@ func TestReviewBrokenListingStatusLogPath(t *testing.T) {
 	if code == 0 {
 		t.Fatal("broken listing unexpectedly healthy")
 	}
-	if !strings.Contains(stdout+stderr, "iwdp log of an iwdp that iwdp-mcp starts:") {
+	if !strings.Contains(stdout+stderr, "iwdp log of an iwdp that iwdp-cli starts:") {
 		t.Fatalf("status omits log path on the listing failure: stdout %q, stderr %q", stdout, stderr)
 	}
 	if !strings.Contains(stderr, addr) {

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // evalCaller answers Runtime.evaluate with answer(n), n counting calls

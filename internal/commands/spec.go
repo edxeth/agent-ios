@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // FlagType is the value type of a flag.

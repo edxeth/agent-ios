@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
 )
 
 // The Target domain (design 5.2 and 5.3): each page in the record's scope

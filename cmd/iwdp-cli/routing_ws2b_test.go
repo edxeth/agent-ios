@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // Reviews ws2a-r3-a F8 and ws2a-r3-b F7 (brief ws2b-1a, "Regression

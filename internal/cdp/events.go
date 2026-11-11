@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Page events per CDP attachment (design docs/design/agentic-parity.md,

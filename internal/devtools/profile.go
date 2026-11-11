@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // CPU profile in the .cpuprofile format of Chrome DevTools (CDP

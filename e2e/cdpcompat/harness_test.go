@@ -33,9 +33,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // gateEnv is the design's gate of the suite (8.4). The build tag cdpcompat
@@ -52,7 +52,7 @@ const v8CoverageVar = "CDPCOMPAT_V8_COVERAGE"
 
 // proxyListingVar is the link-time seam of internal/proxy (W1c T01): the
 // iwdp listing address of a binary.
-const proxyListingVar = "github.com/nnemirovsky/iwdp-mcp/internal/proxy.listingAddr"
+const proxyListingVar = "github.com/nnemirovsky/iwdp-cli/internal/proxy.listingAddr"
 
 // Time limits of the driver.
 const (

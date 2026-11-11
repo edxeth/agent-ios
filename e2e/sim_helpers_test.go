@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // shared simulator connection — WebKit only allows one debugger connection per page.

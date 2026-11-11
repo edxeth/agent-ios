@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime/bundlegen"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime/bundlegen"
 )
 
 // The installed bundle is bundle.js, generated from the readable sources

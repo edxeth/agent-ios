@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Client sources above the transport's message limit (proof P2 item 2;

@@ -15,8 +15,8 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // The pause-on-start lifecycle property (W1c-3 R1, F2): generated

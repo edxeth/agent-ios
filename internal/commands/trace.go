@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 )
 
 // trace start and trace stop (design docs/design/agentic-parity.md,

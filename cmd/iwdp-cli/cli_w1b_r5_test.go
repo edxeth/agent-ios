@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // cookieMock is a page that answers Page.getCookies with no cookies.

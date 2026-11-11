@@ -34,10 +34,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/refs"
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/refs"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Unclassified is the marker of an error that Error cannot classify by

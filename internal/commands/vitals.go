@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 )
 
 // vitals (design docs/design/agentic-parity.md, section 4.2): Web Vitals

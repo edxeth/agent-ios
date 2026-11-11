@@ -188,7 +188,7 @@ const scenarios = {
     const server = new McpServer();
     try {
       const init = await observe(out, 'initialize', async () => {
-        const r = await server.request('initialize', { protocolVersion, capabilities: {}, clientInfo: { name: 'iwdp-mcp-cdpcompat', version: '1' } });
+        const r = await server.request('initialize', { protocolVersion, capabilities: {}, clientInfo: { name: 'iwdp-cli-cdpcompat', version: '1' } });
         server.notify('notifications/initialized', {});
         return { protocolVersion: r.protocolVersion, server: r.serverInfo };
       });

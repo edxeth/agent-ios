@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // e2eRuntimeDir is the private XDG_RUNTIME_DIR and XDG_STATE_HOME of the

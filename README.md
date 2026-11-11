@@ -1,8 +1,8 @@
 # iOS WebKit Debug Proxy CLI
 
-[![CI](https://github.com/nnemirovsky/iwdp-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/nnemirovsky/iwdp-mcp/actions/workflows/test.yml)
-[![Lint](https://github.com/nnemirovsky/iwdp-mcp/actions/workflows/lint.yml/badge.svg)](https://github.com/nnemirovsky/iwdp-mcp/actions/workflows/lint.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nnemirovsky/iwdp-mcp)](https://goreportcard.com/report/github.com/nnemirovsky/iwdp-mcp)
+[![CI](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/test.yml/badge.svg)](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/test.yml)
+[![Lint](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/lint.yml/badge.svg)](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/lint.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nnemirovsky/iwdp-cli)](https://goreportcard.com/report/github.com/nnemirovsky/iwdp-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Debug iOS Safari from your AI agent or your shell.** `iwdp-cli` drives Safari on a real iPhone or iPad. Chrome tooling speaks the Chrome DevTools Protocol (CDP), which WebKit does not; this project bridges that gap.
@@ -37,18 +37,18 @@ For Linux and other platforms, see the [ios-webkit-debug-proxy installation guid
 ### Go Install
 
 ```bash
-go install github.com/nnemirovsky/iwdp-mcp/cmd/iwdp-cli@latest
+go install github.com/nnemirovsky/iwdp-cli/cmd/iwdp-cli@latest
 ```
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/nnemirovsky/iwdp-mcp/releases).
+Download from [GitHub Releases](https://github.com/nnemirovsky/iwdp-cli/releases).
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/nnemirovsky/iwdp-mcp.git
-cd iwdp-mcp
+git clone https://github.com/nnemirovsky/iwdp-cli.git
+cd iwdp-cli
 make build
 ```
 
@@ -168,12 +168,12 @@ To debug one simulator test by hand, run `make sim-setup`. Only when it succeeds
 
 > **Note:** the simulator tests require macOS with Xcode and `ios-webkit-debug-proxy` installed. GitHub Actions `macos-latest` runners have Xcode and iOS Simulator runtimes pre-installed.
 >
-> Setup opens a test page of its own (`IWDP_SIM_PAGE_URL`, unique by a random query) in the Simulator, and the tests run only against that page. Teardown (at the end of `make test-e2e`, in CI, or `make sim-teardown` after a crashed run) shuts down the Simulator only when setup's own boot started it; a Simulator that was already running stays booted. On macOS teardown does not stop the iwdp that setup started: it cannot verify that process, so it prints `kill <pid>`. Check that the pid is that iwdp, then run the command yourself; until then the next setup refuses because port 9221 is in use (docs/device-runbook.md).
+> Setup opens a test page of its own (`IWDP_SIM_PAGE_URL`, unique by a random query) in the Simulator, and the tests run only against that page. Teardown (at the end of `make test-e2e`, in CI, or `make sim-teardown` after a crashed run) shuts down the Simulator only when setup's own boot started it; a Simulator that was already running stays booted. Teardown stops the iwdp that setup started only through `scripts/iwdp-owner-check.sh --terminate`, which verifies that process (the recorded pid, start time and start token, and the program ios_webkit_debug_proxy) and sends SIGTERM only to it. It removes the record only with `scripts/iwdp-owner-check.sh --forget`, which reads it again and removes it only when the process that this read names is gone and the file did not change after that read; a changed record that `--forget` keeps under a private name is not checked by the next teardown (the warning names it; see docs/device-runbook.md). Otherwise no signal is sent, or teardown reports an iwdp that still runs after SIGTERM; it gives the check's reason and keeps the record for the next teardown, and the next setup refuses meanwhile. Never stop that iwdp with a command of your own; if it stays running, report it. Stop any other iwdp by hand only if you started it yourself and nobody else uses it; otherwise send no signal and ask whoever started it, or the user. The stop is `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand) in docs/device-runbook.md describes.
 
 ### Project Structure
 
 ```
-iwdp-mcp/
+iwdp-cli/
 ├── cmd/
 │   └── iwdp-cli/          # CLI and daemon binary
 ├── internal/

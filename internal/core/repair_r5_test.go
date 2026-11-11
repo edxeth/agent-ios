@@ -14,7 +14,7 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Regression tests for the fifth W1b review: R5-1 (a change after a

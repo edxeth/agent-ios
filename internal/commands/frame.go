@@ -10,11 +10,11 @@ import (
 	"time"
 	"weak"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-mcp/internal/refs"
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/refs"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // frame: the session's frame scope (design docs/design/agentic-parity.md,

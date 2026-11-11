@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 )
 
 // network har start and stop: a HAR 1.2 file of the requests that the

@@ -362,11 +362,11 @@ func TestRestartRefusesAnUnsafeRecordStore(t *testing.T) {
 func TestRecordDirIsPrivate(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	fallback := filepath.Join(tmp, fmt.Sprintf("iwdp-mcp-%d", os.Getuid()))
+	fallback := filepath.Join(tmp, fmt.Sprintf("iwdp-cli-%d", os.Getuid()))
 	xdg := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", xdg)
-	if dir, err := recordDir(); err != nil || dir != filepath.Join(xdg, "iwdp-mcp") {
-		t.Fatalf("recordDir with a private XDG_RUNTIME_DIR = %q, %v; want %s/iwdp-mcp", dir, err, xdg)
+	if dir, err := recordDir(); err != nil || dir != filepath.Join(xdg, "iwdp-cli") {
+		t.Fatalf("recordDir with a private XDG_RUNTIME_DIR = %q, %v; want %s/iwdp-cli", dir, err, xdg)
 	}
 	if err := os.Chmod(xdg, 0o777); err != nil {
 		t.Fatal(err)
@@ -422,7 +422,7 @@ func TestStartFailsWithAnUnsafeRecordDirectory(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	if err := os.Mkdir(filepath.Join(tmp, fmt.Sprintf("iwdp-mcp-%d", os.Getuid())), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(tmp, fmt.Sprintf("iwdp-cli-%d", os.Getuid())), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	err := testStarter(addr, 10*time.Second).Start(context.Background())

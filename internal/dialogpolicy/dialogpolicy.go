@@ -13,8 +13,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Policies (decision D6): with no answer armed, Dismiss makes confirm

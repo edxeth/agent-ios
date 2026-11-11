@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // core-events r6: a declared stall interrupts a socket write in progress,

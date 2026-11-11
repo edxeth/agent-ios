@@ -123,10 +123,17 @@ type sock struct {
 // classify reports who receives a connection to address ep among the
 // listening sockets socks on its port. The most specific bind receives it:
 // sockets on ep itself first, else those on the wildcard address of ep's
-// family, and for IPv4 last the IPv6 wildcard (a dual-stack socket, as Go
-// creates for 0.0.0.0; it can hold the port only when no IPv4 socket
-// does). A socket of another process in the deciding set makes it
-// foreign. Sockets on other addresses never count.
+// family, and for IPv4 last the IPv6 wildcard. A socket of another process
+// in the deciding set makes it foreign. Sockets on other addresses never
+// count.
+//
+// An IPv6 wildcard socket receives IPv4 connections only when it is
+// dual-stack (no IPV6_V6ONLY), and neither /proc/net/tcp6 nor lsof shows
+// that option. So for an IPv4 ep the IPv6 wildcard can make it foreign
+// (another process may receive the connection) but never own: the group's
+// own socket there proves nothing, and classify reports listenerNone
+// (fail closed: a restart refuses, a start's readiness waits). iwdp itself
+// listens on the IPv4 wildcard.
 func classify(socks []sock, ep netip.Addr) listener {
 	ep = ep.Unmap()
 	order := []netip.Addr{ep, netip.IPv6Unspecified()}
@@ -134,6 +141,7 @@ func classify(socks []sock, ep netip.Addr) listener {
 		order = []netip.Addr{ep, netip.IPv4Unspecified(), netip.IPv6Unspecified()}
 	}
 	for _, want := range order {
+		unverified := ep.Is4() && want == netip.IPv6Unspecified()
 		found := false
 		for _, s := range socks {
 			if s.addr != want {
@@ -143,6 +151,9 @@ func classify(socks []sock, ep netip.Addr) listener {
 				return listenerForeign
 			}
 			found = true
+		}
+		if found && unverified {
+			return listenerNone
 		}
 		if found {
 			return listenerOwn
@@ -184,11 +195,11 @@ func listenerPIDs(ctx context.Context, port uint16) ([]int, error) {
 const startLockPoll = 50 * time.Millisecond
 
 // runtimeName is the name of this user's file of kind for the listing
-// address addr, iwdp-mcp-<kind>-<uid>-<address>.<ext>: it carries the user
+// address addr, iwdp-cli-<kind>-<uid>-<address>.<ext>: it carries the user
 // id, so in a shared directory one user's file never blocks another user.
 func runtimeName(kind, addr, ext string) string {
 	name := strings.NewReplacer(":", "_", "/", "_", "[", "", "]", "", "%", "_").Replace(addr)
-	return fmt.Sprintf("iwdp-mcp-%s-%d-%s.%s", kind, os.Getuid(), name, ext)
+	return fmt.Sprintf("iwdp-cli-%s-%d-%s.%s", kind, os.Getuid(), name, ext)
 }
 
 // lockStart takes the host-wide start lock of the listing address addr, so

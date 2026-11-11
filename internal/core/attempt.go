@@ -8,7 +8,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // ClockFn is the runtime function that returns the page clock and the

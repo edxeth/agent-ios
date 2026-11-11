@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 )
 
 // runtimeBrowser starts broadwayd and MiniBrowser (with the DPI shim of

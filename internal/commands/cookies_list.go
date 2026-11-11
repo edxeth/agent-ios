@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/tools"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // cookies lists the page's cookies (agent-browser "cookies"; the legacy W0

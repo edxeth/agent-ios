@@ -12,7 +12,7 @@ make test                         # Run unit + smoke tests (go test ./... -v -co
 make test-e2e                     # macOS: boot iOS Sim + iwdp, run the simulator tests (shared helpers, proxy listing)
 make test-coverage                # Run tests with coverage → coverage.html
 make sim-setup                    # Boot iOS Simulator + iwdp, open a test page (prints IWDP_SIM_WS_URL, IWDP_SIM_PAGE_URL)
-make sim-teardown                 # Manual recovery after a crashed run only (one Simulator run per user; never while another run is active): shut down the simulator if setup booted it; stop setup's iwdp (Linux only: on macOS it prints kill <pid> for you to run, docs/device-runbook.md)
+make sim-teardown                 # Manual recovery after a crashed run only (one Simulator run per user; never while another run is active): shut down the simulator if setup booted it; stop setup's iwdp only through scripts/iwdp-owner-check.sh --terminate, which verifies it (pid, start time, start token, program) and signals only it, and keep its record until it is gone; otherwise it leaves that iwdp running, says why and sends no signal (docs/device-runbook.md, Stopping an iwdp by hand)
 make fmt                          # gofumpt -w . (format all Go files)
 make lint                         # golangci-lint run ./... (needs golangci-lint v2.15+ built with Go 1.27)
 make docs                         # regenerate docs/commands.md from the command registry
@@ -77,6 +77,7 @@ Some `<Domain>.enable` methods work through iwdp Target routing (e.g., `Debugger
 ### Rules for agents working on a device
 
 - Never stop, restart or pattern-kill an iwdp you did not start. `restart-iwdp` refuses every iwdp whose record iwdp-cli did not write, also one that the removed iwdp-mcp started (record field `writer`, internal/proxy/restart.go; decision L02, docs/device-runbook.md).
+- Stop an iwdp by hand only if you started it yourself and nobody else uses it; otherwise send no signal and ask whoever started it, or the user. The stop is `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone` ([docs/device-runbook.md, Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand)).
 - Use a distinct `--session`; reserve physical devices (`device reserve`) and release them; on "lost" stop and ask before `--takeover`.
 - All input is synthetic (`isTrusted=false`); `set viewport`, PDF, downloads and browser contexts are impossible (docs/synthetic-input.md).
 - Pause-on-start is on in the daemon but best effort; "runs before page scripts" is partial without it.

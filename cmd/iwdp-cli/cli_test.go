@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // TestCmdDevicesWithMockIWDP tests the devices listing against a mock HTTP

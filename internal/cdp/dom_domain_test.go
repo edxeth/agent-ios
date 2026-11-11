@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
-	"github.com/nnemirovsky/iwdp-mcp/internal/upload"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/upload"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 5.2 "Node ids": DOM.describeNode gives the node's runtime handle

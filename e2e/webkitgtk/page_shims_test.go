@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/e2e/jscov"
+	"github.com/nnemirovsky/iwdp-cli/e2e/jscov"
 )
 
 // shimFile is the page shims' path in the repository, the file of their

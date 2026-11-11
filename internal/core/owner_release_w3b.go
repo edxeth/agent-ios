@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // ReleaseOwnerChange releases owner as one change of the page's desired

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // An enable in Apply's pipelined batch that the page refuses fails the

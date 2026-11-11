@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	iwdpruntime "github.com/nnemirovsky/iwdp-mcp/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	iwdpruntime "github.com/nnemirovsky/iwdp-cli/internal/runtime"
 )
 
 // 7.5 test 2: each fixture's snapshot equals its hand-written expected text.

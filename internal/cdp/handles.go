@@ -5,7 +5,7 @@ import (
 	"sync"
 	"weak"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // Node identity (design docs/design/agentic-parity.md 5.2 "Node ids"):

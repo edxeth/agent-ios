@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // standingCaller is an emitCaller with an active target that the test

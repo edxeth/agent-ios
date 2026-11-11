@@ -5,7 +5,7 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
 )
 
 // hit-test: the element at a point (design docs/design/agentic-parity.md,

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 )
 
 // W4 DevTools suite (design docs/design/agentic-parity.md, section 7.7,

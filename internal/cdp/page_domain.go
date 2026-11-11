@@ -17,10 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/dialogpolicy"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/dialogpolicy"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // The Page domain (design docs/design/agentic-parity.md, sections 5.2 and

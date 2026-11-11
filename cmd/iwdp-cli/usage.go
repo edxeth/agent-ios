@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	reg "github.com/nnemirovsky/iwdp-cli/internal/commands"
 )
 
 // synopsisWidth aligns command summaries in the overview.

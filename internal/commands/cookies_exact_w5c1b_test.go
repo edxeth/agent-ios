@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // "cookies clear --domain d" deletes the cookies of d and its subdomains

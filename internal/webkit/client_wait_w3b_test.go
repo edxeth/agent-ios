@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // tokenWaitContext reports, through reached, that Client.Send evaluated

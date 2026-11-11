@@ -15,7 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // W3b final round, finding (c) of the round-4 review: a testing/quick

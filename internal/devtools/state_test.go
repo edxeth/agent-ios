@@ -10,9 +10,9 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // bg is the context of a test's calls to a fake page, which answers every

@@ -30,8 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
 )
 
 // DefaultPort is the default listener port (decision D3): 9221 to 9229
@@ -65,7 +65,7 @@ const (
 type Options struct {
 	Manager      *core.Manager
 	Reservations *core.Reservations // device scope; nil: no reserved devices
-	Version      string             // iwdp-mcp version for /json/version
+	Version      string             // iwdp-cli version for /json/version
 	Logf         func(format string, args ...any)
 	// Enter marks a client connection as daemon activity (idle exit,
 	// design 2.3) until the returned function runs. nil: none.

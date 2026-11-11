@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
+	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
 )
 
 // Device check 3, P3-D: "iwdp-cli status" names the log of an iwdp that
@@ -14,7 +14,7 @@ import (
 func TestStatusNamesTheIWDPLog(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
-	if got, want := iwdpLogLine(proxy.LogPath()), "iwdp log of an iwdp that iwdp-mcp starts: "+filepath.Join(state, "iwdp-mcp", "iwdp.log"); got != want {
+	if got, want := iwdpLogLine(proxy.LogPath()), "iwdp log of an iwdp that iwdp-cli starts: "+filepath.Join(state, "iwdp-cli", "iwdp.log"); got != want {
 		t.Fatalf("iwdpLogLine = %q, want %q", got, want)
 	}
 	t.Setenv("XDG_STATE_HOME", "")

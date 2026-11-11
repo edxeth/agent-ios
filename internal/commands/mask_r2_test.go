@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 )
 
 // W4 round 2 (watchout of /home/devkit/.pi/artifacts/worker/w4-r1-cmd-20261107-061500.md,

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Navigation commands of design docs/design/agentic-parity.md, sections

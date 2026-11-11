@@ -9,8 +9,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Chrome trace event format (Trace Event Format, Google, "JSON Object

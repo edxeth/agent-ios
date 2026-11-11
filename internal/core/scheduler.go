@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Class is the admission class of an operation (design 2.5 and 2.10).

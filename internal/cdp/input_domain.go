@@ -11,9 +11,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // The Input domain (design docs/design/agentic-parity.md 5.3, tier 1, and

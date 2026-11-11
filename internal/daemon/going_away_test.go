@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/commands"
 )
 
 // closeMode is how a fake daemon that goes away ends a connection that it

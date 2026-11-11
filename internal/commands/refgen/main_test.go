@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/commands"
 )
 
 // referencePath is the checked-in reference, relative to this package.

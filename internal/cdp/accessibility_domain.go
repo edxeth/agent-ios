@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
 )
 
 // The Accessibility domain (design docs/design/agentic-parity.md 5.3,

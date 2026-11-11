@@ -1,5 +1,5 @@
 {
-  "name": "iwdp-mcp-cdpcompat",
+  "name": "iwdp-cli-cdpcompat",
   "private": true,
   "description": "CDP compatibility suite (docs/design/agentic-parity.md 7.8, 8.4): the pinned CDP clients that the Go driver runs against the CDP endpoint. See README.md.",
   "type": "module",

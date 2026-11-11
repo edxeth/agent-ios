@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // bfcacheUA is the user-agent override of TestBackAndForwardAcrossSites.

@@ -39,7 +39,7 @@ func TestCheckListingNamesTheObservedFailure(t *testing.T) {
 		if err == nil || errors.Is(err, ErrNotListening) {
 			t.Fatalf("CheckListing on an owned port with an empty reply = %v, want an error other than ErrNotListening", err)
 		}
-		for _, want := range []string{addr, "closed the connection without an answer", "empty reply", "WebSocket to one of its pages is open", "iwdp-cli daemon stop", "no second iwdp"} {
+		for _, want := range []string{addr, "closed the connection without an answer", "empty reply", "WebSocket to one of its pages is open", "iwdp-cli daemon stop", "no second iwdp", "iwdp-cli restart-iwdp", "only whoever started that iwdp, and only when nobody else uses it, may stop it", "Stopping an iwdp by hand"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error %q does not contain %q", err, want)
 			}
@@ -54,7 +54,7 @@ func TestCheckListingNamesTheObservedFailure(t *testing.T) {
 		t.Parallel()
 		addr := silentListing(t)
 		err := CheckListing(context.Background(), addr)
-		for _, want := range []string{addr, "does not answer GET /json within " + ProbeBudget.String(), "busy or stuck", "no second iwdp"} {
+		for _, want := range []string{addr, "does not answer GET /json within " + ProbeBudget.String(), "busy or stuck", "no second iwdp", "iwdp-cli restart-iwdp", "only whoever started that iwdp, and only when nobody else uses it, may stop it", "Stopping an iwdp by hand"} {
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("error %v does not contain %q", err, want)
 			}

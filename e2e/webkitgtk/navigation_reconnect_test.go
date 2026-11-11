@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/daemon"
+	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
 )
 
 // W3b-R3 finding 3 (design 2.4, 3.8; reconnect of design 2.6): the frame

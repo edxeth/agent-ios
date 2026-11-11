@@ -7,8 +7,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/tools"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/tools"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // "vitals" (design 4.2): Web Vitals read in the page. Navigation timing

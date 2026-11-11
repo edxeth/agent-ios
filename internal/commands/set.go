@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 )
 
 // set media, useragent, headers, credentials, geo, offline, viewport and

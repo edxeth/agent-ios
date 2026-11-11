@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	reg "github.com/nnemirovsky/iwdp-cli/internal/commands"
 )
 
 // main runs one registry command (internal/commands): the command

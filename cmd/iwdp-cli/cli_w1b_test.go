@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
 
 // privateDaemon returns the environment of CLI runs that share one daemon

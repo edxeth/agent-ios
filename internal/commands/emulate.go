@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/devtools"
+	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 )
 
 // emulate network: network throttling (design

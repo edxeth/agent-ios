@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // guardBin holds the package-wide fakes of the iwdp and device commands
@@ -125,29 +126,91 @@ func TestPortFreeIgnoresTimeWait(t *testing.T) {
 // fake ends with this test process (exitWithParent).
 func startServer(t *testing.T, addr string) int {
 	t.Helper()
+	return startServerOn(t, "tcp", addr)
+}
+
+// startServerOn is startServer with the listener's network (net.Listen).
+func startServerOn(t *testing.T, network, addr string) int {
+	t.Helper()
+	s := spawnServer(t, network, addr)
+	if s.listenErr != "" {
+		t.Fatalf("the serve fake did not listen on %s %s: %s", network, addr, s.listenErr)
+	}
+	return s.pid
+}
+
+// fakeStartGuard bounds the wait for the serve fake's listen report: the
+// fake is a separate process that can hang before it reports.
+const fakeStartGuard = 10 * time.Second
+
+// served is the serve fake's own report of its listen call (fakeReadyEnv).
+type served struct {
+	pid       int
+	local     netip.AddrPort // the listener's local address, when it listens
+	listenErr string         // the listen error, when it does not
+	noFamily  bool           // the error is EAFNOSUPPORT (fakeNoFamily)
+}
+
+// spawnServer runs the serve fake as startServerOn does and returns its
+// report of the listen call. The fake reports on a pipe after net.Listen
+// returns, so readiness never depends on a connection to the address: a
+// dial to [::1] fails on a host whose loopback has no ::1, although the
+// fake listens on [::]. A fake that exits before it reports fails the
+// test.
+func spawnServer(t *testing.T, network, addr string) served {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command(exe, "-test.run=^TestFakeIWDPProcess$")
-	cmd.Env = append(os.Environ(), fakeServeEnv+"="+addr, fakeParent())
+	// ExtraFiles[0] is file descriptor 3 in the fake.
+	cmd.ExtraFiles = []*os.File{pw}
+	cmd.Env = append(os.Environ(), fakeServeEnv+"="+addr, fakeNetworkEnv+"="+network, fakeReadyEnv+"=3", fakeParent())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	// The fake holds its own copy; without this one, the read below ends
+	// when the fake exits.
+	_ = pw.Close()
+	if err != nil {
+		_ = pr.Close()
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		_ = pr.Close()
 	})
-	dial := strings.Replace(addr, "0.0.0.0:", "127.0.0.1:", 1)
-	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
-		if c, err := net.Dial("tcp", dial); err == nil {
-			_ = c.Close()
-			return cmd.Process.Pid
-		}
+	report := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReader(pr).ReadString('\n')
+		report <- line
+	}()
+	var line string
+	select {
+	case line = <-report:
+	case <-time.After(fakeStartGuard):
+		t.Fatalf("the serve fake did not report its listen on %s %s within %s", network, addr, fakeStartGuard)
 	}
-	t.Fatalf("the serve fake did not listen on %s", addr)
-	return 0
+	s := served{pid: cmd.Process.Pid}
+	line, complete := strings.CutSuffix(line, "\n")
+	if local, ok := strings.CutPrefix(line, fakeListening); ok && complete {
+		if s.local, err = netip.ParseAddrPort(local); err != nil {
+			t.Fatalf("the serve fake on %s %s reported the local address %q: %v", network, addr, local, err)
+		}
+		return s
+	}
+	if msg, ok := strings.CutPrefix(line, fakeListenError); ok && complete {
+		s.listenErr = msg
+		_, s.noFamily = strings.CutPrefix(msg, fakeNoFamily)
+		return s
+	}
+	t.Fatalf("the serve fake on %s %s ended without a listen report (it wrote %q)", network, addr, line)
+	return s
 }
 
 // inspector tells who receives a connection to an endpoint.
@@ -198,17 +261,154 @@ func TestGroupListensTellsOwnFromForeign(t *testing.T) {
 	}
 }
 
-// Review round 2, F2: a wildcard listener of the started group (Go's
-// dual-stack socket for 0.0.0.0) receives a connection to the loopback
+// Review round 2, F2: an IPv4 wildcard listener of the started group (the
+// socket iwdp opens on 0.0.0.0) receives a connection to the loopback
 // address, so it is the group's (both checks).
 func TestGroupListensAcceptsTheGroupsWildcardListener(t *testing.T) {
 	addr := freeAddr(t)
-	child := startServer(t, "0.0.0.0:"+strconv.Itoa(portOf(t, addr)))
+	child := startServerOn(t, "tcp4", "0.0.0.0:"+strconv.Itoa(portOf(t, addr)))
 	for name, f := range inspectors() {
 		if got, err := f(context.Background(), child, endpoint(t, addr)); err != nil || got != listenerOwn {
 			t.Errorf("%s(child group on 0.0.0.0, probe %s) = %v, %v; want listenerOwn", name, addr, got, err)
 		}
 	}
+}
+
+// WS3 round 4 (reviewer repro ipv6only-listener.py): an IPv6 wildcard
+// socket serves IPv4 only when it is dual-stack, and neither the socket
+// tables nor lsof show IPV6_V6ONLY. So the group's only listener on [::]
+// never proves that it receives connections to 127.0.0.1: both checks
+// report nobody, also for Go's dual-stack socket, and a restart or a
+// start's readiness check fails closed.
+//
+// The real sockets need IPv6 sockets, not an IPv6 loopback address: the
+// fake reports its listen itself (spawnServer). On a kernel without IPv6
+// (socket(AF_INET6) fails with EAFNOSUPPORT, and Go's "tcp" listener on
+// 0.0.0.0 is then an IPv4 socket) no real IPv6 wildcard socket can exist;
+// the socket-table fixtures below cover the rule on every host.
+func TestGroupListensDoesNotTrustAnIPv6WildcardForIPv4(t *testing.T) {
+	ipv6 := true // the system can open IPv6 sockets
+	for _, l := range []struct{ name, network, host string }{
+		{"IPV6_V6ONLY socket on [::]", "tcp6", "[::]"},
+		{"Go's dual-stack socket for 0.0.0.0", "tcp", "0.0.0.0"},
+	} {
+		addr := freeAddr(t)
+		s := spawnServer(t, l.network, l.host+":"+strconv.Itoa(portOf(t, addr)))
+		switch {
+		case s.noFamily && l.network == "tcp6":
+			ipv6 = false
+			t.Logf("no IPv6 sockets on this system (%s): the fixtures cover the %s", s.listenErr, l.name)
+			continue
+		case s.listenErr != "":
+			t.Fatalf("the serve fake for a %s did not listen: %s", l.name, s.listenErr)
+		case s.local.Addr() != netip.IPv6Unspecified():
+			// Go listens on the IPv4 wildcard for "tcp" only without IPv6.
+			if ipv6 || l.network != "tcp" {
+				t.Fatalf("the serve fake for a %s listens on %s, not on the IPv6 wildcard", l.name, s.local)
+			}
+			t.Logf("Go opened an IPv4 socket (%s) without IPv6: the fixtures cover the %s", s.local, l.name)
+			continue
+		}
+		for name, f := range inspectors() {
+			if got, err := f(context.Background(), s.pid, endpoint(t, addr)); err != nil || got != listenerNone {
+				t.Errorf("%s(child group with a %s, probe %s) = %v, %v; want listenerNone", name, l.name, addr, got, err)
+			}
+		}
+	}
+	t.Run("socket-table fixtures", testOwnIPv6WildcardFixtures)
+}
+
+// fixturePort is the port of the socket-table fixtures; nothing listens on
+// it, the inspectors only read the fixtures.
+const fixturePort = 9221
+
+// testOwnIPv6WildcardFixtures runs each inspector on fixed socket tables
+// where the group's only listener on fixturePort is the IPv6 wildcard: an
+// IPv4 probe gets listenerNone, while an IPv6 probe on the same tables
+// gets listenerOwn, which shows that the inspector read the listener as
+// the group's.
+func testOwnIPv6WildcardFixtures(t *testing.T) {
+	v4 := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), fixturePort)
+	v6 := netip.AddrPortFrom(netip.IPv6Loopback(), fixturePort)
+	for name, f := range inspectors() {
+		pgid := syscall.Getpgrp()
+		switch name {
+		case "proc":
+			procIPv6WildcardFixture(t)
+		case "lsof":
+			lsofIPv6WildcardFixture(t, pgid)
+		default:
+			t.Fatalf("no IPv6 wildcard fixture for the %s inspector", name)
+		}
+		if got, err := f(context.Background(), pgid, v4); err != nil || got != listenerNone {
+			t.Errorf("%s(group whose only listener is on [::]:%d, probe %s) = %v, %v; want listenerNone", name, fixturePort, v4, got, err)
+		}
+		if got, err := f(context.Background(), pgid, v6); err != nil || got != listenerOwn {
+			t.Errorf("%s(group whose only listener is on [::]:%d, probe %s) = %v, %v; want listenerOwn", name, fixturePort, v6, got, err)
+		}
+	}
+}
+
+// procIPv6WildcardFixture points socketTables, for this test, at an empty
+// tcp table and a tcp6 table whose only row is a listener on
+// [::]:fixturePort. The row's inode is that of a socket of this test
+// process, so groupSocketLinks finds it in this process group's fds.
+func procIPv6WildcardFixture(t *testing.T) {
+	t.Helper()
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	rc, err := l.(*net.TCPListener).SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var link string
+	var linkErr error
+	if err := rc.Control(func(fd uintptr) { link, linkErr = os.Readlink(fmt.Sprintf("/proc/self/fd/%d", fd)) }); err != nil {
+		t.Fatal(err)
+	}
+	inode, ok := strings.CutPrefix(link, "socket:[")
+	inode, closed := strings.CutSuffix(inode, "]")
+	if linkErr != nil || !ok || !closed {
+		t.Fatalf("the socket link of this test's listener = %q, %v", link, linkErr)
+	}
+	const header = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+	// The IPv6 wildcard as the kernel prints it: 32 hex digits, all zero;
+	// 0A is TCP_LISTEN.
+	row := fmt.Sprintf("   0: %032X:%04X %032X:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 %s 1 0000000000000000 100 0 0 10 0\n", 0, fixturePort, 0, inode)
+	dir := t.TempDir()
+	tcp, tcp6 := filepath.Join(dir, "tcp"), filepath.Join(dir, "tcp6")
+	if err := os.WriteFile(tcp, []byte(header), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tcp6, []byte(header+row), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := socketTables
+	t.Cleanup(func() { socketTables = old })
+	socketTables.tcp, socketTables.tcp6 = tcp, tcp6
+}
+
+// lsofIPv6WildcardFixture puts first on PATH, for this test, an lsof that
+// answers the inspector's query for the listeners on fixturePort with one
+// socket of process group pgid on the IPv6 wildcard, in the -F pgtn format
+// (lsofSockets). Any other query fails.
+func lsofIPv6WildcardFixture(t *testing.T, pgid int) {
+	t.Helper()
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lsof-output")
+	if err := os.WriteFile(out, fmt.Appendf(nil, "p%d\ng%d\ntIPv6\nn*:%d\n", os.Getpid(), pgid, fixturePort), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+	query := fmt.Sprintf("-w -n -P -iTCP:%d -sTCP:LISTEN -F pgtn", fixturePort)
+	script := "#!/bin/sh\nif [ \"$*\" != " + q(query) + " ]; then echo \"fixture lsof: unexpected query $*\" >&2; exit 2; fi\nexec cat " + q(out) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "lsof"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // F2: who receives a connection is decided by address and port. The most
@@ -229,7 +429,8 @@ func TestClassifyMatchesTheEndpointAddress(t *testing.T) {
 		{"own wildcard, foreign exact", []sock{{any4, true}, {lo, false}}, lo, listenerForeign},
 		{"own exact, foreign wildcard", []sock{{lo, true}, {any4, false}}, lo, listenerOwn},
 		{"foreign wildcard", []sock{{any4, false}}, lo, listenerForeign},
-		{"dual-stack wildcard covers IPv4", []sock{{any6, true}}, lo, listenerOwn},
+		{"own IPv6 wildcard does not prove IPv4 (V6ONLY unknown)", []sock{{any6, true}}, lo, listenerNone},
+		{"foreign IPv6 wildcard may serve IPv4", []sock{{any6, false}}, lo, listenerForeign},
 		{"own dual-stack wildcard, foreign IPv4 wildcard", []sock{{any6, true}, {any4, false}}, lo, listenerForeign},
 		{"own IPv4 wildcard, foreign dual-stack wildcard", []sock{{any4, true}, {any6, false}}, lo, listenerOwn},
 		{"IPv4 wildcard does not cover IPv6", []sock{{any4, true}}, lo6, listenerNone},
@@ -488,11 +689,11 @@ func TestLockStartFallsBackToAPerUserFileInTheTemporaryDirectory(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	t.Setenv("TMPDIR", tmp)
 	// Another user's file, as this user cannot open it.
-	other := filepath.Join(tmp, fmt.Sprintf("iwdp-mcp-start-%d-127.0.0.1_1.lock", os.Getuid()+1))
+	other := filepath.Join(tmp, fmt.Sprintf("iwdp-cli-start-%d-127.0.0.1_1.lock", os.Getuid()+1))
 	if err := os.WriteFile(other, nil, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	shared := filepath.Join(tmp, "iwdp-mcp-start-127.0.0.1_1.lock")
+	shared := filepath.Join(tmp, "iwdp-cli-start-127.0.0.1_1.lock")
 	if err := os.WriteFile(shared, nil, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +702,7 @@ func TestLockStartFallsBackToAPerUserFileInTheTemporaryDirectory(t *testing.T) {
 		t.Fatalf("lockStart with other users' files in TMPDIR: %v", err)
 	}
 	defer unlock()
-	if _, err := os.Stat(filepath.Join(tmp, fmt.Sprintf("iwdp-mcp-start-%d-127.0.0.1_1.lock", os.Getuid()))); err != nil {
+	if _, err := os.Stat(filepath.Join(tmp, fmt.Sprintf("iwdp-cli-start-%d-127.0.0.1_1.lock", os.Getuid()))); err != nil {
 		t.Fatalf("the start lock is not this user's file in TMPDIR: %v", err)
 	}
 }

@@ -29,4 +29,4 @@ changelog:
 release:
   github:
     owner: nnemirovsky
-    name: iwdp-mcp
+    name: iwdp-cli

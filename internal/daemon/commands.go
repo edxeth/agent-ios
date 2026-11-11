@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/commands"
 )
 
 // Host is what a binary tells the daemon commands: how to reach and start

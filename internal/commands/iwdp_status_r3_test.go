@@ -56,8 +56,8 @@ var boundedText = regexp.MustCompile(`(?s)^--- AGENT_BROWSER_PAGE_CONTENT nonce=
 func TestFailingStatusOutputTakesTheOutputFlags(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
-	logPath := filepath.Join(state, "iwdp-mcp", "iwdp.log")
-	logLine := "iwdp log of an iwdp that iwdp-mcp starts: " + logPath
+	logPath := filepath.Join(state, "iwdp-cli", "iwdp.log")
+	logLine := "iwdp log of an iwdp that iwdp-cli starts: " + logPath
 	useStatusListing(t, freeLoopbackAddr(t)) // nothing listens: not running
 	text := "ios_webkit_debug_proxy is NOT running\n" + logLine
 
@@ -106,7 +106,7 @@ func TestStatusOfABrokenListingTakesTheOutputFlags(t *testing.T) {
 	useStatusListing(t, l.Addr().String())
 	code, out, stderr := runStatusCLI("status", "--content-boundaries")
 	m := boundedText.FindStringSubmatch(out)
-	if code != ExitError || m == nil || !strings.HasPrefix(m[2], "iwdp log of an iwdp that iwdp-mcp starts: ") || !strings.Contains(stderr, "HTTP 500") {
+	if code != ExitError || m == nil || !strings.HasPrefix(m[2], "iwdp log of an iwdp that iwdp-cli starts: ") || !strings.Contains(stderr, "HTTP 500") {
 		t.Errorf("status --content-boundaries on a broken listing: exit %d, stdout %q, stderr %q; want exit 1, the marked log line and the HTTP status", code, out, stderr)
 	}
 }

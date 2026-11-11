@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Domain ownership of owned state (design 2.4: domains are reference

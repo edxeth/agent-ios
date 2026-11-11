@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
 )
 
 // Tabs and the per-session current page (design

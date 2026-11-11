@@ -281,7 +281,7 @@ On the second device check, the user's iwdp closed every listing request without
 - The target discovery that runs every 2 s while a client discovers or auto-attaches logs the failure and announces nothing.
 - `get cdp-url` reads no listing when it selects a page that the daemon holds open: the session's `tab` choice, its default page, or `--page` with its tab id, label, key or `ws://` URL (steps 1 to 3 of "Which page the URL selects"). It reads the listing for a title or URL text, for the `ws://` URL of a page that the daemon does not hold open, and for the listing's first page.
 
-Advice: run `iwdp-cli daemon stop` to close the page connections (this also stops the endpoint and revokes its URLs), or restart that iwdp; then get a new URL. Not checked on a device: whether a CDP client can work on such an iwdp at all, because its own attachment opens a page connection.
+Advice: run `iwdp-cli daemon stop` to close the page connections (this also stops the endpoint and revokes its URLs), or restart that iwdp (`iwdp-cli restart-iwdp` for an iwdp that iwdp-cli started; any other iwdp only whoever started it, and only when nobody else uses it: `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand) in device-runbook.md describes; otherwise ask whoever started it, or the user); then get a new URL. Not checked on a device: whether a CDP client can work on such an iwdp at all, because its own attachment opens a page connection.
 
 ## Compatibility suite
 

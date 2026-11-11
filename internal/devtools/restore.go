@@ -11,9 +11,9 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // The storage part of "state load" (W4 repair rounds 3 and 4, storage

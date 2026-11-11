@@ -3,7 +3,7 @@ package core
 import (
 	"errors"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
 )
 
 // Exit codes that core errors choose (design 2.10); they equal the

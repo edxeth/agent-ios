@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	reg "github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // runMainEnv makes the test binary run main() instead of the tests, so CLI

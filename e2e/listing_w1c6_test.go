@@ -12,7 +12,7 @@ import (
 
 // proxyListingVar is the link-time seam of internal/proxy: the iwdp
 // listing address of a binary, which its daemon's iwdp transport uses too.
-const proxyListingVar = "github.com/nnemirovsky/iwdp-mcp/internal/proxy.listingAddr"
+const proxyListingVar = "github.com/nnemirovsky/iwdp-cli/internal/proxy.listingAddr"
 
 // listingLDFlags links a binary whose iwdp listing is addr, a private
 // loopback server of these tests, so that no test reads the device list

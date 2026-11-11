@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // Lease commands (design 2.5).

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	reg "github.com/nnemirovsky/iwdp-mcp/internal/commands"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit/testutil"
+	reg "github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
 )
 
 // WS2b-1b-b item 1: iwdp-cli before the registry (f731071,

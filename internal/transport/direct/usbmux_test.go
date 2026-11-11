@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
 )
 
 func newTestTransport(t *testing.T, m *fakeUsbmuxd) *Transport {

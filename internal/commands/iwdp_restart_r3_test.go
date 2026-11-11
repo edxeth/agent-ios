@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
+	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
 )
 
 // The serve fake iwdp of these tests is that of the internal/proxy tests

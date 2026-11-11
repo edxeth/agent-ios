@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Cleanup at the end of an operation (design docs/design/agentic-parity.md,

@@ -16,7 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
 )
 
 // statusRecorder keeps the status of a response for Options.Observe, and
@@ -196,7 +196,7 @@ func (s *Server) version(w http.ResponseWriter, r *http.Request, rec *record) {
 	ws := s.wsBrowserLocked(rec)
 	s.mu.Unlock()
 	writeJSON(w, map[string]any{
-		"Browser":              rec.product() + " (iwdp-mcp " + s.o.Version + ")",
+		"Browser":              rec.product() + " (iwdp-cli " + s.o.Version + ")",
 		"Protocol-Version":     "1.3",
 		"User-Agent":           "",
 		"V8-Version":           "",

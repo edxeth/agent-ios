@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
 )
 
 // find: semantic locators (design docs/design/agentic-parity.md, section

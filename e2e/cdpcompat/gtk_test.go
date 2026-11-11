@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 )
 
 const miniBrowser = "/usr/lib/webkit2gtk-4.1/MiniBrowser"

@@ -11,7 +11,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // Sender sends one protocol command. webkit.Caller and webkit.TargetCaller
@@ -52,7 +52,7 @@ type Entry struct {
 	Scoped bool
 }
 
-// DesiredState is the per-page model of state that iwdp-mcp set in WebKit
+// DesiredState is the per-page model of state that iwdp-cli set in WebKit
 // (design 2.4). It is not a history of sends: Apply sends the complete state
 // to a new or provisional target, and Release removes one owner's entries
 // and sends what that changes.

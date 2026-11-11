@@ -10,8 +10,23 @@ Earlier releases had one connection per command and one tool per WebKit method. 
 - **Device reservations.** Pages of a physical device need a reservation: `iwdp-cli device reserve --owner <owner>` first. Without one, page commands exit 6.
 - **Lost pages.** When someone else takes the page, commands fail with exit 4 and "ownership is unknown"; nothing reconnects by itself. `--takeover` reattaches, with the device owner's approval.
 - **The "Connecting to: <title>" line is gone.** Errors still name the page.
-- **restart-iwdp** restarts only an iwdp that iwdp-cli started and recorded, and refuses otherwise ([device-runbook.md](device-runbook.md)). It also refuses an iwdp that the removed iwdp-mcp server, or an iwdp-cli older than this release, started: its record lacks the iwdp-cli mark. Stop such an iwdp by hand once (`kill <pid>`, the pid that the refusal names); the next start records it with the mark.
+- **restart-iwdp** restarts only an iwdp that iwdp-cli started and recorded, and refuses otherwise ([device-runbook.md](device-runbook.md)). It also refuses every iwdp that an earlier version started. The removed iwdp-mcp server and an iwdp-cli older than the writer mark wrote records without the iwdp-cli mark. Every version before the rename to iwdp-cli, also one that wrote the mark, kept its record and start token under the old names, which this release does not read ([Rename to iwdp-cli](#rename-to-iwdp-cli)). Whoever started such an iwdp, and only when nobody else uses it, stops it once, as [Stopping an iwdp of an older version](#stopping-an-iwdp-of-an-older-version) describes; the next start records the new iwdp under the new names, with the mark.
 - **Exit codes of registry commands**: 0 ok, 1 error, 2 usage, 3 wait timeout, 4 page busy or lost, 5 no device or page, 6 reservation missing, 124 deadline, 130 signal.
+
+## Rename to iwdp-cli
+
+The project and its Go module are renamed from iwdp-mcp to iwdp-cli: the module path is `github.com/nnemirovsky/iwdp-cli`, and `go install github.com/nnemirovsky/iwdp-cli/cmd/iwdp-cli@latest` installs the binary. The files and the environment variable that iwdp-cli keeps for an iwdp that it starts are renamed too, without a migration; nothing is carried over from the old names:
+
+- The record of a started iwdp is `iwdp-cli-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/iwdp-cli/` (else `$TMPDIR/iwdp-cli-<uid>/`). It was `iwdp-mcp-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/iwdp-mcp/` (else `$TMPDIR/iwdp-mcp-<uid>/`).
+- The start lock is `iwdp-cli-start-<uid>-<address>.lock` (was `iwdp-mcp-start-<uid>-<address>.lock`).
+- The start token in the environment of a started iwdp is `IWDP_CLI_START_TOKEN` (was `IWDP_MCP_START_TOKEN`).
+- The iwdp log is now `$XDG_STATE_HOME/iwdp-cli/iwdp.log` (fallback `~/.local/state/iwdp-cli/iwdp.log`), and `iwdp-cli status` names that path. It was `$XDG_STATE_HOME/iwdp-mcp/iwdp.log`; the old file is not moved, and an iwdp that an older version started keeps writing to it.
+
+An iwdp that an older version started is therefore another program's iwdp for this version: it reads no record for it, so `restart-iwdp` refuses it. Whoever started that iwdp, and only when nobody else uses it, stops it once; the next start records the new iwdp under the new names. The daemon's own files keep the name `iwdp` (`$XDG_RUNTIME_DIR/iwdp/`, `$XDG_STATE_HOME/iwdp/daemon.log`) and are not affected.
+
+### Stopping an iwdp of an older version
+
+A pid in an old record proves nothing by itself: the recorded iwdp may have exited, and its pid may now belong to another process, also to another owner's iwdp. Stop such an iwdp only if you started it yourself and nobody else uses it, as [Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand) in device-runbook.md describes, with the old record (`$XDG_RUNTIME_DIR/iwdp-mcp/iwdp-mcp-started-<uid>-<address>.json`, else `$TMPDIR/iwdp-mcp-<uid>/`): `scripts/iwdp-owner-check.sh --terminate <record>` checks the process against that record and its start token `IWDP_MCP_START_TOKEN` and sends SIGTERM only when it reports `verified`; then run `scripts/iwdp-owner-check.sh <record>` until it reports `gone`. If you did not start it, another client uses it or you do not know, or the check does not report `verified`, send no signal: leave it running and ask whoever started it, or the user.
 
 ## MCP server
 

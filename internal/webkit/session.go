@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
 )
 
 // Errors of a Session (design docs/design/agentic-parity.md, sections 2.6 and 2.7).

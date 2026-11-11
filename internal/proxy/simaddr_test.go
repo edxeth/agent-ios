@@ -14,7 +14,7 @@ import (
 // on to ::1, and where ::1 does not answer, that connect stays pending,
 // and about 133 s later iwdp leaves a dead send queue that breaks one
 // file-descriptor slot. "-s 127.0.0.1:27753" makes the connect fail at
-// once. Linux runs no iOS Simulator, so every start of iwdp-mcp passes it
+// once. Linux runs no iOS Simulator, so every start of iwdp-cli passes it
 // there; macOS keeps the default, which the simulator tests use.
 func TestStartPassesTheSimulatorAddressOnLinuxOnly(t *testing.T) {
 	addr := freeAddr(t)

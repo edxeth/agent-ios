@@ -15,10 +15,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/commands"
+	"github.com/nnemirovsky/iwdp-cli/internal/commands"
 	// The daemon lifecycle commands register in internal/daemon, because
 	// that package imports internal/commands.
-	_ "github.com/nnemirovsky/iwdp-mcp/internal/daemon"
+	_ "github.com/nnemirovsky/iwdp-cli/internal/daemon"
 )
 
 func main() {

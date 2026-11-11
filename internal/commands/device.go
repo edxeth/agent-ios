@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // defaultReservationTTL is the lifetime of a device reservation; the daemon

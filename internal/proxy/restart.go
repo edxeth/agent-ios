@@ -20,14 +20,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logcause"
+	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
 )
 
 // tokenEnv carries the start token of an iwdp that Starter starts in that
 // process's environment. Only this program sets it, so a live process
 // with the recorded token is the iwdp this program started (decision L02,
 // review round 1, F3).
-const tokenEnv = "IWDP_MCP_START_TOKEN"
+const tokenEnv = "IWDP_CLI_START_TOKEN"
 
 // record is an ios_webkit_debug_proxy that a Starter started and saw serve
 // its listing address (decision L02). The started process leads its own
@@ -199,15 +199,15 @@ func procargsEnv(buf []byte) ([]string, error) {
 }
 
 // recordDir returns this user's private directory of iwdp records,
-// creating it: XDG_RUNTIME_DIR/iwdp-mcp when XDG_RUNTIME_DIR is a
+// creating it: XDG_RUNTIME_DIR/iwdp-cli when XDG_RUNTIME_DIR is a
 // directory of this user that others cannot write, else
-// <temporary directory>/iwdp-mcp-<uid>. The directory must be this user's,
+// <temporary directory>/iwdp-cli-<uid>. The directory must be this user's,
 // not a symlink, with mode 0700 (checkPrivate), on every use: another user
 // can create names in a shared temporary directory.
 func recordDir() (string, error) {
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("iwdp-mcp-%d", os.Getuid()))
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("iwdp-cli-%d", os.Getuid()))
 	if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" && checkPrivate(x, true, 0o022) == nil {
-		dir = filepath.Join(x, "iwdp-mcp")
+		dir = filepath.Join(x, "iwdp-cli")
 	}
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return "", fmt.Errorf("creating the iwdp record directory: %w", err)
@@ -441,7 +441,7 @@ func (s *Starter) owns(ctx context.Context, rec *record, ep netip.AddrPort) erro
 // refuse returns Restart's refusal for the listing address, owned by a
 // process that this program did not start, for reason.
 func (s *Starter) refuse(ctx context.Context, ep netip.AddrPort, reason string) error {
-	owner, kill := "owner pid unknown", "kill <pid>"
+	owner := "owner pid unknown"
 	pids, err := listenerPIDs(ctx, ep.Port())
 	switch {
 	case err != nil:
@@ -452,10 +452,9 @@ func (s *Starter) refuse(ctx context.Context, ep netip.AddrPort, reason string) 
 			list[i] = strconv.Itoa(pid)
 		}
 		owner = "pid " + strings.Join(list, ", ")
-		kill = "kill " + strings.Join(list, " ")
 	}
-	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-cli started and recorded (%s). It may be the iwdp of the user or another agent, so nothing was stopped. If it is yours, restart it by hand: %s, then run '%s'",
-		s.addr, owner, reason, kill, ManualCommand())
+	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-cli started and recorded (%s). It may be the iwdp of the user or another agent, so nothing was stopped. Ask whoever started it, or the user. Stop it yourself only if you started it and nobody else uses it, and only with 'scripts/iwdp-owner-check.sh --terminate <record>', then 'scripts/iwdp-owner-check.sh <record>' until it reports gone, as docs/device-runbook.md (Stopping an iwdp by hand) describes; then run '%s'",
+		s.addr, owner, reason, ManualCommand())
 }
 
 // ErrStopFailed marks a restart whose recorded iwdp did not stop: a signal

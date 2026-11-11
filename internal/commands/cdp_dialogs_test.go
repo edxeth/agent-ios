@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/cdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
 )
 
 // Design 5.2 "Dialogs" and 3.7: CDPDialogs is the logical session's own

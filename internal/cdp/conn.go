@@ -12,8 +12,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
 )
 
 // Kinds of attached targets.

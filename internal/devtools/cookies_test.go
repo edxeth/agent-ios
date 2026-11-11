@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // importedSession is a session cookie as the importer builds it: path "/",

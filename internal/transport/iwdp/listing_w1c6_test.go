@@ -3,8 +3,8 @@ package iwdp_test
 import (
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport/iwdp"
+	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
 )
 
 // W1c T01: the transport's default device list is proxy.ListingAddr, the

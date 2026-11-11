@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-mcp/internal/transport"
+	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
 )
 
 // Page resolution without the listing (docs/known-limits.md, "iwdp does
@@ -116,5 +116,5 @@ func (m *Manager) listingFailed(err error) error {
 	if n > 1 {
 		conns = fmt.Sprintf("%d page connections", n)
 	}
-	return fmt.Errorf("iwdp did not answer the page list while the daemon has %s open; commands on an attached page still work (in its session without --page, or with its ws:// URL), and the daemon does not start or restart iwdp for this. To list or select pages, run 'iwdp-cli daemon stop' to close the page connections, or restart ios_webkit_debug_proxy. Cause: %w", conns, err)
+	return fmt.Errorf("iwdp did not answer the page list while the daemon has %s open; commands on an attached page still work (in its session without --page, or with its ws:// URL), and the daemon does not start or restart iwdp for this. To list or select pages, run 'iwdp-cli daemon stop' to close the page connections, or have ios_webkit_debug_proxy restarted: 'iwdp-cli restart-iwdp' restarts only an iwdp that iwdp-cli started and recorded; for another iwdp, only whoever started that iwdp, and only when nobody else uses it, may stop it, with the procedure of docs/device-runbook.md (Stopping an iwdp by hand). Cause: %w", conns, err)
 }

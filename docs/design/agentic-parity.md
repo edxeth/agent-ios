@@ -1,4 +1,4 @@
-# Design: agentic parity, CDP endpoint and direct transport for iwdp-mcp
+# Design: agentic parity, CDP endpoint and direct transport for iwdp-cli
 
 > **Note (2026-11-10):** the MCP server (commit f731071) and the old CLI commands (WS2b) are removed; iwdp-cli runs registry commands only. The parts of this design about the MCP server, its tools and the legacy commands are history.
 > The daemon protocol parts of section 2.2 are history too. The endpoints `/v1/op`, `/v1/raw`, `/v1/events` and `/v1/lease` are removed, with the operation scopes and raw calls of the legacy commands and the event streams of MCP clients. `/v1/run` takes an absolute `deadline` instead of `timeoutMs`. `/v1/batch` was never built. The current protocol (version 2) is in internal/daemon/proto.go; internal/daemon/server.go routes its four endpoints: `GET /v1/hello`, `GET /v1/status`, `POST /v1/run` and `POST /v1/shutdown`.
@@ -25,7 +25,7 @@ Words used in this document:
 - **CDP**: Chrome DevTools Protocol.
 - **Page connection**: one inspector connection to one Safari tab. Safari allows one per tab; a new one takes the tab from the old one.
 - **Target routing**: WIP wraps every page command in `Target.sendMessageToTarget` and every reply in `Target.dispatchMessageFromTarget` (CLAUDE.md).
-- **Runtime**: the JavaScript that iwdp-mcp injects into the page (section 3). Not the WIP `Runtime` domain; that one is written `Runtime.*`.
+- **Runtime**: the JavaScript that iwdp-cli injects into the page (section 3). Not the WIP `Runtime` domain; that one is written `Runtime.*`.
 - **Ref**: an element handle such as `@e7` that a snapshot prints and later commands accept.
 - **Lease**: exclusive right of one named session to drive one page (section 2.5).
 
@@ -164,7 +164,7 @@ Sessions and leases inside the daemon:
 
 Device ownership (outside the daemon). The daemon cannot see every inspector client: another agent's raw script, an older iwdp-cli, or Safari Web Inspector on a Mac can hold a page, and iwdp takes a page from its current owner when a new client attaches (ios_webkit_debug_proxy.c lines 1202-1235). Rules:
 1. **No page connection to a physical device without a reservation.** `iwdp-cli device reserve [--device d] --owner <name> [--ttl 2h]` writes a cooperative reservation (flock-protected JSON in `$XDG_RUNTIME_DIR/iwdp/reservations/`, honored by every iwdp-cli and iwdp-mcp of this version, renewed while leases are active). It fails if another live reservation exists. `IWDP_DEVICE_RESERVATION=<owner>` lets an orchestrator create the reservation once and pass it to workers. Local targets (WebKitGTK, simulators) need no reservation.
-2. **Preflight before every first attach.** The daemon checks the reservation, then a non-disruptive busy hint where one exists: iwdp lists `devtoolsFrontendUrl` as empty for a page that already has a WebSocket client (ios_webkit_debug_proxy.c lines 1854-1863), but only when iwdp runs with its frontend; with `-F` or `--no-frontend` (how `proxy.Start` and iwdpctl start it) the hint is always empty and ownership is **unknown**. A busy hint fails the attach; an unknown state is accepted only inside a reservation. Hints are not locks and do not protect against clients that ignore reservations; the docs say so.
+2. **Preflight before every first attach.** The daemon checks the reservation, then a non-disruptive busy hint where one exists: iwdp lists `devtoolsFrontendUrl` as empty for a page that already has a WebSocket client (ios_webkit_debug_proxy.c lines 1854-1863), but only when iwdp runs with its frontend; with `-F` or `--no-frontend` (how `proxy.Start` starts it) the hint is always empty and ownership is **unknown**. A busy hint fails the attach; an unknown state is accepted only inside a reservation. Hints are not locks and do not protect against clients that ignore reservations; the docs say so.
 3. **Unexpected disconnect means ownership unknown.** When a page connection closes without a request from the daemon, the lease moves to `lost`. The daemon never reconnects by itself, and the next ordinary command fails with "connection to page was closed by someone else or by the device; ownership is unknown". Only `--takeover` (or the `lease takeover` command) reattaches, and the docs require the device owner's approval for it (the orchestrator gates device sessions; decisions.md).
 4. **Scope.** The CDP endpoint and `tab` discovery list pages only of reserved devices, and CDP discovery and auto-attach are limited to the selected page of the endpoint record unless the record was issued with `--scope device` (5.2).
 
@@ -643,7 +643,7 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
   - **Origin.** Requests with any `Origin` header (browser pages, including `null`) are rejected unless the origin is in `--cdp-allow-origin` (empty by default).
   - **No side effects on GET.** `/json/new`, `/json/close` and `/json/activate` accept only `PUT`.
   - The socket directory check of 2.2 protects the Unix API that hands out the token.
-- HTTP, all below `/t/<token>/e/<endpoint>`: `GET /json/version` (also with a trailing slash, which Playwright sends; `Browser: "Safari/<iOS version> (iwdp-mcp <version>)"`, `Protocol-Version: "1.3"`, `webSocketDebuggerUrl` of the record's browser endpoint), `GET /json` and `/json/list` (one entry per page in the record's scope, `type: "page"`, `webSocketDebuggerUrl: ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/page/<targetId>`), `PUT /json/new?url` (`window.open`, see 3.8), `PUT /json/close/<id>` (`window.close()`), `PUT /json/activate/<id>` (probe only; error text if the tab is not visible), `GET /json/protocol` (the supported subset in CDP JSON form, generated from the handler table).
+- HTTP, all below `/t/<token>/e/<endpoint>`: `GET /json/version` (also with a trailing slash, which Playwright sends; `Browser: "Safari/<iOS version> (iwdp-cli <version>)"`, `Protocol-Version: "1.3"`, `webSocketDebuggerUrl` of the record's browser endpoint), `GET /json` and `/json/list` (one entry per page in the record's scope, `type: "page"`, `webSocketDebuggerUrl: ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/page/<targetId>`), `PUT /json/new?url` (`window.open`, see 3.8), `PUT /json/close/<id>` (`window.close()`), `PUT /json/activate/<id>` (probe only; error text if the tab is not visible), `GET /json/protocol` (the supported subset in CDP JSON form, generated from the handler table).
 - WebSocket, below `/t/<token>/e/<endpoint>`: `/devtools/browser/<endpoint>` (flat sessions through `Target.attachToTarget{flatten:true}`; Puppeteer, Playwright, agent-browser) and `/devtools/page/<targetId>` (one page; chrome-devtools-mcp through Puppeteer uses the browser endpoint, older tools use this).
 
 ### 5.2 Target model
@@ -720,7 +720,7 @@ Based on spike B (section 11.2). Package `internal/transport/direct` (W2).
   - `MaxOutgoing` stays 16 MiB (the go-ios `maxMessageSize`; the device-side limit is not measured).
   - Operations with a known large result (full-page screenshots, heap snapshots) are refused before sending when their estimate exceeds the cap. Results above the cap need chunk reassembly (`WIRMessageDataTypeChunkSupportedKey: 1` with Partial and Final messages), which is not in v1; the heap snapshot command then prints "use --transport iwdp".
 - **Selection.** `--transport direct` first; `auto` chooses direct only when iwdp is not running, and only after the device test in 8.3 passes on iOS 16.7 and on one iOS 17 or later device. Never use direct and iwdp on the same device at the same time: both connect to webinspectord, and page connections take pages from each other.
-- **Cost.** go-ios v1.3.2 requires `go 1.26.0`; iwdp-mcp is at `go 1.25.7`, and a 1.25.7 toolchain fails to build with it (spike B). Linked modules grow from 8 to 20, the stripped binary from 9.70 MB to 10.68 MB, no cgo, all licenses MIT, BSD or Apache. Decision D5 accepts go-ios and the Go 1.26 floor. If the adapter cannot avoid every leaking path, the fallback is a minimal own usbmuxd and lockdown client behind the same interface (mobium, Apache-2.0, shows that this is possible without dependencies).
+- **Cost.** go-ios v1.3.2 requires `go 1.26.0`; iwdp-cli is at `go 1.25.7`, and a 1.25.7 toolchain fails to build with it (spike B). Linked modules grow from 8 to 20, the stripped binary from 9.70 MB to 10.68 MB, no cgo, all licenses MIT, BSD or Apache. Decision D5 accepts go-ios and the Go 1.26 floor. If the adapter cannot avoid every leaking path, the fallback is a minimal own usbmuxd and lockdown client behind the same interface (mobium, Apache-2.0, shows that this is possible without dependencies).
 - **Wrapped surface** (W2 defines it inside its package; nothing outside `direct` imports go-ios):
 
 ```go
@@ -999,7 +999,7 @@ Spike A shows that WebKitGTK 2.54 MiniBrowser runs headless under `broadwayd` an
 
 ### 8.3 Real-device tests (gated) and runbook
 
-Build tag `device`; the suite refuses to run unless `IWDP_DEVICE_TEST=1` and a device reservation (2.5) exist. The orchestrator grants each device session; the suite never restarts or stops iwdp, never runs `iwdpctl`, and never navigates the visible tab without that grant (decisions.md).
+Build tag `device`; the suite refuses to run unless `IWDP_DEVICE_TEST=1` and a device reservation (2.5) exist. The orchestrator grants each device session; the suite never restarts or stops iwdp, never runs `iwdp-cli restart-iwdp`, and never navigates the visible tab without that grant (decisions.md).
 - **Contracts fail the gate.** Shared semantic fixtures have hand-written expected results (snapshots, visibility, event outcomes, waits, dialogs). On iOS 16.7 any mismatch fails, except entries in `e2e/device/known-differences.yaml`, each with a reason and a reviewer. WebKitGTK output is never the expected answer.
 - **Capability probes are separate and report-only**: interception, whether `Network.setExtraHTTPHeaders` merges or replaces the header map (2.4), the rate of the page's `performance.now()` against the host monotonic clock (2.6), `getResponseBody`, `Touch` construction, `DOM.getAccessibilityPropertiesForNode` cost, reconnect gap, large evaluate.
 - The CDP scenarios of 8.4 run on the device under the same grant before any scenario is advertised as supported on iOS.
@@ -1114,7 +1114,7 @@ Full report: /home/devkit/.pi/artifacts/retro/browser-checker-20261106/analysis/
 
 ## 12. Licensing and attribution
 
-- iwdp-mcp stays MIT. New dependencies allowed by this design: go-ios (MIT, D5), esbuild Go API as a test-only dependency (MIT, D4). gorilla/websocket and the MCP SDK are already used.
+- iwdp-cli stays MIT. New dependencies allowed by this design: go-ios (MIT, D5), esbuild Go API as a test-only dependency (MIT, D4). gorilla/websocket and the MCP SDK are already used.
 - Do not copy code from pymobiledevice3 (GPL-3.0), mobilecli (FSL-1.1-ALv2) or sonic-ios-bridge (AGPL-3.0). Behavior facts from them (message names, timings) are cited, not copied.
 - Playwright (Apache-2.0) and agent-browser (Apache-2.0): prefer own implementations. If a worker adapts code (for example role tables from `roleUtils.ts` or key tables from `webViewInput.ts`), that file keeps the original copyright and license header, a `NOTICE` file at the repository root names the source and license, and the README license section mentions it.
 - WebKit protocol method lists (`internal/wip/methods_gen.go`) contain names only; the generator header cites the WebKit source files (BSD-style license).

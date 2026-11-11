@@ -1,5 +1,5 @@
 // Package runtime is the Go side of the agent runtime, the JavaScript that
-// iwdp-mcp injects into the page (design docs/design/agentic-parity.md,
+// iwdp-cli injects into the page (design docs/design/agentic-parity.md,
 // sections 3.1 to 3.4): the bundle in js/, the call contract (expression,
 // envelope, install-and-retry, async calls), the owner epoch and the
 // snapshot renderer.
@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // bundle is the installed bundle: js/*.js joined in name order and

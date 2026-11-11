@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
 )
 
 // snapshot: the accessibility snapshot with @eN refs (design

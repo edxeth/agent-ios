@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-mcp/internal/core"
-	"github.com/nnemirovsky/iwdp-mcp/internal/proxy"
-	"github.com/nnemirovsky/iwdp-mcp/internal/webkit"
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // The ios_webkit_debug_proxy commands: status, devices and restart-iwdp.
@@ -53,7 +53,7 @@ var restartIWDP = proxy.Restart
 // and stderr: path and err from proxy.LogPath), or why its path is
 // unknown; status prints it for every outcome.
 func iwdpLogLine(path string, err error) string {
-	const label = "iwdp log of an iwdp that iwdp-mcp starts: "
+	const label = "iwdp log of an iwdp that iwdp-cli starts: "
 	if err != nil {
 		return label + "unknown (" + err.Error() + ")"
 	}

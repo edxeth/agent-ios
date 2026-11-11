@@ -118,7 +118,7 @@ func TestStatusNotRunningStreams(t *testing.T) {
 		start += " -s 127.0.0.1:27753"
 	}
 	stdout, stderr, code := runBinIn(t, bin, "status")
-	if code != 1 || !strings.HasPrefix(stdout, "ios_webkit_debug_proxy is NOT running\niwdp log of an iwdp that iwdp-mcp starts: ") || !strings.Contains(stderr, start+"\n") {
+	if code != 1 || !strings.HasPrefix(stdout, "ios_webkit_debug_proxy is NOT running\niwdp log of an iwdp that iwdp-cli starts: ") || !strings.Contains(stderr, start+"\n") {
 		t.Errorf("status without iwdp: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	stdout, _, code = runBinIn(t, bin, "status", "--json")
@@ -207,7 +207,7 @@ func TestStatusHonorsTheDeadline(t *testing.T) {
 func TestRestartIWDPHonorsTheDeadline(t *testing.T) {
 	addr := deadCLIListing().Addr()
 	dir := t.TempDir()
-	name := fmt.Sprintf("iwdp-mcp-start-%d-%s.lock", os.Getuid(), strings.ReplaceAll(addr, ":", "_")) // proxy.runtimeName
+	name := fmt.Sprintf("iwdp-cli-start-%d-%s.lock", os.Getuid(), strings.ReplaceAll(addr, ":", "_")) // proxy.runtimeName
 	lock, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)
