@@ -29,6 +29,16 @@ func TestMain(m *testing.M) {
 	// dead listing, never the device list of the user's iwdp.
 	iwdp.DefaultListingAddr = testutil.DeadIWDPListing()
 	if len(os.Args) >= 3 && os.Args[1] == "daemon" && os.Args[2] == "run" {
+		// A test may delay the daemon before Run takes run.lock, as a
+		// slowly scheduled daemon process (TestRetireProperty).
+		if d := os.Getenv(lockDelayEnv); d != "" {
+			delay, err := time.ParseDuration(d)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "daemon: %s=%q: %v\n", lockDelayEnv, d, err)
+				os.Exit(1)
+			}
+			time.Sleep(delay)
+		}
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 		err := Run(ctx, RunOptions{Version: "test"})
 		stop()

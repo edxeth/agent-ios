@@ -101,7 +101,10 @@ func init() {
 				return commands.Result{}, err
 			}
 			defer c.Close()
-			if err := c.Shutdown(ctx, false); err != nil {
+			// A request that the daemon closes without an answer
+			// (notRunning) means it is going away already: wait for it
+			// as after its answer.
+			if err := c.Shutdown(ctx, false); err != nil && !notRunning(err) {
 				return commands.Result{}, err
 			}
 			if err := c.WaitGone(ctx, stopWait); err != nil {
@@ -116,13 +119,16 @@ func init() {
 		Run: func(ctx context.Context, env commands.Env, _ commands.Input) (commands.Result, error) {
 			c, err := connectRunning(ctx, env)
 			if errors.Is(err, ErrNotRunning) {
-				return commands.Result{Text: "The iwdp daemon is not running.", Data: map[string]bool{"running": false}}, nil
+				return notRunningStatus(), nil
 			}
 			if err != nil {
 				return commands.Result{}, err
 			}
 			defer c.Close()
 			st, err := c.Status(ctx)
+			if notRunning(err) { // the daemon went away after its hello
+				return notRunningStatus(), nil
+			}
 			if err != nil {
 				return commands.Result{}, err
 			}
@@ -171,6 +177,11 @@ func runOptions(ro RunOptions, in commands.Input) RunOptions {
 		ro.CDPPort = p
 	}
 	return ro
+}
+
+// notRunningStatus is the result of 'daemon status' when no daemon answers.
+func notRunningStatus() commands.Result {
+	return commands.Result{Text: "The iwdp daemon is not running.", Data: map[string]bool{"running": false}}
 }
 
 func connectRunning(ctx context.Context, env commands.Env) (*Client, error) {

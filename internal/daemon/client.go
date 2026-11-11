@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,7 +92,26 @@ func newClientDial(dir string, dial func(context.Context) (net.Conn, error)) *Cl
 		DisableCompression:  true,
 		MaxIdleConnsPerHost: 8,
 	}
-	return &Client{dir: dir, hc: &http.Client{Transport: tr}}
+	return &Client{dir: dir, hc: &http.Client{Transport: answersAsIs{tr}}}
+}
+
+// answersAsIs makes every daemon answer final: it removes the Location of
+// a 3xx answer, and http.Client returns a 3xx without a Location to its
+// caller. So a redirect is an answer with an unexpected status, never
+// followed, whatever its Location (http.Client parses the Location before
+// it would ask CheckRedirect). A followed redirect's failure would stand
+// for the daemon's answer (notRunning would read its closed connection as
+// "no daemon answers"). It embeds the *http.Transport so that
+// Client.Close still closes the idle connections (http.Client calls
+// CloseIdleConnections of its Transport only when it has one).
+type answersAsIs struct{ *http.Transport }
+
+func (t answersAsIs) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.Transport.RoundTrip(req)
+	if err == nil && resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		resp.Header.Del("Location")
+	}
+	return resp, err
 }
 
 // Dir is the socket directory of the daemon.
@@ -100,10 +120,36 @@ func (c *Client) Dir() string { return c.dir }
 // Close releases the client's idle connections.
 func (c *Client) Close() { c.hc.CloseIdleConnections() }
 
-// notRunning reports a dial error that means no daemon listens.
+// notRunning reports a request error that means no daemon answers: none
+// listens (no socket: ENOENT; a socket without a listener: ECONNREFUSED),
+// or the daemon accepted the connection and closed or reset it without
+// an answer. A daemon that exits closes its listener and its connections,
+// so a request that reaches it in that window (a hello, or the request
+// after a hello that it still answered) gets EOF, ECONNRESET (the request
+// was unread) or EPIPE (the close came while the client wrote).
+// Only errors of the connection count (the *url.Error of the request): a
+// daemon that answers, also with an error status or a broken body, does
+// answer.
 func notRunning(err error) bool {
-	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return false
+	}
+	if ue.Err.Error() == serverClosedIdle {
+		return true
+	}
+	for _, gone := range []error{syscall.ENOENT, syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.EPIPE, io.EOF} {
+		if errors.Is(ue.Err, gone) {
+			return true
+		}
+	}
+	return false
 }
+
+// serverClosedIdle is the text of net/http's errServerClosedIdle, which is
+// not exported: the transport reports an EOF with it when the EOF comes
+// before the request was sent on the connection.
+const serverClosedIdle = "http: server closed idle connection"
 
 // Connect returns a client of the daemon of o.Dir. When no daemon answers
 // it starts one (design 2.3): an exclusive flock on daemon.lock, a second
@@ -254,7 +300,10 @@ func reusable(h Hello) (bool, error) {
 
 // retire asks a daemon of another protocol or executable to exit when it
 // has no leases (design 2.2) and waits until its socket is gone. The
-// daemon checks the leases again when the request arrives (ifIdle).
+// daemon checks the leases again when the request arrives (ifIdle). A
+// request that the daemon closes without an answer (notRunning) means it
+// is going away already (an idle exit, another client's 'daemon stop'):
+// retire waits for it in the same way.
 func (c *Client) retire(ctx context.Context, h Hello) error {
 	build := ""
 	if h.Protocol == Protocol {
@@ -265,13 +314,14 @@ func (c *Client) retire(ctx context.Context, h Hello) error {
 		return busy
 	}
 	var out shutdownReply
-	if err := c.call(ctx, http.MethodPost, "/v1/shutdown", shutdownRequest{IfIdle: true}, &out); err != nil {
+	err := c.call(ctx, http.MethodPost, "/v1/shutdown", shutdownRequest{IfIdle: true}, &out)
+	switch {
+	case err != nil && !notRunning(err):
 		return fmt.Errorf("asking daemon version %s (protocol %d) to exit: %w", h.Version, h.Protocol, err)
-	}
-	if out.Error != nil {
+	case err != nil: // going away
+	case out.Error != nil:
 		return fmt.Errorf("%w (%s)", busy, out.Error.Message)
-	}
-	if retireReplied != nil {
+	case retireReplied != nil:
 		retireReplied()
 	}
 	c.Close()
@@ -405,6 +455,9 @@ func spawn(o Options) (exited <-chan error, logPath string, err error) {
 	cmd.Env = append(cmd.Env, o.Env...)
 	cmd.Stdout, cmd.Stderr = logf, logf // stdin stays /dev/null
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if spawnStarting != nil {
+		spawnStarting(o.Dir)
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, "", fmt.Errorf("starting the iwdp daemon (%s daemon run): %w", exe, err)
 	}
@@ -412,6 +465,11 @@ func spawn(o Options) (exited <-chan error, logPath string, err error) {
 	go func() { ch <- cmd.Wait() }() // reaps the child if it exits while this process runs
 	return ch, logPath, nil
 }
+
+// spawnStarting, when set, is called just before spawn starts a daemon
+// process for the socket directory dir. Tests set it to check that no
+// daemon holds run.lock at that moment.
+var spawnStarting func(dir string)
 
 // ---- requests ----
 
