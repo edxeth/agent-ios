@@ -54,7 +54,7 @@ func (r *rig) cliDo(t *testing.T, fn func(ctx context.Context, p *devtools.Page,
 	t.Helper()
 	req := r.req
 	req.Page = "One"
-	mo, err := r.m.Begin(ctxFor(t, 10*time.Second), req, core.AcquireOptions{Session: "s1", Reservation: "o1"}, "cli", core.ClassExclusive)
+	mo, err := r.m.Begin(testCtx(t), req, core.AcquireOptions{Session: "s1", Reservation: "o1"}, "cli", core.ClassExclusive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func (r *rig) emitAndWait(t *testing.T, method string, params any) {
 	var delivered atomic.Bool
 	defer ss.SubscribeSync(method, func(string, json.RawMessage) { delivered.Store(true) })()
 	r.fake["One"].Emit(method, params)
-	eventually(t, 5*time.Second, method+" delivered", delivered.Load)
+	waitUntil(t, method+" delivered", delivered.Load)
 }
 
 func timelineRecord(typ string, start float64) map[string]any {

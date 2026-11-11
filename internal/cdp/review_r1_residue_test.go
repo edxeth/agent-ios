@@ -47,8 +47,8 @@ func waitClosed(t *testing.T, ch chan struct{}, what string) {
 	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s: not within 5s", what)
+	case <-testCtx(t).Done():
+		t.Fatalf("%s: not before the test's deadline", what)
 	}
 }
 
@@ -56,7 +56,7 @@ func waitClosed(t *testing.T, ch chan struct{}, what string) {
 // events.
 func pushedAtLeast(t *testing.T, ps *pageState, n uint64) {
 	t.Helper()
-	eventually(t, 5*time.Second, "the events queued", func() bool { return ps.q.pushed() >= n })
+	waitUntil(t, "the events queued", func() bool { return ps.q.pushed() >= n })
 }
 
 // events.go close: an interception event that the attachment queued and

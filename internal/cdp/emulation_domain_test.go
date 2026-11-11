@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
@@ -14,7 +13,7 @@ import (
 func (w *w5b2Page) detachPage(t *testing.T) {
 	t.Helper()
 	call(t, w.c, "", "Target.detachFromTarget", map[string]any{"sessionId": w.page})
-	if _, err := w.c.WaitEvent(ctxFor(t, 5*time.Second), 0, "Target.detachedFromTarget", nil); err != nil {
+	if _, err := w.c.WaitEvent(testCtx(t), 0, "Target.detachedFromTarget", nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -25,12 +24,12 @@ func (w *w5b2Page) cliOverride(t *testing.T, method, params string) {
 	t.Helper()
 	req := w.r.req
 	req.Page = "One"
-	mo, err := w.r.m.Begin(ctxFor(t, 5*time.Second), req, core.AcquireOptions{Session: "s1", Reservation: "o1"}, "cli", core.ClassExclusive)
+	mo, err := w.r.m.Begin(testCtx(t), req, core.AcquireOptions{Session: "s1", Reservation: "o1"}, "cli", core.ClassExclusive)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer w.r.m.End(mo.ID)
-	if _, err := w.r.m.RawAs(ctxFor(t, 5*time.Second), mo, core.SessionOwner("legacy", mo.Session), method, []byte(params)); err != nil {
+	if _, err := w.r.m.RawAs(testCtx(t), mo, core.SessionOwner("legacy", mo.Session), method, []byte(params)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -218,7 +217,7 @@ func (w *w5b2Page) cliGeo(t *testing.T, lat, lng float64) {
 	t.Helper()
 	req := w.r.req
 	req.Page = "One"
-	mo, err := w.r.m.Begin(ctxFor(t, 5*time.Second), req, core.AcquireOptions{Session: "s1", Reservation: "o1"}, "cli", core.ClassExclusive)
+	mo, err := w.r.m.Begin(testCtx(t), req, core.AcquireOptions{Session: "s1", Reservation: "o1"}, "cli", core.ClassExclusive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +226,7 @@ func (w *w5b2Page) cliGeo(t *testing.T, lat, lng float64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.SetGeolocation(ctxFor(t, 5*time.Second), mo.Op.Caller(), "s1", lat, lng, 1); err != nil {
+	if err := p.SetGeolocation(testCtx(t), mo.Op.Caller(), "s1", lat, lng, 1); err != nil {
 		t.Fatal(err)
 	}
 }

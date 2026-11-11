@@ -1,7 +1,6 @@
 package cdp
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -153,9 +152,7 @@ type otherConn struct {
 // settle waits until the goroutine handled every pushed event.
 func settle(t *testing.T, ps *pageState) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := ps.caughtUp(ctx); err != nil {
+	if err := ps.caughtUp(testCtx(t)); err != nil {
 		t.Fatalf("waiting for the attachment's events: %v", err)
 	}
 }

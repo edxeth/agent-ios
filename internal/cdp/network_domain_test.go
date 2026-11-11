@@ -60,7 +60,7 @@ func netEvents(t *testing.T, c *cdptest.Client, after int, sid, method string) [
 // callErr calls method and returns its CDP error.
 func callErr(t *testing.T, c *cdptest.Client, sid, method string, params any) *cdptest.Error {
 	t.Helper()
-	_, err := c.Call(ctxFor(t, 5*time.Second), sid, method, params)
+	_, err := c.Call(testCtx(t), sid, method, params)
 	ce, ok := err.(*cdptest.Error)
 	if !ok {
 		t.Fatalf("%s: got %v, want a CDP error", method, err)

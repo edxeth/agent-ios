@@ -185,7 +185,7 @@ func runClaimHistory(t *testing.T, h claimHistory) []string {
 	}
 	settle := func() {
 		for _, a := range atts {
-			if err := a.ps.caughtUp(ctxFor(t, 5*time.Second)); err != nil {
+			if err := a.ps.caughtUp(testCtx(t)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -270,13 +270,13 @@ func runClaimHistory(t *testing.T, h claimHistory) []string {
 		return out
 	}
 	// The bridge's continues run on their own goroutines.
-	deadline := time.Now().Add(5 * time.Second)
+	waits := testCtx(t)
 	for _, j := range pausedOrder {
 		want := 0
 		if answered[j] {
 			want = 1
 		}
-		for sends(j) < want && time.Now().Before(deadline) {
+		for sends(j) < want && waits.Err() == nil {
 			time.Sleep(2 * time.Millisecond)
 		}
 	}
@@ -310,7 +310,7 @@ func runClaimHistory(t *testing.T, h claimHistory) []string {
 			if !ok {
 				continue
 			}
-			if _, err := c.Call(ctxFor(t, 5*time.Second), a.sid, "Fetch.continueRequest", map[string]any{"requestId": id}); err != nil {
+			if _, err := c.Call(testCtx(t), a.sid, "Fetch.continueRequest", map[string]any{"requestId": id}); err != nil {
 				if !strings.Contains(err.Error(), "Invalid InterceptionId.") {
 					failf("request %d: answer of %s: %v", j, a.sid, err)
 				}

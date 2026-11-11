@@ -339,7 +339,8 @@ func (r *rig) releaseWhileQueued(t *testing.T, title string, send func() error) 
 	if session != "s1" {
 		t.Fatalf("page %q is leased by %q, want s1", title, session)
 	}
-	hold, err := r.pageSessionOf(t, title).Sched.Begin(ctxFor(t, 10*time.Second), core.OpSpec{Name: "hold", Class: core.ClassExclusive, Session: session, Epoch: epoch})
+	waits := testCtx(t)
+	hold, err := r.pageSessionOf(t, title).Sched.Begin(waits, core.OpSpec{Name: "hold", Class: core.ClassExclusive, Session: session, Epoch: epoch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,20 +353,18 @@ func (r *rig) releaseWhileQueued(t *testing.T, title string, send func() error) 
 	held := r.pageStatus(t, title).LastUsed
 	errc := make(chan error, 1)
 	go func() { errc <- send() }()
-	for deadline := time.Now().Add(10 * time.Second); r.pageStatus(t, title).LastUsed.Equal(held); time.Sleep(time.Millisecond) {
-		if time.Now().After(deadline) {
+	for ; r.pageStatus(t, title).LastUsed.Equal(held); time.Sleep(time.Millisecond) {
+		if waits.Err() != nil {
 			t.Fatal("the command never reached the page's lease")
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := r.m.Release(ctx, "s1", key); err != nil {
+	if err := r.m.Release(waits, "s1", key); err != nil {
 		t.Fatalf("releasing the lease: %v", err)
 	}
 	select {
 	case err := <-errc:
 		return err
-	case <-time.After(10 * time.Second):
+	case <-waits.Done():
 		t.Fatal("the command did not end after the release of its lease")
 		return nil
 	}

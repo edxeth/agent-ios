@@ -129,7 +129,7 @@ func (r *rig) issue(t *testing.T, session, page, scope string) Endpoint {
 	t.Helper()
 	req := r.req
 	req.Page = page
-	ep, err := r.srv.Issue(ctxFor(t, 5*time.Second), IssueRequest{Session: session, Reservation: "o1", Page: req, Scope: scope})
+	ep, err := r.srv.Issue(testCtx(t), IssueRequest{Session: session, Reservation: "o1", Page: req, Scope: scope})
 	if err != nil {
 		t.Fatalf("Issue(%s, %s, %s): %v", session, page, scope, err)
 	}
@@ -143,9 +143,47 @@ func ctxFor(t *testing.T, d time.Duration) context.Context {
 	return ctx
 }
 
+// noTestDeadline bounds the waits of testCtx when the test has no
+// deadline (go test -timeout 0). It is go test's default -timeout. The
+// waits need a deadline: core.Scheduler.Begin refuses an operation
+// without one.
+const noTestDeadline = 10 * time.Minute
+
+// testCtx is the context of a wait of a shared helper on the rig (a fake
+// page, the endpoint or the manager): it ends at the test's own deadline
+// (go test -timeout), or after noTestDeadline when the test has none.
+// The fakes answer every call, so the bound only turns a hang into a
+// failure. A fixed short bound does not fit (CLAUDE.md, Key Patterns):
+// under -race on a host with a load of 30 to 50, Tracing.end of a trace
+// at the record limit took up to 11 s, past the 10 s that call waited.
+func testCtx(t *testing.T) context.Context {
+	t.Helper()
+	d, ok := t.Deadline()
+	if !ok {
+		d = time.Now().Add(noTestDeadline)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), d)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// waitUntil polls cond until it holds, and fails the test when the
+// test's deadline (testCtx) comes first.
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	ctx := testCtx(t)
+	for !cond() {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("%s: not before the test's deadline", what)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func dial(t *testing.T, url string) *cdptest.Client {
 	t.Helper()
-	c, _, err := cdptest.Dial(ctxFor(t, 5*time.Second), url, nil)
+	c, _, err := cdptest.Dial(testCtx(t), url, nil)
 	if err != nil {
 		t.Fatalf("dialing the CDP endpoint: %v", err)
 	}
@@ -155,7 +193,7 @@ func dial(t *testing.T, url string) *cdptest.Client {
 
 func call(t *testing.T, c *cdptest.Client, session, method string, params any) json.RawMessage {
 	t.Helper()
-	res, err := c.Call(ctxFor(t, 10*time.Second), session, method, params)
+	res, err := c.Call(testCtx(t), session, method, params)
 	if err != nil {
 		t.Fatalf("%s: %v", method, err)
 	}

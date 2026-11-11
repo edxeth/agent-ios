@@ -69,15 +69,16 @@ func (w *treeOrderRun) arm(t *testing.T) {
 // goroutine go on and checks that the child frame does not come back.
 func (w *treeOrderRun) raceRead(t *testing.T) {
 	t.Helper()
+	ctx := testCtx(t)
 	select {
 	case <-w.read:
-	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
 		t.Fatal("no tree read")
 	}
 	w.f.Emit("Page.frameAttached", map[string]any{"frameId": "ghost", "parentFrameId": "main"})
 	select {
 	case <-w.paused:
-	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
 		t.Fatal("the child frame's event did not reach the attachment")
 	}
 	w.f.Emit("Page.frameNavigated", map[string]any{"frame": map[string]any{"id": "ghost", "parentId": "main", "loaderId": "child.old", "url": "https://old-child.example/"}})
@@ -88,9 +89,9 @@ func (w *treeOrderRun) raceRead(t *testing.T) {
 	w.f.Emit("Page.frameNavigated", map[string]any{"frame": frame})
 	close(w.answer)
 	ps := w.s.page
-	eventually(t, 5*time.Second, "the tree read's reply queued while the goroutine lags", func() bool { return replyQueued(ps) })
+	waitUntil(t, "the tree read's reply queued while the goroutine lags", func() bool { return replyQueued(ps) })
 	close(w.release)
-	if err := ps.caughtUp(ctxFor(t, 5*time.Second)); err != nil {
+	if err := ps.caughtUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

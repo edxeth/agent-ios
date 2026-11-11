@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
@@ -183,7 +182,7 @@ func (w *w5b2Page) call(t *testing.T, method string, params any) json.RawMessage
 // fail runs method on the page attachment and returns its CDP error.
 func (w *w5b2Page) fail(t *testing.T, method string, params any) *cdptest.Error {
 	t.Helper()
-	res, err := w.c.Call(ctxFor(t, 10*time.Second), w.page, method, params)
+	res, err := w.c.Call(testCtx(t), w.page, method, params)
 	if err == nil {
 		t.Fatalf("%s %v succeeded with %s, want an error", method, params, res)
 	}

@@ -33,8 +33,10 @@ func stallResponse(t *testing.T, rawURL string) net.Conn {
 			t.Fatal(err)
 		}
 	}
-	// Listing a large page under -race and a loaded host takes seconds.
-	if err := peer.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	// Listing a large page under -race and a loaded host takes seconds;
+	// the read waits until the test's deadline (testCtx).
+	readEnd, _ := testCtx(t).Deadline() // testCtx always has a deadline
+	if err := peer.SetReadDeadline(readEnd); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fmt.Fprintf(peer, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", u.RequestURI(), u.Host); err != nil {

@@ -63,7 +63,7 @@ func setJar(jar *devtoolstest.Page, cs ...webkit.Cookie) {
 
 func cdpFail(t *testing.T, c *cdptest.Client, session, method string, params any) *cdptest.Error {
 	t.Helper()
-	_, err := c.Call(ctxFor(t, 10*time.Second), session, method, params)
+	_, err := c.Call(testCtx(t), session, method, params)
 	ce, ok := err.(*cdptest.Error)
 	if !ok {
 		t.Fatalf("%s: got %v, want a CDP error", method, err)

@@ -21,7 +21,7 @@ func waitResumed(t *testing.T, resumed <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-resumed:
-	case <-time.After(5 * time.Second):
+	case <-testCtx(t).Done():
 		t.Fatal("the provisional target was not resumed")
 	}
 }

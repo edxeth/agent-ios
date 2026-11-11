@@ -13,7 +13,7 @@ import (
 
 func httpDo(t *testing.T, method, url string, mod func(*http.Request)) (int, string) {
 	t.Helper()
-	req, err := http.NewRequestWithContext(ctxFor(t, 5*time.Second), method, url, nil)
+	req, err := http.NewRequestWithContext(testCtx(t), method, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

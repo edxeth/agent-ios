@@ -44,7 +44,7 @@ func interceptReq(t *testing.T, c *cdptest.Client, f *fakewebkit.Server, sid, ta
 // answeredWith waits until the fake page took the hold of id with method.
 func answeredWith(t *testing.T, f *fakewebkit.Server, id, method string) {
 	t.Helper()
-	eventually(t, 5*time.Second, "an answer "+method+" of "+id, func() bool {
+	waitUntil(t, "an answer "+method+" of "+id, func() bool {
 		return slices.ContainsFunc(f.Answers(), func(a fakewebkit.Answer) bool { return a.RequestID == id && a.Method == method })
 	})
 }

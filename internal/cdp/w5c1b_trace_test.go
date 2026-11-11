@@ -44,7 +44,7 @@ func sinceMark(f *fakewebkit.Server, mark int) []string {
 
 func waitSessionEvent(t *testing.T, c *cdptest.Client, after int, session, method string) cdptest.Event {
 	t.Helper()
-	e, err := c.WaitEvent(ctxFor(t, 10*time.Second), after, method, func(e cdptest.Event) bool { return e.SessionID == session })
+	e, err := c.WaitEvent(testCtx(t), after, method, func(e cdptest.Event) bool { return e.SessionID == session })
 	if err != nil {
 		t.Fatalf("waiting for %s: %v", method, err)
 	}

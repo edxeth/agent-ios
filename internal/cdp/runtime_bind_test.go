@@ -29,7 +29,7 @@ func attachWithPriorContexts(t *testing.T, child bool) (*rig, *fakePage, *cdptes
 	c := dial(t, r.issue(t, "s1", "One", ScopePage).WS)
 	call(t, c, "", "Target.setAutoAttach", map[string]any{"autoAttach": true, "flatten": true, "filter": []any{map[string]any{"type": "page", "exclude": true}, map[string]any{}}})
 	tab := decode[attached](t, eventsOf(c, "Target.attachedToTarget")[0].Params).SessionID
-	eventually(t, time.Second, "connection open", func() bool { return f.ConnectionCount() > 0 })
+	waitUntil(t, "connection open", func() bool { return f.ConnectionCount() > 0 })
 	f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 1, "type": "normal", "frameId": "main"}})
 	if child {
 		f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 7, "type": "normal", "frameId": "c1"}})
@@ -38,7 +38,7 @@ func attachWithPriorContexts(t *testing.T, child bool) (*rig, *fakePage, *cdptes
 	att := eventsOf(c, "Target.attachedToTarget")
 	sid := decode[attached](t, att[len(att)-1].Params).SessionID
 	_, s := r.pageSession(t, sid)
-	eventually(t, time.Second, "WebKit's contexts recorded", func() bool {
+	waitUntil(t, "WebKit's contexts recorded", func() bool {
 		return s.pg.PS.Sched.FrameContext("main").ID == 1 && (!child || s.pg.PS.Sched.FrameContext("c1").ID == 7)
 	})
 	call(t, c, sid, "Page.enable", nil)
@@ -61,7 +61,7 @@ func contextOf(t *testing.T, c *cdptest.Client, sid, frame string) int {
 // evaluateErr runs Runtime.evaluate in the context id and returns its error.
 func evaluateErr(t *testing.T, c *cdptest.Client, sid, expr string, id int) error {
 	t.Helper()
-	_, err := c.Call(ctxFor(t, 5*time.Second), sid, "Runtime.evaluate", map[string]any{"expression": expr, "contextId": id})
+	_, err := c.Call(testCtx(t), sid, "Runtime.evaluate", map[string]any{"expression": expr, "contextId": id})
 	return err
 }
 

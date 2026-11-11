@@ -68,7 +68,7 @@ func newAltRig(t *testing.T, alt transport.Kind) *altRig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Stop() })
-	pages, err := m.ListPages(ctxFor(t, 5*time.Second), core.PageRequest{Transport: string(alt)})
+	pages, err := m.ListPages(testCtx(t), core.PageRequest{Transport: string(alt)})
 	if err != nil || len(pages) != 1 {
 		t.Fatalf("pages of the %s listing: %+v, %v", alt, pages, err)
 	}
@@ -80,7 +80,7 @@ func newAltRig(t *testing.T, alt transport.Kind) *altRig {
 // that Target.attachToTarget through it attaches the page for s1.
 func (a *altRig) wantDiscoverable(t *testing.T, page core.PageRequest) {
 	t.Helper()
-	ep, err := a.srv.Issue(ctxFor(t, 5*time.Second), IssueRequest{Session: "s1", Page: page})
+	ep, err := a.srv.Issue(testCtx(t), IssueRequest{Session: "s1", Page: page})
 	if err != nil || ep.Page != "Selected" {
 		t.Fatalf("Issue for s1 = %+v, %v; want the page Selected", ep, err)
 	}

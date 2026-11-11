@@ -103,14 +103,13 @@ func runLifetime(t *testing.T, steps []lifeStep, finalAuto, finalDiscover uint8)
 	r := newRig(t)
 	c := dial(t, r.issue(t, "s1", "One", ScopeDevice).WS)
 	co := r.onlyConn(t)
+	waits := testCtx(t)
 	var wg sync.WaitGroup
 	async := func(session, method string, params any) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			_, _ = c.Call(ctx, session, method, params) // refusals are expected; the invariants decide
+			_, _ = c.Call(waits, session, method, params) // refusals are expected; the invariants decide
 		}()
 	}
 	pick := func(arg uint8, ok func(*session) bool) string {
@@ -184,7 +183,7 @@ func runLifetime(t *testing.T, steps []lifeStep, finalAuto, finalDiscover uint8)
 			title := []string{"One", "Two"}[arg%2]
 			for _, ps := range r.m.Status() {
 				if ps.Title == title {
-					if err := r.m.Break(ctxFor(t, 10*time.Second), ps.Key); err != nil {
+					if err := r.m.Break(waits, ps.Key); err != nil {
 						t.Fatalf("breaking the lease of %s: %v", title, err)
 					}
 				}
@@ -219,7 +218,7 @@ func runLifetime(t *testing.T, steps []lifeStep, finalAuto, finalDiscover uint8)
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
+	case <-waits.Done():
 		t.Fatalf("steps %v: commands did not finish", log)
 	}
 	autoOn := finalAuto%(uint8(len(lifeFilters))+1) != uint8(len(lifeFilters))
@@ -262,8 +261,8 @@ func checkLifetime(t *testing.T, r *rig, co *conn, c *cdptest.Client, log []stri
 	}
 	// Lease watchers detach asynchronously (design 5.2: nothing of a
 	// session outlives its lease).
-	eventually(t, 5*time.Second, fmt.Sprintf("steps %v: attachments of ended leases detach", log), func() bool { return len(stale()) == 0 })
-	ts, err := co.rec.targets(ctxFor(t, 5*time.Second))
+	waitUntil(t, fmt.Sprintf("steps %v: attachments of ended leases detach", log), func() bool { return len(stale()) == 0 })
+	ts, err := co.rec.targets(testCtx(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +355,7 @@ func TestLifetimeBlockThenDisable(t *testing.T) {
 func (r *rig) onlyConn(t *testing.T) *conn {
 	t.Helper()
 	var co *conn
-	eventually(t, 5*time.Second, "the connection registers", func() bool {
+	waitUntil(t, "the connection registers", func() bool {
 		r.srv.mu.Lock()
 		defer r.srv.mu.Unlock()
 		for cc := range r.srv.conns {

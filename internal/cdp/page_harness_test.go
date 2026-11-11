@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
@@ -178,7 +177,7 @@ func attachPage(t *testing.T) (*rig, *fakePage, *cdptest.Client, string, string)
 // waitEvent waits for an event of method on the session sid after seq.
 func waitEvent(t *testing.T, c *cdptest.Client, after int, sid, method string, match func(json.RawMessage) bool) cdptest.Event {
 	t.Helper()
-	e, err := c.WaitEvent(ctxFor(t, 5*time.Second), after, method, func(e cdptest.Event) bool {
+	e, err := c.WaitEvent(testCtx(t), after, method, func(e cdptest.Event) bool {
 		return e.SessionID == sid && (match == nil || match(e.Params))
 	})
 	if err != nil {
