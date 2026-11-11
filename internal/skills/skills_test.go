@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -13,13 +14,14 @@ import (
 	"testing/quick"
 )
 
-// repoSkills reads skills/<name>/SKILL.md from the repository checkout:
-// the files that the binary must embed (design 7.9 "embedded skills").
+// repoSkills reads skill-data/<name>/SKILL.md from the repository
+// checkout: the guides that the binary must embed (design 7.9 "embedded
+// skills").
 func repoSkills(t *testing.T) map[string]string {
 	t.Helper()
-	paths, err := filepath.Glob(filepath.Join("..", "..", "skills", "*", FileName))
+	paths, err := filepath.Glob(filepath.Join("..", "..", "skill-data", "*", FileName))
 	if err != nil || len(paths) == 0 {
-		t.Fatalf("no skills/*/%s in the repository: %v", FileName, err)
+		t.Fatalf("no skill-data/*/%s in the repository: %v", FileName, err)
 	}
 	out := map[string]string{}
 	for _, p := range paths {
@@ -64,7 +66,141 @@ func TestEmbeddedSkillsAreTheRepositorySkills(t *testing.T) {
 			t.Fatal(err)
 		}
 		if s.Content != content {
-			t.Errorf("embedded %s differs from skills/%s/%s", n, n, FileName)
+			t.Errorf("embedded %s differs from skill-data/%s/%s", n, n, FileName)
+		}
+	}
+}
+
+// maxStubWords bounds a discovery stub. Its model, agent-browser's stub,
+// has about 450 words with a list of eight guides; an iwdp-cli stub points
+// at one guide, so 350 words hold every required point, while a copied
+// guide section (the safety rules alone have more than 900 words) does not
+// fit. Guide text in a stub would drift from the binary's guide.
+const maxStubWords = 350
+
+// fenceRE matches the opening or closing line of a Markdown fenced code
+// block in either form (CommonMark: up to three spaces, then at least
+// three backticks or tildes).
+var fenceRE = regexp.MustCompile("^ {0,3}(```|~~~)")
+
+// Design 7.9 (skill layout, agent-browser's): skills/<name>/SKILL.md is
+// the only file of its directory, a discovery stub that agents find; the
+// guide is skill-data/<name>/SKILL.md, which the binary embeds. A stub
+// triggers like its guide (same name and description), names the command
+// that prints the guide, and has no code block: the guide's examples run
+// in the WebKitGTK doc test, a stub's would not.
+func TestSkillStubsPointAtTheirGuides(t *testing.T) {
+	root := filepath.Join("..", "..")
+	stubs := 0
+	err := filepath.WalkDir(filepath.Join(root, "skills"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(filepath.Join(root, "skills"), p)
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		switch {
+		case rel == ".":
+			return nil
+		case len(parts) == 1 && d.IsDir():
+			return nil
+		case len(parts) != 2 || d.IsDir() || parts[1] != FileName:
+			// Pi finds SKILL.md files below a skill directory too, and a
+			// nested one would collide with the stub.
+			t.Errorf("skills/%s: skills/ holds only <name>/%s stubs", filepath.ToSlash(rel), FileName)
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		stubs++
+		name := parts[0]
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		stub, err := parse(name, string(data))
+		if err != nil {
+			t.Errorf("stub: %v", err)
+			return nil
+		}
+		guideData, err := os.ReadFile(filepath.Join(root, "skill-data", name, FileName))
+		if err != nil {
+			t.Errorf("stub skills/%s/%s has no guide skill-data/%s/%s: %v", name, FileName, name, FileName, err)
+			return nil
+		}
+		guide, err := parse(name, string(guideData))
+		if err != nil {
+			t.Errorf("guide: %v", err)
+			return nil
+		}
+		if stub.Description != guide.Description {
+			t.Errorf("skills/%s/%s: description %q differs from the guide's %q", name, FileName, stub.Description, guide.Description)
+		}
+		if want := "iwdp-cli skills get " + name; !strings.Contains(stub.Content, want) {
+			t.Errorf("skills/%s/%s does not name %q", name, FileName, want)
+		}
+		for i, line := range strings.Split(stub.Content, "\n") {
+			if fenceRE.MatchString(line) {
+				t.Errorf("skills/%s/%s:%d: a fenced code block; examples belong in the guide", name, FileName, i+1)
+			}
+		}
+		if n := len(strings.Fields(stub.Content)); n > maxStubWords {
+			t.Errorf("skills/%s/%s has %d words, more than %d: a stub points at the guide and does not copy it", name, FileName, n, maxStubWords)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stubs == 0 {
+		t.Fatalf("no skills/*/%s stub in the repository", FileName)
+	}
+}
+
+// readRepo reads a file of the repository checkout by its slash path.
+func readRepo(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// readmeLine returns the line of README.md that starts with prefix, the
+// install hints that the stub repeats.
+func readmeLine(t *testing.T, prefix string) string {
+	t.Helper()
+	for _, line := range strings.Split(readRepo(t, "README.md"), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	t.Fatalf("README.md has no line that starts with %q", prefix)
+	return ""
+}
+
+// The iwdp stub states each instruction that design 7.9 (skill layout)
+// and the WS6 brief require of it, in this wording; the install hint is
+// README's.
+func TestIwdpStubStatesTheRequiredInstructions(t *testing.T) {
+	stub := readRepo(t, "skills/iwdp/SKILL.md")
+	for _, c := range []struct {
+		what string
+		want []string
+	}{
+		{"it is a discovery stub, not the guide", []string{"This file is a discovery stub, not the guide."}},
+		{"load the guide before any other iwdp-cli command", []string{"Before you run any other `iwdp-cli` command, load the guide that matches the installed binary", "Run `iwdp-cli skills get iwdp`."}},
+		{"read the guide by line range", []string{"read it by line range"}},
+		{"--help prints one command's flags and never connects", []string{"`iwdp-cli <command> --help` prints the flags of one command and never connects to a page."}},
+		{"README's install hint", []string{"`" + readmeLine(t, "go install ") + "`", "`" + readmeLine(t, "brew install ") + "`"}},
+		{"what iwdp-cli is", []string{"Safari speaks the WebKit Inspector Protocol", "CDP clients such as agent-browser", "`iwdp-cli get cdp-url`"}},
+		{"why it only points at the CLI", []string{"The CLI serves the guide of its own version.", "so it only points at the CLI"}},
+	} {
+		for _, w := range c.want {
+			if !strings.Contains(stub, w) {
+				t.Errorf("skills/iwdp/SKILL.md does not state %s: no %q", c.what, w)
+			}
 		}
 	}
 }

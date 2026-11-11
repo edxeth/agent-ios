@@ -1,10 +1,11 @@
 # Skill example fixtures (W6)
 
 Pages for e2e/webkitgtk/skills_doc_test.go, which runs the bash examples of
-skills/*/SKILL.md against WebKitGTK (design docs/design/agentic-parity.md,
+the skill guides skill-data/*/SKILL.md against WebKitGTK (design docs/design/agentic-parity.md,
 7.9 acceptance 2). The test serves the examples' origin https://example.com
-from this folder: /login is login.html, /second is second.html, /api/me
-answers JSON, and / is a start page.
+from this folder: /login is login.html, /second is second.html, and /api/me
+answers JSON. MiniBrowser starts on /login, the target URL of the guide's
+target check, which runs before the first page action.
 
 login.html is laid out so that the refs in the skill examples are the refs
 that "snapshot -i" hands out: Email e1, Password e2, Sign in e3, and after

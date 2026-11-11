@@ -602,7 +602,7 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 | `session`, `session id/list/info`, `--session` | `session [id\|list\|info]`, `session release`, `lease break <page>` | `session_info` | daemon | W1 |
 | `doctor` | `doctor [--json]`: daemon, transport, iwdp version (needs 1.9.2+), usbmuxd, devices, Web Inspector hint, visible tab probe, leases | `doctor` | daemon | W1 |
 | `batch [--bail]` | `batch [--bail] "cmd" ...` | none (MCP calls are already batched by clients) | one `/v1/batch` request | W1 |
-| `skills get/list/path` | `skills get\|list\|path` (skills embedded in the binary) | none | none | W6 |
+| `skills get/list/path` | `skills get\|list\|path` (the skill guides `skill-data/<name>/SKILL.md`, embedded in the binary; the discovery stub `skills/<name>/SKILL.md` only points at `skills get <name>`) | none | none | W6 |
 | `trace start/stop` | `trace start [--categories]`, `trace stop [path]` | `trace_start`, `trace_stop` | `Timeline.start/stop` converted to Chrome trace JSON | W4 |
 | `profiler start/stop` | `profiler start`, `profiler stop [path]` | `profiler_start`, `profiler_stop` | `ScriptProfiler` samples converted to `.cpuprofile` | W4 |
 | `vitals [url]` | `vitals [--json]` | `vitals` | JS: navigation and paint timing on 16.7; LCP and event timing on Safari 26.2+ (MAP 1.12) | W4 |
@@ -803,7 +803,7 @@ Merge order. Every workstream works on its own branch from `feat/agentic-parity`
 | `internal/tools/*.go` | W1 (mechanical `*webkit.Client` to `webkit.Caller`) | W4 adds new code in `internal/devtools` instead of editing `tools/network.go` |
 | `internal/webkit/testutil/mock.go` | W0 then W1 | new fakes go in `fakewebkit` |
 | `e2e/proofs/**` | W1a | W5 deletes it (7.1) |
-| `README.md`, `CLAUDE.md`, `skills/**` | W6 | other workstreams write their notes in `docs/notes/<ws>.md`; W6 merges them |
+| `README.md`, `CLAUDE.md`, `skills/**`, `skill-data/**` | W6 | other workstreams write their notes in `docs/notes/<ws>.md`; W6 merges them |
 | `e2e/*.go` (existing) | W1 (e2e/mcp_test.go asserts the tool list) | new e2e suites are new directories |
 
 Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. Section 7.10 maps every review finding to its tests.
@@ -913,13 +913,14 @@ Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. S
 
 ### 7.9 W6: docs, skills, agent prompts (drafts for approval)
 
-- Owns: `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `skills/**` of this repository, `docs/**` except `docs/design/`, embedded skills (`internal/skills/`, `skills get`).
+- Owns: `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `skills/**` and `skill-data/**` of this repository, `docs/**` except `docs/design/`, embedded skills (`internal/skills/`, `skills get`).
+- Skill layout (agent-browser's): `skills/<name>/SKILL.md` is a short discovery stub with the name and description of its guide and no bash block; it is the only file of its directory, because Pi finds nested SKILL.md files too. The guide is `skill-data/<name>/SKILL.md`, which the binary embeds and `iwdp-cli skills get <name>` prints, so an agent always reads the guide of the installed binary. Agents install the stub by a symlink of `skills/<name>` into an Agent Skills directory (README, Agent Skill).
 - Agent prompts and active skills outside the repository (browser-checker prompt, safari-agent skill) are produced as **draft copies plus diffs staged for the user's approval**; W6 never edits the active agent configuration (decisions.md).
 - Content: the agentic loop; session, reservation and lease rules; synthetic-input statement; impossible features; CDP how-to with tokens; device runbook; migration notes. Draft safety rules from AGG: no infrastructure writes and stop on a guard refusal (P0 [047]; P1 [015], [063], [108], [262]); build, origin and auth preflight and one final verdict contract (P0 [026], [108], [161], [292]); one bounded diagnostic budget then BLOCKED (P1 [097], [116], [165], [170]); default masking of password and token fields, 0600 permissions and deletion rules for HAR and state files, no dumps of account or security pages (P1 [191], [202], [304], [108], [212], [197]; agent-browser-skill [044]); cookie owner preservation and restore, with server-session revocation assigned to the auth helper (P1 [176], [177], [301]); bounded shell calls and known evidence directories, no filesystem-wide searches (P0 [305], [317]; P1 [179], [180], [268], [310], [312], [314], [330], [334]). Shell-level timeouts stay for external helpers that do not go through the daemon.
 - A finding-to-owner matrix (`docs/notes/retro-coverage.md`) lists each P0 and P1 finding as solved by a workstream, constrained by a rule, or owned elsewhere (harness and provider gaps, auth helpers, container naming).
 - Acceptance:
   1. Every registry command appears in the generated command reference.
-  2. Skill examples run against WebKitGTK in a doc test.
+  2. The examples of the skill guides (`skill-data/*/SKILL.md`) run against WebKitGTK in a doc test.
   3. The matrix covers every P0 and P1 finding of AGG.
   4. The prompt and skill drafts exist as copies plus diffs at the paths named in the W6 report, each safety rule above appears in them, and no file outside the repository was changed.
 - Size: see 7.1.

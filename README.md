@@ -52,6 +52,15 @@ cd iwdp-cli
 make build
 ```
 
+### Agent Skill
+
+The agent skill has two parts, as in agent-browser:
+
+- `skills/iwdp/SKILL.md` is a short discovery stub. It has the skill's name and description, so an agent finds it, and it tells the agent to load the guide with `iwdp-cli skills get iwdp`.
+- `skill-data/iwdp/SKILL.md` is the guide: safety rules, the agentic loop, errors and limits. The binary embeds it, and `iwdp-cli skills get iwdp` prints it, so the guide always matches the installed binary.
+
+To install the stub, symlink `skills/iwdp` of a checkout into an Agent Skills directory, for example `ln -s "$PWD/skills/iwdp" ~/.agents/skills/iwdp`, or install the skill with a skills manager from this repository. Install `iwdp-cli` too: the stub holds no guide text of its own.
+
 ## Quick Start
 
 ### CLI
@@ -188,7 +197,8 @@ iwdp-cli/
 │   ├── cdp/               # Opt-in CDP endpoint
 │   ├── tools/             # Shared helpers: evaluation, screenshots, DOM lookup, cookies
 │   └── proxy/             # iwdp process detection + management
-└── skills/                # Agent skill (iwdp-cli skills get iwdp)
+├── skill-data/            # Agent skill guides, embedded (iwdp-cli skills get iwdp)
+└── skills/                # Agent skill discovery stubs (skills/iwdp/SKILL.md)
 ```
 
 ## License

@@ -20,7 +20,9 @@ import (
 )
 
 // Design 7.9 acceptance 2: the command examples of the skills run against
-// WebKitGTK. Every ```bash block of skills/*/SKILL.md is an example. The
+// WebKitGTK. Every ```bash block of the guides skill-data/*/SKILL.md (what
+// "iwdp-cli skills get" prints) is an example; the stubs in skills/ have
+// no bash block (internal/skills TestSkillStubsPointAtTheirGuides). The
 // blocks of one skill run in file order in one bash process (so an export
 // in one block holds for the next), each block's output in its own files,
 // under "set -eo pipefail": the first failing command fails the test and
@@ -35,7 +37,9 @@ import (
 // The examples use the origin https://example.com; the test serves it
 // from e2e/fixtures/skills. The environment gives EVIDENCE (a temporary
 // folder), QA_PASSWORD (a stand-in) and TARGET_FILE (a file that holds
-// the login URL).
+// the URL of /login). MiniBrowser starts on /login, so the guide's target
+// check, which comes before the first page action, reads that URL and
+// finds the target; it never opens or navigates the tab.
 var skipRules = map[string]string{
 	"device": "needs a USB-connected iPhone or iPad and ios_webkit_debug_proxy",
 	"w5b":    "runs agent-browser, which this test does not install; e2e/cdpcompat TestClientScenarios runs the agent-browser --cdp form",
@@ -104,21 +108,19 @@ func docBlocks(t *testing.T, path string) []docBlock {
 	return out
 }
 
+// skillsRoot is the folder of the skill guides, skill-data/.
 func skillsRoot() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "..", "skills")
+	return filepath.Join(filepath.Dir(file), "..", "..", "skill-data")
 }
 
 // skillsBrowser serves the skill fixtures as the example origin and starts
-// MiniBrowser on its start page. It returns the inspector address and the
+// MiniBrowser on /login, the target of the guide's target check. It returns the inspector address and the
 // fixture origin.
 func skillsBrowser(t *testing.T) (string, string) {
 	t.Helper()
 	dir := filepath.Join(fixtureDir(), "..", "skills")
 	mux := http.NewServeMux()
-	mux.HandleFunc("/{$}", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("<!doctype html><title>Start</title><p>start</p>"))
-	})
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join(dir, "login.html")) })
 	mux.HandleFunc("/second", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join(dir, "second.html")) })
 	mux.HandleFunc("/api/me", func(w http.ResponseWriter, _ *http.Request) {
@@ -140,7 +142,7 @@ func skillsBrowser(t *testing.T) (string, string) {
 	display := broadway(t)
 	addr := freeAddr(t)
 	startProcess(t, []string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr, "LD_PRELOAD=" + shim},
-		miniBrowser, origin+"/")
+		miniBrowser, origin+"/login")
 	tr := webkitgtk.New(addr)
 	for end := time.Now().Add(browserStart); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -150,7 +152,7 @@ func skillsBrowser(t *testing.T) (string, string) {
 			return addr, origin
 		}
 	}
-	t.Fatalf("MiniBrowser did not list the start page at %s within %v", addr, browserStart)
+	t.Fatalf("MiniBrowser did not list the login page at %s within %v", addr, browserStart)
 	return "", ""
 }
 
@@ -173,7 +175,7 @@ func skillScript(blocks []docBlock, out, origin string) string {
 func TestSkillExamplesRunOnWebKitGTK(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join(skillsRoot(), "*", "SKILL.md"))
 	if err != nil || len(paths) == 0 {
-		t.Fatalf("no skills/*/SKILL.md: %v", err)
+		t.Fatalf("no skill-data/*/SKILL.md: %v", err)
 	}
 	addr, origin := skillsBrowser(t)
 	if r := cli(t, "daemon", "start", "--transport", "webkitgtk", "--addr", addr); r.code != 0 {
