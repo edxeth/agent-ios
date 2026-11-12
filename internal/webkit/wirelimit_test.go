@@ -98,7 +98,7 @@ func sendOnce(t *testing.T, limit int, expr string) (*pipeConn, error) {
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	_, err = s.Send(context.Background(), "Runtime.evaluate", map[string]string{"expression": expr})
 	return c, err
 }

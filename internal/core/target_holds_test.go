@@ -466,7 +466,9 @@ func TestPageConnPassesSourceTargets(t *testing.T) {
 
 	// A reconnect: the subscriptions move to the new connection.
 	sess2 := dialSession(t, f)
-	pc.swap(sess2)
+	if err := pc.swap(sess2); err != nil {
+		t.Fatal(err)
+	}
 	f.EmitFrom("page-1", "Test.e", map[string]any{})
 	syncPage(t, sess2, "page-1")
 	waitUntil(t, "the queued events", func() bool { return len(events()) == 10 })

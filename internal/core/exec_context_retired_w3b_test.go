@@ -162,7 +162,9 @@ func TestRetiredReleaseWriteKeepsTheFrameRecord(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.contextsMoved()
-			pc.swap(c2)
+			if err := pc.swap(c2); err != nil {
+				t.Fatal(err)
+			}
 
 			if err := release(); err != nil {
 				t.Fatalf("release on the new connection = %v", err)

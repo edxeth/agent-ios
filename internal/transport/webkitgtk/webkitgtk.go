@@ -50,7 +50,7 @@ func (t *Transport) Pages(ctx context.Context, deviceID string) ([]transport.Pag
 	if err != nil {
 		return nil, fmt.Errorf("webkitgtk: listing targets at %s: %w", t.addr, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, fmt.Errorf("webkitgtk: reading the target list: %w", err)

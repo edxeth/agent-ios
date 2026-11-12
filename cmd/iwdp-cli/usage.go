@@ -50,16 +50,16 @@ Environment:
 
 // printUsage writes the overview of all commands.
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "iwdp-cli — iOS Safari debugging CLI")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Usage: iwdp-cli <command> [options]")
-	fmt.Fprintln(w, "       iwdp-cli <command> --help")
+	_, _ = fmt.Fprintln(w, "iwdp-cli — iOS Safari debugging CLI")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Usage: iwdp-cli <command> [options]")
+	_, _ = fmt.Fprintln(w, "       iwdp-cli <command> --help")
 	_, _ = fmt.Fprintln(w, "       iwdp-cli <group> --help   (lists a group's commands, for example 'network')")
 	_, _ = fmt.Fprintln(w, "\nCommands:")
 	for _, c := range reg.All() {
 		_, _ = fmt.Fprintf(w, "  %-*s %s\n", synopsisWidth, c.Name, c.Summary)
 	}
-	fmt.Fprintf(w, "\n%s\n\n%s\n", globalOptionsHelp, footerHelp)
+	_, _ = fmt.Fprintf(w, "\n%s\n\n%s\n", globalOptionsHelp, footerHelp)
 }
 
 // printCommandHelp writes the help of the registry command name (its

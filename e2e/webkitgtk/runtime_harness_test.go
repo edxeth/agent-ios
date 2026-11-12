@@ -87,7 +87,7 @@ func runSuite(m *testing.M) (code int, err error) {
 	}
 	srv := &http.Server{Handler: http.FileServer(http.Dir(fixtureDir()))}
 	go func() { _ = srv.Serve(l) }()
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	origin = "http://" + l.Addr().String()
 
 	var procs []*exec.Cmd
@@ -125,7 +125,7 @@ func runSuite(m *testing.M) (code int, err error) {
 	if err != nil {
 		return 1, err
 	}
-	defer os.RemoveAll(shimDir)
+	defer func() { _ = os.RemoveAll(shimDir) }()
 	shim, err := buildDPIShim(shimDir)
 	if err != nil {
 		return 1, err
@@ -143,7 +143,9 @@ func runSuite(m *testing.M) (code int, err error) {
 		return 1, err
 	}
 	addr := pl.Addr().String()
-	pl.Close()
+	if err := pl.Close(); err != nil {
+		return 1, err
+	}
 	if err := start([]string{"GDK_BACKEND=broadway", "BROADWAY_DISPLAY=" + display, "WEBKIT_INSPECTOR_HTTP_SERVER=" + addr, "LD_PRELOAD=" + shim}, miniBrowser, origin+"/forms.html"); err != nil {
 		return 1, err
 	}
@@ -168,7 +170,7 @@ func runSuite(m *testing.M) (code int, err error) {
 	if err != nil {
 		return 1, fmt.Errorf("connecting to the page: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 	// Page events give the session its document generations (design 2.7).
 	if _, err := sess.Send(ctx, "Page.enable", nil); err != nil {
 		return 1, fmt.Errorf("Page.enable: %w", err)

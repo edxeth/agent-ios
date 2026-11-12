@@ -335,7 +335,9 @@ func TestProvisionalSetupBeforeTheReconnectKeepsTheFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { closeCaller(c) })
-	pc.swap(c)
+	if err := pc.swap(c); err != nil {
+		t.Fatal(err)
+	}
 	if n := len(f.ReceivedMethod("Runtime.enable")); n != 1 {
 		t.Fatalf("Runtime.enable sent %d times, want once (the provisional setup's)", n)
 	}

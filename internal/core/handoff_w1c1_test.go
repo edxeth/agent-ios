@@ -102,6 +102,7 @@ func (c *emitCaller) add(h webkit.TargetEventHandler) func() {
 }
 
 func (c *emitCaller) SubscribeTarget(_ string, h webkit.TargetEventHandler) func() { return c.add(h) }
+
 func (c *emitCaller) SubscribeTargetSync(_ string, h webkit.TargetEventHandler) func() {
 	return c.add(h)
 }

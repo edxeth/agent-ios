@@ -83,7 +83,7 @@ func TestDialRetriesOnceAfterConnectionClosedBeforeTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if n := f.ConnectionCount(); n != 2 {
 		t.Fatalf("connections = %d, want 2 (one failed attempt, one success)", n)
 	}
@@ -545,5 +545,47 @@ func TestSessionCloseStopsSubscriberWorkers(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if w := s.workers.Load(); w != 0 {
 		t.Fatalf("subscriber workers = %d after a subscription on a closed session, want 0", w)
+	}
+}
+
+// ResumeTarget refuses a target that is not paused with ErrTargetNotPaused
+// and sends nothing (its contract; the scheduler's resume control tells a
+// refused resume from a failed one by errors.Is): a target that was never
+// paused, and one that was already resumed, so a target gets at most one
+// Target.resume.
+func TestResumeTargetRefusesATargetThatIsNotPaused(t *testing.T) {
+	f := fakewebkit.New(fakewebkit.Options{})
+	defer f.Close()
+	s := newFakeSession(t, f, SessionOptions{PauseOnStart: true, ResumeAfter: time.Minute, Setup: func(ctx context.Context, tc TargetCaller) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	// Bounded by the test's own deadline, not a fixed timeout: the suites
+	// run under -race on loaded hosts (CLAUDE.md).
+	ctx := t.Context()
+	if d, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, d)
+		defer cancel()
+	}
+	if err := s.ResumeTarget(ctx, "page-never"); !errors.Is(err, ErrTargetNotPaused) {
+		t.Fatalf("ResumeTarget of a target that was never paused = %v, want ErrTargetNotPaused", err)
+	}
+	go f.Swap("page-2", 0)
+	for !s.IsPaused("page-2") {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("page-2 was not paused on start before the test's deadline: %v", ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if err := s.ResumeTarget(ctx, "page-2"); err != nil {
+		t.Fatalf("ResumeTarget of the paused target: %v", err)
+	}
+	if err := s.ResumeTarget(ctx, "page-2"); !errors.Is(err, ErrTargetNotPaused) {
+		t.Fatalf("a second ResumeTarget = %v, want ErrTargetNotPaused", err)
+	}
+	if n := len(f.ReceivedMethod("Target.resume")); n != 1 {
+		t.Fatalf("fake received %d Target.resume, want 1", n)
 	}
 }

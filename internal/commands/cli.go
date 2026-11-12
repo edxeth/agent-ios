@@ -565,16 +565,16 @@ var ErrInterrupted = errors.New("interrupted by a signal")
 func RunCLIStarted(ctx context.Context, args []string, stdout, stderr io.Writer, start func(context.Context, *Invocation) DeadlineReporter, newEnv func(context.Context, *Invocation) (Env, error)) int {
 	inv, err := Parse(args, os.Getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return ExitCodeOf(err)
 	}
 	if inv.Help || inv.Cmd == nil {
 		if inv.Cmd != nil {
-			fmt.Fprint(stdout, Help(inv.Cmd))
+			_, _ = fmt.Fprint(stdout, Help(inv.Cmd))
 		} else if inv.Group != "" {
 			_, _ = fmt.Fprint(stdout, inv.Group)
 		} else {
-			fmt.Fprint(stdout, Usage())
+			_, _ = fmt.Fprint(stdout, Usage())
 		}
 		return ExitOK
 	}
@@ -625,7 +625,7 @@ func RunCLIStarted(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return fail(err, fmt.Sprintf("Error: %s: %v", inv.Cmd.Name, err))
 	}
 	if err := writeResult(stdout, res, inv.Input.Global); err != nil {
-		fmt.Fprintf(stderr, "Error: writing the result: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Error: writing the result: %v\n", err)
 		return ExitError
 	}
 	return ExitOK

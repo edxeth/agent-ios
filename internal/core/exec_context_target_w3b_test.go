@@ -205,7 +205,9 @@ func TestPinnedSendNeverReachesAReplacementConnection(t *testing.T) {
 	if ec.ID != 7 || ec.conn != a || ec.target != "page-1" {
 		t.Fatalf("frame context = %+v, want 7 on page-1 of the first connection", ec)
 	}
-	pc.swap(b)
+	if err := pc.swap(b); err != nil {
+		t.Fatal(err)
+	}
 	_, err := contextCaller{Caller: pc, ec: ec}.Send(ctxFor(t, time.Second), "Runtime.evaluate", map[string]any{"expression": "release"})
 	if !errors.Is(err, errConnReplaced) || !errors.Is(err, webkit.ErrNotSent) || !targetReplaced(err) {
 		t.Fatalf("send to the replaced connection: %v, want not sent with errConnReplaced", err)

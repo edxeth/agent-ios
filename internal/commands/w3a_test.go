@@ -472,15 +472,15 @@ func TestReadURL(t *testing.T) {
 			return
 		case "/plain":
 			w.Header().Set("Content-Type", "text/plain")
-			fmt.Fprint(w, "  just text\n")
+			_, _ = fmt.Fprint(w, "  just text\n")
 			return
 		case "/image":
 			w.Header().Set("Content-Type", "image/png")
-			fmt.Fprint(w, "\x89PNG")
+			_, _ = fmt.Fprint(w, "\x89PNG")
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `<!doctype html><html><head><title>T</title><style>p{}</style><script>var x = "hidden";</script></head>
+		_, _ = fmt.Fprint(w, `<!doctype html><html><head><title>T</title><style>p{}</style><script>var x = "hidden";</script></head>
 <body><h1>Main  title</h1><p>Hello <b>world</b>&nbsp;!</p><div hidden>secret</div><nav aria-hidden="true">menu</nav>
 <ul><li>One</li><li>Two</li></ul><h3>Sub</h3><noscript>no js</noscript><template><p>tpl</p></template></body></html>`)
 	}))

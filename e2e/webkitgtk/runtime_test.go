@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -83,8 +84,10 @@ var refPattern = regexp.MustCompile(`ref=e(\d+)`)
 func refsOf(text string) []int {
 	var out []int
 	for _, m := range refPattern.FindAllStringSubmatch(text, -1) {
-		var n int
-		fmt.Sscan(m[1], &n)
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			panic(fmt.Sprintf("refsOf: ref number %q: %v", m[1], err)) // refPattern matches digits only
+		}
 		out = append(out, n)
 	}
 	return out

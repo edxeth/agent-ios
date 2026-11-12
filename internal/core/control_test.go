@@ -157,7 +157,9 @@ func TestCancelBehindWaitSendsPageCancel(t *testing.T) {
 	waitUntil(t, "the successor to queue", func() bool { return h.queueLen() == 1 })
 	cancelAt := time.Now()
 	cancel()
-	<-evalDone
+	if err := <-evalDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the canceled operation's evaluation = %v, want the cancellation", err)
+	}
 	waitUntil(t, "the page cancel", func() bool { return len(h.rt.CallsOf("cancel")) == 1 })
 	if at := h.rt.CallsOf("cancel")[0].At; at.Sub(cancelAt) > time.Second {
 		t.Fatalf("cancel reached the page %s after the cancel, want within 1 s", at.Sub(cancelAt))
@@ -181,7 +183,8 @@ func TestReleaseBarrierCompletesPendingItemsBeforeCleanup(t *testing.T) {
 	ctx, _ := timeoutCtx(t, 10*time.Second)
 	op := h.begin(t, ctx, ClassExclusive)
 	evalDone := evalInOp(ctx, op)
-	go func() { <-evalDone; op.End() }()
+	evalErr := make(chan error, 1)
+	go func() { err := <-evalDone; op.End(); evalErr <- err }()
 	waitUntil(t, "the pending items", func() bool {
 		h.s.mu.Lock()
 		defer h.s.mu.Unlock()
@@ -207,6 +210,13 @@ func TestReleaseBarrierCompletesPendingItemsBeforeCleanup(t *testing.T) {
 	}
 	if err := <-queued; !errors.Is(err, ErrLeaseEnded) {
 		t.Fatalf("queued operation err = %v, want ErrLeaseEnded", err)
+	}
+	// The barrier continues the held request, which can let the evaluation
+	// answer before the release's cancel of the operation reaches the call
+	// (context.AfterFunc runs it asynchronously): it succeeds, or it ends
+	// with the end of the lease, never with another error.
+	if err := <-evalErr; err != nil && !errors.Is(err, ErrLeaseEnded) {
+		t.Fatalf("the held evaluation of the released operation = %v, want success or ErrLeaseEnded", err)
 	}
 	if _, err := h.s.Control(ctx, ControlMsg{Kind: ControlCompleteRequest, Session: testSession, Epoch: 1, RequestID: "r1", Method: "Network.interceptContinue"}); !errors.Is(err, ErrControlRefused) {
 		t.Fatalf("control after release err = %v, want refused", err)

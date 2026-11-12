@@ -662,7 +662,7 @@ func (s *Session) ResumeTarget(ctx context.Context, id string) error {
 	t := s.targets[id]
 	if !pausedLocked(t) {
 		s.mu.Unlock()
-		return fmt.Errorf("Target.resume for %s: %w", id, ErrTargetNotPaused)
+		return fmt.Errorf("resuming target %s (Target.resume): %w", id, ErrTargetNotPaused)
 	}
 	t.resuming = true
 	s.mu.Unlock()

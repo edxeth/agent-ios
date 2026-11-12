@@ -242,8 +242,9 @@ func TestRenderedNameDecodesAsJSON(t *testing.T) {
 	}}
 	f := func(name string) bool {
 		got := Render([]Node{{Role: "button", Name: name, Ref: "e1"}}, RenderOptions{})
-		q, ok := strings.CutPrefix(got, "- button ")
-		if q, ok = strings.CutSuffix(q, " [ref=e1]"); !ok || strings.Contains(got, "\n") {
+		q, prefixed := strings.CutPrefix(got, "- button ")
+		q, suffixed := strings.CutSuffix(q, " [ref=e1]")
+		if !prefixed || !suffixed || strings.Contains(got, "\n") {
 			t.Logf("name %q rendered as %q", name, got)
 			return false
 		}

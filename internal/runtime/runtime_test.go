@@ -213,7 +213,7 @@ func TestInstallOverWireLimitFailsBeforeWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	err = New(s, nil).Call(ctx, "ping", nil, nil)
 	var wl *webkit.WireLimitError
 	if !errors.As(err, &wl) || wl.Limit != limit || !strings.Contains(err.Error(), "installing the agent runtime") ||

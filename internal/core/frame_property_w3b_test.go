@@ -321,7 +321,7 @@ func (c *propConn) AgentStates(target string) map[string]webkit.AgentState {
 // makes it the page connection's current one (pageConn.swap). early: the
 // re-apply's reports come before the scheduler's reconnect step (a
 // provisional setup during the open).
-func (p *propPage) reconnect(s *Scheduler, pc *pageConn, mode int, early bool) {
+func (p *propPage) reconnect(t *testing.T, s *Scheduler, pc *pageConn, mode int, early bool) {
 	p.mu.Lock()
 	c := p.newConn(mode)
 	p.mu.Unlock()
@@ -342,7 +342,9 @@ func (p *propPage) reconnect(s *Scheduler, pc *pageConn, mode int, early bool) {
 	p.mu.Lock()
 	p.cur = c
 	p.mu.Unlock()
-	pc.swap(c)
+	if err := pc.swap(c); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // recorded reports whether the book keeps frame for epoch 1.
@@ -468,7 +470,7 @@ func frameContextsProperty(t *testing.T, rnd *rand.Rand) {
 			case betweenCommit:
 				p.commit()
 			case betweenReconnect:
-				p.reconnect(s, pc, mode, true)
+				p.reconnect(t, s, pc, mode, true)
 			default:
 				return -1
 			}
@@ -526,7 +528,7 @@ func frameContextsProperty(t *testing.T, rnd *rand.Rand) {
 				} else {
 					reach.late++
 				}
-				p.reconnect(s, pc, arg%3, early)
+				p.reconnect(t, s, pc, arg%3, early)
 			case 8: // the frame navigates: its state and context end, a new one is reported when Runtime is enabled
 				p.mu.Lock()
 				if p.alive[frame] {
