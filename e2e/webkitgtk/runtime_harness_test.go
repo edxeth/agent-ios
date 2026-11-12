@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -27,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-cli/e2e/internal/broadwayshm"
 	"github.com/nnemirovsky/iwdp-cli/internal/commands"
 	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/refs"
@@ -72,8 +74,10 @@ func TestMain(m *testing.M) {
 }
 
 // runSuite starts the fixture server, broadwayd and MiniBrowser, runs the
-// tests and stops every process it started.
-func runSuite(m *testing.M) (int, error) {
+// tests and stops every process it started. It also removes the GTK
+// Broadway buffers that its MiniBrowser created (broadwayshm); when that
+// fails, the suite fails.
+func runSuite(m *testing.M) (code int, err error) {
 	if _, err := os.Stat(miniBrowser); err != nil {
 		return 1, fmt.Errorf("WebKitGTK MiniBrowser not found at %s: %w", miniBrowser, err)
 	}
@@ -87,20 +91,34 @@ func runSuite(m *testing.M) (int, error) {
 	origin = "http://" + l.Addr().String()
 
 	var procs []*exec.Cmd
+	var recs []*broadwayshm.Recorder
 	defer func() {
 		for _, c := range procs {
 			_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
 			_ = c.Wait()
 		}
+		for _, rec := range recs {
+			if rerr := broadwayshm.Keep(rec.Dir, broadwayshm.End(rec.Log)); rerr != nil {
+				err = errors.Join(err, fmt.Errorf("removing the Broadway buffers of the suite's MiniBrowser: %w", rerr))
+				if code == 0 {
+					code = 1
+				}
+			}
+		}
 	}()
 	start := func(env []string, name string, args ...string) error {
+		rec, err := broadwayshm.NewRecorder(os.TempDir())
+		if err != nil {
+			return fmt.Errorf("starting %s: %w", name, err)
+		}
 		c := exec.Command(name, args...)
-		c.Env = append(os.Environ(), env...)
+		c.Env = rec.Env(append(os.Environ(), env...))
 		c.SysProcAttr = ownedProcAttr()
 		if err := c.Start(); err != nil {
 			return fmt.Errorf("starting %s: %w", name, err)
 		}
 		procs = append(procs, c)
+		recs = append(recs, rec)
 		return nil
 	}
 	shimDir, err := os.MkdirTemp("", "iwdp-w3a-shim-")

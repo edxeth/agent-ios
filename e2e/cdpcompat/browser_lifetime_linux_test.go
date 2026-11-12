@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/nnemirovsky/iwdp-cli/e2e/internal/broadwayshm"
 )
 
 // lifetimeReady is the line that the child prints when its MiniBrowser
@@ -39,10 +41,25 @@ func TestBrowserEndsWithItsTestProcess(t *testing.T) {
 	if !ok {
 		t.Fatal("the test needs a deadline (go test -timeout) for its child process")
 	}
+	// The child's MiniBrowser ends by SIGKILL (Pdeathsig) and leaves its
+	// GTK Broadway buffers in /dev/shm until a reboot; its recorder logs
+	// them in shmDir (broadwayshm.DirEnv). This cleanup removes them on
+	// every path: it runs after the cleanup below that kills the child and
+	// waits until every process that recorded them ended. shmDir stays when
+	// the removal fails, with the logs that name the leftovers.
+	shmDir, err := os.MkdirTemp("", "bdwshm-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := broadwayshm.Keep(shmDir, broadwayshm.EndIn(shmDir)); err != nil {
+			t.Errorf("removing the Broadway buffers of the child's MiniBrowser: %v", err)
+		}
+	})
 	cmd := exec.Command(selfBinary(t), "-test.run=^TestBrowserEndsWithItsTestProcess$", "-test.count=1", "-test.timeout="+time.Until(d).String())
 	// TMPDIR: the child's temp dirs (the DPI shim) go away with this
 	// test's, also after the kill.
-	cmd.Env = append(os.Environ(), helperVar+"="+lifetimeHelperMode, "TMPDIR="+t.TempDir())
+	cmd.Env = append(os.Environ(), helperVar+"="+lifetimeHelperMode, "TMPDIR="+t.TempDir(), broadwayshm.DirEnv+"="+shmDir)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	// The child ends with this process too, so a failed run leaves nothing.

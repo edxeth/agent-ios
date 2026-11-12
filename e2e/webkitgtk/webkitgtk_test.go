@@ -22,10 +22,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-cli/e2e/internal/broadwayshm"
 	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
 	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
@@ -132,16 +134,39 @@ func freeAddr(t *testing.T) string {
 // cleanup (ownedProcAttr).
 func startProcess(t *testing.T, env []string, name string, args ...string) {
 	t.Helper()
+	startOwned(t, env, name, args...)
+}
+
+// startOwned is startProcess that also returns the process, the log of
+// the GTK Broadway buffers that its group creates, and the end of its
+// group, which the cleanup runs too (once). A MiniBrowser killed with
+// SIGKILL leaves its Broadway buffers in /dev/shm until a reboot, so the
+// group runs with the recorder of broadwayshm, and the end removes the
+// buffers that it created once every process that recorded them ended.
+func startOwned(t *testing.T, env []string, name string, args ...string) (*exec.Cmd, string, func()) {
+	t.Helper()
+	rec, err := broadwayshm.NewRecorder(os.TempDir())
+	if err != nil {
+		t.Fatalf("starting %s: %v", name, err)
+	}
 	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = rec.Env(append(os.Environ(), env...))
 	cmd.SysProcAttr = ownedProcAttr()
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting %s: %v", name, err)
 	}
-	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
-	})
+	var once sync.Once
+	end := func() {
+		once.Do(func() {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
+			if err := broadwayshm.Keep(rec.Dir, broadwayshm.End(rec.Log)); err != nil {
+				t.Errorf("removing the Broadway buffers of %s: %v", name, err)
+			}
+		})
+	}
+	t.Cleanup(end)
+	return cmd, rec.Log, end
 }
 
 // broadwayd serves display :N on TCP port broadwayPortBase+N on every

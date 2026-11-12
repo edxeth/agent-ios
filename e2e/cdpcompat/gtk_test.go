@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-cli/e2e/internal/broadwayshm"
 	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 )
 
@@ -34,11 +35,19 @@ const miniBrowser = "/usr/lib/webkit2gtk-4.1/MiniBrowser"
 
 // startProcess starts a command in its own process group (ownedProcAttr)
 // and kills the group at cleanup, so no MiniBrowser survives the test, also
-// when the test process ends without its cleanup.
+// when the test process ends without its cleanup. A MiniBrowser killed
+// with SIGKILL leaves its GTK Broadway buffers in /dev/shm until a reboot,
+// so the group runs with the recorder of broadwayshm, and the cleanup
+// removes the buffers that it created once every process that recorded
+// them ended.
 func startProcess(t *testing.T, env []string, name string, args ...string) {
 	t.Helper()
+	rec, err := broadwayshm.NewRecorder(os.TempDir())
+	if err != nil {
+		t.Fatalf("starting %s: %v", name, err)
+	}
 	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = rec.Env(append(os.Environ(), env...))
 	cmd.SysProcAttr = ownedProcAttr()
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting %s: %v", name, err)
@@ -46,6 +55,9 @@ func startProcess(t *testing.T, env []string, name string, args ...string) {
 	t.Cleanup(func() {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
+		if err := broadwayshm.Keep(rec.Dir, broadwayshm.End(rec.Log)); err != nil {
+			t.Errorf("removing the Broadway buffers of %s: %v", name, err)
+		}
 	})
 }
 
