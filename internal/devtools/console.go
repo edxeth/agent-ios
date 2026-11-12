@@ -18,6 +18,24 @@ const DefaultMaxMessages = 1000
 // errorMarker starts the console.debug text of the error hooks (ErrorHooks).
 const errorMarker = "[iwdp:error] "
 
+// noScriptURL is the url that iOS 16.7 WebKit gives a console message and
+// its stack frames for a script without a URL, such as code that
+// Runtime.evaluate ran: the string "undefined" (device check of
+// 2026-11-12, "errors" printed "(undefined:1:86)"). It is stored as "".
+const noScriptURL = "undefined"
+
+// AnonymousScript names the script of a location without a URL in the
+// printed console messages, errors and stack frames.
+const AnonymousScript = "<anonymous>"
+
+// scriptURL returns u, or "" for WebKit's url of a script without one.
+func scriptURL(u string) string {
+	if u == noScriptURL {
+		return ""
+	}
+	return u
+}
+
 // ErrorHooks is the bootstrap part (and the current-document install) that
 // reports uncaught errors and unhandled rejections with their stack
 // through console.debug, so that the console capture sees them even when
@@ -215,11 +233,12 @@ func (k *Console) added(_ string, params json.RawMessage) {
 		var e PageError
 		if json.Unmarshal([]byte(strings.TrimPrefix(m.Text, errorMarker)), &e) == nil {
 			e.ID = k.next
+			e.URL = scriptURL(e.URL)
 			k.errs = append(k.errs, e)
 		}
 	} else {
 		msg := Message{
-			ID: k.next, Source: m.Source, Level: m.Level, Type: m.Type, Text: m.Text, URL: m.URL,
+			ID: k.next, Source: m.Source, Level: m.Level, Type: m.Type, Text: m.Text, URL: scriptURL(m.URL),
 			Line: m.Line, Column: m.Column, RepeatCount: m.RepeatCount, Timestamp: m.Timestamp,
 		}
 		if m.StackTrace != nil {
@@ -229,13 +248,17 @@ func (k *Console) added(_ string, params json.RawMessage) {
 				if name == "" {
 					name = "(anonymous)"
 				}
-				fmt.Fprintf(&b, "    at %s (%s:%d:%d)\n", name, f.URL, f.LineNumber, f.ColumnNumber)
+				loc := scriptURL(f.URL)
+				if loc == "" {
+					loc = AnonymousScript
+				}
+				fmt.Fprintf(&b, "    at %s (%s:%d:%d)\n", name, loc, f.LineNumber, f.ColumnNumber)
 			}
 			msg.Stack = strings.TrimRight(b.String(), "\n")
 		}
 		k.msgs = append(k.msgs, msg)
 		if m.Level == "error" && m.Source == "javascript" {
-			k.errs = append(k.errs, PageError{ID: k.next, Kind: "console", Message: m.Text, URL: m.URL, Line: m.Line, Column: m.Column, Stack: msg.Stack})
+			k.errs = append(k.errs, PageError{ID: k.next, Kind: "console", Message: m.Text, URL: msg.URL, Line: m.Line, Column: m.Column, Stack: msg.Stack})
 		}
 	}
 	k.trimLocked()

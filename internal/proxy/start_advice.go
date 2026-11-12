@@ -32,7 +32,7 @@ const maxStartLog = 64 << 10
 // connecting to it: iwdp connects a device inside its one event loop.
 func (s *Starter) startAdvice(ctx context.Context, path string, start int64, exited bool) string {
 	if strings.Contains(readFrom(path, start), inspectorRefused) {
-		return "; a device did not accept the Web Inspector connection (the iwdp log has \"" + inspectorRefused + "...\"): " + deviceAdvice + ", then run the command again"
+		return "; a device did not accept the Web Inspector connection (the iwdp log has \"" + inspectorRefused + "...\"): " + DeviceAdvice + ", then run the command again"
 	}
 	udids, err := s.attached(ctx)
 	if err != nil {

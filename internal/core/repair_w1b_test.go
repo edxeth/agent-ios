@@ -100,6 +100,73 @@ func TestUnlistedIWDPPortURLRefused(t *testing.T) {
 	}
 }
 
+// Device check of 2026-11-12: iwdp writes the host of each listing request
+// into the page's webSocketDebuggerUrl, so curl on localhost lists
+// ws://localhost:9224/..., and --page with that URL was refused as not
+// listed, because the daemon reads the listing on 127.0.0.1. The
+// localhost form of a listed page's URL names that page.
+func TestLocalhostIWDPPortURLNamesTheListedPage(t *testing.T) {
+	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
+	r.reserve(t, "agent")
+	const listed = "ws://127.0.0.1:9230/devtools/page/77"
+	r.dev.AddPage("Listed", "https://listed.example/", listed)
+	q := r.req
+	q.Page = "ws://localhost:9230/devtools/page/77"
+	tgt, err := r.m.resolveURL(ctxFor(t, 5*time.Second), q)
+	if err != nil || tgt.page.ID != listed {
+		t.Fatalf("resolveURL(%s) = page %q, %v; want the listed page %s", q.Page, tgt.page.ID, err, listed)
+	}
+	// A listing that names the page with localhost keeps that form.
+	const listedLocal = "ws://localhost:9231/devtools/page/78"
+	r.dev.AddPage("Local", "https://local.example/", listedLocal)
+	q.Page = listedLocal
+	if tgt, err := r.m.resolveURL(ctxFor(t, 5*time.Second), q); err != nil || tgt.page.ID != listedLocal {
+		t.Fatalf("resolveURL(%s) = page %q, %v; want the listed page itself", q.Page, tgt.page.ID, err)
+	}
+	for _, tc := range []struct {
+		a, b string
+		same bool
+	}{
+		{"ws://localhost:9224/devtools/page/2", "ws://127.0.0.1:9224/devtools/page/2", true},
+		{"ws://localhost:37071/devtools/page/1", "ws://127.0.0.1:37071/devtools/page/1", true},
+		{"ws://localhost:9224/devtools/page/2", "ws://127.0.0.1:9225/devtools/page/2", false},
+		{"ws://localhost:9224/devtools/page/2", "ws://127.0.0.1:9224/devtools/page/3", false},
+		{"ws://example.test:9224/x", "ws://127.0.0.1:9224/x", false},
+	} {
+		if got := samePageURL(tc.a, tc.b); got != tc.same {
+			t.Errorf("samePageURL(%s, %s) = %v, want %v", tc.a, tc.b, got, tc.same)
+		}
+	}
+}
+
+// A localhost URL of a page that the listing names with 127.0.0.1, on a
+// port outside iwdp's default range, is that listed page: it needs the
+// device's reservation like any other selection of it (review of
+// 2026-11-12: it was classified as a local endpoint without one).
+func TestLocalhostURLOfAListedPageNeedsTheReservation(t *testing.T) {
+	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
+	q := r.req
+	q.Page = strings.Replace(r.f.URL, "127.0.0.1", "localhost", 1)
+	if iwdpDevicePort(q.Page) {
+		t.Fatalf("the fixture %s is inside iwdp's default port range", q.Page)
+	}
+	if _, err := r.m.Begin(ctxFor(t, 5*time.Second), q, agent, "a", ClassRead); !errors.Is(err, ErrNoReservation) || exitCode(err) != CodeReservation {
+		t.Fatalf("Begin by the localhost URL without a reservation = %v (exit %d), want ErrNoReservation (exit 6)", err, exitCode(err))
+	}
+	if n := r.f.ConnectionCount(); n != 0 {
+		t.Errorf("connections = %d, want 0", n)
+	}
+	r.reserve(t, "agent")
+	mo, err := r.m.Begin(ctxFor(t, 5*time.Second), q, agent, "b", ClassRead)
+	if err != nil {
+		t.Fatalf("Begin by the localhost URL with the reservation: %v", err)
+	}
+	r.m.End(mo.ID)
+	if mo.Page.pageID != r.f.URL {
+		t.Errorf("the localhost URL attached page %q, want the listed %s", mo.Page.pageID, r.f.URL)
+	}
+}
+
 // Design 2.6 step 4: after IdleProbe without commands, the probe runs
 // before the next command; a failed probe refuses the command unsent.
 func TestIdleProbeRunsBeforeTheNextCommand(t *testing.T) {

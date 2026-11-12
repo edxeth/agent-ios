@@ -43,6 +43,23 @@ import (
 // running under launchd. It restarts only the iwdp that this program
 // started and recorded (stopOwn's identity and ownership checks, decision
 // L02); the check and the signal are separate system calls, as in Restart.
+//
+// An iwdp can also lose one device while it keeps its usbmuxd
+// subscription. iwdp 1.9.2 ends its whole connection to a device when it
+// fails to pass one inspector message to a WebSocket client that is
+// closing or gone (iwdp_on_applicationSentData returns the failed
+// ws_send_frame, and rpc_recv_msg then reports "Invalid message" and the
+// device connection closes), and it connects to a device only on usbmuxd's
+// attach event, so it never sees that device again (device check of
+// 2026-11-12: "Invalid message _rpc_applicationSentData", then
+// "Disconnected :9224 from iPhone X", an empty listing for good, while
+// idevice_id -l listed the iPhone). Recover restarts such an iwdp too: an
+// empty listing while usbmuxd reports a USB device (Starter.attached). A
+// device can refuse the inspector connection for a while after it lost
+// one, and a locked device or one with Web Inspector off never accepts
+// it, so Recover restarts for this reason only an iwdp that started
+// deviceRestartBackoff or longer ago (the age of its record): no restart
+// loop, one attempt per back-off while commands run.
 
 // ErrDeviceNotListed marks Recover's error when the restarted iwdp lists no
 // device within recoveredDeviceWait.
@@ -51,6 +68,26 @@ var ErrDeviceNotListed = errors.New("the restarted ios_webkit_debug_proxy lists 
 // ErrUSBLost marks Recover's error for an iwdp that lost usbmuxd but that
 // Recover may not restart, or whose restart failed.
 var ErrUSBLost = errors.New("ios_webkit_debug_proxy lost its usbmuxd connection, so it no longer sees USB devices")
+
+// ErrDeviceLost marks Recover's error for an iwdp that lists no device
+// while usbmuxd reports one, which Recover may not restart, or whose
+// restart failed.
+var ErrDeviceLost = errors.New("ios_webkit_debug_proxy lists no device, although usbmuxd reports a USB device: it lost its connection to the device, and ios_webkit_debug_proxy 1.9.2 never connects to it again by itself")
+
+// deviceRestartBackoff is the youngest age of an iwdp that Recover
+// restarts because it lists no attached device: the device check of
+// 2026-11-12 saw an iPhone refuse the restart right after the loss and
+// accept one 30 s later.
+const deviceRestartBackoff = StartBackoff
+
+// lostKind is what Recover found an iwdp to have lost.
+type lostKind int
+
+const (
+	lostNothing lostKind = iota
+	lostUSBMuxd          // its usbmuxd subscription: every device
+	lostDevice           // its connection to a device that usbmuxd reports
+)
 
 // recoverOS is the system on which Recover acts (runtime.GOOS; tests of
 // other systems set it).
@@ -71,29 +108,47 @@ const lockPoll = 10 * time.Millisecond
 // usbmuxdDial bounds the connection that proves usbmuxd's socket is live.
 const usbmuxdDial = time.Second
 
-// deviceAdvice tells the user what makes an attached device appear in
+// DeviceAdvice tells the user what makes an attached device appear in
 // iwdp's listing.
-const deviceAdvice = "Unlock the device and keep it unlocked, tap Trust if it asks, and check Settings > Safari > Advanced > Web Inspector; if it stays unlisted, unplug it and plug it in again"
+const DeviceAdvice = "Unlock the device and keep it unlocked, tap Trust if it asks, and check Settings > Safari > Advanced > Web Inspector; if it stays unlisted, unplug it and plug it in again"
 
 // Recover restarts the iwdp on the default listing address when it lost
-// usbmuxd (Starter.Recover).
+// usbmuxd or its device (Starter.Recover).
 func Recover(ctx context.Context) (bool, error) { return std.Recover(ctx) }
 
+// AwaitDevice waits up to recoveredDeviceWait, and not past ctx, until the
+// default listing has an entry other than iwdp's SIMULATOR entry, as after
+// a recovery (Starter.awaitDevice): iwdp lists a device a moment after
+// its start.
+func AwaitDevice(ctx context.Context) (bool, error) { return std.awaitDevice(ctx) }
+
+// AttachedDevices returns the UDIDs of the USB devices that usbmuxd
+// reports (DeviceUDIDs), once usbmuxd's socket accepts a connection
+// (usbmuxdLive); without a live usbmuxd it returns that error and no list.
+func AttachedDevices(ctx context.Context) ([]string, error) {
+	if err := std.usbmuxdLive(ctx); err != nil {
+		return nil, err
+	}
+	return std.attached(ctx)
+}
+
 // Recover restarts the iwdp on s's listing address when it lost usbmuxd
-// (see above) and this program started and recorded it. It reports
-// whether it restarted iwdp.
+// or its device (see above) and this program started and recorded it. It
+// reports whether it restarted iwdp.
 //
 // It returns false and nil when nothing is to be done or the evidence
 // cannot be read: not on Linux, a listing that has an entry or does not
-// answer, a subscription socket that accepts no connection, a listening process
-// that holds a Unix socket or whose sockets cannot be read, or nothing on
-// the address any more (Start's job). For an iwdp
-// that lost usbmuxd but is not the recorded one, it returns an ErrUSBLost
-// refusal and signals nothing; when the restart fails, an ErrUSBLost
-// error. When the restarted iwdp lists no device but iwdp's SIMULATOR
-// entry within recoveredDeviceWait, it returns true and an
-// ErrDeviceNotListed error with what to do on the device. Its waits for
-// locks end with ctx.
+// answer, a subscription socket that accepts no connection, a listening
+// process whose sockets cannot be read, a listener that holds a Unix
+// socket while usbmuxd reports no USB device or its device list cannot be
+// read, a recorded iwdp younger than deviceRestartBackoff that holds one,
+// or nothing on the address any more (Start's job). For an iwdp that lost
+// usbmuxd or its device but is not the recorded one, it returns an
+// ErrUSBLost or ErrDeviceLost refusal and signals nothing; when the
+// restart fails, such an error. When the restarted iwdp lists no device
+// but iwdp's SIMULATOR entry within recoveredDeviceWait, it returns true
+// and an ErrDeviceNotListed error with what to do on the device. Its
+// waits for locks end with ctx.
 func (s *Starter) Recover(ctx context.Context) (bool, error) {
 	if recoverOS != "linux" {
 		return false, nil
@@ -116,27 +171,90 @@ func (s *Starter) Recover(ctx context.Context) (bool, error) {
 	}
 	defer unlock()
 	// The listing last, right before the stop.
-	if !s.lostUSBMuxd(ctx, ep) || !s.listingEmpty(ctx) {
+	lost := s.lost(ctx, ep)
+	if lost == lostNothing || (lost == lostDevice && s.ownYoung(ctx, ep)) || !s.listingEmpty(ctx) {
 		return false, nil
+	}
+	kind, what, retry := ErrUSBLost, "usbmuxd", ""
+	if lost == lostDevice {
+		kind, what = ErrDeviceLost, "its device"
+		retry = fmt.Sprintf(" A device can refuse a new connection for a while after it lost one: keep it unlocked, and run the command again after %s, when iwdp-cli restarts ios_webkit_debug_proxy once more.", deviceRestartBackoff)
 	}
 	stopped, err := s.stopOwn(ctx, ep)
 	if err != nil {
-		return false, fmt.Errorf("%w (%s): only a new ios_webkit_debug_proxy sees the devices. %w", ErrUSBLost, s.addr, err)
+		return false, fmt.Errorf("%w (%s): only a new ios_webkit_debug_proxy sees the devices. %w", kind, s.addr, err)
 	}
 	if !stopped {
 		return false, nil
 	}
 	if err := s.startLocked(ctx, true); err != nil {
-		return false, fmt.Errorf("%w (%s), so iwdp-cli restarted it, and the start failed: %w", ErrUSBLost, s.addr, err)
+		return false, fmt.Errorf("%w (%s), so iwdp-cli restarted it, and the start failed: %w", kind, s.addr, err)
 	}
 	listed, err := s.awaitDevice(ctx)
 	switch {
 	case err != nil:
-		return true, fmt.Errorf("iwdp-cli restarted ios_webkit_debug_proxy on %s because it had lost usbmuxd, and the new one's listing failed: %w", s.addr, err)
+		return true, fmt.Errorf("iwdp-cli restarted ios_webkit_debug_proxy on %s because it had lost %s, and the new one's listing failed: %w", s.addr, what, err)
 	case !listed:
-		return true, fmt.Errorf("%w on %s after %s, although a usbmuxd runs. %s", ErrDeviceNotListed, s.addr, recoveredDeviceWait, deviceAdvice)
+		return true, fmt.Errorf("%w on %s after %s, although a usbmuxd runs. %s.%s", ErrDeviceNotListed, s.addr, recoveredDeviceWait, DeviceAdvice, retry)
 	}
 	return true, nil
+}
+
+// lost tells what the iwdp that listens on ep lost, from usbmuxd and the
+// listening processes: usbmuxd when none of them holds a Unix socket, its
+// device when they hold one and usbmuxd reports a USB device. The caller
+// has seen an empty listing. Every failed read counts as lostNothing.
+func (s *Starter) lost(ctx context.Context, ep netip.AddrPort) lostKind {
+	if s.usbmuxdLive(ctx) != nil {
+		return lostNothing
+	}
+	pids, err := s.listeners(ctx, ep.Port())
+	if err != nil || len(pids) == 0 {
+		return lostNothing
+	}
+	holding := 0
+	for _, pid := range pids {
+		n, err := s.unixSockets(pid)
+		if err != nil {
+			return lostNothing
+		}
+		if n > 0 {
+			holding++
+		}
+	}
+	switch {
+	case holding == 0:
+		return lostUSBMuxd
+	case holding < len(pids):
+		return lostNothing // processes that disagree tell nothing
+	}
+	if udids, err := s.attached(ctx); err != nil || len(udids) == 0 {
+		return lostNothing
+	}
+	return lostDevice
+}
+
+// ownYoung reports whether the iwdp that listens on ep is the one that
+// this program started and recorded (a valid record whose process owns
+// ep, as stopOwn checks), and its record was written less than
+// deviceRestartBackoff ago, at that iwdp's start. Otherwise it reports
+// false, and the stop refuses another program's iwdp (review of
+// 2026-11-12: a young record of an iwdp that had exited hid that
+// refusal).
+func (s *Starter) ownYoung(ctx context.Context, ep netip.AddrPort) bool {
+	dir, err := recordDir()
+	if err != nil {
+		return false
+	}
+	fi, err := os.Lstat(filepath.Join(dir, recordName(s.addr)))
+	if err != nil || time.Since(fi.ModTime()) >= deviceRestartBackoff {
+		return false
+	}
+	rec, err := s.loadRecord()
+	if err != nil || rec == nil || rec.problem(s.addr) != "" {
+		return false
+	}
+	return s.owns(ctx, rec, ep) == nil
 }
 
 // listingEmpty reports whether s's listing answers with no entry at all. A
@@ -144,25 +262,6 @@ func (s *Starter) Recover(ctx context.Context) (bool, error) {
 func (s *Starter) listingEmpty(ctx context.Context) bool {
 	devices, err := listDevicesFromURL(ctx, "http://"+s.addr+"/json")
 	return err == nil && len(devices) == 0
-}
-
-// lostUSBMuxd reports whether usbmuxd's socket accepts a connection and
-// no process that listens on ep holds a Unix-domain socket. Every failed
-// read counts as false.
-func (s *Starter) lostUSBMuxd(ctx context.Context, ep netip.AddrPort) bool {
-	if s.usbmuxdLive(ctx) != nil {
-		return false
-	}
-	pids, err := s.listeners(ctx, ep.Port())
-	if err != nil || len(pids) == 0 {
-		return false
-	}
-	for _, pid := range pids {
-		if n, err := s.unixSockets(pid); err != nil || n > 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // awaitDevice waits up to recoveredDeviceWait, and not past ctx, until s's
@@ -224,7 +323,10 @@ func LockContext(ctx context.Context, mu *sync.Mutex) error {
 // subscribes to usbmuxd's device events: its own device listener
 // (dl_connect in src/device_listener.c, USBMUXD_FILE_PATH) always connects
 // to this path and ignores libusbmuxd's USBMUXD_SOCKET_ADDRESS. It is a
-// variable only so that tests can name a private socket.
+// variable only so that tests can name a private socket, and so that the
+// e2e tests can link binaries that never see the host's usbmuxd (-ldflags
+// -X, e2e/listing_w1c6_test.go): those binaries recover no iwdp and
+// report no attached device.
 var usbmuxdSubscriptionSocket = "/var/run/usbmuxd"
 
 // usbmuxdLive returns nil when usbmuxdSubscriptionSocket accepts a

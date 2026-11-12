@@ -30,7 +30,8 @@ func TestDaemonLogNamesNoPageTitleOrURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.CloseConnections()
-	for end := time.Now().Add(5 * time.Second); !strings.Contains(log.String(), "page connection closed unexpectedly"); time.Sleep(20 * time.Millisecond) {
+	const lossLine = "page connection closed by its other end"
+	for end := time.Now().Add(5 * time.Second); !strings.Contains(log.String(), lossLine); time.Sleep(20 * time.Millisecond) {
 		if time.Now().After(end) {
 			t.Fatalf("no connection-loss line in the daemon log:\n%s", log.String())
 		}
@@ -45,7 +46,7 @@ func TestDaemonLogNamesNoPageTitleOrURL(t *testing.T) {
 		}
 	}
 	// The page is still named: by its id, the WebSocket URL of the listing.
-	if !strings.Contains(out, "page "+f.URL+": page connection closed unexpectedly") {
+	if !strings.Contains(out, "page "+f.URL+": "+lossLine) {
 		t.Errorf("the connection-loss line does not name the page by its id %s:\n%s", f.URL, out)
 	}
 }

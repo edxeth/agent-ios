@@ -24,17 +24,21 @@ func TestStatusNamesTheIWDPLog(t *testing.T) {
 	}
 }
 
-// The three iwdp commands need no page and run in the client (WS2a brief,
+// The three iwdp commands need no page, arguments or flags (WS2a brief,
 // section 3); the help of restart-iwdp states which iwdp it may stop.
+// status and restart-iwdp run in the client; devices runs in the daemon,
+// which is then, without IWDP_NO_DAEMON=1, the only process that starts
+// iwdp automatically, so its start back-off covers every automatic start
+// (review of 2026-11-12; docs/known-limits.md).
 func TestIWDPCommandsAreLocalRegistryCommands(t *testing.T) {
-	for _, name := range []string{"status", "devices", "restart-iwdp"} {
+	for name, local := range map[string]bool{"status": true, "devices": false, "restart-iwdp": true} {
 		c, n := Lookup([]string{name})
 		if c == nil || n != 1 || c.Name != name {
 			t.Errorf("%s is not a registry command", name)
 			continue
 		}
-		if !c.Local || c.Page != NoPage || len(c.Args) != 0 || len(c.Flags) != 0 {
-			t.Errorf("%s: local %v, page %v, args %v, flags %v; want a Local command without page, arguments or flags", name, c.Local, c.Page, c.Args, c.Flags)
+		if c.Local != local || c.Page != NoPage || len(c.Args) != 0 || len(c.Flags) != 0 {
+			t.Errorf("%s: local %v, page %v, args %v, flags %v; want local %v without page, arguments or flags", name, c.Local, c.Page, c.Args, c.Flags, local)
 		}
 	}
 }

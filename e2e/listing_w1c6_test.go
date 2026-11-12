@@ -14,11 +14,23 @@ import (
 // listing address of a binary, which its daemon's iwdp transport uses too.
 const proxyListingVar = "github.com/nnemirovsky/iwdp-cli/internal/proxy.listingAddr"
 
+// proxyUSBMuxdVar is the link-time seam of internal/proxy for usbmuxd's
+// socket, and noUSBMuxd a path where no socket is.
+const (
+	proxyUSBMuxdVar = "github.com/nnemirovsky/iwdp-cli/internal/proxy.usbmuxdSubscriptionSocket"
+	noUSBMuxd       = "/nonexistent/iwdp-e2e-usbmuxd"
+)
+
 // listingLDFlags links a binary whose iwdp listing is addr, a private
 // loopback server of these tests, so that no test reads the device list
-// of the user's iwdp on 127.0.0.1:9221 (W1c T01). The linker ignores -X
-// for a missing variable, so the tests check that the binary reads addr.
-func listingLDFlags(addr string) string { return "-X " + proxyListingVar + "=" + addr }
+// of the user's iwdp on 127.0.0.1:9221 (W1c T01), and that sees no
+// usbmuxd, so that it never restarts the fake listing for a USB device of
+// the host (proxy.Recover) nor reports one (devices). The linker ignores
+// -X for a missing variable, so the tests check that the binary reads
+// addr.
+func listingLDFlags(addr string) string {
+	return "-X " + proxyListingVar + "=" + addr + " -X " + proxyUSBMuxdVar + "=" + noUSBMuxd
+}
 
 // The fake iwdp of a healthy listing: one device with one page.
 const (

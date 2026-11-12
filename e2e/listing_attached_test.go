@@ -6,7 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -101,8 +103,11 @@ func TestCLI_LegacyListingCommandsOnAHealthyListing(t *testing.T) {
 	}
 }
 
-// When no process owns the listing port, iwdp is not running: the legacy
-// listing commands say so with the start advice and exit 1.
+// When no process owns the listing port, iwdp is not running: status says
+// so with the start advice and exits 1. devices starts iwdp as page
+// commands do (decision D10, device check of 2026-11-12); the fake iwdp of
+// these tests exits at once, so devices exits 1 with the failed start and
+// the manual command of this system.
 func TestCLI_LegacyListingCommandsOnAnUnownedPort(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -115,22 +120,22 @@ func TestCLI_LegacyListingCommandsOnAnUnownedPort(t *testing.T) {
 	bin := buildCLIFor(t, addr)
 	// Review round 2, F5: the start advice is the command line of this
 	// system; on Linux it has -s 127.0.0.1:27753 (docs/known-limits.md).
-	start := "Start it with: ios_webkit_debug_proxy --no-frontend"
+	manual := "ios_webkit_debug_proxy --no-frontend"
 	if runtime.GOOS == "linux" {
-		start += " -s 127.0.0.1:27753"
+		manual += " -s 127.0.0.1:27753"
 	}
 	for _, c := range []struct {
-		args []string
-		want string
+		args       []string
+		want, hint string
 	}{
-		{[]string{"devices"}, "ios_webkit_debug_proxy is not running."},
-		{[]string{"status"}, "ios_webkit_debug_proxy is NOT running"},
+		{[]string{"devices"}, "ios_webkit_debug_proxy is not running and starting it failed: ios_webkit_debug_proxy exited during its start", "run '" + manual + "' to see why"},
+		{[]string{"status"}, "ios_webkit_debug_proxy is NOT running", "Start it with: " + manual + "\n"},
 	} {
 		output, code := runBin(t, bin, c.args...)
 		if code != 1 {
 			t.Errorf("%v on an unowned port: exit %d, want 1; output %q", c.args, code, output)
 		}
-		for _, want := range []string{c.want, start + "\n"} {
+		for _, want := range []string{c.want, c.hint} {
 			if !strings.Contains(output, want) {
 				t.Errorf("%v: output %q does not contain %q", c.args, output, want)
 			}
@@ -158,7 +163,9 @@ func runBinStreams(t *testing.T, bin string, args ...string) (string, string, in
 }
 
 // Review round 2, F5: when no iwdp runs, the legacy commands tell how to
-// start one with the command line of this system. On Linux it has
+// start one with the command line of this system: status as its start
+// advice, devices in the error of its failed start (it starts iwdp since
+// 2026-11-12; the fake iwdp of these tests exits at once). On Linux it has
 // -s 127.0.0.1:27753, as docs/known-limits.md tells a user who starts iwdp
 // by hand; macOS keeps iwdp's default. The binary reads a private listing
 // address that nothing owns (review round 3, F7: never 127.0.0.1:9221).
@@ -172,14 +179,14 @@ func TestStartHintNamesTheManualCommandOfThisSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := buildCLIFor(t, addr)
-	want := "Start it with: ios_webkit_debug_proxy --no-frontend"
+	manual := "ios_webkit_debug_proxy --no-frontend"
 	if runtime.GOOS == "linux" {
-		want += " -s 127.0.0.1:27753"
+		manual += " -s 127.0.0.1:27753"
 	}
-	for _, args := range [][]string{{"status"}, {"devices"}} {
-		_, stderr, code := runBinStreams(t, bin, args...)
-		if code != 1 || !strings.Contains(stderr, want+"\n") {
-			t.Errorf("iwdp-cli %v without iwdp: exit %d, stderr %q; want exit 1 and %q", args, code, stderr, want)
+	for args, want := range map[string]string{"status": "Start it with: " + manual + "\n", "devices": "run '" + manual + "' to see why"} {
+		_, stderr, code := runBinStreams(t, bin, args)
+		if code != 1 || !strings.Contains(stderr, want) {
+			t.Errorf("iwdp-cli %s without iwdp: exit %d, stderr %q; want exit 1 and %q", args, code, stderr, want)
 		}
 	}
 }
@@ -273,4 +280,47 @@ func TestCLI_LegacyDevicesWhenTheListingFailsAfterItsCheck(t *testing.T) {
 		t.Fatalf("the listing got %d requests, want 2 (the check, then the read)", n)
 	}
 	wantListingAdvice(t, "devices after a passed check", output, code)
+}
+
+// A failed iwdp start backs off the next devices command of another
+// process: devices runs in the daemon, whose start back-off covers every
+// automatic start (review of 2026-11-12; with devices in the client
+// process, every devices command started iwdp again at once). The fake
+// ios_webkit_debug_proxy of these tests exits at once and logs its calls.
+func TestDevicesProcessesShareTheStartBackoff(t *testing.T) {
+	// The shared daemon is the case under test: with IWDP_NO_DAEMON=1
+	// from the runner, each command would have its own back-off (an
+	// accepted limit, docs/known-limits.md).
+	t.Setenv("IWDP_NO_DAEMON", "")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The fake's calls of every test of this package are in one log; the
+	// tests run one at a time, so this test's starts are the new lines.
+	count := func() int {
+		data, _ := os.ReadFile(filepath.Join(e2eFakeBin, "calls.log"))
+		n := 0
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "ios_webkit_debug_proxy ") {
+				n++
+			}
+		}
+		return n
+	}
+	bin := buildCLIFor(t, addr)
+	before := count()
+	starts := func() int { return count() - before }
+	first, code := runBin(t, bin, "devices")
+	if code != 1 || !strings.Contains(first, "starting it failed") || starts() != 1 {
+		t.Fatalf("first devices: exit %d, output %q, %d starts; want the failed start", code, first, starts())
+	}
+	second, code := runBin(t, bin, "devices")
+	if code != 1 || !strings.Contains(second, "not trying again") || starts() != 1 {
+		t.Fatalf("second devices (another process): exit %d, output %q, %d starts; want the back-off and no second start", code, second, starts())
+	}
 }

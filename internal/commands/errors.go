@@ -46,8 +46,11 @@ func runErrors(ctx context.Context, env Env, in Input) (Result, error) {
 	var b strings.Builder
 	for _, e := range errs {
 		fmt.Fprintf(&b, "#%d %s: %s", e.ID, e.Kind, e.Message)
-		if e.URL != "" {
+		switch {
+		case e.URL != "":
 			fmt.Fprintf(&b, " (%s:%d:%d)", e.URL, e.Line, e.Column)
+		case e.Line > 0:
+			fmt.Fprintf(&b, " (%s:%d:%d)", devtools.AnonymousScript, e.Line, e.Column)
 		}
 		b.WriteByte('\n')
 		if e.Stack != "" {

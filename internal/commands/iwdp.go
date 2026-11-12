@@ -13,8 +13,13 @@ import (
 
 // The ios_webkit_debug_proxy commands: status, devices and restart-iwdp.
 // They talk to iwdp's listing address (proxy.ListingAddr) and to the
-// processes of this host, not to a page or the daemon, so they are Local.
-// Their output is that of the legacy commands they replace.
+// processes of this host, not to a page. status and restart-iwdp are
+// Local. devices runs in the daemon, like page commands: it may start or
+// restart iwdp, and the daemon is then, without IWDP_NO_DAEMON=1, the one
+// process that does so automatically, so the start back-off of its
+// proxy.Starter covers every automatic start (review of 2026-11-12; the
+// cases where it does not are in docs/known-limits.md). Their output is
+// that of the legacy commands they replace.
 func init() {
 	Register(&Command{
 		Name:    "status",
@@ -23,10 +28,11 @@ func init() {
 		Run:     runStatus,
 	})
 	Register(&Command{
-		Name:    "devices",
-		Summary: "List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages).",
-		Local:   true,
-		Run:     runDevices,
+		Name: "devices",
+		Summary: "List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). " +
+			"Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that iwdp-cli started when it lost its devices, as page commands do. " +
+			"Exits 5 when it lists no device although usbmuxd reports one.",
+		Run: runDevices,
 	})
 	Register(&Command{
 		Name: "restart-iwdp",
@@ -103,34 +109,72 @@ func errNotRunning() error {
 	return fmt.Errorf("ios_webkit_debug_proxy is not running.\nStart it with: %s", proxy.ManualCommand())
 }
 
-// runDevices lists the devices as the legacy devices did. Only a listing
-// address that nothing owns means that iwdp is not running (exit 1 with
-// the start advice); an owner that does not answer, or answers with
+// The listing address of devices and its iwdp starts (decision D10, as the
+// daemon's for page commands): proxy.ListingAddr, proxy.Start,
+// proxy.Recover, proxy.AwaitDevice and proxy.AttachedDevices. Tests
+// replace them, because no test may read, start or stop an iwdp on iwdp's
+// address.
+var (
+	devicesListing  = proxy.ListingAddr
+	devicesStart    = proxy.Start
+	devicesRecover  = proxy.Recover
+	devicesAwait    = proxy.AwaitDevice
+	devicesAttached = proxy.AttachedDevices
+)
+
+// runDevices lists the devices as the legacy devices did, after the start
+// that page commands get from the daemon: when nothing owns the listing
+// address it starts iwdp and waits a moment for a device (devicesAwait),
+// and an empty listing of an iwdp that lost its devices gets that iwdp
+// restarted and read again (devicesRecover). A failed start exits 1 with the start's error. An
+// owner of the listing address that does not answer, or answers with
 // something other than a device list, gets an error that says how it
 // failed, with the exit code of a listing failure (5): an iwdp can close
 // listing requests while a page is connected (docs/known-limits.md). A
 // read that fails after the check passed is classified the same way
 // (proxy.ReadFailure); when nothing owns the address by then, the read's
-// own error exits 1.
+// own error exits 1. An empty listing while usbmuxd reports a USB device
+// exits 5 with what to do on the device; without one, or without
+// usbmuxd's list, it prints the legacy line.
 func runDevices(ctx context.Context, _ Env, _ Input) (Result, error) {
-	addr := proxy.ListingAddr()
-	if err := proxy.CheckListing(ctx, addr); err != nil {
+	addr := devicesListing()
+	err := proxy.CheckListing(ctx, addr)
+	if errors.Is(err, proxy.ErrNotListening) {
+		if serr := devicesStart(ctx); serr != nil {
+			return Result{}, fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", serr)
+		}
+		if _, aerr := devicesAwait(ctx); aerr != nil {
+			return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("iwdp-cli started ios_webkit_debug_proxy, and its listing failed: %w", aerr)}
+		}
+		err = proxy.CheckListing(ctx, addr)
+	}
+	if err != nil {
 		if errors.Is(err, proxy.ErrNotListening) {
 			return Result{}, errNotRunning()
 		}
 		return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: err}
 	}
-	devices, err := proxy.ListDevicesContext(ctx)
+	devices, err := readDevices(ctx, addr)
 	if err != nil {
-		if cerr := proxy.ReadFailure(ctx, addr, err); !errors.Is(cerr, proxy.ErrNotListening) {
-			err = &core.CodedError{Code: core.CodeNoPage, Err: cerr}
-		}
 		return Result{}, err
 	}
-	if devices == nil {
-		devices = []webkit.DeviceEntry{}
+	if len(devices) == 0 {
+		// Only an empty listing can be an iwdp that lost its devices; the
+		// recovery reads the listing again under the start lock.
+		restarted, rerr := devicesRecover(ctx)
+		if rerr != nil {
+			return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: rerr}
+		}
+		if restarted {
+			if devices, err = readDevices(ctx, addr); err != nil {
+				return Result{}, err
+			}
+		}
 	}
 	if len(devices) == 0 {
+		if udids, aerr := devicesAttached(ctx); aerr == nil && len(udids) > 0 {
+			return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("ios_webkit_debug_proxy lists no device, although usbmuxd reports %d USB device(s). %s, then run devices again", len(udids), proxy.DeviceAdvice)}
+		}
 		return Result{Text: "No devices connected.", Data: devices}, nil
 	}
 	lines := make([]string, len(devices))
@@ -138,4 +182,21 @@ func runDevices(ctx context.Context, _ Env, _ Input) (Result, error) {
 		lines[i] = fmt.Sprintf("%-40s  %s  (pages on %s)", d.DeviceName, d.DeviceID, d.URL)
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: devices}, nil
+}
+
+// readDevices reads the device list of the listing address addr. A read
+// that fails after the listing's check is a listing failure (exit 5,
+// proxy.ReadFailure), unless nothing owns the address by then.
+func readDevices(ctx context.Context, addr string) ([]webkit.DeviceEntry, error) {
+	devices, err := proxy.ListDevicesAt(ctx, addr)
+	if err != nil {
+		if cerr := proxy.ReadFailure(ctx, addr, err); !errors.Is(cerr, proxy.ErrNotListening) {
+			err = &core.CodedError{Code: core.CodeNoPage, Err: cerr}
+		}
+		return nil, err
+	}
+	if devices == nil {
+		devices = []webkit.DeviceEntry{}
+	}
+	return devices, nil
 }

@@ -276,10 +276,8 @@ func (s *Starter) startLocked(ctx context.Context, fresh bool) error {
 	if !errors.Is(err, ErrNotListening) {
 		return err // nil (running) or a process owns the port
 	}
-	if s.failErr != nil {
-		if since := time.Since(s.failedAt); since < StartBackoff {
-			return fmt.Errorf("%w (failed %s ago; not trying again for another %s)", s.failErr, since.Round(time.Second), (StartBackoff - since).Round(time.Second))
-		}
+	if err := s.backoff(); err != nil {
+		return err
 	}
 	err = s.launch(ctx)
 	if err != nil && ctx.Err() == nil && !errors.Is(err, errPortTaken) {
@@ -288,6 +286,17 @@ func (s *Starter) startLocked(ctx context.Context, fresh bool) error {
 		s.failErr = nil
 	}
 	return err
+}
+
+// backoff returns the error of this Starter's failed start while its
+// back-off (StartBackoff) holds, else nil.
+func (s *Starter) backoff() error {
+	if s.failErr != nil {
+		if since := time.Since(s.failedAt); since < StartBackoff {
+			return fmt.Errorf("%w (failed %s ago; not trying again for another %s)", s.failErr, since.Round(time.Second), (StartBackoff - since).Round(time.Second))
+		}
+	}
+	return nil
 }
 
 // maxIWDPLog is the size at which a start keeps the iwdp log as
@@ -525,7 +534,13 @@ func stopGroup(pgid int, exited <-chan struct{}) {
 // ListDevicesContext is ListDevices that also ends when ctx ends (a
 // command deadline); the read stays bounded by readTimeout.
 func ListDevicesContext(ctx context.Context) ([]webkit.DeviceEntry, error) {
-	return listDevicesFromURL(ctx, "http://"+listingAddr+"/json")
+	return ListDevicesAt(ctx, listingAddr)
+}
+
+// ListDevicesAt is ListDevicesContext for the listing address addr
+// (host:port).
+func ListDevicesAt(ctx context.Context, addr string) ([]webkit.DeviceEntry, error) {
+	return listDevicesFromURL(ctx, "http://"+addr+"/json")
 }
 
 func listDevicesFromURL(ctx context.Context, u string) ([]webkit.DeviceEntry, error) {

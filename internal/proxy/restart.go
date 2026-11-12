@@ -382,7 +382,11 @@ func (s *Starter) Restart(ctx context.Context) error {
 // stopOwn stops the recorded iwdp when it owns the listener of ep, removes
 // its record and returns true; it returns the refusal otherwise (Restart),
 // and the stop's error when the iwdp does not stop. It returns false and
-// nil when nothing owns the listing address.
+// nil when nothing owns the listing address. It stops nothing while this
+// Starter's start back-off holds (backoff), since the start after the stop
+// would be refused and leave no iwdp (review of 2026-11-12); that check
+// comes after the ownership checks, so another program's iwdp is refused
+// as such.
 func (s *Starter) stopOwn(ctx context.Context, ep netip.AddrPort) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, ProbeBudget)
 	defer cancel()
@@ -401,6 +405,9 @@ func (s *Starter) stopOwn(ctx context.Context, ep netip.AddrPort) (bool, error) 
 	}
 	if err := s.owns(ctx, rec, ep); err != nil {
 		return false, s.refuse(ctx, ep, err.Error())
+	}
+	if err := s.backoff(); err != nil {
+		return false, fmt.Errorf("restart refused, nothing was stopped, because the start after the stop would be refused: %w", err)
 	}
 	// A failed stop keeps both records: the old iwdp may still run.
 	if err := s.stopRecorded(ctx, rec, ep); err != nil {

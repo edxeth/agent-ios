@@ -138,8 +138,11 @@ func IsRuntimeMessage(text string) bool { return strings.HasPrefix(text, runtime
 // with its stack, if any, on the following lines.
 func formatConsoleMessage(m devtools.Message) string {
 	s := fmt.Sprintf("#%d [%s] %s", m.ID, m.Level, m.Text)
-	if m.URL != "" {
+	switch {
+	case m.URL != "":
 		s += fmt.Sprintf(" (%s:%d)", m.URL, m.Line)
+	case m.Line > 0:
+		s += fmt.Sprintf(" (%s:%d)", devtools.AnonymousScript, m.Line)
 	}
 	if m.RepeatCount > 1 {
 		s += fmt.Sprintf(" x%d", m.RepeatCount)

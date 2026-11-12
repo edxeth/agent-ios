@@ -122,7 +122,10 @@ func (p *pageConn) ended(c webkit.Caller) {
 		return
 	}
 	p.state = ConnLost
-	p.logf("page connection closed unexpectedly; the lease is lost")
+	// The other end closed it: the tab closed (also through tab close,
+	// whose release reaches a page that is gone), iwdp or the device ended
+	// it, or another inspector took the page.
+	p.logf("page connection closed by its other end (a closed tab, iwdp or the device, or another inspector); the page is lost")
 	close(p.done)
 }
 

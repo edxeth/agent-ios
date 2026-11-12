@@ -37,7 +37,7 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`device list`](#device-list) | List the live device reservations. |
 | [`device release`](#device-release) | Release an owner's device reservation. |
 | [`device reserve`](#device-reserve) | Reserve a physical device for an owner, so that only that owner's sessions attach to its pages. |
-| [`devices`](#devices) | List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). |
+| [`devices`](#devices) | List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that iwdp-cli started when it lost its devices, as page commands do. Exits 5 when it lists no device although usbmuxd reports one. |
 | [`dialog`](#dialog) | Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept\|dismiss). |
 | [`diff screenshot`](#diff-screenshot) | Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ. |
 | [`diff snapshot`](#diff-snapshot) | Show what changed between the last two snapshots of this session (a unified line diff). |
@@ -468,9 +468,9 @@ Reserve a physical device for an owner, so that only that owner's sessions attac
 iwdp-cli devices
 ```
 
-List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages).
+List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that iwdp-cli started when it lost its devices, as page commands do. Exits 5 when it lists no device although usbmuxd reports one.
 
-- Page: none; runs in the client process, not in the daemon
+- Page: none
 
 ### `dialog`
 

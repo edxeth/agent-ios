@@ -71,9 +71,11 @@ type RunOptions struct {
 	// RecoverIWDP). nil: the daemon reports how to start it.
 	StartIWDP func(context.Context) error
 	// RecoverIWDP restarts the iwdp of the default listing address that
-	// iwdp-cli started and recorded when it lost its usbmuxd connection,
-	// and reports whether it restarted it (proxy.Recover: an iwdp loses
-	// the devices for good when usbmuxd restarts). nil: no recovery.
+	// iwdp-cli started and recorded when it lost its usbmuxd connection or
+	// its device, and reports whether it restarted it (proxy.Recover: an
+	// iwdp loses the devices for good when usbmuxd restarts, and a device
+	// when it fails to pass one message to a closing client). nil: no
+	// recovery.
 	RecoverIWDP func(context.Context) (bool, error)
 	// Manager carries timing options (tests); Run sets Transport,
 	// Reservations, DaemonID, Logf, Session.PauseOnStart and Session.Logf.
@@ -403,7 +405,7 @@ func (ts *transports) recoverIWDP(ctx context.Context, listing string, isDefault
 		return err
 	}
 	if restarted {
-		ts.logf("restarted ios_webkit_debug_proxy: it had lost its usbmuxd connection, so it no longer saw USB devices")
+		ts.logf("restarted ios_webkit_debug_proxy: it had lost its usbmuxd connection or its device, so it no longer listed a USB device")
 		ts.awaitPages(ctx, listing)
 	}
 	return nil

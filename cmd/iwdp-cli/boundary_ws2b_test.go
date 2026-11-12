@@ -192,7 +192,8 @@ func TestEveryLocalCommandButDaemonRunReportsItsDeadline(t *testing.T) {
 			t.Errorf("startRegistry(%s) armed the watchdog: %v; want it armed only for the iwdp commands %v", c.Name, armed, iwdpCommands)
 		}
 	}
-	for _, name := range []string{"daemon run", "daemon start", "daemon stop", "daemon status", "daemon logs", "status", "devices", "restart-iwdp"} {
+	// devices runs in the daemon since 2026-11-12 (internal/commands/iwdp.go).
+	for _, name := range []string{"daemon run", "daemon start", "daemon stop", "daemon status", "daemon logs", "status", "restart-iwdp"} {
 		if !seen[name] {
 			t.Errorf("%s is not a Local registry command", name)
 		}

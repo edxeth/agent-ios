@@ -29,8 +29,8 @@ var daemonSpawnEnv []string
 var daemonStartIWDP = proxy.Start
 
 // daemonRecoverIWDP restarts the iwdp that iwdp-cli started when it lost
-// its usbmuxd connection, so that it no longer sees USB devices
-// (proxy.Recover).
+// its usbmuxd connection or its device, so that it no longer lists a USB
+// device (proxy.Recover).
 // Tests set it to nil.
 var daemonRecoverIWDP = proxy.Recover
 
@@ -326,7 +326,7 @@ const daemonRun = "daemon run"
 // iwdpCommands are the Local registry commands that talk to
 // ios_webkit_debug_proxy; besides the deadline message they get the
 // watchdog (startRegistry).
-var iwdpCommands = map[string]bool{"status": true, "devices": true, "restart-iwdp": true}
+var iwdpCommands = map[string]bool{"status": true, "restart-iwdp": true}
 
 // remoteEnv runs registry commands in the daemon (commands.RemoteEnv).
 type remoteEnv struct {

@@ -175,6 +175,29 @@ func TestConsoleAndErrorsCommands(t *testing.T) {
 	}
 }
 
+// Device check of 2026-11-12: iOS 16.7 WebKit gives an error of code
+// without a URL (here thrown in a timer that eval set) the url
+// "undefined", and errors printed "(undefined:1:86)". Such a location
+// prints as <anonymous>, in the error line, its stack and the console.
+func TestErrorsNameAScriptWithoutURLAnonymous(t *testing.T) {
+	h := newDTHarness(t)
+	if out := h.mustRun(t, "errors"); out != "No errors." {
+		t.Fatalf("errors = %q", out)
+	}
+	h.f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{
+		"source": "javascript", "level": "error", "text": "Error: smoke-uncaught", "url": "undefined", "line": 1, "column": 86, "timestamp": 1.0,
+		"stackTrace": map[string]any{"callFrames": []any{map[string]any{"functionName": "", "url": "undefined", "lineNumber": 1, "columnNumber": 86}}},
+	}})
+	var out string
+	waitFor(t, "the error", func() bool { out = h.mustRun(t, "errors"); return strings.Contains(out, "smoke-uncaught") })
+	if strings.Contains(out, "undefined:") || !strings.Contains(out, "console: Error: smoke-uncaught (<anonymous>:1:86)") || !strings.Contains(out, "    at (anonymous) (<anonymous>:1:86)") {
+		t.Fatalf("errors = %q, want the location and the frame as <anonymous>:1:86", out)
+	}
+	if out := h.mustRun(t, "console"); strings.Contains(out, "undefined:") || !strings.Contains(out, "[error] Error: smoke-uncaught (<anonymous>:1)") {
+		t.Fatalf("console = %q, want the location as <anonymous>:1", out)
+	}
+}
+
 // Design 4.2 "network requests" and "network request", 7.7 test 1: the
 // log lists requests seen since the lease with filters; one request shows
 // its headers with secrets masked, --show-secrets keeps them, and --body
@@ -485,5 +508,20 @@ func TestConsoleLeavesOutTheRuntimesMarkers(t *testing.T) {
 	_, js, _ := h.run("console", "--json")
 	if strings.Contains(js, `"text":"__iwdp_`) || !strings.Contains(js, "user text with __iwdp_dialog__ inside") {
 		t.Errorf("console --json = %s, want the page's messages without the runtime's markers", js)
+	}
+}
+
+// The error hooks' report of an error without a URL (WebKit's "undefined")
+// prints as <anonymous> too (review of 2026-11-12).
+func TestHookErrorWithoutURLIsAnonymous(t *testing.T) {
+	h := newDTHarness(t)
+	h.mustRun(t, "errors")
+	h.f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{
+		"source": "console-api", "level": "debug", "text": `[iwdp:error] {"kind":"error","message":"hook failure","url":"undefined","line":1,"column":9}`, "timestamp": 1.0,
+	}})
+	var out string
+	waitFor(t, "the hook's error", func() bool { out = h.mustRun(t, "errors"); return strings.Contains(out, "hook failure") })
+	if strings.Contains(out, "undefined:") || !strings.Contains(out, "error: hook failure (<anonymous>:1:9)") {
+		t.Fatalf("errors = %q, want the location as <anonymous>:1:9", out)
 	}
 }

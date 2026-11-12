@@ -353,6 +353,34 @@ func iwdpDevicePort(u string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// samePageURL reports whether the page URLs a and b name the same
+// endpoint: equal, or equal but for the loopback host names localhost and
+// 127.0.0.1. iwdp writes the host of each listing request into the page's
+// webSocketDebuggerUrl, so curl http://localhost:9224/json lists
+// ws://localhost:9224/devtools/page/1, while the iwdp transport reads the
+// listing on 127.0.0.1 (proxy's listingAddr) and names the same page
+// ws://127.0.0.1:9224/devtools/page/1 (device check of 2026-11-12: --page
+// with the localhost URL was refused as not listed).
+func samePageURL(a, b string) bool {
+	if a == b {
+		return true
+	}
+	pa, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	pb, err := url.Parse(b)
+	if err != nil {
+		return false
+	}
+	loopback := func(h string) bool { return h == "localhost" || h == "127.0.0.1" }
+	if !loopback(pa.Hostname()) || !loopback(pb.Hostname()) || pa.Port() != pb.Port() {
+		return false
+	}
+	pa.Host, pb.Host = "", ""
+	return pa.String() == pb.String()
+}
+
 // redactURL drops the query and fragment of a page URL for output (R17).
 func redactURL(u string) string {
 	if i := strings.IndexAny(u, "?#"); i >= 0 {
@@ -478,7 +506,7 @@ func (m *Manager) resolveURL(ctx context.Context, req PageRequest) (pageTarget, 
 	iwdpPort := iwdpDevicePort(u)
 	lctx := WithoutTransportStart(ctx)
 	if m.urlListing(lctx, req, iwdpPort) {
-		t, _, err := m.findListed(lctx, req, func(_ string, p transport.Page) bool { return p.ID == u })
+		t, _, err := m.findListed(lctx, req, func(_ string, p transport.Page) bool { return samePageURL(p.ID, u) })
 		if err == nil && t.key != "" {
 			return t, nil
 		}
@@ -522,14 +550,14 @@ func (m *Manager) urlListing(ctx context.Context, req PageRequest, iwdpPort bool
 	return false
 }
 
-// attachedPage returns the page record whose page id is id and that has a
-// connection, or nil. A record without one (its attach was refused) keeps
+// attachedPage returns the page record whose page id is id (samePageURL)
+// and that has a connection, or nil. A record without one (its attach was refused) keeps
 // the device and busy hint of an old listing, so the URL is listed again.
 func (m *Manager) attachedPage(id string) *Page {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, pg := range m.pages {
-		if pg.pageID == id && pg.conn != nil {
+		if samePageURL(pg.pageID, id) && pg.conn != nil {
 			return pg
 		}
 	}
@@ -683,7 +711,7 @@ func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *D
 			case canceledByOwner(ctx, err):
 				return nil, 0, fmt.Errorf("connecting to page %q: %w: %w", t.title, errProbeCanceled, err)
 			case errors.Is(lerr, ErrLost):
-				return nil, 0, pg.newConnLost(t.title, "its liveness probe", lerr)
+				return nil, 0, pg.newConnLost(t.title, "its liveness probe", lerr, err)
 			}
 			return nil, 0, &CodedError{Code: CodeBusy, Err: fmt.Errorf("tab is not answering; it is probably not the visible Safari tab. Bring it to the front on the device (%w)", err)}
 		}
@@ -693,7 +721,7 @@ func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *D
 		lerr := lostOnPeerEnd(c, err) // read before c is closed here
 		drop(c)
 		if errors.Is(lerr, ErrLost) && !errors.Is(err, context.DeadlineExceeded) && !canceledByOwner(ctx, err) {
-			return nil, 0, pg.newConnLost(t.title, "the re-apply of the page state", lerr)
+			return nil, 0, pg.newConnLost(t.title, "the re-apply of the page state", lerr, err)
 		}
 		return nil, 0, attachError(ctx, fmt.Errorf("re-applying the page state: %w", err))
 	}
@@ -701,17 +729,23 @@ func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *D
 }
 
 // newConnLost is the error of a new connection that a peer ended during
-// what, before it was installed (lostOnPeerEnd): another inspector may hold
-// the page now. A reconnect (reopen, takeover, recovery) marks the page
-// lost (pageConn.markLost), so that only --takeover connects it again,
-// also on the next command (design 2.5 rule 3). A first attach has no page
-// state to mark. The caller holds attachMu.
-func (pg *Page) newConnLost(title, what string, err error) error {
-	lerr := &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: the new connection ended during %s: %w", title, what, err)}
-	if pg.conn != nil {
-		pg.conn.markLost(lerr)
+// what, before it was installed: lerr is cause with ErrLost
+// (lostOnPeerEnd). Another inspector may hold the page now. A reconnect
+// (reopen, takeover, recovery) marks the page lost (pageConn.markLost),
+// so that only --takeover connects it again, also on the next command
+// (design 2.5 rule 3), and returns lerr. A first attach has no page state
+// to mark and nothing to take over: its error is not ErrLost and tells to
+// run the command again. In the device check of 2026-11-12, iwdp ended
+// first attaches to a page that no other client held, about every second
+// time, and the next command attached; the --takeover guidance of ErrLost
+// was wrong there. The caller holds attachMu.
+func (pg *Page) newConnLost(title, what string, lerr, cause error) error {
+	if pg.conn == nil {
+		return &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: ios_webkit_debug_proxy or the device closed the new connection during %s, and nothing was attached: run the command again. When it fails the same way again, another inspector (Safari Web Inspector on a Mac, another tool) may hold the page, or iwdp lost the device (run iwdp-cli devices): %w", title, what, cause)}
 	}
-	return lerr
+	err := &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: the new connection ended during %s: %w", title, what, lerr)}
+	pg.conn.markLost(err)
+	return err
 }
 
 // attachError codes a failed connect or setup of openConn: a timeout (exit
@@ -1129,7 +1163,7 @@ func (m *Manager) recover(bg context.Context, pg *Page) {
 			if errors.Is(lerr, ErrLost) {
 				// Another inspector may hold the page: lost, not stalled,
 				// so that only --takeover connects it again (newConnLost).
-				fail(pg.newConnLost(t.title, "its liveness probe", lerr))
+				fail(pg.newConnLost(t.title, "its liveness probe", lerr, err))
 			} else {
 				fail(fmt.Errorf("the new connection does not answer either: %w", err))
 			}

@@ -273,6 +273,113 @@ func TestRecoverNeverSignalsAnotherProgramsIWDP(t *testing.T) {
 	}
 }
 
+// ageRecord makes the record of the iwdp on addr look written age ago, as
+// at the start of an iwdp that has run that long.
+func ageRecord(t *testing.T, addr string, age time.Duration) {
+	t.Helper()
+	at := time.Now().Add(-age)
+	if err := os.Chtimes(recordPath(addr), at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An iwdp that keeps its usbmuxd subscription but lost its device (device
+// check of 2026-11-12: iwdp 1.9.2 dropped the iPhone after "Invalid
+// message _rpc_applicationSentData" and listed [] for good, while
+// idevice_id -l listed the iPhone) is restarted, but only once it is
+// deviceRestartBackoff old: a younger one may still be refused by the
+// device, and no command restarts it again before that.
+func TestRecoverRestartsTheRecordedIWDPThatLostItsDevice(t *testing.T) {
+	s, f, addr, _ := startedIWDP(t, listedDevice, 2)
+	s.usbmuxdLive, s.unixSockets, s.attached = liveUSBMuxd, subscribed, oneAttached
+	old := f.pids()
+	if restarted, err := s.Recover(context.Background()); restarted || err != nil {
+		t.Fatalf("Recover of an iwdp younger than %s = %v, %v; want nothing done", deviceRestartBackoff, restarted, err)
+	}
+	ageRecord(t, addr, deviceRestartBackoff+time.Second)
+	restarted, err := s.Recover(context.Background())
+	if err != nil || !restarted {
+		t.Fatalf("Recover of the recorded iwdp that lists no attached device = %v, %v; want a restart", restarted, err)
+	}
+	for _, pid := range old {
+		if alive(pid) {
+			t.Errorf("the old iwdp %d still runs after the recovery", pid)
+		}
+	}
+	if n := len(f.starts()); n != 2 {
+		t.Fatalf("ios_webkit_debug_proxy ran %d times, want 2 (the start and the recovery)", n)
+	}
+}
+
+// Without a USB device that usbmuxd reports, or without its device list,
+// an empty listing of an iwdp that holds its usbmuxd connection is no
+// lost device: nothing is restarted, also when the iwdp is old.
+func TestRecoverLeavesAnIWDPWithoutAnAttachedDeviceAlone(t *testing.T) {
+	failedRead := func(context.Context) ([]string, error) { return nil, errors.New("idevice_id: exit status 1") }
+	for name, attached := range map[string]func(context.Context) ([]string, error){"none attached": noneAttached, "unreadable": failedRead} {
+		t.Run(name, func(t *testing.T) {
+			s, f, addr, _ := startedIWDP(t, listedDevice, 0)
+			s.usbmuxdLive, s.unixSockets, s.attached = liveUSBMuxd, subscribed, attached
+			ageRecord(t, addr, deviceRestartBackoff+time.Second)
+			if restarted, err := s.Recover(context.Background()); restarted || err != nil {
+				t.Fatalf("Recover = %v, %v; want nothing done", restarted, err)
+			}
+			if n := len(f.starts()); n != 1 {
+				t.Fatalf("ios_webkit_debug_proxy ran %d times, want 1", n)
+			}
+		})
+	}
+}
+
+// When the restarted iwdp does not list the device either, the error says
+// what to do on the device and when the next restart comes.
+func TestRecoverAdvisesWhenTheDeviceStaysUnlisted(t *testing.T) {
+	s, f, addr, _ := startedIWDP(t, listedDevice, 0)
+	s.usbmuxdLive, s.unixSockets, s.attached = liveUSBMuxd, subscribed, oneAttached
+	ageRecord(t, addr, deviceRestartBackoff+time.Second)
+	restarted, err := s.Recover(context.Background())
+	if !restarted || !errors.Is(err, ErrDeviceNotListed) {
+		t.Fatalf("Recover whose new iwdp lists no device = %v, %v; want a restart and ErrDeviceNotListed", restarted, err)
+	}
+	for _, want := range []string{"Unlock the device", "run the command again after " + deviceRestartBackoff.String()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+	// The new iwdp is young: the next command does not restart it again.
+	if restarted, err := s.Recover(context.Background()); restarted || err != nil {
+		t.Fatalf("Recover right after the restart = %v, %v; want nothing done", restarted, err)
+	}
+	if n := len(f.starts()); n != 2 {
+		t.Fatalf("ios_webkit_debug_proxy ran %d times, want 2", n)
+	}
+}
+
+// Another program's iwdp that lost its device is refused, never signaled.
+func TestRecoverRefusesAnotherProgramsIWDPThatLostItsDevice(t *testing.T) {
+	onLinux(t)
+	addr := freeAddr(t)
+	f := installFakeIWDP(t, fakeServe, addr)
+	pid := foreignIWDP(t, addr)
+	s := testStarter(addr, 10*time.Second)
+	s.usbmuxdLive, s.unixSockets, s.attached = liveUSBMuxd, subscribed, oneAttached
+	restarted, err := s.Recover(context.Background())
+	if restarted || !errors.Is(err, ErrDeviceLost) {
+		t.Fatalf("Recover of another program's iwdp that lost its device = %v, %v; want ErrDeviceLost", restarted, err)
+	}
+	for _, want := range []string{"restart refused", fmt.Sprintf("pid %d", pid), "nothing was stopped"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not contain %q", err, want)
+		}
+	}
+	if !alive(pid) {
+		t.Fatalf("the foreign iwdp %d was stopped", pid)
+	}
+	if n := len(f.starts()); n != 0 {
+		t.Fatalf("ios_webkit_debug_proxy ran %d times, want 0", n)
+	}
+}
+
 // A replacement iwdp that does not start is reported as an ErrUSBLost
 // error that names the failed start; nothing claims a restart.
 func TestRecoverReportsAFailedRestart(t *testing.T) {
@@ -634,16 +741,17 @@ func TestAwaitDeviceReportsTheCallersEnd(t *testing.T) {
 // the SIMULATOR entry), whether usbmuxd's socket is live, how many Unix
 // sockets the listener holds (-1: unreadable), and the system.
 type recoverCase struct {
-	Entries []bool // true: a device, false: SIMULATOR
-	Live    bool
-	Sockets int
-	Linux   bool
+	Entries  []bool // true: a device, false: SIMULATOR
+	Live     bool
+	Sockets  int
+	Attached int // USB devices that usbmuxd reports; -1: unreadable
+	Linux    bool
 }
 
 // Generate makes listings of 0 to 3 entries, empty ones in about half the
 // cases.
 func (recoverCase) Generate(r *rand.Rand, _ int) reflect.Value {
-	c := recoverCase{Live: r.Intn(4) > 0, Linux: r.Intn(4) > 0, Sockets: r.Intn(4) - 1}
+	c := recoverCase{Live: r.Intn(4) > 0, Linux: r.Intn(4) > 0, Sockets: r.Intn(4) - 1, Attached: r.Intn(3) - 1}
 	if r.Intn(2) == 1 {
 		for range 1 + r.Intn(3) {
 			c.Entries = append(c.Entries, r.Intn(2) == 1)
@@ -655,7 +763,9 @@ func (recoverCase) Generate(r *rand.Rand, _ int) reflect.Value {
 // Property: Recover never restarts an iwdp that is not recorded, and it
 // reports one only when it lost usbmuxd (Linux, an empty listing, a live
 // usbmuxd socket, a listener that holds no Unix socket), with an
-// ErrUSBLost refusal. Every other case changes nothing and reports
+// ErrUSBLost refusal, or its device (the same, but a listener that holds
+// a Unix socket while usbmuxd reports a USB device), with an
+// ErrDeviceLost refusal. Every other case changes nothing and reports
 // nothing.
 func TestRecoverDecisionProperty(t *testing.T) {
 	f := installFakeIWDP(t, fakeServe, freeAddr(t)) // no real iwdp or idevice_id
@@ -686,6 +796,12 @@ func TestRecoverDecisionProperty(t *testing.T) {
 			}
 			return c.Sockets, nil
 		}
+		s.attached = func(context.Context) ([]string, error) {
+			if c.Attached < 0 {
+				return nil, errors.New("idevice_id: exit status 1")
+			}
+			return make([]string, c.Attached), nil
+		}
 		recoverOS = "darwin"
 		if c.Linux {
 			recoverOS = "linux"
@@ -695,8 +811,15 @@ func TestRecoverDecisionProperty(t *testing.T) {
 			t.Logf("case %+v: restarted an iwdp that is not recorded", c)
 			return false
 		}
-		lost := c.Linux && len(c.Entries) == 0 && c.Live && c.Sockets == 0
-		if lost != (err != nil) || (lost && (!errors.Is(err, ErrUSBLost) || !strings.Contains(err.Error(), "restart refused"))) {
+		empty := c.Linux && len(c.Entries) == 0 && c.Live
+		lostUSB := empty && c.Sockets == 0
+		lostDev := empty && c.Sockets > 0 && c.Attached > 0
+		want := ErrUSBLost
+		if lostDev {
+			want = ErrDeviceLost
+		}
+		lost := lostUSB || lostDev
+		if lost != (err != nil) || (lost && (!errors.Is(err, want) || !strings.Contains(err.Error(), "restart refused"))) {
 			t.Logf("case %+v: err %v, want a refusal: %v", c, err, lost)
 			return false
 		}
@@ -753,4 +876,74 @@ func TestStartAdviceNamesTheDeviceOrUsbmuxd(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A young record whose process is gone, while another program's iwdp
+// holds the port, hides nothing: the restart is refused with
+// ErrDeviceLost (review of 2026-11-12). The back-off covers only the
+// recorded iwdp that owns the port.
+func TestRecoverRefusesAForeignIWDPBehindAYoungRecord(t *testing.T) {
+	onLinux(t)
+	addr := freeAddr(t)
+	f := installFakeIWDP(t, fakeServe, addr)
+	pid := foreignIWDP(t, addr)
+	other := sleeper(t) // a process of this user that the young record names
+	writeRecord(t, addr, other, other)
+	s := testStarter(addr, 10*time.Second)
+	s.usbmuxdLive, s.unixSockets, s.attached = liveUSBMuxd, subscribed, oneAttached
+	restarted, err := s.Recover(context.Background())
+	if restarted || !errors.Is(err, ErrDeviceLost) || !strings.Contains(err.Error(), "restart refused") {
+		t.Fatalf("Recover of another program's iwdp %d behind a young record = %v, %v; want the ErrDeviceLost refusal", pid, restarted, err)
+	}
+	if !alive(pid) {
+		t.Fatalf("the foreign iwdp %d was stopped", pid)
+	}
+	if n := len(f.starts()); n != 0 {
+		t.Fatalf("ios_webkit_debug_proxy ran %d times, want 0", n)
+	}
+}
+
+// While this Starter's start back-off holds, Recover and Restart stop
+// nothing: the start after the stop would be refused and leave no iwdp
+// (review of 2026-11-12). Another program's iwdp is still refused as such,
+// with its pid: the ownership check comes first.
+func TestNoStopDuringTheStartBackoff(t *testing.T) {
+	t.Run("own", func(t *testing.T) {
+		s, f, addr, _ := startedIWDP(t, listedDevice, 0)
+		s.usbmuxdLive, s.unixSockets, s.attached = liveUSBMuxd, subscribed, oneAttached
+		ageRecord(t, addr, deviceRestartBackoff+time.Second)
+		s.failErr, s.failedAt = errors.New("exited during its start"), time.Now()
+		old := f.pids()
+		restarted, err := s.Recover(context.Background())
+		if restarted || !errors.Is(err, ErrDeviceLost) || !strings.Contains(err.Error(), "nothing was stopped") || !strings.Contains(err.Error(), "not trying again") {
+			t.Fatalf("Recover during the back-off = %v, %v; want ErrDeviceLost, nothing stopped, and the back-off", restarted, err)
+		}
+		if err := s.Restart(context.Background()); err == nil || !strings.Contains(err.Error(), "nothing was stopped") {
+			t.Fatalf("Restart during the back-off = %v; want the refusal", err)
+		}
+		for _, pid := range old {
+			if !alive(pid) {
+				t.Errorf("the running iwdp %d was stopped", pid)
+			}
+		}
+		if n := len(f.starts()); n != 1 {
+			t.Fatalf("ios_webkit_debug_proxy ran %d times, want 1", n)
+		}
+	})
+	t.Run("foreign", func(t *testing.T) {
+		onLinux(t)
+		addr := freeAddr(t)
+		installFakeIWDP(t, fakeServe, addr)
+		pid := foreignIWDP(t, addr)
+		s := testStarter(addr, 10*time.Second)
+		s.usbmuxdLive, s.unixSockets, s.attached = liveUSBMuxd, subscribed, oneAttached
+		s.failErr, s.failedAt = errors.New("exited during its start"), time.Now()
+		restarted, err := s.Recover(context.Background())
+		if restarted || !errors.Is(err, ErrDeviceLost) || !strings.Contains(err.Error(), "restart refused") || !strings.Contains(err.Error(), fmt.Sprintf("pid %d", pid)) {
+			t.Fatalf("Recover of another program's iwdp during the back-off = %v, %v; want its refusal with pid %d", restarted, err, pid)
+		}
+		if !alive(pid) {
+			t.Fatalf("the foreign iwdp %d was stopped", pid)
+		}
+	})
 }

@@ -251,7 +251,7 @@ func startOwnerProbe(t *testing.T, spec probeSpec) *probeProcess {
 	p.argv = append([]string{argv0, "-c", ownerProbe, p.signal, mode, p.marker}, spec.args...)
 	// A small environment of its own: a failing check may print it.
 	p.env = append([]string{"PATH=" + os.Getenv("PATH")}, spec.env...)
-	cmd := &exec.Cmd{Path: python, Args: p.argv, Env: p.env}
+	cmd := &exec.Cmd{Path: python, Args: p.argv, Env: p.env, SysProcAttr: probeProcAttr()}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

@@ -302,6 +302,24 @@ func TestFreshProbePeerEndIsNoHiddenTab(t *testing.T) {
 	}
 }
 
+// Device check of 2026-11-12: iwdp ended the first attach to a page that
+// no other client held, and the error told to run --takeover. A first
+// attach whose new connection a peer ends has nothing to take over: its
+// error is not ErrLost, names no --takeover and tells to run the command
+// again, and the next command attaches without --takeover.
+func TestFirstAttachPeerEndTellsToRunAgain(t *testing.T) {
+	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
+	r.reserve(t, "agent")
+	closeOnProbe(r.f, 1)
+	err := evalOnce(ctxFor(t, 5*time.Second), r, agent)
+	if err == nil || errors.Is(err, ErrLost) || exitCode(err) != CodeBusy || strings.Contains(err.Error(), "--takeover") || !strings.Contains(err.Error(), "run the command again") {
+		t.Fatalf("first attach whose new connection a peer ended = %v (exit %d); want exit %d, no ErrLost, no --takeover, and the advice to run it again", err, exitCode(err), CodeBusy)
+	}
+	if err := evalOnce(ctxFor(t, 5*time.Second), r, agent); err != nil {
+		t.Fatalf("the next command without --takeover = %v, want it to attach", err)
+	}
+}
+
 // C07: the events of the re-apply on a new connection reach the page's
 // subscribers, here the Console.enable replay, through a takeover and
 // through a background recovery; each subscriber gets each event once.
