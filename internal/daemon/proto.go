@@ -68,6 +68,9 @@ type ErrorReply struct {
 	Message string `json:"message"`
 	NotSent bool   `json:"notSent,omitempty"`
 	Timeout bool   `json:"timeout,omitempty"`
+	// ActionTimeout: the deadline ended the attempts of an action
+	// (core.ErrActionTimeout), and the message names their last reason.
+	ActionTimeout bool `json:"actionTimeout,omitempty"`
 }
 
 // Item is one NDJSON line of the /v1/run stream.
@@ -115,16 +118,19 @@ func (e *RemoteError) Is(target error) bool {
 		return e.E.NotSent
 	case context.DeadlineExceeded:
 		return e.E.Timeout
+	case core.ErrActionTimeout:
+		return e.E.ActionTimeout
 	}
 	return false
 }
 
 // toErrorReply encodes err for the wire: its exit code (usage errors 2,
-// coded errors their code, deadlines 124), whether the call was never sent
-// and whether a deadline ended it.
+// coded errors their code, deadlines 124), whether the call was never sent,
+// whether a deadline ended it, and whether it ended an action's attempts.
 func toErrorReply(err error) *ErrorReply {
 	r := &ErrorReply{Code: commands.ExitCodeOf(err), Message: err.Error()}
 	r.NotSent = errors.Is(err, webkit.ErrNotSent)
+	r.ActionTimeout = errors.Is(err, core.ErrActionTimeout)
 	r.Timeout = errors.Is(err, context.DeadlineExceeded) || r.Code == core.CodeTimeout
 	if r.Timeout && r.Code == commands.ExitError {
 		r.Code = core.CodeTimeout

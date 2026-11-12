@@ -25,11 +25,17 @@ var daemonSpawnEnv []string
 // daemonStartIWDP starts ios_webkit_debug_proxy from the daemon when iwdp
 // is selected and not running (decision D10: as the legacy auto-start, with
 // the first UDID pinned to 9224; a running iwdp is never stopped or
-// restarted). Tests set it to nil.
+// restarted, except by daemonRecoverIWDP). Tests set it to nil.
 var daemonStartIWDP = proxy.Start
 
+// daemonRecoverIWDP restarts the iwdp that iwdp-cli started when it lost
+// its usbmuxd connection, so that it no longer sees USB devices
+// (proxy.Recover).
+// Tests set it to nil.
+var daemonRecoverIWDP = proxy.Recover
+
 func daemonOptions() daemon.Options {
-	return daemon.Options{Version: daemon.BuildVersion(), Env: daemonSpawnEnv, StartIWDP: daemonStartIWDP}
+	return daemon.Options{Version: daemon.BuildVersion(), Env: daemonSpawnEnv, StartIWDP: daemonStartIWDP, RecoverIWDP: daemonRecoverIWDP}
 }
 
 // cleanupGrace is how long past daemon.ShutdownBudget an exit path waits
@@ -310,7 +316,7 @@ func (cliHost) Emit(line string)              { fmt.Println(line) }
 func (cliHost) ResolvePath(p string) string   { return p }
 func (cliHost) ClientOptions() daemon.Options { return daemonOptions() }
 func (cliHost) RunOptions() daemon.RunOptions {
-	return daemon.RunOptions{Version: daemon.BuildVersion(), StartIWDP: daemonStartIWDP}
+	return daemon.RunOptions{Version: daemon.BuildVersion(), StartIWDP: daemonStartIWDP, RecoverIWDP: daemonRecoverIWDP}
 }
 
 // daemonRun is the one registry command without a command deadline: the
@@ -371,8 +377,10 @@ func (e *remoteEnv) RunRemote(ctx context.Context, c *reg.Command, in reg.Input)
 		if g.Page == "" {
 			// The page title goes only into error messages, never on
 			// every command: titles must not land in agent transcripts
-			// and logs.
-			current.setPage(fmt.Sprintf("%q (%s)", p.Title, p.Key))
+			// and logs. It is the title of the listing that found the
+			// page, which for a page the daemon already holds is the
+			// listing of its attach: the page may have navigated since.
+			current.setPage(fmt.Sprintf("%q (title as listed; the page may have navigated since; %s)", p.Title, p.Key))
 		}
 	}
 	res, err := e.c.RunWithPage(ctx, req, func(line string) { fmt.Println(line) }, onPage)

@@ -81,6 +81,7 @@ Some `<Domain>.enable` methods work through iwdp Target routing (e.g., `Debugger
 - Use a distinct `--session`; reserve physical devices (`device reserve`) and release them; on "lost" stop and ask before `--takeover`.
 - All input is synthetic (`isTrusted=false`); `set viewport`, PDF, downloads and browser contexts are impossible (docs/synthetic-input.md).
 - Pause-on-start is on in the daemon but best effort; "runs before page scripts" is partial without it.
+- ios_webkit_debug_proxy 1.9.2 subscribes to usbmuxd once; after usbmuxd restarts (Linux: an unplug and replug) it lists no device for good. On Linux the daemon restarts only the iwdp that iwdp-cli recorded, and only when it holds no Unix socket (no usbmuxd connection) while usbmuxd's socket answers (`proxy.Recover`, internal/proxy/recover.go); another iwdp needs its owner.
 - iwdp sends error `data` as a JSON array `[{"code":...,"message":...}]` — `ErrorData.Data` is `json.RawMessage` to handle this.
 
 ## Architecture

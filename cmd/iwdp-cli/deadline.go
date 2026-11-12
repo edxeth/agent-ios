@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 )
 
 // exitTimeout is the exit code for a command that hit its deadline. It
@@ -120,6 +122,15 @@ func (r *commandRun) timeoutMessage(cause error) string {
 		fmt.Fprintf(&b, "Last wait: %v\n", cause)
 	}
 	b.WriteString("Likely causes:\n")
+	if errors.Is(cause, core.ErrActionTimeout) {
+		// The page answered every attempt of the action; the attempts
+		// stopped for the reason in "Last wait", so a stalled page or
+		// another inspector is not the likely cause.
+		b.WriteString("  - the action's target did not pass its checks before the deadline; 'Last wait' names the last reason (for example: no element matches, not visible, disabled, covered by another element, still moving)\n")
+		b.WriteString("  - the selector or ref does not match the current page: take a new snapshot ('snapshot -i') and use its refs\n")
+		b.WriteString("If the element appears late by design, raise the deadline with --timeout <duration> or " + timeoutEnv + ".")
+		return b.String()
+	}
 	b.WriteString("  - another inspector session holds the page (Safari Web Inspector or another iwdp-cli such as 'console --follow')\n")
 	b.WriteString("  - the page is stalled (long-running JavaScript, or an alert, confirm or prompt dialog is open)\n")
 	b.WriteString("  - the device is locked or asleep, or Safari is in the background\n")

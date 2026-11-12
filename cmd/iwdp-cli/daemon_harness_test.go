@@ -38,8 +38,9 @@ func init() {
 	if os.Getenv(runMainEnv) == "1" {
 		// A CLI or daemon process of a test (the test binary running
 		// main): it inherits the private directories. It never starts the
-		// real ios_webkit_debug_proxy.
+		// real ios_webkit_debug_proxy, and never restarts one.
 		daemonStartIWDP = nil
+		daemonRecoverIWDP = nil
 		if os.Getenv("IWDP_DAEMON_IDLE") == "" {
 			_ = os.Setenv("IWDP_DAEMON_IDLE", testDaemonIdle)
 		}

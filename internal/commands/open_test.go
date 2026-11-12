@@ -291,6 +291,31 @@ func TestBackAndForward(t *testing.T) {
 	}
 }
 
+// A history move that starts no navigation ends with exit 3 and tells to
+// check the URL and run the command again (device check of 2026-11-11:
+// WebKit ignored a forward sent at once after a back); the move is never
+// asked for twice. open keeps its message.
+func TestHistoryMoveThatDoesNotNavigateTellsWhatToDo(t *testing.T) {
+	n := newNavFake(t)
+	n.navigates = false
+	code, _, errOut := n.h.run("--timeout", "600ms", "forward")
+	if code != ExitWaitTimeout || !strings.Contains(errOut, "did not navigate; URL is still http://a.test/one") || !strings.Contains(errOut, "run 'forward' again") {
+		t.Fatalf("forward without a navigation: exit %d, stderr %q; want 3, the old URL and what to do", code, errOut)
+	}
+	k := 0
+	for _, c := range n.calls() {
+		if c["hist"] != nil {
+			k++
+		}
+	}
+	if k != 1 {
+		t.Fatalf("forward sent %d history moves, want 1", k)
+	}
+	if code, _, errOut := n.h.run("--timeout", "600ms", "open", "http://b.test/never"); code != ExitWaitTimeout || strings.Contains(errOut, "again") {
+		t.Fatalf("open without a navigation: exit %d, stderr %q; want 3 without the history advice", code, errOut)
+	}
+}
+
 // Design 3.6: a navigation that never produces a new document ends with
 // exit 3 and the last state; --wait none returns without waiting.
 func TestOpenThatDoesNotNavigateTimesOut(t *testing.T) {

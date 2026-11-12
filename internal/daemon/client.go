@@ -55,6 +55,9 @@ type Options struct {
 	// StartIWDP is the in-process core's iwdp start (IWDP_NO_DAEMON; see
 	// RunOptions.StartIWDP). A started daemon uses its own.
 	StartIWDP func(context.Context) error
+	// RecoverIWDP is the in-process core's iwdp recovery (see
+	// RunOptions.RecoverIWDP). A started daemon uses its own.
+	RecoverIWDP func(context.Context) (bool, error)
 }
 
 // Client talks to the daemon's socket API (design 2.2).

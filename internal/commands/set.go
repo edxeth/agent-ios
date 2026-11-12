@@ -110,7 +110,7 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "set offline",
-		Summary: "Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device.",
+		Summary: "Fail every request of the page (on) or stop doing so (off), through request interception; navigator.onLine stays true.",
 		Args:    []Arg{{Name: "state", Help: "on or off", Required: true}},
 		Page:    LeasedPage,
 		Mutates: true,

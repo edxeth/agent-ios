@@ -90,7 +90,7 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`set geo`](#set-geo) | Answer navigator.geolocation with this position (a page-side shim: WebKit has no geolocation override). |
 | [`set headers`](#set-headers) | Send these extra HTTP headers with every request of the page; '{}' removes this session's headers. |
 | [`set media`](#set-media) | Emulate prefers-color-scheme (dark, light or no-preference), and optionally reduced motion and more contrast. |
-| [`set offline`](#set-offline) | Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device. |
+| [`set offline`](#set-offline) | Fail every request of the page (on) or stop doing so (off), through request interception; navigator.onLine stays true. |
 | [`set useragent`](#set-useragent) | Override the user agent string of the page (--reset removes the override). |
 | [`set viewport`](#set-viewport) | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
 | [`skills get`](#skills-get) | Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill. |
@@ -1316,7 +1316,7 @@ Emulate prefers-color-scheme (dark, light or no-preference), and optionally redu
 iwdp-cli set offline <state>
 ```
 
-Fail every request of the page (on) or stop doing so (off), through request interception; unverified on a device.
+Fail every request of the page (on) or stop doing so (off), through request interception; navigator.onLine stays true.
 
 - Page: leases the session's page
 

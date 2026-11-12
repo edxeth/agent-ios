@@ -67,9 +67,14 @@ type RunOptions struct {
 	Addr      string
 	// StartIWDP starts ios_webkit_debug_proxy when iwdp is selected and its
 	// device list does not answer (decision D10: like the legacy
-	// auto-start; a running iwdp is never stopped or restarted). nil: the
-	// daemon reports how to start it.
+	// auto-start; a running iwdp is never stopped or restarted, except by
+	// RecoverIWDP). nil: the daemon reports how to start it.
 	StartIWDP func(context.Context) error
+	// RecoverIWDP restarts the iwdp of the default listing address that
+	// iwdp-cli started and recorded when it lost its usbmuxd connection,
+	// and reports whether it restarted it (proxy.Recover: an iwdp loses
+	// the devices for good when usbmuxd restarts). nil: no recovery.
+	RecoverIWDP func(context.Context) (bool, error)
 	// Manager carries timing options (tests); Run sets Transport,
 	// Reservations, DaemonID, Logf, Session.PauseOnStart and Session.Logf.
 	Manager core.ManagerOptions
@@ -354,13 +359,20 @@ const (
 // owns the listing port, slow or silent, it never starts a second iwdp.
 func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault bool) error {
 	err := proxy.CheckListing(ctx, listing)
+	if err == nil {
+		return ts.recoverIWDP(ctx, listing, isDefault)
+	}
 	if !errors.Is(err, proxy.ErrNotListening) {
 		return listingError(ctx, err) // nil (answers) or a process owns the port
 	}
 	if !isDefault || ts.o.StartIWDP == nil {
 		return fmt.Errorf("ios_webkit_debug_proxy is not running on %s; start it with: %s (install: brew install ios-webkit-debug-proxy)", listing, proxy.ManualCommand())
 	}
-	ts.starts.Lock()
+	// A start or recovery may hold the lock for seconds; the wait ends
+	// with the command's deadline.
+	if err := proxy.LockContext(ctx, &ts.starts); err != nil {
+		return err
+	}
 	defer ts.starts.Unlock()
 	err = proxy.CheckListing(ctx, listing)
 	if !errors.Is(err, proxy.ErrNotListening) {
@@ -371,6 +383,29 @@ func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault 
 		return fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", err)
 	}
 	ts.awaitPages(ctx, listing)
+	return nil
+}
+
+// recoverIWDP runs RecoverIWDP for the answering iwdp of the default
+// address: when it restarted iwdp, it waits for a page as after a start.
+func (ts *transports) recoverIWDP(ctx context.Context, listing string, isDefault bool) error {
+	if !isDefault || ts.o.RecoverIWDP == nil {
+		return nil
+	}
+	// A start of iwdp may hold the lock for seconds; the wait ends with
+	// the command's deadline.
+	if err := proxy.LockContext(ctx, &ts.starts); err != nil {
+		return err
+	}
+	defer ts.starts.Unlock()
+	restarted, err := ts.o.RecoverIWDP(ctx)
+	if err != nil {
+		return err
+	}
+	if restarted {
+		ts.logf("restarted ios_webkit_debug_proxy: it had lost its usbmuxd connection, so it no longer saw USB devices")
+		ts.awaitPages(ctx, listing)
+	}
 	return nil
 }
 

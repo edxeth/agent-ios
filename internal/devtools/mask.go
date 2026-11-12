@@ -20,6 +20,13 @@ var secretHeaders = map[string]bool{
 	"x-api-key": true, "x-auth-token": true, "x-csrf-token": true, "x-xsrf-token": true,
 }
 
+// publicValues are header values that a secret name part (secretParts)
+// would mask although they carry no secret: Access-Control-Allow-Credentials
+// has the one valid value "true" (Fetch standard), and masking it hides
+// the answer to a CORS question. Any other value of that header, also in a
+// request, is masked as before.
+var publicValues = map[string]string{"access-control-allow-credentials": "true"}
+
 // secretParts are lower-case name parts that mark a password or token
 // field (form fields, JSON keys, query parameters, storage keys, cookies).
 var secretParts = []string{
@@ -57,6 +64,7 @@ func MaskHeaders(h map[string]string) map[string]string {
 	for k, v := range h {
 		lk := strings.ToLower(k)
 		switch {
+		case publicValues[lk] != "" && v == publicValues[lk]:
 		case secretHeaders[lk] || SecretName(k):
 			v = Masked
 		case urlHeaders[lk]:

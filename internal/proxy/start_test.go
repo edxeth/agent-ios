@@ -26,6 +26,20 @@ import (
 // address it names.
 const fakeServeEnv = "IWDP_PROXY_TEST_FAKE_SERVE"
 
+// fakeListingEnv names a file whose content TestFakeIWDPProcess serves as
+// its device list, read on every request; without it the list is empty.
+// With fakeListingFromEnv=N, only the fake of the Nth start (counted in
+// the starts log that fakeStartsEnv names) serves the file, and earlier
+// ones serve an empty list, as an iwdp that lost usbmuxd does.
+const (
+	fakeListingEnv     = "IWDP_PROXY_TEST_FAKE_LISTING"
+	fakeListingFromEnv = "IWDP_PROXY_TEST_FAKE_LISTING_FROM"
+	fakeStartsEnv      = "IWDP_PROXY_TEST_FAKE_STARTS"
+	// fakeExitFromEnv=N makes the fake of the Nth start and later ones
+	// exit 1 before they listen, as an iwdp whose start fails.
+	fakeExitFromEnv = "IWDP_PROXY_TEST_FAKE_EXIT_FROM"
+)
+
 // fakeNetworkEnv names the network of the serve fake's listener (net.Listen):
 // "tcp" without it, as before; "tcp4" for an IPv4-only socket, "tcp6" for
 // an IPV6_V6ONLY socket.
@@ -90,6 +104,12 @@ func TestFakeIWDPProcess(t *testing.T) {
 		return
 	}
 	exitWithParent(func() {})
+	if from, err := strconv.Atoi(os.Getenv(fakeExitFromEnv)); err == nil {
+		if data, _ := os.ReadFile(os.Getenv(fakeStartsEnv)); strings.Count(string(data), "\n") >= from {
+			fmt.Fprintln(os.Stderr, "fake iwdp: exiting as start", from)
+			os.Exit(1)
+		}
+	}
 	network := os.Getenv(fakeNetworkEnv)
 	if network == "" {
 		network = "tcp"
@@ -105,8 +125,19 @@ func TestFakeIWDPProcess(t *testing.T) {
 		os.Exit(3)
 	}
 	reportListen(fakeListening + l.Addr().String())
+	serves := true
+	if from, err := strconv.Atoi(os.Getenv(fakeListingFromEnv)); err == nil {
+		data, _ := os.ReadFile(os.Getenv(fakeStartsEnv))
+		serves = strings.Count(string(data), "\n") >= from
+	}
 	err = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("[]"))
+		body := []byte("[]")
+		if path := os.Getenv(fakeListingEnv); path != "" && serves {
+			if data, err := os.ReadFile(path); err == nil {
+				body = data
+			}
+		}
+		_, _ = w.Write(body)
 	}))
 	fmt.Fprintln(os.Stderr, "fake iwdp:", err)
 	os.Exit(3)
@@ -152,6 +183,10 @@ const (
 	// stdout is), "fake-stdout-line" to stdout, then serves as fakeServe.
 	// sed ends when the fake has exited.
 	fakeChatty = "chatty"
+	// fakeLocked writes the lines of ios_webkit_debug_proxy 1.9.2 about a
+	// device whose inspector closed the connection (a locked device) and,
+	// like fakeHang, never serves.
+	fakeLocked = "locked"
 )
 
 // shellExitWithParent is exitWithParent for a shell fake whose child's pid
@@ -189,7 +224,7 @@ func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body = "exec env " + fakeParent() + " " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
+		body = "exec env " + fakeParent() + " " + fakeServeEnv + "=" + q(addr) + " " + fakeStartsEnv + "=" + q(filepath.Join(dir, "starts.log")) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
 	case fakeChatty:
 		exe, err := os.Executable()
 		if err != nil {
@@ -202,6 +237,9 @@ func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 		body = "exit 1\n"
 	case fakeHang:
 		body = "sleep 300 &\nc=$!\necho $c > " + q(filepath.Join(dir, "child.pid")) + "\n" + shellExitWithParent()
+	case fakeLocked:
+		body = "echo 'Unable to connect to iPhone X (00008020-0000000000000001)'\necho '  Please verify that Settings > Safari > Advanced > Web Inspector = ON'\n" +
+			"sleep 300 &\nc=$!\necho $c > " + q(filepath.Join(dir, "child.pid")) + "\n" + shellExitWithParent()
 	case fakeStubborn:
 		body = "trap '' TERM\nsleep 300 &\nc=$!\necho $c > " + q(filepath.Join(dir, "child.pid")) + "\n" + shellExitWithParent()
 	default:

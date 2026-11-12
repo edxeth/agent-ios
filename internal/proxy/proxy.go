@@ -213,6 +213,17 @@ type Starter struct {
 	identify func(pid int) (identity, error)
 	kill     func(pid int, sig syscall.Signal) error
 
+	// attached lists the UDIDs of the USB devices that usbmuxd reports
+	// (DeviceUDIDs; tests inject lists).
+	attached func(context.Context) ([]string, error)
+	// usbmuxdLive and unixSockets read Recover's evidence (usbmuxdLive,
+	// unixSockets; tests inject them).
+	usbmuxdLive func(context.Context) error
+	unixSockets func(pid int) (int, error)
+	// listeners returns the pids that listen on a port (listenerPIDs;
+	// tests inject failures).
+	listeners func(ctx context.Context, port uint16) ([]int, error)
+
 	mu       sync.Mutex // held for a whole start: one start at a time
 	failErr  error      // the last failed start
 	failedAt time.Time  // when it failed
@@ -221,7 +232,7 @@ type Starter struct {
 
 // NewStarter returns a Starter for the listing address addr (host:port).
 func NewStarter(addr string) *Starter {
-	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens, identify: readIdentity, kill: syscall.Kill}
+	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens, identify: readIdentity, kill: syscall.Kill, attached: DeviceUDIDs, usbmuxdLive: usbmuxdLive, unixSockets: unixSockets, listeners: listenerPIDs}
 }
 
 // std is the Starter of iwdp's default listing address, used by Start.
@@ -388,7 +399,8 @@ func iwdpCommand(args ...string) (*exec.Cmd, error) {
 // log (LogPath); it writes to the file itself, so the log goes on after
 // the starting process exits.
 func (s *Starter) launch(ctx context.Context) error {
-	cmd, err := iwdpCommand(iwdpArgs(runtime.GOOS, BuildConfig(DeviceUDIDs()))...)
+	udids, _ := s.attached(ctx) // without the list, no port is pinned
+	cmd, err := iwdpCommand(iwdpArgs(runtime.GOOS, BuildConfig(udids))...)
 	if err != nil {
 		return fmt.Errorf("starting ios_webkit_debug_proxy: %w\nMake sure it is installed: brew install ios-webkit-debug-proxy", err)
 	}
@@ -397,6 +409,12 @@ func (s *Starter) launch(ctx context.Context) error {
 		return fmt.Errorf("starting ios_webkit_debug_proxy: %w; no ios_webkit_debug_proxy was started", err)
 	}
 	defer func() { _ = log.Close() }() // the started process has its own copy
+	// Where this start's output begins in the log: the failure messages
+	// read it (startAdvice).
+	var logStart int64
+	if fi, err := log.Stat(); err == nil {
+		logStart = fi.Size()
+	}
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	token := newToken()
@@ -425,13 +443,13 @@ func (s *Starter) launch(ctx context.Context) error {
 		select {
 		case <-exited:
 			stopGroup(cmd.Process.Pid, exited)
-			return logcause.Errorf("ios_webkit_debug_proxy exited during its start (%v); run '%s' to see why", waitErr, ManualCommand())
+			return logcause.Errorf("ios_webkit_debug_proxy exited during its start (%v)%s; run '%s' to see why", waitErr, s.startAdvice(ctx, log.Name(), logStart, true), ManualCommand())
 		case <-ctx.Done():
 			stopGroup(cmd.Process.Pid, exited)
 			return fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
 		case <-deadline.C:
 			stopGroup(cmd.Process.Pid, exited)
-			return fmt.Errorf("the started ios_webkit_debug_proxy did not answer on %s within %s, so it was stopped; run '%s' to see why", s.addr, s.readyWait, ManualCommand())
+			return fmt.Errorf("the started ios_webkit_debug_proxy did not answer on %s within %s, so it was stopped%s; run '%s' to see why", s.addr, s.readyWait, s.startAdvice(ctx, log.Name(), logStart, false), ManualCommand())
 		case <-poll.C:
 			ok, err := s.ready(ctx, readyBy, cmd.Process.Pid)
 			if err != nil {

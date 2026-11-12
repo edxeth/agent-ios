@@ -281,6 +281,16 @@ func TestFrame(t *testing.T) {
 	}
 }
 
+// A frame without a src (srcdoc, or filled by a script) is named without
+// an empty "()" (device check of 2026-11-11).
+func TestFrameWithoutASrc(t *testing.T) {
+	fh := newFrameHarness(t)
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "", "index": 1, "frames": 2})
+	if code, out, errOut := fh.run("frame", "#doc"); code != 0 || !strings.HasPrefix(out, "frame #doc: later commands") {
+		t.Fatalf("frame #doc without a src: %d %q %q", code, out, errOut)
+	}
+}
+
 // W3b-R2 finding 2 (design 2.4: "the disable command is sent only when the
 // count reaches zero"): a frame selection while another owner holds
 // Runtime sends neither Runtime.disable nor Runtime.enable and still finds

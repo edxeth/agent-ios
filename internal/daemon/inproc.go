@@ -43,7 +43,7 @@ var inproc struct {
 func connectInProcess(ctx context.Context, o Options) (*Client, error) {
 	inproc.mu.Lock()
 	if inproc.l == nil {
-		ro := RunOptions{Dir: o.Dir, Version: o.Version, Transport: string(transport.KindIWDP), StartIWDP: o.StartIWDP, Log: os.Stderr}
+		ro := RunOptions{Dir: o.Dir, Version: o.Version, Transport: string(transport.KindIWDP), StartIWDP: o.StartIWDP, RecoverIWDP: o.RecoverIWDP, Log: os.Stderr}
 		logger := log.New(ro.Log, "iwdp (no daemon): ", log.LstdFlags|log.Lmicroseconds)
 		m, srv, tr := newCore(ro, logger.Printf)
 		l := &memListener{conns: make(chan net.Conn), done: make(chan struct{})}

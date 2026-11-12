@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
@@ -63,6 +64,12 @@ func init() {
 // committed navigation can destroy the target before it answers (design
 // 3.6), so its reply may be lost.
 const navStartBudget = time.Second
+
+// notNavigated is the end of a navigation wait in which the page kept its
+// document and its URL href.
+type notNavigated string
+
+func (n notNavigated) Error() string { return "the page did not navigate; URL is still " + string(n) }
 
 // navPoll is how often a navigation wait checks for the new document.
 const navPoll = 50 * time.Millisecond
@@ -139,7 +146,7 @@ func (w *w3bPage) navigated(ctx context.Context, mode string, m navMark) (Result
 				break
 			}
 			if time.Now().After(end) || ctx.Err() != nil {
-				return Result{}, waitTimedOut(what, "the page did not navigate; URL is still "+m.href, time.Since(start))
+				return Result{}, &core.CodedError{Code: ExitWaitTimeout, Err: fmt.Errorf("wait %s timed out after %s: %w", what, time.Since(start).Round(time.Millisecond), notNavigated(m.href))}
 			}
 			sleepUntil(ctx, earliest(time.Now().Add(navPoll), end))
 		}
@@ -213,7 +220,17 @@ func historyRun(name string, delta int) func(context.Context, Env, Input) (Resul
 		if err := w.startNav(ctx, map[string]any{"hist": delta}); err != nil {
 			return Result{}, fmt.Errorf("%s: %w", name, err)
 		}
-		return w.navigated(ctx, flagString(in, "wait"), m)
+		res, err := w.navigated(ctx, flagString(in, "wait"), m)
+		var nn notNavigated
+		if errors.As(err, &nn) {
+			// Device check of 2026-11-11 (iOS 16.7): a forward sent at
+			// once after a back across a cross-site navigation started no
+			// navigation in 2 of 5 runs, without an error. The move cannot
+			// be asked for again safely: a move that WebKit accepted and
+			// has not started yet would then move twice.
+			return Result{}, &core.CodedError{Code: ExitWaitTimeout, Err: fmt.Errorf("%w. WebKit can ignore a history move that arrives while the page still settles after another navigation; check the URL ('get url') and run '%s' again", err, name)}
+		}
+		return res, err
 	}
 }
 

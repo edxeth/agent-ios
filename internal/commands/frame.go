@@ -283,8 +283,12 @@ func runFrame(ctx context.Context, env Env, in Input) (Result, error) {
 	f.mu.Lock()
 	f.scopes[session] = frameScope{epoch: epoch, gen: p.rt.Generation(), frameID: frameID, target: t}
 	f.mu.Unlock()
+	where := " (" + info.Src + ")"
+	if info.Src == "" {
+		where = "" // a srcdoc or script-filled frame has no src to name
+	}
 	return Result{
-		Text: fmt.Sprintf("frame %s (%s): later commands of session %q work in this frame until 'frame main' or a navigation", t, info.Src, session),
+		Text: fmt.Sprintf("frame %s%s: later commands of session %q work in this frame until 'frame main' or a navigation", t, where, session),
 		Data: map[string]any{"frame": t, "src": info.Src, "frameId": frameID},
 	}, nil
 }

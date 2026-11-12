@@ -282,7 +282,9 @@ func TestRegistryDeadlineNamesCommandPageAndCauses(t *testing.T) {
 		page string // in stderr
 	}{
 		{"page flag", []string{"cookies", "--page", f.URL, "--timeout", "1s"}, "Page: " + f.URL},
-		{"session page", []string{"cookies", "--timeout", "1s"}, "Page: \""},
+		// The title is the listing's, which can be older than the page's
+		// document (device check of 2026-11-11): the message says so.
+		{"session page", []string{"cookies", "--timeout", "1s"}, "Page: \"Fixture\" (title as listed; the page may have navigated since; "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := runCLI(t, "", env, tc.args...)
