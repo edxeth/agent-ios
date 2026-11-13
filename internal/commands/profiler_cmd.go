@@ -64,7 +64,13 @@ func runProfilerStop(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	return Result{
-		Text: fmt.Sprintf("CPU profile written to %s: %s, %s.", path, nounCount(len(prof.Samples), "sample"), nounCount(len(prof.Nodes), "node")),
+		Text: profilerStopText(path, len(prof.Samples), len(prof.Nodes)),
 		Data: map[string]any{"path": path, "samples": len(prof.Samples), "nodes": len(prof.Nodes)},
 	}, nil
+}
+
+// profilerStopText is the text of profiler stop; private mode makes it
+// from the members that it prints (privateReads).
+func profilerStopText(path string, samples, nodes int) string {
+	return fmt.Sprintf("CPU profile written to %s: %s, %s.", path, nounCount(samples, "sample"), nounCount(nodes, "node"))
 }

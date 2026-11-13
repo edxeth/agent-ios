@@ -19,6 +19,8 @@ const globalOptionsHelp = `Global options (any position before "--"):
                   An unknown option or command still exits 2.
   --page <p>      The page: a tab id from 'tab list' or a ws:// URL. Default: the
                   session's tab, else the first debuggable page.
+  --only-tab      The page is the only tab of the listing; exit 5 unless the listing
+                  shows exactly one tab and no hidden page. Not with --page or a page argument.
   --session <s>   Session that holds the page lease (IWDP_SESSION; default "default").
   --reservation <owner>  Device reservation owner (IWDP_DEVICE_RESERVATION; default
                   the session). Pages of a physical device need one: 'device reserve'.
@@ -48,34 +50,38 @@ Environment:
   IWDP_WS_URL    No longer selects a page: a page command with it set and no
                  --page fails with exit 2. Name the page with --page.`
 
-// printUsage writes the overview of all commands.
-func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "iwdp-cli — iOS Safari debugging CLI")
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Usage: iwdp-cli <command> [options]")
-	_, _ = fmt.Fprintln(w, "       iwdp-cli <command> --help")
-	_, _ = fmt.Fprintln(w, "       iwdp-cli <group> --help   (lists a group's commands, for example 'network')")
-	_, _ = fmt.Fprintln(w, "\nCommands:")
+// printUsage writes the overview of all commands on w and returns the
+// error of the write.
+func printUsage(w io.Writer) error {
+	var b strings.Builder
+	b.WriteString("iwdp-cli — iOS Safari debugging CLI\n\n")
+	b.WriteString("Usage: iwdp-cli <command> [options]\n")
+	b.WriteString("       iwdp-cli <command> --help\n")
+	b.WriteString("       iwdp-cli <group> --help   (lists a group's commands, for example 'network')\n")
+	b.WriteString("\nCommands:\n")
 	for _, c := range reg.All() {
-		_, _ = fmt.Fprintf(w, "  %-*s %s\n", synopsisWidth, c.Name, c.Summary)
+		fmt.Fprintf(&b, "  %-*s %s\n", synopsisWidth, c.Name, c.Summary)
 	}
-	_, _ = fmt.Fprintf(w, "\n%s\n\n%s\n", globalOptionsHelp, footerHelp)
+	fmt.Fprintf(&b, "\n%s\n\n%s\n", globalOptionsHelp, footerHelp)
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 // printCommandHelp writes the help of the registry command name (its
 // command words, for example "network requests"), or the command list of
-// the group that name names (for example "network"). It reports false for
-// an unknown command.
-func printCommandHelp(w io.Writer, name string) bool {
+// the group that name names (for example "network"), and returns the
+// error of the write. It reports known false, and writes nothing, for an
+// unknown command.
+func printCommandHelp(w io.Writer, name string) (known bool, err error) {
 	words := strings.Fields(name)
 	c, n := reg.Lookup(words)
 	if c == nil || n != len(words) {
 		if list, ok := reg.GroupHelp(words); ok && c == nil {
-			_, _ = fmt.Fprint(w, list)
-			return true
+			_, err := io.WriteString(w, list)
+			return true, err
 		}
-		return false
+		return false, nil
 	}
-	_, _ = fmt.Fprint(w, reg.Help(c))
-	return true
+	_, err = io.WriteString(w, reg.Help(c))
+	return true, err
 }

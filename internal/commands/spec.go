@@ -30,6 +30,11 @@ type Arg struct {
 	Help     string
 	Required bool
 	Variadic bool // takes the rest of the arguments; only the last Arg
+	// Page: the argument names a page (a page key, ws:// URL, tab id or
+	// label, or part of a title or URL). --only-tab names the page of the
+	// command, so it refuses the argument (CheckPageArgs), as it refuses
+	// --page.
+	Page bool
 }
 
 // Flag is a typed command flag.
@@ -69,6 +74,7 @@ type Command struct {
 	Args      []Arg
 	Flags     []Flag
 	Page      PageNeed
+	ReadsPage bool // with Page NoPage: reads --page itself (get cdp-url); the daemon resolves --only-tab for it
 	Mutates   bool // serialized per page when true; ref allocation counts as a mutation
 	RetrySafe bool // only pure reads may be retried (design 2.6)
 	Timeout   time.Duration
@@ -112,6 +118,7 @@ type RemoteEnv interface {
 type Globals struct {
 	Session           string        // --session, IWDP_SESSION; default "default" (D8)
 	Page              string        // --page
+	OnlyTab           bool          // --only-tab: the only tab of the listing (never with --page)
 	Timeout           time.Duration // --timeout; 0: the command's default
 	JSON              bool          // --json
 	Transport         string        // --transport auto|iwdp|direct|webkitgtk
@@ -120,6 +127,7 @@ type Globals struct {
 	Reservation       string        // --reservation, IWDP_DEVICE_RESERVATION: device reservation owner (design 2.5)
 	WaitLease         time.Duration // --wait-lease: wait this long for another session's lease
 	Takeover          bool          // --takeover: reattach a lost page (needs the reservation)
+	Private           bool          // --private, IWDP_PRIVATE: print no title, URL, device, session or error text (private.go)
 }
 
 // Input is a parsed invocation of a command.

@@ -94,11 +94,18 @@ type Item struct {
 // clock (the monotonic reading does not cross the socket); a step of
 // that clock while a request is in flight shifts its deadline by the
 // step. That limit is accepted.
+//
+// OnlyTab is --only-tab: the daemon runs the command on the only tab of
+// the listing (core.Manager.OnlyTab), and a request with OnlyTab and a
+// Page is a usage error. A client sends requests only to a daemon of its
+// own executable (reusable), so no daemon of another build reads this
+// request; Protocol stays 2.
 type RunRequest struct {
 	Argv     []string  `json:"argv"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Cwd      string    `json:"cwd"`
 	JSON     bool      `json:"json,omitempty"`
+	OnlyTab  bool      `json:"onlyTab,omitempty"`
 	PageReq
 	Owner
 }

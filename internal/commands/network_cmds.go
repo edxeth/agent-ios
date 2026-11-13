@@ -85,10 +85,13 @@ func netlogFor(ctx context.Context, d devtoolsCmd) (*devtools.Netlog, string, er
 		return nil, "", err
 	}
 	if started {
-		return n, "(the network capture started now; requests made before it are not in the log)", nil
+		return n, netlogStartedNote, nil
 	}
 	return n, "", nil
 }
+
+// netlogStartedNote is the note of netlogFor when the capture started now.
+const netlogStartedNote = "(the network capture started now; requests made before it are not in the log)"
 
 func runNetworkRequests(ctx context.Context, env Env, in Input) (Result, error) {
 	d, err := devtoolsForCommand(ctx, env)
@@ -108,6 +111,18 @@ func runNetworkRequests(ctx context.Context, env Env, in Input) (Result, error) 
 			snap.Requests[i] = maskRequest(r)
 		}
 	}
+	text := requestsText(note, snap)
+	if snap.Requests == nil {
+		snap.Requests = []devtools.Request{}
+	}
+	return Result{Text: text, Data: snap}, nil
+}
+
+// requestsText is the text of network requests: the note of netlogFor
+// ("" for none), the number of dropped requests, and one line per request
+// and per gap, in order. Private mode makes it from the members that it
+// prints (privateReads).
+func requestsText(note string, snap devtools.Snapshot) string {
 	lines := []string{}
 	if note != "" {
 		lines = append(lines, note)
@@ -129,10 +144,7 @@ func runNetworkRequests(ctx context.Context, env Env, in Input) (Result, error) 
 	if len(snap.Requests) == 0 {
 		lines = append(lines, "No requests.")
 	}
-	if snap.Requests == nil {
-		snap.Requests = []devtools.Request{}
-	}
-	return Result{Text: strings.Join(lines, "\n"), Data: snap}, nil
+	return strings.Join(lines, "\n")
 }
 
 // requestLine is "id METHOD status type URL"; the status is the HTTP
@@ -184,6 +196,36 @@ func runNetworkRequest(ctx context.Context, env Env, in Input) (Result, error) {
 		r = maskRequest(r)
 	}
 	var b strings.Builder
+	b.WriteString(requestHead(r))
+	data := map[string]any{"request": r}
+	if flagBool(in, "body") {
+		raw, b64, err := n.Body(ctx, d.c, id)
+		if err != nil {
+			return Result{}, err
+		}
+		body, err := devtools.DecodedBody(raw, b64)
+		if err != nil {
+			return Result{}, fmt.Errorf("network request %s: decoding the base64 body: %w", id, err)
+		}
+		if !utf8.Valid(body) || show {
+			b.WriteString(bodyText(body))
+			data["body"], data["base64Encoded"] = string(raw), b64
+		} else {
+			masked := devtools.MaskBody(r.MimeType, string(body))
+			b.WriteString(bodyText([]byte(masked)))
+			data["body"], data["base64Encoded"] = masked, false
+		}
+	}
+	return Result{Text: strings.TrimRight(b.String(), "\n"), Data: data}, nil
+}
+
+// requestHead is the text of network request without the body: the
+// method and URL, the status, WebKit's error text, the type, the headers,
+// the request body and why the response body is gone. Private mode makes
+// it from the members that it prints, which have no error text
+// (privateRequest).
+func requestHead(r devtools.Request) string {
+	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s\n", r.Method, r.URL)
 	status := r.State
 	if r.Status != 0 {
@@ -204,31 +246,16 @@ func runNetworkRequest(ctx context.Context, env Env, in Input) (Result, error) {
 	if r.BodyGone != "" {
 		fmt.Fprintf(&b, "Note: %s\n", r.BodyGone)
 	}
-	data := map[string]any{"request": r}
-	if flagBool(in, "body") {
-		raw, b64, err := n.Body(ctx, d.c, id)
-		if err != nil {
-			return Result{}, err
-		}
-		body, err := devtools.DecodedBody(raw, b64)
-		if err != nil {
-			return Result{}, fmt.Errorf("network request %s: decoding the base64 body: %w", id, err)
-		}
-		switch {
-		case !utf8.Valid(body):
-			fmt.Fprintf(&b, "Body: %d bytes of binary data (use --json for base64)\n", len(body))
-		case show:
-			fmt.Fprintf(&b, "Body:\n%s\n", body)
-		default:
-			fmt.Fprintf(&b, "Body:\n%s\n", devtools.MaskBody(r.MimeType, string(body)))
-		}
-		if !utf8.Valid(body) || show {
-			data["body"], data["base64Encoded"] = string(raw), b64
-		} else {
-			data["body"], data["base64Encoded"] = devtools.MaskBody(r.MimeType, string(body)), false
-		}
+	return b.String()
+}
+
+// bodyText is the response body in the text of network request: the body,
+// or its length when it is not UTF-8 text.
+func bodyText(body []byte) string {
+	if !utf8.Valid(body) {
+		return fmt.Sprintf("Body: %d bytes of binary data (use --json for base64)\n", len(body))
 	}
-	return Result{Text: strings.TrimRight(b.String(), "\n"), Data: data}, nil
+	return fmt.Sprintf("Body:\n%s\n", body)
 }
 
 // maskRequest returns r with the secret values that listings mask by

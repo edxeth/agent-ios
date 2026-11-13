@@ -35,15 +35,7 @@ func init() {
 			if err != nil {
 				return Result{}, err
 			}
-			width := 0
-			for _, s := range list {
-				width = max(width, len(s.Name))
-			}
-			var b strings.Builder
-			for _, s := range list {
-				fmt.Fprintf(&b, "  %-*s  %s\n", width, s.Name, shorten(s.Description, listDescriptionRunes))
-			}
-			return Result{Text: strings.TrimRight(b.String(), "\n"), Data: list}, nil
+			return Result{Text: skillsListText(list), Data: list}, nil
 		},
 	})
 	Register(&Command{
@@ -68,11 +60,7 @@ func init() {
 					out = append(out, s)
 				}
 			}
-			texts := make([]string, len(out))
-			for i, s := range out {
-				texts[i] = strings.TrimRight(s.Content, "\n")
-			}
-			return Result{Text: strings.Join(texts, "\n\n"), Data: out}, nil
+			return Result{Text: skillsGetText(out), Data: out}, nil
 		},
 	})
 	Register(&Command{
@@ -97,6 +85,32 @@ func init() {
 			return Result{Text: dir, Data: map[string]string{"path": dir}}, nil
 		},
 	})
+}
+
+// skillsListText is the text of skills list: one line per skill with its
+// name and its shortened description. Private mode makes it from the
+// members that it prints (privateReads).
+func skillsListText(list []skills.Skill) string {
+	width := 0
+	for _, s := range list {
+		width = max(width, len(s.Name))
+	}
+	var b strings.Builder
+	for _, s := range list {
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, s.Name, shorten(s.Description, listDescriptionRunes))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// skillsGetText is the text of skills get: the content of each skill, an
+// empty line between two. Private mode makes it from the members that it
+// prints (privateReads).
+func skillsGetText(list []skills.Skill) string {
+	texts := make([]string, len(list))
+	for i, s := range list {
+		texts[i] = strings.TrimRight(s.Content, "\n")
+	}
+	return strings.Join(texts, "\n\n")
 }
 
 // shorten cuts s to at most n runes at a word boundary and adds "...".

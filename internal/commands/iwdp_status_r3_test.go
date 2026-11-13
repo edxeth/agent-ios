@@ -8,10 +8,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -108,5 +110,75 @@ func TestStatusOfABrokenListingTakesTheOutputFlags(t *testing.T) {
 	m := boundedText.FindStringSubmatch(out)
 	if code != ExitError || m == nil || !strings.HasPrefix(m[2], "iwdp log of an iwdp that iwdp-cli starts: ") || !strings.Contains(stderr, "HTTP 500") {
 		t.Errorf("status --content-boundaries on a broken listing: exit %d, stdout %q, stderr %q; want exit 1, the marked log line and the HTTP status", code, out, stderr)
+	}
+}
+
+// status counts the devices of the listing without iwdp's SIMULATOR
+// entry, with one more read of the listing that starts nothing. Private
+// mode prints the count and no identifier (review of 2026-11-13, F14 and
+// F17: a caller that may not restart iwdp learns whether a device is
+// there before any command that can recover one).
+func TestStatusCountsTheListedDevices(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `[{"deviceId":"SIMULATOR","deviceName":"SIMULATOR","url":"127.0.0.1:9225"},{"deviceId":"%s-udid","deviceName":"Phone of %s","url":"127.0.0.1:9224"}]`, privateMarker, privateMarker)
+	}))
+	t.Cleanup(srv.Close)
+	useStatusListing(t, strings.TrimPrefix(srv.URL, "http://"))
+	code, out, errOut := runStatusCLI("--private", "status")
+	if code != ExitOK || out != "iwdp answers: true\ndevices 1\n" || errOut != "status exit 0\n" {
+		t.Fatalf("--private status: exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	code, out, _ = runStatusCLI("status")
+	if code != ExitOK || !strings.Contains(out, "ios_webkit_debug_proxy is running\ndevices: 1\n") || strings.Contains(out, privateMarker) {
+		t.Fatalf("status: exit %d, stdout %q; want the count and no identifier", code, out)
+	}
+}
+
+// A status without a count is no success: iwdp answered the check and then
+// not the read of its devices. A caller that stops on "devices 0" would go
+// on to a command that can restart iwdp (review of 2026-11-13, F19).
+func TestStatusFailsWhenTheDeviceListCannotBeRead(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	var gets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if gets.Add(1)%2 == 1 { // the check of the listing
+			_, _ = fmt.Fprint(w, "[]")
+			return
+		}
+		http.Error(w, "broken "+privateMarker, http.StatusInternalServerError) // the read of the devices
+	}))
+	t.Cleanup(srv.Close)
+	useStatusListing(t, strings.TrimPrefix(srv.URL, "http://"))
+	code, out, errOut := runStatusCLI("--private", "status")
+	if want := "status exit 1: the command failed (private mode hides the message)\n"; code != ExitError || out != "iwdp answers: true\n" || errOut != want {
+		t.Fatalf("--private status: exit %d, stdout %q, stderr %q; want exit 1, no count and %q", code, out, errOut, want)
+	}
+	code, out, errOut = runStatusCLI("status")
+	if code != ExitError || !strings.Contains(out, "its device list could not be read") || strings.Contains(out, "devices:") || !strings.Contains(errOut, "reading the device list") {
+		t.Fatalf("status: exit %d, stdout %q, stderr %q; want exit 1, no count and the error of the read", code, out, errOut)
+	}
+	if got := gets.Load(); got != 4 {
+		t.Fatalf("the listing got %d requests; want a check and a read for each of the 2 commands", got)
+	}
+}
+
+// A command that fails with a result (status) and cannot write that result
+// still prints exactly one status line in private mode, that of its own
+// error (review of 2026-11-13, F20). Without the mode both errors print,
+// as before.
+func TestAFailedCommandThatCannotWriteItsResultPrintsOnePrivateLine(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	useStatusListing(t, freeLoopbackAddr(t)) // nothing listens: status fails with a result
+	env := func(context.Context, *Invocation) (Env, error) { return emitEnv{w: io.Discard}, nil }
+	var errOut bytes.Buffer
+	code := RunCLIStarted(context.Background(), []string{"--private", "status"}, failingWriter{}, &errOut, nil, env)
+	if want := "status exit 1: the command failed (private mode hides the message)\n"; code != ExitError || errOut.String() != want {
+		t.Fatalf("--private status: exit %d, stderr %q; want exit 1 and only %q", code, errOut.String(), want)
+	}
+	errOut.Reset()
+	code = RunCLIStarted(context.Background(), []string{"status"}, failingWriter{}, &errOut, nil, env)
+	if code != ExitError || !strings.Contains(errOut.String(), "Error: writing the result: write refused") || !strings.Contains(errOut.String(), "ios_webkit_debug_proxy is not running.") {
+		t.Fatalf("status: exit %d, stderr %q; want exit 1, the error of the write and the error of the command", code, errOut.String())
 	}
 }

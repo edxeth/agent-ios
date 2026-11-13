@@ -39,11 +39,13 @@ var inproc struct {
 
 // connectInProcess returns a client of the in-process core. Its API
 // requests run over in-memory connections to the same Server that a daemon
-// runs.
+// runs. The core logs where this process's standard logger writes when
+// the core starts (log.Writer): stderr, unless the process drops its log,
+// as the CLI does in private mode.
 func connectInProcess(ctx context.Context, o Options) (*Client, error) {
 	inproc.mu.Lock()
 	if inproc.l == nil {
-		ro := RunOptions{Dir: o.Dir, Version: o.Version, Transport: string(transport.KindIWDP), StartIWDP: o.StartIWDP, RecoverIWDP: o.RecoverIWDP, Log: os.Stderr}
+		ro := RunOptions{Dir: o.Dir, Version: o.Version, Transport: string(transport.KindIWDP), StartIWDP: o.StartIWDP, RecoverIWDP: o.RecoverIWDP, Log: log.Writer()}
 		logger := log.New(ro.Log, "iwdp (no daemon): ", log.LstdFlags|log.Lmicroseconds)
 		m, srv, tr := newCore(ro, logger.Printf)
 		l := &memListener{conns: make(chan net.Conn), done: make(chan struct{})}

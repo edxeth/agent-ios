@@ -103,6 +103,10 @@ type shotLabel struct {
 	Name string `json:"name"`
 }
 
+// line is the label in the text of screenshot; private mode makes it from
+// the members that it prints (privateReads).
+func (l shotLabel) line() string { return fmt.Sprintf("[%d] @%s %s %q", l.N, l.Ref, l.Role, l.Name) }
+
 func runScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
 	out, full, sel, err := screenshotOptions(in)
 	if err != nil {
@@ -174,7 +178,7 @@ func runScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	lines := []string{fmt.Sprintf("Screenshot saved to %s (%s)", path, size)}
 	for _, l := range labels {
-		lines = append(lines, fmt.Sprintf("[%d] @%s %s %q", l.N, l.Ref, l.Role, l.Name))
+		lines = append(lines, l.line())
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"path": path, "sha256": hash, "labels": labels}}, nil
 }

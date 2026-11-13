@@ -82,12 +82,19 @@ func runHARStop(ctx context.Context, env Env, in Input) (Result, error) {
 	if err := devtools.WritePrivateFile(path, data); err != nil {
 		return Result{}, err
 	}
+	return Result{
+		Text: harStopText(len(har.Log.Entries), path, show),
+		Data: map[string]any{"path": path, "entries": len(har.Log.Entries)},
+	}, nil
+}
+
+// harStopText is the text of network har stop; show says whether secret
+// values were kept. Private mode makes it from the members that it prints
+// (privateReads).
+func harStopText(entries int, path string, show bool) string {
 	masked := "secret values masked; --show-secrets keeps them"
 	if show {
 		masked = "secret values kept"
 	}
-	return Result{
-		Text: fmt.Sprintf("Wrote %d entries to %s (%s).", len(har.Log.Entries), path, masked),
-		Data: map[string]any{"path": path, "entries": len(har.Log.Entries)},
-	}, nil
+	return fmt.Sprintf("Wrote %d entries to %s (%s).", entries, path, masked)
 }

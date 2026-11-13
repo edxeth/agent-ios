@@ -7,7 +7,7 @@ This page lists every registry command of `iwdp-cli`: the commands that run in t
 - `iwdp-cli` runs only these commands. [The migration notes](migration.md) map each removed command of earlier versions (for example `pages`, `set-breakpoint`, `get-matched-styles`) to its registry command, or say that it was removed.
 - `iwdp-cli <command> --help` prints the same usage and never connects to a page.
 
-Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--transport`, `--max-output`, `--content-boundaries`, `--reservation`, `--wait-lease`, `--takeover`.
+Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `--json`, `--transport`, `--max-output`, `--content-boundaries`, `--reservation`, `--wait-lease`, `--takeover`, `--private`.
 
 ## Index
 
@@ -99,11 +99,12 @@ Global flags (any position): `--session`, `--page`, `--timeout`, `--json`, `--tr
 | [`snapshot`](#snapshot) | Print the page's accessibility tree with @eN refs for later commands. |
 | [`state load`](#state-load) | Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's. |
 | [`state save`](#state-save) | Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials). |
-| [`status`](#status) | Check whether ios_webkit_debug_proxy answers on its listing address, and name the log of an iwdp that iwdp-cli starts. Exits 1 when it does not answer. |
+| [`status`](#status) | Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that iwdp-cli starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read. |
 | [`storage`](#storage) | Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session). |
 | [`swipe`](#swipe) | Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down). |
 | [`tab`](#tab) | Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs. |
 | [`tab close`](#tab-close) | Close a tab (default: the current one) with window.close(); works only for tabs that a script opened. |
+| [`tab find`](#tab-find) | Print the id of the tab whose page shows exactly this URL (query and fragment included), compared inside the page. It only reads: it navigates and selects nothing. The session keeps the lease of the tab that the command prints, as after any read of that tab, and no lease that only the command used on another tab. Exit 7 when no tab shows the URL; exit 1 when several do or a tab could not be read; exit 6 when the listing hides pages of a device that the caller has not reserved. |
 | [`tab list`](#tab-list) | List the pages of the device as tabs t1, t2, ... with labels; \* marks this session's current tab. |
 | [`tab new`](#tab-new) | Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end. |
 | [`tap`](#tap) | Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and touchend, then the click sequence with pointerType touch. |
@@ -975,7 +976,7 @@ Remove the routes with this pattern (all without one); requests that a route hol
 ### `open`
 
 ```
-iwdp-cli open <url> [flags]
+iwdp-cli open [<url>] [flags]
 ```
 
 Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open).
@@ -985,11 +986,12 @@ Open a URL in the page (location.href), then wait for the load state; a URL that
 
 | Argument | Required | Description |
 |---|---|---|
-| `<url>` | yes | the URL to open |
+| `<url>` | no | the URL to open; or --url-file |
 
 | Flag | Value | Description |
 |---|---|---|
 | `--wait` | `load`, `domcontentloaded`, `none` | after the navigation, wait for this load state of the new document (none: return at once) (default `load`) |
+| `--url-file` | file path | read the URL from this file (one line), so the URL is not on the command line |
 
 ### `press`
 
@@ -1451,7 +1453,7 @@ Save the cookies, localStorage and sessionStorage of the page's current origin t
 iwdp-cli status
 ```
 
-Check whether ios_webkit_debug_proxy answers on its listing address, and name the log of an iwdp that iwdp-cli starts. Exits 1 when it does not answer.
+Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that iwdp-cli starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read.
 
 - Page: none; runs in the client process, not in the daemon
 
@@ -1523,6 +1525,24 @@ Close a tab (default: the current one) with window.close(); works only for tabs 
 | Argument | Required | Description |
 |---|---|---|
 | `<id>` | no | tab id (tN) or label; default: the current tab |
+
+### `tab find`
+
+```
+iwdp-cli tab find [<url>] [flags]
+```
+
+Print the id of the tab whose page shows exactly this URL (query and fragment included), compared inside the page. It only reads: it navigates and selects nothing. The session keeps the lease of the tab that the command prints, as after any read of that tab, and no lease that only the command used on another tab. Exit 7 when no tab shows the URL; exit 1 when several do or a tab could not be read; exit 6 when the listing hides pages of a device that the caller has not reserved.
+
+- Page: none
+
+| Argument | Required | Description |
+|---|---|---|
+| `<url>` | no | the URL to find; or --url-file |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--url-file` | file path | read the URL from this file (one line), so the URL is not on the command line |
 
 ### `tab list`
 

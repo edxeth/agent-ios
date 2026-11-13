@@ -95,6 +95,7 @@ func parseTimeout(name, v string) (time.Duration, error) {
 var globalSpecs = []globalSpec{
 	{"--session", true, func(g *Globals, v string) error { g.Session = v; return nil }},
 	{"--page", true, func(g *Globals, v string) error { g.Page = v; return nil }},
+	{"--only-tab", false, boolGlobal("--only-tab", func(g *Globals, b bool) { g.OnlyTab = b })},
 	{"--timeout", true, func(g *Globals, v string) (err error) {
 		g.Timeout, err = parseTimeout("--timeout", v)
 		return err
@@ -123,6 +124,7 @@ var globalSpecs = []globalSpec{
 		return err
 	}},
 	{"--takeover", false, boolGlobal("--takeover", func(g *Globals, b bool) { g.Takeover = b })},
+	{"--private", false, boolGlobal("--private", func(g *Globals, b bool) { g.Private = b })},
 }
 
 // boolGlobal is the setter of the boolean global option name: "--name"
@@ -139,6 +141,33 @@ func boolGlobal(name string, set func(g *Globals, b bool)) func(*Globals, string
 		set(g, b)
 		return nil
 	}
+}
+
+// CheckPageGlobals refuses --only-tab together with --page: both name the
+// page of the command. Parse and the daemon (for a request that carries
+// both) return its usage error (exit 2) before any page work.
+func CheckPageGlobals(g Globals) error {
+	if g.OnlyTab && g.Page != "" {
+		return &UsageError{fmt.Sprintf("--only-tab and --page %q both name the page; pass one of them", g.Page)}
+	}
+	return nil
+}
+
+// CheckPageArgs refuses --only-tab together with an argument of c that
+// names a page (Arg.Page): both name the page, and the argument would
+// override the one tab that --only-tab checked. Parse and the daemon (for
+// a request with --only-tab, which is not in its Argv) return its usage
+// error (exit 2) before any page work.
+func CheckPageArgs(c *Command, in Input) error {
+	if !in.Global.OnlyTab {
+		return nil
+	}
+	for i, a := range c.Args {
+		if a.Page && i < len(in.Args) {
+			return &UsageError{fmt.Sprintf("%s: --only-tab and the <%s> argument %q both name the page; pass one of them", c.Name, a.Name, in.Args[i])}
+		}
+	}
+	return nil
 }
 
 func globalFlag(name string) *globalSpec {
@@ -162,8 +191,8 @@ type Invocation struct {
 
 // Parse parses a registry command line: global flags anywhere before "--",
 // the command path, then its flags and arguments. It never connects to
-// anything. env supplies IWDP_SESSION, IWDP_TRANSPORT and IWDP_TIMEOUT
-// defaults; the flags override them.
+// anything. env supplies IWDP_SESSION, IWDP_TRANSPORT, IWDP_TIMEOUT and
+// IWDP_PRIVATE defaults; the flags override them.
 func Parse(args []string, env func(string) string) (*Invocation, error) {
 	g := Globals{Session: "default", Transport: "auto"}
 	if v := env("IWDP_SESSION"); v != "" {
@@ -180,8 +209,18 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 		}
 		g.Timeout = d
 	}
+	if v := env(privateEnv); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, &UsageError{fmt.Sprintf("%s %q: want true or false (or 1, t, T, TRUE, True, 0, f, F, FALSE, False)", privateEnv, v)}
+		}
+		g.Private = b
+	}
 	rest, help, err := splitGlobals(args, &g)
 	if err != nil {
+		return nil, err
+	}
+	if err := CheckPageGlobals(g); err != nil {
 		return nil, err
 	}
 	// An unknown long option or an unknown command is a usage error also
@@ -228,6 +267,9 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 	}
 	if err := parseCommand(c, rest[n:], &inv.Input); err != nil {
 		return nil, &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
+	}
+	if err := CheckPageArgs(c, inv.Input); err != nil {
+		return nil, err
 	}
 	if err := checkValues(c, inv.Input); err != nil {
 		return nil, err
@@ -512,7 +554,7 @@ func Help(c *Command) string {
 			fmt.Fprintf(&b, "  %-22s %s\n", n, h)
 		}
 	}
-	b.WriteString("\nGlobal flags: --session, --page, --timeout, --json, --transport, --max-output, --content-boundaries,\n  --reservation, --wait-lease, --takeover\n")
+	b.WriteString("\nGlobal flags: --session, --page, --only-tab, --timeout, --json, --transport, --max-output,\n  --content-boundaries, --reservation, --wait-lease, --takeover, --private\n")
 	return b.String()
 }
 
@@ -549,38 +591,174 @@ func Usage() string {
 
 // ErrInterrupted is the cause with which the caller of RunCLIStarted
 // cancels ctx when a signal (SIGINT or SIGTERM) ends the command. The
-// caller exits 130 for the signal; RunCLIStarted prints no error for a
-// command that the signal ended.
+// caller exits ExitInterrupted for the signal; RunCLIStarted prints no
+// error for a command that the signal ended.
 var ErrInterrupted = errors.New("interrupted by a signal")
 
-// RunCLIStarted parses args and runs the command. Help and usage errors
-// are handled before newEnv is called, so they never connect to anything.
-// The command deadline (commandTimeout; an earlier deadline of ctx stays)
-// is fixed before newEnv, so it covers building the environment and the
-// run. start, when not nil, is called once the command's deadline is
-// fixed, before the command's ClientStep and newEnv. The DeadlineReporter that start returns (nil: none) explains a
-// deadline error of every later stage: the ClientStep (for example a
-// read of the standard input), building the environment (for example
-// connecting to or starting the daemon) and the run.
-func RunCLIStarted(ctx context.Context, args []string, stdout, stderr io.Writer, start func(context.Context, *Invocation) DeadlineReporter, newEnv func(context.Context, *Invocation) (Env, error)) int {
+// ExitInterrupted is the exit code of a command that a signal (SIGINT or
+// SIGTERM) ended: 128 + SIGINT, as shells report it.
+const ExitInterrupted = 130
+
+// Outcome is how one run of iwdp-cli ends: its exit code and the text
+// that stderr gets last. Every exit path of the CLI ends with one
+// Outcome, and Line is the one decision of that text, so that private
+// mode prints exactly one status line on every path: a registry command
+// (RunCLIOutcome), help and usage errors, and the ends that the process
+// decides itself (a signal, the deadline watchdog; cmd/iwdp-cli).
+type Outcome struct {
+	// Command is the command, or the words of the command group, that the
+	// line names; "" when it names none (the overview, a line that Parse
+	// refused). It is a registry name, never an argument.
+	Command string
+	Code    int
+	// Private is private mode (--private, IWDP_PRIVATE; privateRequested
+	// for a line that Parse refused).
+	Private bool
+	// Status is the status line of a command that succeeded in private
+	// mode (privateResult); "" means "<Command> exit 0".
+	Status string
+	// Message is what stderr gets last without private mode: the error,
+	// which can have several lines, or "" for nothing. It can name a page
+	// or repeat an argument, so private mode never prints it.
+	Message string
+}
+
+// Line returns the text that stderr gets last, "" for none. In private
+// mode it is exactly one status line, made of the command and the exit
+// code only: Status or "<command> exit 0" for a success, privateErrorLine
+// for a failure. Without private mode it is Message.
+func (o Outcome) Line() string {
+	switch {
+	case !o.Private:
+		return o.Message
+	case o.Code != ExitOK:
+		return privateErrorLine(o.Command, o.Code)
+	case o.Status != "":
+		return o.Status
+	case o.Command != "":
+		return o.Command + " exit 0"
+	}
+	return "iwdp-cli exit 0"
+}
+
+// Print writes Line and a newline on w; it writes nothing for an empty
+// Line.
+func (o Outcome) Print(w io.Writer) {
+	if line := o.Line(); line != "" {
+		_, _ = fmt.Fprintln(w, line) // nothing to do when stderr fails
+	}
+}
+
+// WriteFailed returns the end of the run o whose output what ("result",
+// "help", "output") could not be written on stdout (err): a success
+// becomes exit 1 with the line "Error: writing the <what>: <err>"; a
+// failure keeps its exit code, and that line comes first in its message.
+// In private mode Line prints only the status line of the exit code.
+func (o Outcome) WriteFailed(what string, err error) Outcome {
+	line := fmt.Sprintf("Error: writing the %s: %v", what, err)
+	if o.Code == ExitOK {
+		return Outcome{Command: o.Command, Code: ExitError, Private: o.Private, Message: line}
+	}
+	o.Message = strings.TrimSuffix(line+"\n"+o.Message, "\n")
+	return o
+}
+
+// DaemonRun is the command that runs the daemon in the foreground
+// (internal/daemon registers it). Private mode never applies to it
+// (privateRun).
+const DaemonRun = "daemon run"
+
+// PrivateRequested reports whether the run of the command line args, with
+// the environment of this process, is in private mode (privateRun). main
+// calls it first, before any output or work, to install what private mode
+// needs at the process boundary.
+func PrivateRequested(args []string) bool {
 	inv, err := Parse(args, os.Getenv)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
-		return ExitCodeOf(err)
+		inv = nil
+	}
+	return privateRun(args, inv)
+}
+
+// privateRun decides private mode for the run of the command line args,
+// which Parse read as inv (nil: Parse refused the line). Every run gets
+// its mode here: the process boundary (PrivateRequested) and
+// RunCLIOutcome.
+//
+// A line that Parse refused, and a help request, have no parsed options:
+// privateRequested reads them as Parse does. A command runs in the mode of
+// its options (--private, IWDP_PRIVATE), with one rule:
+//
+// Private mode is a mode of the output of a client command, and "daemon
+// run" is not a client command: it is the daemon itself. A client starts
+// it on demand with the client's environment, so IWDP_PRIVATE=1 reaches
+// it, and its stderr is the daemon's log, which has its own policy of
+// safe arguments (internal/logsafe). So private mode never applies to a
+// run of "daemon run": with --private or IWDP_PRIVATE=1 it logs on
+// stderr, prints no status line and exits as without them. Its help, and
+// a line of its words that Parse refuses, are output of the client and
+// stay in private mode.
+func privateRun(args []string, inv *Invocation) bool {
+	switch {
+	case inv == nil || inv.Help || inv.Cmd == nil:
+		return privateRequested(args, os.Getenv)
+	case inv.Cmd.Name == DaemonRun:
+		return false
+	}
+	return inv.Input.Global.Private
+}
+
+// RunCLIStarted runs the command line args (RunCLIOutcome), prints its
+// end on stderr (Outcome.Print) and returns its exit code.
+func RunCLIStarted(ctx context.Context, args []string, stdout, stderr io.Writer, start func(context.Context, *Invocation) DeadlineReporter, newEnv func(context.Context, *Invocation) (Env, error)) int {
+	o := RunCLIOutcome(ctx, args, stdout, start, newEnv)
+	o.Print(stderr)
+	return o.Code
+}
+
+// RunCLIOutcome parses args and runs the command. It prints the result on
+// stdout and returns how the run ends; it prints nothing on stderr, so
+// that the caller prints the end once (Outcome.Print), after anything
+// else that it does at the exit. Help and usage errors are handled before
+// newEnv is called, so they never connect to anything. The command
+// deadline (commandTimeout; an earlier deadline of ctx stays) is fixed
+// before newEnv, so it covers building the environment and the run.
+// start, when not nil, is called once the command's deadline is fixed,
+// before the command's ClientStep and newEnv. The DeadlineReporter that
+// start returns (nil: none) explains a deadline error of every later
+// stage: the ClientStep (for example a read of the standard input),
+// building the environment (for example connecting to or starting the
+// daemon) and the run.
+func RunCLIOutcome(ctx context.Context, args []string, stdout io.Writer, start func(context.Context, *Invocation) DeadlineReporter, newEnv func(context.Context, *Invocation) (Env, error)) Outcome {
+	inv, err := Parse(args, os.Getenv)
+	if err != nil {
+		// A usage error can repeat an argument, and an argument can be a
+		// URL: the line names no command in private mode.
+		return Outcome{Code: ExitCodeOf(err), Private: privateRun(args, nil), Message: fmt.Sprintf("Error: %v", err)}
 	}
 	if inv.Help || inv.Cmd == nil {
-		if inv.Cmd != nil {
-			_, _ = fmt.Fprint(stdout, Help(inv.Cmd))
-		} else if inv.Group != "" {
-			_, _ = fmt.Fprint(stdout, inv.Group)
-		} else {
-			_, _ = fmt.Fprint(stdout, Usage())
+		// A help request without a command has no parsed options. Parse
+		// accepted the line, so privateRequested reads its options as
+		// Parse did (TestPrivateRequestedAgreesWithTheParser), also for
+		// the help of a command.
+		o := Outcome{Private: privateRun(args, inv)}
+		var help string
+		switch {
+		case inv.Cmd != nil:
+			o.Command, help = inv.Cmd.Name, Help(inv.Cmd)
+		case inv.Group != "":
+			o.Command, help = groupWords(args), inv.Group
+		default:
+			help = Usage()
 		}
-		return ExitOK
+		if _, err := io.WriteString(stdout, help); err != nil {
+			return o.WriteFailed("help", err)
+		}
+		return o
 	}
+	private := privateRun(args, inv)
 	if err := refusePageURLEnv(inv); err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err) // nothing to do when stderr fails
-		return ExitCodeOf(err)
+		return Outcome{Command: inv.Cmd.Name, Code: ExitCodeOf(err), Private: private, Message: fmt.Sprintf("Error: %v", err)}
 	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout(inv.Cmd, inv.Input.Global))
 	defer cancel()
@@ -588,21 +766,33 @@ func RunCLIStarted(ctx context.Context, args []string, stdout, stderr io.Writer,
 	if start != nil {
 		reporter = start(ctx, inv)
 	}
-	// fail prints the error of a stage and returns its exit code: nothing
-	// after a signal's cancellation, the reporter's deadline message when
-	// the deadline ended the stage, else line (the error line).
-	fail := func(err error, line string) int {
+	// fail is the end of a stage that failed with err: its exit code and
+	// line (the error line), the reporter's deadline message in its place
+	// when the deadline ended the stage, and no message after a signal's
+	// cancellation. Private mode prints neither message (Outcome.Line):
+	// the deadline message names the page, and an error line can.
+	fail := func(err error, line string) Outcome {
+		o := Outcome{Command: inv.Cmd.Name, Code: ExitCodeOf(err), Private: private, Message: line}
 		if errors.Is(context.Cause(ctx), ErrInterrupted) {
-			return ExitCodeOf(err)
+			o.Message = ""
+			return o
 		}
 		if reporter != nil {
 			if msg, hit := reporter.DeadlineMessage(err); hit {
-				_, _ = fmt.Fprintln(stderr, msg) // nothing to do when stderr fails
-				return ExitTimeout
+				o.Code, o.Message = ExitTimeout, msg
 			}
 		}
-		_, _ = fmt.Fprintln(stderr, line) // nothing to do when stderr fails
-		return ExitCodeOf(err)
+		return o
+	}
+	// write prints the result on stdout as this mode prints it: in private
+	// mode what privateResult allows. It returns the status line of
+	// private mode for a command that succeeded; it prints nothing on
+	// stderr.
+	write := func(res Result) (status string, err error) {
+		if private {
+			res, status = privateResult(inv.Cmd, res)
+		}
+		return status, writeResult(stdout, res, inv.Input.Global)
 	}
 	if inv.Cmd.ClientStep != nil {
 		if err := inv.Cmd.ClientStep(ctx, &inv.Input, os.Stdin); err != nil {
@@ -614,21 +804,34 @@ func RunCLIStarted(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return fail(err, fmt.Sprintf("Error: %v", err))
 	}
 	res, err := run(ctx, env, inv.Cmd, inv.Input)
+	hasResult := err == nil
 	var wr *withResult
 	if errors.As(err, &wr) {
-		if werr := writeResult(stdout, wr.Result, inv.Input.Global); werr != nil {
-			_, _ = fmt.Fprintf(stderr, "Error: writing the result: %v\n", werr) // nothing to do when stderr fails; Err follows
-		}
-		err = wr.Err
+		res, err, hasResult = wr.Result, wr.Err, true
 	}
+	var status string
+	var werr error
+	if hasResult {
+		status, werr = write(res)
+	}
+	// The error of the command decides the exit code, then a result that
+	// could not be written (exit 1), then the success; without private
+	// mode the error of the write comes first in the message.
+	o := Outcome{Command: inv.Cmd.Name, Code: ExitOK, Private: private, Status: status}
 	if err != nil {
-		return fail(err, fmt.Sprintf("Error: %s: %v", inv.Cmd.Name, err))
+		o = fail(err, fmt.Sprintf("Error: %s: %v", inv.Cmd.Name, err))
 	}
-	if err := writeResult(stdout, res, inv.Input.Global); err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: writing the result: %v\n", err)
-		return ExitError
+	if werr != nil {
+		o = o.WriteFailed("result", werr)
 	}
-	return ExitOK
+	return o
+}
+
+// groupWords returns the command words of args, a line that Parse read as
+// the help of a command group: the words of that group (GroupHelp).
+func groupWords(args []string) string {
+	rest, _, _ := splitGlobals(args, nil)
+	return strings.Join(commandWords(rest), " ")
 }
 
 // withResult is the error of a command that fails with a result to show
@@ -652,9 +855,10 @@ const pageURLEnv = "IWDP_WS_URL"
 // without --page while IWDP_WS_URL is set: earlier versions ran it on the
 // page that the variable names, so running it on the session's page
 // instead could act on another page than the caller expects. The usage
-// error (exit 2) names --page; an explicit --page wins over the variable.
+// error (exit 2) names --page; an explicit --page or --only-tab wins over
+// the variable.
 func refusePageURLEnv(inv *Invocation) error {
-	if inv.Cmd.Page == NoPage || inv.Input.Global.Page != "" || os.Getenv(pageURLEnv) == "" {
+	if inv.Cmd.Page == NoPage || inv.Input.Global.Page != "" || inv.Input.Global.OnlyTab || os.Getenv(pageURLEnv) == "" {
 		return nil
 	}
 	return &UsageError{Msg: fmt.Sprintf("%s: %s no longer selects the page; pass the page with --page <tab id or ws:// URL>, or unset %s", inv.Cmd.Name, pageURLEnv, pageURLEnv)}

@@ -233,6 +233,7 @@ func TestPrintUsageDoesNotPanic(t *testing.T) {
 	os.Stderr, _ = os.Open(os.DevNull)
 	defer func() { os.Stderr = old }()
 
-	// Should not panic.
-	printUsage(os.Stderr)
+	// Should not panic. The file is open for reading, so the write fails;
+	// that error is not what this test is about.
+	_ = printUsage(os.Stderr)
 }

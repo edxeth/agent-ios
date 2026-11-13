@@ -7,34 +7,32 @@ import (
 )
 
 // safetyRules are the safety rules of design 7.9 (from the retro
-// aggregate's P0 and P1 findings), each with the phrases that state it.
-// Every repository skill states every rule; the W6 drafts of the
-// browser-checker prompt and the safari-agent skill are checked for the
-// same rules by proposals/w6/check_w6.py.
+// aggregate's P0 and P1 findings) that are rules of the tool, each with
+// the phrases that state it. The core guide states every rule; a guide
+// beside it points at them (TestGuidesAreLayered). The rule "preflight,
+// then one final verdict" of the earlier guide is a rule of a caller's
+// report, not of the tool: the prompt of the agent that reports states it.
 var safetyRules = []struct {
 	rule    string
 	phrases []string
 }{
 	{"no infrastructure writes, stop on a guard refusal", []string{"No infrastructure writes", "guard or wrapper refuses", "stop and report the refusal"}},
-	{"build, origin and auth preflight; one final verdict", []string{"Preflight", "build under test is live", "sign-in state", "VERDICT: PASS", "VERDICT: FAIL", "VERDICT: BLOCKED"}},
-	{"one bounded diagnostic budget, then BLOCKED", []string{"One bounded diagnostic budget, then BLOCKED", "fails twice", "health probe"}},
-	{"masking, 0600, HAR and state deletion, no account page dumps", []string{"password and token fields", "[masked]", "mode 0600", "delete them before the run ends", "account, security or settings pages"}},
+	{"one bounded diagnostic budget, then stop", []string{"One bounded diagnostic budget, then stop", "fails twice", "health probe"}},
+	{"private mode; masking, 0600, HAR and state deletion, no account page dumps", []string{"IWDP_PRIVATE=1", "password and token fields", "[masked]", "mode 0600", "delete them before the run ends", "account, security or settings pages", "--url-file"}},
 	{"preserve and restore cookie owners; revocation by the auth helper", []string{"Preserve and restore cookie owners", "restore it", "belongs to the sign-in helper"}},
 	{"bounded shell calls, known evidence folders, no filesystem-wide search", []string{"Give every shell call a timeout", "evidence folder", "Never search the filesystem"}},
 	{"never stop or restart another agent's iwdp; reserve and release", []string{"Never stop, restart or kill an iwdp", "Reserve the device", "release it at the end"}},
 }
 
-func TestEverySkillStatesTheSafetyRules(t *testing.T) {
-	all, err := All()
+func TestTheCoreGuideStatesTheSafetyRules(t *testing.T) {
+	s, err := Get("iwdp")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range all {
-		for _, r := range safetyRules {
-			for _, p := range r.phrases {
-				if !strings.Contains(s.Content, p) {
-					t.Errorf("skill %s: safety rule %q: missing %q", s.Name, r.rule, p)
-				}
+	for _, r := range safetyRules {
+		for _, p := range r.phrases {
+			if !strings.Contains(s.Content, p) {
+				t.Errorf("skill %s: safety rule %q: missing %q", s.Name, r.rule, p)
 			}
 		}
 	}
@@ -48,6 +46,11 @@ func TestEverySkillStatesTheSafetyRules(t *testing.T) {
 var rawOutputs = map[string][]string{
 	"iwdp": {"get value", "get text", "`eval`", "`console`", "`errors`", "snapshot text"},
 }
+
+// noRawOutput are the guides beside the core guide: they document no raw
+// output, so they need no raw-output sentence; the masking claims of every
+// guide are still checked.
+var noRawOutput = map[string]bool{"iwdp-cdp": true, "iwdp-device": true, "iwdp-devtools": true}
 
 // rawTerms are words that name a raw output in any skill.
 var rawTerms = []string{"console", "errors", "get value", "get text", "`eval`", "snapshot"}
@@ -66,13 +69,13 @@ func TestSkillsLimitMaskingToTheMaskedOutputs(t *testing.T) {
 	}
 	for _, s := range all {
 		want, ok := rawOutputs[s.Name]
-		if !ok {
+		if !ok && !noRawOutput[s.Name] {
 			t.Errorf("skill %s: no raw-output list in rawOutputs", s.Name)
 			continue
 		}
 		_, after, found := strings.Cut(s.Content, "Page reads are not masked")
 		raw, _, _ := strings.Cut(after, ".")
-		if !found {
+		if !found && ok {
 			t.Errorf("skill %s: no sentence \"Page reads are not masked: ...\"", s.Name)
 		}
 		for _, w := range want {

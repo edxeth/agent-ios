@@ -11,7 +11,7 @@ import (
 func init() {
 	Register(&Command{
 		Name: "lease break", Summary: "End the lease on a page whoever holds it, with its cleanup.",
-		Args: []Arg{{Name: "page", Help: "page key, ws:// URL, or part of its title or URL", Required: true}},
+		Args: []Arg{{Name: "page", Help: "page key, ws:// URL, or part of its title or URL", Required: true, Page: true}},
 		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
 			m, err := managerOf(env)
 			if err != nil {
@@ -29,7 +29,8 @@ func init() {
 	})
 	Register(&Command{
 		Name: "lease takeover", Summary: "Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval).",
-		Args: []Arg{{Name: "page", Help: "page key, ws:// URL, or part of its title or URL; default: the first page"}},
+		Args:      []Arg{{Name: "page", Help: "page key, ws:// URL, or part of its title or URL; default: the first page", Page: true}},
+		ReadsPage: true,
 		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
 			m, err := managerOf(env)
 			if err != nil {

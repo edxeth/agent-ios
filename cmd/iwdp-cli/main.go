@@ -10,32 +10,60 @@ import (
 
 // main runs one registry command (internal/commands): the command
 // registry parses the line, prints its help and runs it, a Local command
-// here and every other one in the daemon (runRegistry). Only these lines
-// are handled here: a line of only "help", "--help" and "-h", in any
-// number and order, prints the overview with the global options (exit 0);
-// "help <command or group words>" prints that
-// help; an empty line prints the overview as a usage error (exit 2). The
-// registry parses every other line, also "help" followed by a flag, so an
-// unknown option or command exits 2 also with help.
+// here and every other one in the daemon (runRegistry). Every line ends
+// through exits.finish, which prints the end of the run on stderr and
+// exits (in private mode exactly one status line).
+//
+// Private mode is decided first (commands.PrivateRequested), and what it
+// needs is installed before any output or work (enterPrivate), so that
+// every path of the run, also a help text that blocks on stdout, ends
+// with its status line.
 func main() {
-	kind, args := classifyLine(os.Args[1:])
+	args := os.Args[1:]
+	private := reg.PrivateRequested(args)
+	if private {
+		enterPrivate()
+	}
+	exits.finish(runLine(args, private))
+}
+
+// runLine runs the command line args and returns how it ends. Only these
+// lines are handled here: a line of only "help", "--help" and "-h", in
+// any number and order, prints the overview with the global options (exit
+// 0); "help <command or group words>" prints that help; an empty line
+// prints the overview as a usage error (exit 2). The registry parses every
+// other line, also "help" followed by a flag, so an unknown option or
+// command exits 2 also with help. private is the mode of the run
+// (commands.PrivateRequested). A help text that cannot be written on
+// stdout ends the run with exit 1 (commands.Outcome.WriteFailed).
+func runLine(args []string, private bool) reg.Outcome {
+	kind, words := classifyLine(args)
 	switch kind {
 	case lineEmpty:
-		printUsage(os.Stderr)
-		os.Exit(reg.ExitUsage)
+		var usage strings.Builder
+		_ = printUsage(&usage) // a strings.Builder never fails
+		return reg.Outcome{Code: reg.ExitUsage, Private: private, Message: strings.TrimSuffix(usage.String(), "\n")}
 	case lineOverview:
-		printUsage(os.Stdout)
-		return
-	case lineCommandHelp:
-		name := strings.Join(args, " ")
-		if !printCommandHelp(os.Stdout, name) {
-			fmt.Fprintf(os.Stderr, "Error: unknown command %q (run 'iwdp-cli --help')\n", name)
-			os.Exit(reg.ExitUsage)
+		o := reg.Outcome{Private: private}
+		if err := printUsage(os.Stdout); err != nil {
+			return o.WriteFailed("help", err)
 		}
-		return
+		return o
+	case lineCommandHelp:
+		name := strings.Join(words, " ")
+		known, err := printCommandHelp(os.Stdout, name)
+		if !known {
+			return reg.Outcome{Code: reg.ExitUsage, Private: private, Message: fmt.Sprintf("Error: unknown command %q (run 'iwdp-cli --help')", name)}
+		}
+		// The words name a command or a group of the registry; the
+		// status line names them as one line.
+		o := reg.Outcome{Command: strings.Join(strings.Fields(name), " "), Private: private}
+		if err != nil {
+			return o.WriteFailed("help", err)
+		}
+		return o
 	}
-	code := runRegistry(args)
-	exits.finish(func() int { return code })
+	return runRegistry(words)
 }
 
 // lineKind is how main handles a command line (classifyLine).

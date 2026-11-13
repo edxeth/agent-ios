@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-cli/internal/commands"
 	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
 )
 
@@ -32,7 +33,11 @@ import (
 //   - "<!-- doc-test: skip <rule>: <reason> -->" before a bash block: the
 //     block is not run, by a rule of skipRules, and the test logs it;
 //   - "<!-- doc-test: expect -->" before a ```text block: each of its
-//     lines must appear in the stdout of the nearest bash block above it.
+//     lines must appear in the output of the nearest bash block above it.
+//     A status line of private mode (statusLineRE) must appear in its
+//     stderr, every other line, a result, in its stdout: a shell consumer
+//     reads results from stdout only, so neither stream stands in for the
+//     other.
 //
 // The examples use the origin https://example.com; the test serves it
 // from e2e/fixtures/skills. The environment gives EVIDENCE (a temporary
@@ -46,6 +51,19 @@ var skipRules = map[string]string{
 }
 
 const exampleOrigin = "https://example.com"
+
+// statusLineRE matches a status line of private mode (privateResult and
+// privateErrorLine in internal/commands/private.go): "<command> exit
+// <code>", where <command> is a command of the registry or iwdp-cli for a
+// line that names none, then the end of the line, or a space and the
+// counts of an action, or ": " and the meaning of the code.
+func statusLineRE() *regexp.Regexp {
+	names := []string{"iwdp-cli"}
+	for _, c := range commands.All() {
+		names = append(names, regexp.QuoteMeta(c.Name))
+	}
+	return regexp.MustCompile(`^(` + strings.Join(names, "|") + `) exit [0-9]+($|[ :])`)
+}
 
 type docBlock struct {
 	line   int    // line of the opening fence
@@ -238,6 +256,7 @@ func TestSkillExamplesRunOnWebKitGTK(t *testing.T) {
 				}
 				t.Fatalf("%s: the example block at line %d failed (%v):\n%s\nstdout:\n%s\nstderr:\n%s", name, blocks[last].line, runErr, blocks[last].body, read(last, "out"), read(last, "err"))
 			}
+			status := statusLineRE()
 			ran := 0
 			lastBash := -1
 			for i, b := range blocks {
@@ -254,10 +273,16 @@ func TestSkillExamplesRunOnWebKitGTK(t *testing.T) {
 				if lastBash < 0 {
 					t.Fatalf("%s:%d: an expect block without a runnable bash block above it", name, b.line)
 				}
-				got := read(lastBash, "out")
 				for _, want := range strings.Split(b.body, "\n") {
-					if strings.TrimSpace(want) != "" && !strings.Contains(got, want) {
-						t.Errorf("%s:%d: the output of the block at line %d lacks %q:\n%s", name, b.line, blocks[lastBash].line, want, got)
+					if strings.TrimSpace(want) == "" {
+						continue
+					}
+					stream, ext := "stdout", "out"
+					if status.MatchString(want) {
+						stream, ext = "stderr", "err"
+					}
+					if got := read(lastBash, ext); !strings.Contains(got, want) {
+						t.Errorf("%s:%d: the %s of the block at line %d lacks %q:\n%s", name, b.line, stream, blocks[lastBash].line, want, got)
 					}
 				}
 			}

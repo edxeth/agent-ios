@@ -31,9 +31,11 @@ func init() {
 	}
 	nav(&Command{
 		Name: "open", Aliases: []string{"goto", "navigate"},
-		Summary: "Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open).",
-		Args:    []Arg{{Name: "url", Help: "the URL to open", Required: true}},
-		Run:     runOpen,
+		Summary:    "Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open).",
+		Args:       []Arg{{Name: "url", Help: "the URL to open; or --url-file"}},
+		Flags:      []Flag{urlFileFlag},
+		ClientStep: urlFromFile,
+		Run:        runOpen,
 	})
 	nav(&Command{
 		Name:    "back",
@@ -66,10 +68,17 @@ func init() {
 const navStartBudget = time.Second
 
 // notNavigated is the end of a navigation wait in which the page kept its
-// document and its URL href.
-type notNavigated string
+// document and its URL href. For open --url-file (urlFile: the file's
+// path) it names no URL: the page can still show the URL of the file (the
+// same link opened again), and the error would print it.
+type notNavigated struct{ href, urlFile string }
 
-func (n notNavigated) Error() string { return "the page did not navigate; URL is still " + string(n) }
+func (n notNavigated) Error() string {
+	if n.urlFile != "" {
+		return "the page did not navigate; it still shows the URL it showed before (not printed: the target is " + fileURLName(n.urlFile) + ")"
+	}
+	return "the page did not navigate; URL is still " + n.href
+}
 
 // navPoll is how often a navigation wait checks for the new document.
 const navPoll = 50 * time.Millisecond
@@ -103,10 +112,12 @@ func absoluteURL(raw string) (string, error) {
 }
 
 // navMark is what a navigation wait compares against: the document
-// generation and URL before the navigation started.
+// generation and URL before the navigation started. urlFile is the path
+// of open --url-file, whose wait names no URL (notNavigated).
 type navMark struct {
-	gen  uint64
-	href string
+	gen     uint64
+	href    string
+	urlFile string
 }
 
 func (w *w3bPage) mark(ctx context.Context) navMark {
@@ -146,7 +157,7 @@ func (w *w3bPage) navigated(ctx context.Context, mode string, m navMark) (Result
 				break
 			}
 			if time.Now().After(end) || ctx.Err() != nil {
-				return Result{}, &core.CodedError{Code: ExitWaitTimeout, Err: fmt.Errorf("wait %s timed out after %s: %w", what, time.Since(start).Round(time.Millisecond), notNavigated(m.href))}
+				return Result{}, &core.CodedError{Code: ExitWaitTimeout, Err: fmt.Errorf("wait %s timed out after %s: %w", what, time.Since(start).Round(time.Millisecond), notNavigated{m.href, m.urlFile})}
 			}
 			sleepUntil(ctx, earliest(time.Now().Add(navPoll), end))
 		}
@@ -189,9 +200,22 @@ func (w *w3bPage) startNav(ctx context.Context, extra map[string]any) error {
 	return nil
 }
 
-func runOpen(ctx context.Context, env Env, in Input) (Result, error) {
-	u, err := absoluteURL(arg(in, 0))
+// runOpen names the URL in its errors as the caller gave it, or, for a
+// URL from --url-file, by the file's path (hideFileURL); the result of a
+// navigation ("navigated to <url>") is not an error and prints the URL.
+func runOpen(ctx context.Context, env Env, in Input) (_ Result, err error) {
+	if err := needURL(in, "open"); err != nil {
+		return Result{}, err
+	}
+	raw, file := arg(in, 0), urlFile(in)
+	var u string
+	defer func() { err = hideFileURL(err, file, u, raw) }()
+	u, err = absoluteURL(raw)
 	if err != nil {
+		if file != "" {
+			// The parser's error repeats the URL, and parts of it.
+			return Result{}, usagef("open: %s is not a valid URL", fileURLName(file))
+		}
 		return Result{}, err
 	}
 	w, err := openPage(ctx, env, "open")
@@ -202,6 +226,7 @@ func runOpen(ctx context.Context, env Env, in Input) (Result, error) {
 	// A navigation works on the top document and ends the frame scope.
 	leaveFrame(w.ps, w.op, true)
 	m := w.mark(ctx)
+	m.urlFile = file
 	if err := w.startNav(ctx, map[string]any{"nav": u}); err != nil {
 		return Result{}, fmt.Errorf("open %s: %w", u, err)
 	}

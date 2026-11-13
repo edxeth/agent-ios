@@ -314,7 +314,7 @@ func TestWatchdogStartsTheCleanupAndExitsAfterIt(t *testing.T) {
 // whichever path exits.
 func TestWatchdogWaitsForMainsCleanup(t *testing.T) {
 	f := newFakeExit(t, 5*time.Second, time.Second, false)
-	go f.finish(func() int { return 0 })
+	go f.finish(reg.Outcome{Code: 0})
 	<-f.started
 	armWatchdog(time.Millisecond, f.processExit)
 	f.noExitWhile(t, 200*time.Millisecond, "while main's cleanup runs")
@@ -348,7 +348,7 @@ func TestSignalDuringTheWatchdogsCleanupExitsInterrupted(t *testing.T) {
 // the cleanup.
 func TestFinishExitsWithItsCodeAfterTheCleanup(t *testing.T) {
 	f := newFakeExit(t, 5*time.Second, time.Second, false)
-	go f.finish(func() int { return 4 })
+	go f.finish(reg.Outcome{Code: 4})
 	<-f.started
 	f.noExitWhile(t, 100*time.Millisecond, "while the cleanup runs")
 	close(f.release)
@@ -362,7 +362,7 @@ func TestFinishExitsWithItsCodeAfterTheCleanup(t *testing.T) {
 func TestFailedCleanupIsAWarning(t *testing.T) {
 	f := newFakeExit(t, 5*time.Second, time.Second, false)
 	f.cleanup = func(context.Context) error { return errors.New("Console.disable: not sent") }
-	go f.finish(func() int { return 0 })
+	go f.finish(reg.Outcome{Code: 0})
 	if code := f.exitCode(t); code != 0 {
 		t.Errorf("exit %d, want 0", code)
 	}

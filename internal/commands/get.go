@@ -23,8 +23,19 @@ func init() {
 		Page:      LeasedPage,
 		RetrySafe: true,
 		Output:    OutputText,
+		Check:     checkGetPrivate,
 		Run:       runGet,
 	})
+}
+
+// checkGetPrivate refuses "get url" and "get title" in private mode, before
+// any connection: they print what the mode hides. The other getters print
+// content of the page, which the mode prints.
+func checkGetPrivate(in Input) error {
+	if what := arg(in, 0); in.Global.Private && (what == "url" || what == "title") {
+		return fmt.Errorf("get %s prints the page's %s, which private mode hides; run it without --private, and only on a page whose %s may be printed", what, what, what)
+	}
+	return nil
 }
 
 // getTargets says which getters take a target (true) and which do not.

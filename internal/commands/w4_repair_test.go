@@ -337,9 +337,18 @@ func TestParseSkipsGlobalFlagsProperty(t *testing.T) {
 		c := cmds[r.Intn(len(cmds))]
 		words := strings.Fields(c.Name)
 		var line []string
+		// --page and --only-tab together are a usage error
+		// (TestOnlyTabWithPageIsAUsageErrorBeforeAnyConnection), so a
+		// line takes at most one of the two.
+		named := map[string]bool{}
+		exclusive := map[string]string{"--page": "--only-tab", "--only-tab": "--page"}
 		addGlobals := func() {
 			for range r.Intn(3) {
 				g := globalSpecs[r.Intn(len(globalSpecs))]
+				if named[exclusive[g.name]] {
+					continue
+				}
+				named[g.name] = true
 				switch {
 				case !g.value:
 					line = append(line, g.name)

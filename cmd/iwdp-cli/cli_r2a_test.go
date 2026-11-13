@@ -204,7 +204,7 @@ func TestBoundCleanupEndsByTheDeadlinePlusGrace(t *testing.T) {
 		return nil
 	}
 	f.bound(limit)
-	go f.finish(func() int { return 3 })
+	go f.finish(reg.Outcome{Code: 3})
 	if code := f.exitCode(t); code != 3 {
 		t.Errorf("exit %d, want the path's own 3", code)
 	}
@@ -218,7 +218,7 @@ func TestBoundCleanupEndsByTheDeadlinePlusGrace(t *testing.T) {
 		code  int
 		least time.Duration
 	}{
-		"main":     {ahead, func(f *fakeExit) { go f.finish(func() int { return 0 }) }, 0, ahead + exitAfterDeadline},
+		"main":     {ahead, func(f *fakeExit) { go f.finish(reg.Outcome{Code: 0}) }, 0, ahead + exitAfterDeadline},
 		"watchdog": {-watchdogGrace, func(f *fakeExit) { go f.deadlineExpired() }, exitTimeout, closeWait},
 	} {
 		t.Run(name, func(t *testing.T) {

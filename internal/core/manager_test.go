@@ -572,19 +572,3 @@ func TestNetworkReinitializationBarrier(t *testing.T) {
 	}
 	r.m.End(mo.ID)
 }
-
-// Review round 3, F8: ReleaseEpoch on a key that names no attached page
-// fails as Release does: a no-page error (exit 5, CodeNoPage) that wraps
-// ErrNoPage and names the key.
-func TestReleaseEpochOfAnUnattachedKeyIsNoPage(t *testing.T) {
-	m := NewManager(ManagerOptions{})
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = m.Close(ctx)
-	})
-	err := m.ReleaseEpoch(ctxFor(t, 5*time.Second), "a", "no-such-key", 1)
-	if !errors.Is(err, ErrNoPage) || exitCode(err) != CodeNoPage || !strings.Contains(err.Error(), `"no-such-key"`) {
-		t.Fatalf("ReleaseEpoch of an unattached key = %v (exit %d), want ErrNoPage (exit %d) naming the key", err, exitCode(err), CodeNoPage)
-	}
-}

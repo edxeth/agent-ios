@@ -120,7 +120,7 @@ func TestRunRegistryCommandContextIsTheSignalsContext(t *testing.T) {
 	reg.Register(c)
 	saved := exits.cancelRun
 	t.Cleanup(func() { reg.Unregister(c); exits.cancelRun = saved })
-	if code := runRegistry(strings.Fields(c.Name)); code != 1 {
+	if code := runRegistry(strings.Fields(c.Name)).Code; code != 1 {
 		t.Fatalf("exit %d, want 1 for the canceled command (main exits 130 for the signal)", code)
 	}
 	if !errors.Is(cause, reg.ErrInterrupted) {

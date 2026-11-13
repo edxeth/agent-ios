@@ -163,6 +163,9 @@ func load() ([]Skill, error) {
 		}
 		out = append(out, s)
 	}
+	// By name, not by path: "iwdp-cdp/SKILL.md" sorts before
+	// "iwdp/SKILL.md", and the core guide comes first.
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 

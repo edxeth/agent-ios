@@ -275,6 +275,15 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	g := &inv.Input.Global
 	g.Session, g.JSON, g.Page, g.Transport = req.Session, req.JSON, req.Page, req.Transport
 	g.Reservation, g.WaitLease, g.Takeover = req.Reservation, durMs(req.WaitLeaseMs, 0), req.Takeover
+	g.OnlyTab = req.OnlyTab
+	if err := commands.CheckPageGlobals(*g); err != nil {
+		writeJSON(w, Item{Type: "error", Error: toErrorReply(err)})
+		return
+	}
+	if err := commands.CheckPageArgs(inv.Cmd, inv.Input); err != nil {
+		writeJSON(w, Item{Type: "error", Error: toErrorReply(err)})
+		return
+	}
 	if g.Session == "" {
 		g.Session = "default"
 	}
@@ -309,9 +318,21 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		res, err = inv.Cmd.Run(ctx, env, inv.Input)
 		return err
 	}
-	if inv.Cmd.Page == commands.NoPage {
+	if req.OnlyTab && (inv.Cmd.Page != commands.NoPage || inv.Cmd.ReadsPage) {
+		// --only-tab: the one tab of the listing, or no page at all, for
+		// every command that takes --page (also one that resolves its
+		// page itself, as get cdp-url does). A command that ignores
+		// --page ignores --only-tab.
+		var key string
+		if key, err = s.m.OnlyTab(ctx, pageRequest(req.PageReq), acquireOptions(req.Owner)); err == nil {
+			req.Page, g.Page = key, key
+		}
+	}
+	switch {
+	case err != nil:
+	case inv.Cmd.Page == commands.NoPage:
 		err = runCmd(ctx)
-	} else {
+	default:
 		class := core.ClassRead
 		if inv.Cmd.Mutates {
 			class = core.ClassMutate

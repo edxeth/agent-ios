@@ -123,7 +123,13 @@ func runTraceStop(ctx context.Context, env Env, in Input) (Result, error) {
 		}
 	}
 	return Result{
-		Text: fmt.Sprintf("Trace written to %s: %s, %s.", path, nounCount(records, "Timeline record"), nounCount(events, "trace event")),
+		Text: traceStopText(path, records, events),
 		Data: map[string]any{"path": path, "records": records, "events": events},
 	}, nil
+}
+
+// traceStopText is the text of trace stop; private mode makes it from the
+// members that it prints (privateReads).
+func traceStopText(path string, records, events int) string {
+	return fmt.Sprintf("Trace written to %s: %s, %s.", path, nounCount(records, "Timeline record"), nounCount(events, "trace event"))
 }

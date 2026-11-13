@@ -53,6 +53,9 @@ type listedCookie struct {
 	SameSite string  `json:"sameSite"`
 }
 
+// noCookies is the text of a cookie listing without cookies.
+const noCookies = "No cookies."
+
 // hiddenValue stands for a cookie value in the text without --show-values.
 const hiddenValue = "(hidden)"
 
@@ -72,7 +75,7 @@ func cookieListing(cookies []webkit.Cookie, show bool) Result {
 	}
 	data := map[string]any{"cookies": list, "valuesShown": show}
 	if len(cookies) == 0 {
-		return Result{Text: "No cookies.", Data: data}
+		return Result{Text: noCookies, Data: data}
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: data}
 }

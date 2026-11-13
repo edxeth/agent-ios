@@ -69,13 +69,19 @@ func runDiffScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	ths := strconv.FormatFloat(th, 'g', -1, 64)
 	data := map[string]any{
 		"width": d.Width, "height": d.Height, "total": d.Total, "different": d.Different, "ratio": d.Ratio,
 		"threshold": th, "match": d.Different == 0,
 	}
-	if d.Different == 0 {
-		return Result{Text: fmt.Sprintf("No pixel differs (threshold %s).", ths), Data: data}, nil
+	return Result{Text: diffScreenshotText(d.Different, d.Total, d.Ratio, th), Data: data}, nil
+}
+
+// diffScreenshotText is the text of diff screenshot; private mode makes it
+// from the members that it prints (privateReads).
+func diffScreenshotText(different, total int, ratio, threshold float64) string {
+	ths := strconv.FormatFloat(threshold, 'g', -1, 64)
+	if different == 0 {
+		return fmt.Sprintf("No pixel differs (threshold %s).", ths)
 	}
-	return Result{Text: fmt.Sprintf("%d of %d pixels differ (%.2f%%) at threshold %s.", d.Different, d.Total, 100*d.Ratio, ths), Data: data}, nil
+	return fmt.Sprintf("%d of %d pixels differ (%.2f%%) at threshold %s.", different, total, 100*ratio, ths)
 }

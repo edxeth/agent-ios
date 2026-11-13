@@ -22,7 +22,8 @@ func init() {
 			{Name: "scope", Type: FlagEnum, Enum: []string{cdp.ScopePage, cdp.ScopeDevice}, Default: cdp.ScopePage, Help: "page: only this page; device: also the other pages of the devices reserved by --reservation"},
 			{Name: "form", Type: FlagEnum, Enum: []string{"ws", "http"}, Default: "ws", Help: "ws: the browser WebSocket URL (every client; agent-browser --cdp, Puppeteer browserWSEndpoint, Playwright connectOverCDP); http: the discovery base for Playwright connectOverCDP and Puppeteer browserURL"},
 		},
-		Run: runGetCDPURL,
+		ReadsPage: true,
+		Run:       runGetCDPURL,
 	})
 }
 

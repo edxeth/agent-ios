@@ -90,13 +90,54 @@ type AcquireOptions struct {
 	Reservation string        // reservation owner; "" = the session name
 	WaitLease   time.Duration // wait this long for another session's lease
 	Takeover    bool          // reattach a lost page (needs the reservation)
-	// OnGrant, when set, is called when this acquisition grants a new
-	// lease, with the page key and the lease epoch, while the page's lock
-	// is held: it must only record them. A caller that took the lease
-	// only for one operation can then end exactly that lease
-	// (ReleaseEpoch), also when the operation's admission fails after the
-	// grant.
-	OnGrant func(key string, epoch uint64)
+	// Claim, when set, records each lease that this acquisition grants,
+	// also when the operation's admission fails after the grant, so that
+	// a caller that took a lease only for its own operations can end it
+	// with ReleaseClaimed.
+	Claim *LeaseClaim
+}
+
+// LeaseClaim is the record of the leases that the acquisitions of one
+// caller (one command) granted (AcquireOptions.Claim). Its zero value is
+// ready for use; it is safe for concurrent use.
+//
+// An epoch identifies a lease, not exclusive use of it: every command of
+// the session uses the session's lease. So only the core, under the page's
+// lock that every grant and use takes, can tell whether a lease is still
+// the caller's own (ReleaseClaimed).
+type LeaseClaim struct {
+	mu     sync.Mutex
+	leases map[string]*lease // page key: the lease that an acquisition with the claim granted there
+}
+
+// record notes that an acquisition with c granted l on the page of key.
+// The caller holds that page's lock.
+func (c *LeaseClaim) record(key string, l *lease) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.leases == nil {
+		c.leases = map[string]*lease{}
+	}
+	c.leases[key] = l
+}
+
+// Keys returns, sorted, the keys of the pages on which an acquisition
+// with c was granted a lease.
+func (c *LeaseClaim) Keys() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	keys := make([]string, 0, len(c.leases))
+	for k := range c.leases {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func (c *LeaseClaim) lease(key string) *lease {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.leases[key]
 }
 
 func (ao AcquireOptions) normalized() AcquireOptions {
@@ -141,6 +182,15 @@ type lease struct {
 	epoch    uint64
 	since    time.Time
 	lastUsed time.Time
+	// claim is the claim of the acquisition that granted the lease (nil
+	// without one). shared (under the page's mu) is set by every other use
+	// of the lease: an acquisition without that claim, an operation begun
+	// under the lease by epoch (BeginLeased), an event stream that binds
+	// to it (LeaseEnded) or that held it (the end of HoldLease; an open
+	// hold counts in Page.holders). ReleaseClaimed ends only a lease that
+	// is not shared.
+	claim  *LeaseClaim
+	shared bool
 }
 
 // Page is a page the daemon has attached.
@@ -1345,12 +1395,12 @@ func (pg *Page) grantLocked(ao AcquireOptions, now time.Time) *lease {
 		close(pg.freed)
 		pg.freed = make(chan struct{})
 	}
-	l := &lease{session: ao.Session, resOwner: ao.Reservation, epoch: pg.m.epochs.Add(1), since: now, lastUsed: now}
+	l := &lease{session: ao.Session, resOwner: ao.Reservation, epoch: pg.m.epochs.Add(1), since: now, lastUsed: now, claim: ao.Claim}
 	pg.lease = l
 	pg.m.lifecycle("grant", pg, l)
 	pg.PS.Sched.SetLease(ao.Session, l.epoch)
-	if ao.OnGrant != nil {
-		ao.OnGrant(pg.Key, l.epoch)
+	if ao.Claim != nil {
+		ao.Claim.record(pg.Key, l)
 	}
 	return l
 }
@@ -1395,6 +1445,9 @@ func (m *Manager) acquire(ctx context.Context, pg *Page, ao AcquireOptions, op b
 			l = pg.grantLocked(ao, now)
 		}
 		if l.session == ao.Session {
+			if ao.Claim == nil || l.claim != ao.Claim {
+				l.shared = true // another command of the session uses the lease
+			}
 			prev := pg.lastUsed
 			l.lastUsed = now
 			l.resOwner = ao.Reservation
@@ -1448,6 +1501,7 @@ func (m *Manager) HoldLease(pg *Page, ao AcquireOptions) func() {
 			}
 			if l := pg.lease; l != nil && l.session == session {
 				l.lastUsed = now
+				l.shared = true
 			}
 		})
 	}
@@ -1519,9 +1573,11 @@ func (m *Manager) LeaseEnded(pg *Page, session string, epoch uint64) (<-chan str
 	session = AcquireOptions{Session: session}.normalized().Session
 	pg.mu.Lock()
 	defer pg.mu.Unlock()
-	if l := pg.lease; l == nil || l.session != session || l.epoch != epoch || pg.releasing {
+	l := pg.lease
+	if l == nil || l.session != session || l.epoch != epoch || pg.releasing {
 		return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: the lease of session %q on page %q ended", ErrLeased, session, pg.target.title)}
 	}
+	l.shared = true // a stream of the session is bound to the lease
 	return pg.freed, nil
 }
 
@@ -1783,22 +1839,25 @@ func (m *Manager) Release(ctx context.Context, session, key string) error {
 	return m.releaseLease(ctx, pg, l)
 }
 
-// ReleaseEpoch is Release of session's lease on the page of key only
-// while that lease has epoch: a lease that ended and was granted again (a
-// new epoch, for example to a concurrent command of the same session)
-// stays.
-func (m *Manager) ReleaseEpoch(ctx context.Context, session, key string, epoch uint64) error {
+// ReleaseClaimed is Release of the lease on the page of key that an
+// acquisition with claim granted (AcquireOptions.Claim), only while that
+// lease is the caller's alone: nothing else of the session used it since
+// the grant (LeaseClaim, lease.shared) and no operation runs or is queued
+// on the page, and no event stream of the session holds it. The decision
+// is taken under the page's lock, which every grant and every use takes,
+// and the release is claimed in the same critical section, so a command
+// that comes later waits for the release and gets a new lease, which
+// stays. A lease that ended or was granted again stays too. It returns nil
+// when it has nothing to end.
+func (m *Manager) ReleaseClaimed(ctx context.Context, claim *LeaseClaim, key string) error {
+	l := claim.lease(key)
 	pg := m.lookup(key)
-	if pg == nil {
-		return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no attached page %q", ErrNoPage, key)}
+	if l == nil || pg == nil {
+		return nil // nothing granted there, or the record and its lease ended
 	}
-	pg.mu.Lock()
-	l := pg.lease
-	pg.mu.Unlock()
-	if l == nil || l.session != session || l.epoch != epoch {
-		return nil // that lease ended already
-	}
-	return m.releaseLease(ctx, pg, l)
+	return m.releaseLeaseIf(ctx, pg, l, func() bool {
+		return !l.shared && pg.running == 0 && pg.holders[l.session] == 0
+	})
 }
 
 // ReleaseSession releases every lease of session.
@@ -1837,8 +1896,14 @@ func (m *Manager) Break(ctx context.Context, key string) error {
 // releaseLease claims the release of l and runs it. When another release
 // of l runs, it waits for that one (at most until ctx ends) instead.
 func (m *Manager) releaseLease(ctx context.Context, pg *Page, l *lease) error {
+	return m.releaseLeaseIf(ctx, pg, l, nil)
+}
+
+// releaseLeaseIf is releaseLease, only when may, called under pg.mu with
+// l still the page's lease, is nil or allows it.
+func (m *Manager) releaseLeaseIf(ctx context.Context, pg *Page, l *lease, may func() bool) error {
 	pg.mu.Lock()
-	if pg.lease != l {
+	if pg.lease != l || (may != nil && !may()) {
 		pg.mu.Unlock()
 		return nil
 	}

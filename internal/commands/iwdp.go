@@ -23,7 +23,7 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "status",
-		Summary: "Check whether ios_webkit_debug_proxy answers on its listing address, and name the log of an iwdp that iwdp-cli starts. Exits 1 when it does not answer.",
+		Summary: "Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that iwdp-cli starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read.",
 		Local:   true,
 		Run:     runStatus,
 	})
@@ -69,8 +69,28 @@ func iwdpLogLine(path string, err error) string {
 // statusData is the --json form of status.
 type statusData struct {
 	Running  bool   `json:"running"`
+	Devices  *int   `json:"devices,omitempty"`  // listed devices, without iwdp's SIMULATOR entry; nil in a status that fails
 	Log      string `json:"log,omitempty"`      // the iwdp log's path
 	LogError string `json:"logError,omitempty"` // why that path is unknown
+}
+
+// statusDevices is the number of devices that the iwdp at addr lists,
+// without the SIMULATOR entry that iwdp lists before real devices. It is
+// one more GET of the listing that status just checked: it starts and
+// recovers nothing, so a caller that may not restart iwdp learns from it
+// whether a device is there.
+func statusDevices(ctx context.Context, addr string) (int, error) {
+	entries, err := proxy.ListDevicesAt(ctx, addr)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if e.DeviceID != "SIMULATOR" {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // statusListing is the listing address that status checks:
@@ -79,7 +99,11 @@ type statusData struct {
 var statusListing = proxy.ListingAddr
 
 // runStatus answers as the legacy status did: when iwdp answers, the
-// running line and the log line, exit 0. Otherwise it fails with a result
+// running line, the number of listed devices and the log line, exit 0. A
+// status that succeeds always has that number: when iwdp answers the check
+// and then not the read of its devices, the status fails (exit 1), so that
+// no caller takes a status without a count for a device that is there.
+// Otherwise it fails with a result
 // (withResult), so that stdout holds what it found and the log line (a
 // broken listing is when the user needs the log most): not running with
 // the start advice (exit 1), or how the owner of the listing address
@@ -94,7 +118,15 @@ func runStatus(ctx context.Context, _ Env, _ Input) (Result, error) {
 		data.LogError = perr.Error()
 	}
 	if err == nil {
-		return Result{Text: "ios_webkit_debug_proxy is running\n" + line, Data: data}, nil
+		n, err := statusDevices(ctx, statusListing())
+		if err != nil {
+			return Result{}, &withResult{
+				Result: Result{Text: "ios_webkit_debug_proxy answers, but its device list could not be read\n" + line, Data: data},
+				Err:    fmt.Errorf("reading the device list of ios_webkit_debug_proxy: %w", err),
+			}
+		}
+		data.Devices = &n
+		return Result{Text: fmt.Sprintf("ios_webkit_debug_proxy is running\ndevices: %d\n", n) + line, Data: data}, nil
 	}
 	if errors.Is(err, proxy.ErrNotListening) {
 		return Result{}, &withResult{Result: Result{Text: "ios_webkit_debug_proxy is NOT running\n" + line, Data: data}, Err: errNotRunning()}

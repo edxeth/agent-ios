@@ -128,23 +128,25 @@ func TestCommandGroupWordListsItsCommands(t *testing.T) {
 // reports false.
 func TestPrintCommandHelpListsAGroup(t *testing.T) {
 	var b bytes.Buffer
-	if !printCommandHelp(&b, "network") {
+	if !knownHelp(&b, "network") {
 		t.Fatal("printCommandHelp(network) reports an unknown command")
 	}
 	assertLists(t, "printCommandHelp(network)", b.String(), "network")
 	b.Reset()
-	if !printCommandHelp(&b, "tab") || !strings.HasPrefix(b.String(), "Usage: iwdp-cli tab") || strings.Contains(b.String(), "Commands of") {
+	if !knownHelp(&b, "tab") || !strings.HasPrefix(b.String(), "Usage: iwdp-cli tab") || strings.Contains(b.String(), "Commands of") {
 		t.Errorf("printCommandHelp(tab): %q; want the help of the command tab", b.String())
 	}
 	b.Reset()
-	if printCommandHelp(&b, "zz-no-such-group") || b.Len() != 0 {
+	if knownHelp(&b, "zz-no-such-group") || b.Len() != 0 {
 		t.Errorf("printCommandHelp(zz-no-such-group) printed %q; want false and nothing", b.String())
 	}
-	if printCommandHelp(&b, "tab zz-none") {
+	if knownHelp(&b, "tab zz-none") {
 		t.Error("printCommandHelp(tab zz-none) reports a command")
 	}
 	b.Reset()
-	printUsage(&b)
+	if err := printUsage(&b); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(b.String(), "iwdp-cli <group> --help") {
 		t.Errorf("the overview does not name the group help:\n%s", b.String())
 	}

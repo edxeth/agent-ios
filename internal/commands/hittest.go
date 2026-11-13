@@ -52,18 +52,27 @@ func runHitTest(ctx context.Context, env Env, in Input) (Result, error) {
 	var v struct {
 		Nodes   []runtime.Node `json:"nodes"`
 		Element string         `json:"element"`
-		Box     struct {
-			X      float64 `json:"x"`
-			Y      float64 `json:"y"`
-			Width  float64 `json:"width"`
-			Height float64 `json:"height"`
-		} `json:"box"`
+		Box     hitBox         `json:"box"`
 	}
 	warnings, _, err := p.allocate(ctx, "hitTest", map[string]any{"x": x, "y": y}, &v)
 	if err != nil {
 		return Result{}, err
 	}
-	text := runtime.Render(v.Nodes, runtime.RenderOptions{}) + " " + v.Element +
-		" x=" + formatNum(v.Box.X) + " y=" + formatNum(v.Box.Y) + " width=" + formatNum(v.Box.Width) + " height=" + formatNum(v.Box.Height)
+	text := hitTestText(v.Nodes, v.Element, v.Box)
 	return Result{Text: withWarnings(text, warnings), Data: map[string]any{"match": v.Nodes, "element": v.Element, "box": v.Box, "warnings": warnings}}, nil
+}
+
+// hitBox is the box of the element at the point.
+type hitBox struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// hitTestText is the text of hit-test without the warnings; private mode
+// makes it from the members that it prints (privateReads).
+func hitTestText(nodes []runtime.Node, element string, b hitBox) string {
+	return runtime.Render(nodes, runtime.RenderOptions{}) + " " + element +
+		" x=" + formatNum(b.X) + " y=" + formatNum(b.Y) + " width=" + formatNum(b.Width) + " height=" + formatNum(b.Height)
 }

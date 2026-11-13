@@ -26,7 +26,8 @@ import (
 // commands that lease a page: commands without a lease also print page
 // titles, URLs and protocol messages (tab list, session info, cdp log).
 // Marking other text as page content is harmless; missing page text is not.
-// Error messages on stderr are not marked, as in agent-browser.
+// Error messages on stderr are not marked, as in agent-browser. In private
+// mode the marker names no origin (private.go).
 const (
 	boundaryStart = "--- AGENT_BROWSER_PAGE_CONTENT nonce=%s origin=%s ---"
 	boundaryEnd   = "--- END_AGENT_BROWSER_PAGE_CONTENT nonce=%s ---"
@@ -49,7 +50,11 @@ func newBoundary(data any) boundary {
 // result's "origin", "finalUrl" and "url" members that holds a URL with a
 // host, the members agent-browser reads (boundary_origin); else "unknown".
 // Only the origin is shown: a path, query or fragment can carry tokens.
+// The data of a result in private mode (privateData) names no origin.
 func resultOrigin(data any) string {
+	if _, private := data.(privateData); private {
+		return unknownOrigin
+	}
 	raw, err := json.Marshal(data) // also a json.RawMessage of the daemon (RemoteEnv)
 	if err != nil {
 		return unknownOrigin // writeResult reports the error with --json

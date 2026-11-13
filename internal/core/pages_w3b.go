@@ -144,6 +144,23 @@ func (m *Manager) Tabs(ctx context.Context, req PageRequest, ao AcquireOptions) 
 	return out, hidden, nil
 }
 
+// OnlyTab returns the page key of the only tab of the listing of req
+// (--only-tab; req.Page is ignored), for a caller that may act on a page
+// only when no other page can be meant: the listing shows exactly one tab,
+// and no page is hidden from ao's reservation owner. Any other listing is
+// an error (CodeNoPage) that gives the two counts and names no page.
+func (m *Manager) OnlyTab(ctx context.Context, req PageRequest, ao AcquireOptions) (string, error) {
+	req.Page = ""
+	tabs, hidden, err := m.Tabs(ctx, req, ao)
+	if err != nil {
+		return "", err
+	}
+	if len(tabs) != 1 || hidden != 0 {
+		return "", &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: --only-tab needs a listing of exactly one tab and no hidden page; it shows %d tab(s) and %d hidden page(s)", ErrNoPage, len(tabs), hidden)}
+	}
+	return tabs[0].Key, nil
+}
+
 // Logf writes to the daemon log (ManagerOptions.Logf); commands use it
 // for work that ends after their result, such as a cleanup operation.
 func (m *Manager) Logf(format string, a ...any) { m.o.Logf(format, a...) }

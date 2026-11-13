@@ -706,13 +706,14 @@ func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 		"`scripts/iwdp-owner-check.sh <record>` until it reports `gone`",
 	}
 	for path, ref := range map[string][]string{
-		"README.md":                {"[Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand)"},
-		"CLAUDE.md":                {"(docs/device-runbook.md, Stopping an iwdp by hand)", "](docs/device-runbook.md#stopping-an-iwdp-by-hand)"},
-		"docs/guide.md":            {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
-		"docs/migration.md":        {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
-		"docs/cdp.md":              {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
-		"docs/known-limits.md":     {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
-		"skill-data/iwdp/SKILL.md": {"docs/device-runbook.md (Stopping an iwdp by hand)"},
+		"README.md":            {"[Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand)"},
+		"CLAUDE.md":            {"(docs/device-runbook.md, Stopping an iwdp by hand)", "](docs/device-runbook.md#stopping-an-iwdp-by-hand)"},
+		"docs/guide.md":        {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
+		"docs/migration.md":    {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
+		"docs/cdp.md":          {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
+		"docs/known-limits.md": {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
+		// The guide of the device and its faults, which the core guide names.
+		"skill-data/iwdp-device/SKILL.md": {"docs/device-runbook.md (Stopping an iwdp by hand)"},
 	} {
 		text := read(path)
 		for _, want := range append(slices.Clone(steps), ref...) {

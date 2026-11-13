@@ -46,14 +46,21 @@ func runDiffSnapshot(ctx context.Context, env Env, _ Input) (Result, error) {
 			same++
 		}
 	}
-	data := map[string]any{"changed": add+del > 0, "additions": add, "removals": del, "unchanged": same}
-	if add+del == 0 {
-		data["diff"] = ""
-		return Result{Text: "No changes detected", Data: data}, nil
+	diff := ""
+	if add+del > 0 {
+		diff = unified(ops, diffContext)
 	}
-	diff := unified(ops, diffContext)
-	data["diff"] = diff
-	return Result{Text: fmt.Sprintf("%s\n%d additions, %d removals, %d unchanged", diff, add, del, same), Data: data}, nil
+	data := map[string]any{"changed": add+del > 0, "additions": add, "removals": del, "unchanged": same, "diff": diff}
+	return Result{Text: diffSnapshotText(diff, add, del, same), Data: data}, nil
+}
+
+// diffSnapshotText is the text of diff snapshot; private mode makes it
+// from the members that it prints (privateReads).
+func diffSnapshotText(diff string, add, del, same int) string {
+	if add+del == 0 {
+		return "No changes detected"
+	}
+	return fmt.Sprintf("%s\n%d additions, %d removals, %d unchanged", diff, add, del, same)
 }
 
 // diffContext is the number of unchanged lines shown around a change

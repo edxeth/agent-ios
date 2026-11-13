@@ -179,7 +179,9 @@ func dirEntries(t *testing.T, dir string) []string {
 // only source of commands and help.
 func TestEveryCommandHasHelp(t *testing.T) {
 	var overview bytes.Buffer
-	printUsage(&overview)
+	if err := printUsage(&overview); err != nil {
+		t.Fatal(err)
+	}
 	all := reg.All()
 	if len(all) == 0 {
 		t.Fatal("the registry has no commands")
@@ -189,7 +191,7 @@ func TestEveryCommandHasHelp(t *testing.T) {
 			t.Errorf("the overview does not list %q with its summary", c.Name)
 		}
 		var help bytes.Buffer
-		if !printCommandHelp(&help, c.Name) || !strings.HasPrefix(help.String(), "Usage: iwdp-cli "+c.Name) {
+		if !knownHelp(&help, c.Name) || !strings.HasPrefix(help.String(), "Usage: iwdp-cli "+c.Name) {
 			t.Errorf("help %s = %q, want its usage", c.Name, help.String())
 		}
 	}

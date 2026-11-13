@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/core"
@@ -31,7 +30,7 @@ func init() {
 	Register(&Command{
 		Name:    "tab",
 		Summary: "Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs.",
-		Args:    []Arg{{Name: "id", Help: "tab id (t1, t2, ...) or label from tab list; none: list the tabs"}},
+		Args:    []Arg{{Name: "id", Help: "tab id (t1, t2, ...) or label from tab list; none: list the tabs", Page: true}},
 		Output:  OutputText,
 		Run:     runTab,
 	})
@@ -42,14 +41,14 @@ func init() {
 		Flags:   []Flag{{Name: "label", Type: FlagString, Help: "label for the new tab, usable instead of its tN id"}},
 		// No page of the command: runTabNew leases the current page for
 		// window.open in its own operation, so that it can end that lease
-		// after the operation.
-		Mutates: true, Output: OutputText,
+		// after the operation. It runs window.open in the --page page.
+		ReadsPage: true, Mutates: true, Output: OutputText,
 		Run: runTabNew,
 	})
 	Register(&Command{
 		Name:    "tab close",
 		Summary: "Close a tab (default: the current one) with window.close(); works only for tabs that a script opened.",
-		Args:    []Arg{{Name: "id", Help: "tab id (tN) or label; default: the current tab"}},
+		Args:    []Arg{{Name: "id", Help: "tab id (tN) or label; default: the current tab", Page: true}},
 		Output:  OutputText,
 		Run:     runTabClose,
 	})
@@ -294,20 +293,12 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	// window.open runs in the session's current page (the opener), which
 	// in a new session is the device's first tab, often the user's own.
-	// borrowed is the lease that this call's acquisition granted on the
-	// opener (none when the session held it before), reported by the core
-	// at the grant, so also when the operation's admission fails after it.
-	var borrowedMu sync.Mutex
-	var borrowed struct {
-		key   string
-		epoch uint64
-	}
+	// borrowed records the lease that this call's acquisition granted on
+	// the opener (none when the session held it before), also when the
+	// operation's admission fails after the grant (core.LeaseClaim).
+	var borrowed core.LeaseClaim
 	ao := acquireFor(in)
-	ao.OnGrant = func(key string, epoch uint64) {
-		borrowedMu.Lock()
-		borrowed.key, borrowed.epoch = key, epoch
-		borrowedMu.Unlock()
-	}
+	ao.Claim = &borrowed
 	err = m.Do(ctx, tabRequest(in, in.Global.Page), ao, "tab new", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
 		raw, err := mo.Op.Caller().Send(ctx, "Runtime.evaluate", map[string]any{"expression": "!!window.open(" + string(expr) + ")", "returnByValue": true, "emulateUserGesture": true})
 		if err != nil {
@@ -319,22 +310,19 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 		return nil
 	})
 	// A failed tab new leaves the session on the opener; it ends the lease
-	// that it borrowed there, only while that lease has the epoch that this
-	// call was granted (ReleaseEpoch): a lease held before, a lease on
-	// another page and a lease granted again later stay. The release gets
-	// its own budget, because a canceled or expired command must still end
-	// the lease and send its cleanup.
+	// that it borrowed there, only while that lease is still this call's
+	// alone (ReleaseClaimed): a lease held before, a lease on another page,
+	// a lease granted again later and a lease that another command of the
+	// session used meanwhile stay. The release gets its own budget,
+	// because a canceled or expired command must still end the lease and
+	// send its cleanup.
 	failed := func(err error) error {
-		borrowedMu.Lock()
-		key, epoch := borrowed.key, borrowed.epoch
-		borrowedMu.Unlock()
-		if key == "" {
-			return err
-		}
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tabReleaseBudget)
 		defer cancel()
-		if w := releaseWarning(m, session, "the page that ran window.open", m.ReleaseEpoch(rctx, session, key, epoch)); w != "" {
-			return fmt.Errorf("%w; %s", err, w)
+		for _, key := range borrowed.Keys() {
+			if w := releaseWarning(m, session, "the page that ran window.open", m.ReleaseClaimed(rctx, &borrowed, key)); w != "" {
+				err = fmt.Errorf("%w; %s", err, w)
+			}
 		}
 		return err
 	}
