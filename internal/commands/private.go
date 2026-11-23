@@ -928,7 +928,9 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 		MacStarted     *bool `json:"macStarted"`
 		Booted         bool  `json:"booted"`
 		WindowOpened   bool  `json:"windowOpened"`
+		SafariStarted  bool  `json:"safariStarted"`
 		ForwardStarted bool  `json:"forwardStarted"`
+		IWDPStarted    bool  `json:"iwdpStarted"`
 		IWDPRestarted  bool  `json:"iwdpRestarted"`
 		Pages          *int  `json:"pages"`
 	}
@@ -936,11 +938,11 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 		return "", nil, false
 	}
 	value := map[string]any{
-		"macStarted": *r.MacStarted, "booted": r.Booted, "windowOpened": r.WindowOpened,
-		"forwardStarted": r.ForwardStarted, "iwdpRestarted": r.IWDPRestarted, "pages": *r.Pages,
+		"macStarted": *r.MacStarted, "booted": r.Booted, "windowOpened": r.WindowOpened, "safariStarted": r.SafariStarted,
+		"forwardStarted": r.ForwardStarted, "iwdpStarted": r.IWDPStarted, "iwdpRestarted": r.IWDPRestarted, "pages": *r.Pages,
 	}
-	text := fmt.Sprintf("mac started %t\nbooted %t\nwindow opened %t\nforward started %t\niwdp restarted %t\ntabs %d",
-		*r.MacStarted, r.Booted, r.WindowOpened, r.ForwardStarted, r.IWDPRestarted, *r.Pages)
+	text := fmt.Sprintf("mac started %t\nbooted %t\nwindow opened %t\nsafari started %t\nforward started %t\niwdp started %t\niwdp restarted %t\ntabs %d",
+		*r.MacStarted, r.Booted, r.WindowOpened, r.SafariStarted, r.ForwardStarted, r.IWDPStarted, r.IWDPRestarted, *r.Pages)
 	return text, value, true
 }
 

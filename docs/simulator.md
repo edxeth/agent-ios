@@ -34,18 +34,19 @@ The Mac needs Xcode with an iOS Simulator runtime, Remote Login (sshd) for the u
 
 ## Commands
 
-- `iwdp-cli sim up [--device D] [--url URL] [--no-window] [--restart-iwdp]` does what is still needed, in order: start the Mac with `start` when ssh gets no answer, wait until it answers and a user is logged in to its desktop, boot the simulator, open its window (unless `--no-window`), start Safari, forward `127.0.0.1:27753` to the simulator's `webinspectord_sim` socket (whose path changes at every boot), restart iwdp when it does not list the simulator, open `--url` in Safari, and wait up to 30 s for a tab. Run it again at any time: when everything runs, it changes nothing. Its default deadline is 15 minutes.
+- `iwdp-cli sim up [--device D] [--url URL] [--no-window] [--restart-iwdp]` does what is still needed, in order: start the Mac with `start` when ssh gets no answer, wait until it answers and a user is logged in to its desktop, boot the simulator, open its window (unless `--no-window`), start Safari when it does not run, forward `127.0.0.1:27753` to the simulator's `webinspectord_sim` socket (whose path changes at every boot), start iwdp, or restart the one that iwdp-cli started when it does not use that forward, open `--url` in Safari, and wait up to 30 s for a tab. Run it again at any time: when everything runs, it changes nothing. A `--url` that is not an absolute http or https URL is a usage error (exit 2) before any step. Its default deadline is 15 minutes.
 - `iwdp-cli sim status [--device D]` checks each of these parts and changes none; it does not start iwdp. `--json` has `ready`.
 - `iwdp-cli sim down [--device D] [--mac]` stops the forward and shuts the simulator down; `--mac` also runs `stop`.
 
 A URL of this host, opened in the simulator, uses the Mac's address for this host: `http://10.0.2.2:<port>/` from a QEMU VM with user networking.
 
-Safari's start page is not offered for inspection. When `sim up` reports `tabs: 0`, run it again with `--url`, then `iwdp-cli tab list`.
+Safari's start page is not offered for inspection. When `sim up` reports `tabs: 0`, run it again with `--url`, then `iwdp-cli tab list`. A page list that iwdp does not answer is an error, not `tabs: 0`.
 
 ## Ownership and restarts
 
-- `sim up` stops only the ssh forward that it started and recorded (in the daemon's private directory), after it checked that process's command line. When another program listens on `127.0.0.1:27753`, `sim up` fails and changes nothing.
-- A restart of iwdp ends every page connection, those of physical devices too. `sim up` restarts only the iwdp that iwdp-cli started (`restart-iwdp`, device-runbook.md), and refuses while a page of another device has an active lease, unless `--restart-iwdp`.
+- `sim up` signals only the ssh forward that it started and recorded (in the daemon's private directory, under a lock): the process must have the recorded pid, start time and start token, as for `restart-iwdp`. A record whose process is gone, or whose pid another process now has, is removed without a signal; a process that cannot be identified, or that does not end after SIGTERM, is an error and keeps its record. The forward counts only while its own process alone listens on `127.0.0.1:27753`; when another program listens there, `sim up` fails and starts nothing.
+- `sim up` uses only an iwdp that iwdp-cli started, which looks for a simulator on 127.0.0.1:27753. Another program's iwdp is refused: `sim up` cannot tell where that iwdp looks, nor restart it.
+- A restart of iwdp ends every page connection, those of physical devices too. `sim up` restarts iwdp when it does not list the simulator or when the forward was replaced, and refuses while a page of another device has an active lease, unless `--restart-iwdp`. It checks before it changes the forward, and again right before the restart; a lease taken between that check and the restart still ends (known-limits.md).
 - Quitting the Simulator app on the Mac shuts its simulators down; `sim up` boots the simulator again.
 
 ## Linux: usbmuxd

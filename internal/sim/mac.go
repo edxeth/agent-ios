@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Runner runs a program on this host to its end and returns its standard
@@ -21,6 +22,9 @@ type Runner func(ctx context.Context, name string, args ...string) ([]byte, erro
 // ExecRunner is the Runner of real programs.
 func ExecRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	// A child that keeps the output pipes open after the end of ctx (ssh's
+	// ControlMaster, a wrapper script) does not hold Output past it.
+	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -67,10 +71,14 @@ func (m Mac) shell(ctx context.Context, script string) ([]byte, error) {
 	return m.run(ctx, "ssh", m.sshArgs(nil, script)...)
 }
 
-// Reachable reports whether ssh logs in to the Mac.
-func (m Mac) Reachable(ctx context.Context) bool {
+// Reachable reports whether ssh logs in to the Mac. The end of ctx is an
+// error, not an unreachable Mac.
+func (m Mac) Reachable(ctx context.Context) (bool, error) {
 	_, err := m.shell(ctx, "true")
-	return err == nil
+	if err != nil && ctx.Err() != nil {
+		return false, fmt.Errorf("checking ssh to %s: %w", m.cfg.SSH, ctx.Err())
+	}
+	return err == nil, nil
 }
 
 // LoggedIn reports whether a user is logged in to the Mac's desktop (the
@@ -249,6 +257,19 @@ func (m Mac) WindowOpen(ctx context.Context) (bool, error) {
 	return strings.TrimSpace(string(out)) == "yes", nil
 }
 
+// SafariRunning reports whether Safari runs in the simulator (its launchd
+// job, which simctl spawn lists).
+func (m Mac) SafariRunning(ctx context.Context, udid string) (bool, error) {
+	if !udidRE.MatchString(udid) {
+		return false, fmt.Errorf("checking Safari: bad UDID %q", udid)
+	}
+	out, err := m.shell(ctx, "xcrun simctl spawn "+udid+" launchctl list | grep -q 'UIKitApplication:com.apple.mobilesafari\\[' && echo yes || echo no")
+	if err != nil {
+		return false, fmt.Errorf("checking Safari in the simulator: %w", err)
+	}
+	return strings.TrimSpace(string(out)) == "yes", nil
+}
+
 // LaunchSafari starts Safari in the simulator, or brings it to the front.
 func (m Mac) LaunchSafari(ctx context.Context, udid string) error {
 	if !udidRE.MatchString(udid) {
@@ -260,14 +281,23 @@ func (m Mac) LaunchSafari(ctx context.Context, udid string) error {
 	return nil
 }
 
-// OpenURL opens rawURL (http or https) in the simulator's Safari.
+// CheckURL accepts an absolute http or https URL with a host: what
+// sim up --url opens.
+func CheckURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("--url %q: want an absolute http or https URL", rawURL)
+	}
+	return nil
+}
+
+// OpenURL opens rawURL (CheckURL) in the simulator's Safari.
 func (m Mac) OpenURL(ctx context.Context, udid, rawURL string) error {
 	if !udidRE.MatchString(udid) {
 		return fmt.Errorf("opening a URL: bad UDID %q", udid)
 	}
-	u, err := url.Parse(rawURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("opening %q in the simulator: want an http or https URL", rawURL)
+	if err := CheckURL(rawURL); err != nil {
+		return err
 	}
 	if _, err := m.shell(ctx, "xcrun simctl openurl "+udid+" "+shellQuote(rawURL)); err != nil {
 		return fmt.Errorf("opening the URL in the simulator: %w", err)

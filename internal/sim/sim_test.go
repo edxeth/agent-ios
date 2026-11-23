@@ -2,14 +2,16 @@ package sim
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"testing/quick"
 	"time"
@@ -109,235 +111,6 @@ func TestNewerProperty(t *testing.T) {
 	}
 }
 
-// fakeMac answers the ssh calls of Mac and records every call.
-type fakeMac struct {
-	mu        sync.Mutex
-	calls     []string
-	reachable func() bool
-	loggedIn  bool
-	booted    bool
-	window    bool
-	socket    string
-}
-
-func (f *fakeMac) run(_ context.Context, name string, args ...string) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	line := name + " " + strings.Join(args, " ")
-	if name != "ssh" {
-		f.calls = append(f.calls, line)
-		return nil, nil
-	}
-	script := args[len(args)-1]
-	f.calls = append(f.calls, script)
-	if !f.reachable() {
-		return nil, errors.New("ssh: connect: connection refused")
-	}
-	switch {
-	case script == "true":
-		return nil, nil
-	case strings.HasPrefix(script, "who"):
-		return []byte(map[bool]string{true: "yes\n", false: "no\n"}[f.loggedIn]), nil
-	case strings.HasPrefix(script, "xcrun simctl list"):
-		state := map[bool]string{true: "Booted", false: "Shutdown"}[f.booted]
-		return []byte(`{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"` + udidA + `","name":"iPhone 17 Pro","state":"` + state + `"}]}}`), nil
-	case strings.HasPrefix(script, "xcrun simctl bootstatus"):
-		f.booted = true
-		return nil, nil
-	case strings.HasPrefix(script, "xcrun simctl shutdown"):
-		f.booted = false
-		return nil, nil
-	case strings.HasPrefix(script, "pgrep -xq Simulator"):
-		return []byte(map[bool]string{true: "yes\n", false: "no\n"}[f.window]), nil
-	case strings.HasPrefix(script, "open -a Simulator"):
-		f.window = true
-		return nil, nil
-	case strings.HasPrefix(script, "xcrun simctl openurl"):
-		return nil, nil
-	case strings.HasPrefix(script, "xcrun simctl launch"):
-		return nil, nil
-	case strings.HasPrefix(script, "p=$(pgrep -f 'launchd_sim"):
-		if !f.booted {
-			return nil, errors.New("exit status 1")
-		}
-		return []byte(f.socket + "\n"), nil
-	}
-	return nil, fmt.Errorf("fakeMac: unexpected script %q", script)
-}
-
-func (f *fakeMac) did(prefix string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, c := range f.calls {
-		if strings.HasPrefix(c, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// fakeForward and fakeIWDP stand in for the forward and iwdp.
-type fakeIWDP struct {
-	listed   bool
-	restarts int
-	onStart  bool // a restart makes iwdp list the simulator
-}
-
-func (f *fakeIWDP) SimulatorListed(context.Context) (bool, error) { return f.listed, nil }
-func (f *fakeIWDP) SimulatorPages(context.Context) (int, error) {
-	if f.listed {
-		return 1, nil
-	}
-	return 0, nil
-}
-
-func (f *fakeIWDP) Restart(context.Context) error {
-	f.restarts++
-	f.listed = f.onStart
-	return nil
-}
-
-// forwardFor returns a Forward whose ssh is a real sleep process (so that
-// pids and signals are real) next to a TCP listener on a private address.
-func forwardFor(t *testing.T, mac Mac) (*Forward, *[]string) {
-	t.Helper()
-	var spawned []string
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
-	var listeners []net.Listener
-	args := map[int][]string{}
-	f := &Forward{
-		Mac: mac, Dir: t.TempDir(), Addr: addr, Wait: 5 * time.Second,
-		Run: func(_ context.Context, name string, a ...string) ([]byte, error) {
-			pid := 0
-			_, _ = fmt.Sscan(a[len(a)-1], &pid)
-			if err := exec.Command("kill", "-0", a[len(a)-1]).Run(); err != nil {
-				return nil, errors.New("exit status 1")
-			}
-			return []byte(strings.Join(args[pid], " ") + "\n"), nil
-		},
-	}
-	f.Spawn = func(name string, a ...string) (int, error) {
-		l, err := net.Listen("tcp", addr)
-		if err != nil {
-			return 0, err
-		}
-		cmd := exec.Command("sleep", "60")
-		if err := cmd.Start(); err != nil {
-			_ = l.Close()
-			return 0, err
-		}
-		t.Cleanup(func() { _ = cmd.Process.Kill() })
-		listeners = append(listeners, l)
-		go func() { // the "ssh" stops listening when it ends, as ssh -L does
-			_ = cmd.Wait()
-			_ = l.Close()
-		}()
-		args[cmd.Process.Pid] = append([]string{name}, a...)
-		spawned = append(spawned, strings.Join(a, " "))
-		return cmd.Process.Pid, nil
-	}
-	t.Cleanup(func() {
-		for _, l := range listeners {
-			_ = l.Close()
-		}
-	})
-	return f, &spawned
-}
-
-func newTestSim(t *testing.T, fm *fakeMac, iw *fakeIWDP, cfg Config) (*Sim, *[]string) {
-	t.Helper()
-	mac := NewMac(cfg, fm.run)
-	fwd, spawned := forwardFor(t, mac)
-	return &Sim{Cfg: cfg, Mac: mac, Run: fm.run, Forward: fwd, IWDP: iw, Poll: time.Millisecond, PageWait: 50 * time.Millisecond}, spawned
-}
-
-// From a stopped Mac, Up runs the start command, waits for ssh and the
-// login, boots, opens the window, starts Safari, forwards the inspector
-// socket and restarts iwdp, which lists nothing before.
-func TestUpFromStoppedMac(t *testing.T) {
-	started := false
-	fm := &fakeMac{socket: "/private/var/tmp/x/com.apple.webinspectord_sim.socket", loggedIn: true}
-	fm.reachable = func() bool { return started }
-	cfg := Config{SSH: "mac", Start: []string{"vmctl", "start", "mac"}, Device: "iPhone 17 Pro"}
-	iw := &fakeIWDP{onStart: true}
-	s, spawned := newTestSim(t, fm, iw, cfg)
-	s.Run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		started = true
-		return fm.run(ctx, name, args...)
-	}
-	r, err := s.Up(context.Background(), "", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.MacStarted || !r.Booted || !r.WindowOpened || !r.ForwardStarted || !r.IWDPRestarted || r.Device.UDID != udidA {
-		t.Fatalf("report %+v: want every step done", r)
-	}
-	if !fm.did("vmctl start mac") || len(*spawned) != 1 || !strings.Contains((*spawned)[0], ":"+fm.socket) {
-		t.Fatalf("calls %q, spawned %q", fm.calls, *spawned)
-	}
-}
-
-// When everything runs, Up changes nothing: no boot, no window, the same
-// forward, and no iwdp restart.
-func TestUpIdempotent(t *testing.T) {
-	fm := &fakeMac{socket: "/s/com.apple.webinspectord_sim.socket", loggedIn: true, booted: true, window: true}
-	fm.reachable = func() bool { return true }
-	iw := &fakeIWDP{onStart: true}
-	s, spawned := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
-	if _, err := s.Up(context.Background(), "", "", false); err != nil {
-		t.Fatal(err)
-	}
-	r, err := s.Up(context.Background(), "", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.MacStarted || r.Booted || r.WindowOpened || r.ForwardStarted || r.IWDPRestarted {
-		t.Fatalf("second Up did steps: %+v", r)
-	}
-	if len(*spawned) != 1 || iw.restarts != 1 {
-		t.Fatalf("spawned %d forwards and %d restarts over two Ups, want 1 and 1", len(*spawned), iw.restarts)
-	}
-	// A new boot gives a new socket: the forward is replaced and iwdp,
-	// which dropped the simulator, restarts.
-	fm.socket = "/t/com.apple.webinspectord_sim.socket"
-	iw.listed = false
-	r, err = s.Up(context.Background(), "", "", true)
-	if err != nil || !r.ForwardStarted || !r.IWDPRestarted || len(*spawned) != 2 {
-		t.Fatalf("after a new socket: %+v, %v, %d forwards", r, err, len(*spawned))
-	}
-}
-
-// Up fails with the reason when the Mac is down and nothing can start it,
-// when nobody logs in, and when another program holds the forward's port.
-func TestUpFailures(t *testing.T) {
-	fm := &fakeMac{}
-	fm.reachable = func() bool { return false }
-	s, _ := newTestSim(t, fm, &fakeIWDP{}, Config{SSH: "mac"})
-	if _, err := s.Up(context.Background(), "", "", false); err == nil || !strings.Contains(err.Error(), "no start command") {
-		t.Fatalf("down Mac without start: %v", err)
-	}
-	fm.reachable = func() bool { return true }
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if _, err := s.Up(ctx, "", "", false); err == nil || !strings.Contains(err.Error(), "logged in") {
-		t.Fatalf("no login: %v", err)
-	}
-	fm.loggedIn, fm.booted, fm.socket = true, true, "/s/com.apple.webinspectord_sim.socket"
-	l, err := net.Listen("tcp", s.Forward.Addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = l.Close() }()
-	if _, err := s.Up(context.Background(), udidA, "", true); err == nil || !strings.Contains(err.Error(), "another program listens") {
-		t.Fatalf("foreign listener: %v", err)
-	}
-}
-
 // OpenURL takes only http and https URLs and passes the URL to the Mac's
 // shell as one quoted word, also when it holds a quote.
 func TestOpenURL(t *testing.T) {
@@ -362,12 +135,412 @@ func TestOpenURL(t *testing.T) {
 	}
 }
 
+// fakeMac answers the ssh calls of Mac and records every call.
+type fakeMac struct {
+	mu        sync.Mutex
+	calls     []string
+	reachable func() bool
+	loggedIn  bool
+	booted    bool
+	window    bool
+	safari    bool
+	socket    string
+}
+
+func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if name != "ssh" {
+		f.calls = append(f.calls, name+" "+strings.Join(args, " "))
+		return nil, nil
+	}
+	script := args[len(args)-1]
+	f.calls = append(f.calls, script)
+	if !f.reachable() {
+		return nil, errors.New("ssh: connect: connection refused")
+	}
+	yes := func(b bool) []byte { return []byte(map[bool]string{true: "yes\n", false: "no\n"}[b]) }
+	switch {
+	case script == "true":
+		return nil, nil
+	case strings.HasPrefix(script, "who"):
+		return yes(f.loggedIn), nil
+	case strings.HasPrefix(script, "xcrun simctl list"):
+		state := map[bool]string{true: "Booted", false: "Shutdown"}[f.booted]
+		return []byte(`{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"` + udidA + `","name":"iPhone 17 Pro","state":"` + state + `"}]}}`), nil
+	case strings.HasPrefix(script, "xcrun simctl bootstatus"):
+		f.booted = true
+		return nil, nil
+	case strings.HasPrefix(script, "xcrun simctl shutdown"):
+		f.booted, f.safari = false, false
+		return nil, nil
+	case strings.HasPrefix(script, "pgrep -xq Simulator"):
+		return yes(f.window), nil
+	case strings.HasPrefix(script, "open -a Simulator"):
+		f.window = true
+		return nil, nil
+	case strings.HasPrefix(script, "xcrun simctl spawn"):
+		return yes(f.safari), nil
+	case strings.HasPrefix(script, "xcrun simctl launch"):
+		f.safari = true
+		return nil, nil
+	case strings.HasPrefix(script, "xcrun simctl openurl"):
+		return nil, nil
+	case strings.HasPrefix(script, "p=$(pgrep -f 'launchd_sim"):
+		if !f.booted {
+			return nil, errors.New("exit status 1")
+		}
+		return []byte(f.socket + "\n"), nil
+	}
+	return nil, fmt.Errorf("fakeMac: unexpected script %q", script)
+}
+
+func (f *fakeMac) count(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// fakeProc is a process of fakeProcs.
+type fakeProc struct {
+	start, token string
+	listens      bool
+	ignoresTERM  bool
+}
+
+// fakeProcs is a process table for Forward: Spawn starts an "ssh" that
+// listens at once; Signal(SIGTERM) ends a process unless it ignores it.
+type fakeProcs struct {
+	mu          sync.Mutex
+	next        int
+	procs       map[int]*fakeProc
+	spawned     map[int]fakeProc // every process that Spawn started, as started
+	terms       []int
+	identifyErr error
+	listenLate  bool // a spawned ssh does not listen
+	ignoreTERM  bool // a spawned ssh ignores SIGTERM
+	badTERM     []string
+}
+
+func newFakeProcs() *fakeProcs {
+	return &fakeProcs{next: 1000, procs: map[int]*fakeProc{}, spawned: map[int]fakeProc{}}
+}
+
+func (p *fakeProcs) procsOf() Processes {
+	return Processes{
+		Spawn: func(token, name string, args ...string) (int, error) {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.next++
+			pr := &fakeProc{start: fmt.Sprint("start", p.next), token: token, listens: !p.listenLate, ignoresTERM: p.ignoreTERM}
+			p.procs[p.next] = pr
+			p.spawned[p.next] = *pr
+			return p.next, nil
+		},
+		Identify: func(pid int) (string, string, error) {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			if p.identifyErr != nil {
+				return "", "", p.identifyErr
+			}
+			pr, ok := p.procs[pid]
+			if !ok {
+				return "", "", errors.New("no such process")
+			}
+			return pr.start, pr.token, nil
+		},
+		Signal: func(pid int, sig syscall.Signal) error {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			pr, ok := p.procs[pid]
+			if !ok {
+				return syscall.ESRCH
+			}
+			if sig == syscall.SIGTERM {
+				p.terms = append(p.terms, pid)
+				if s, mine := p.spawned[pid]; !mine || s.start != pr.start || s.token != pr.token {
+					p.badTERM = append(p.badTERM, fmt.Sprintf("pid %d %+v", pid, *pr))
+				}
+				if !pr.ignoresTERM {
+					delete(p.procs, pid)
+				}
+			}
+			return nil
+		},
+		Listeners: func(context.Context, uint16) ([]int, error) {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			var pids []int
+			for pid, pr := range p.procs {
+				if pr.listens {
+					pids = append(pids, pid)
+				}
+			}
+			slices.Sort(pids)
+			return pids, nil
+		},
+		NewToken: func() string {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.next++
+			return fmt.Sprint("token", p.next)
+		},
+	}
+}
+
+// liveSpawned counts the processes that Spawn started and that still run
+// as started.
+func (p *fakeProcs) liveSpawned() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for pid, s := range p.spawned {
+		if pr, ok := p.procs[pid]; ok && pr.start == s.start && pr.token == s.token {
+			n++
+		}
+	}
+	return n
+}
+
+// reuse gives pid to another process, one that this program did not start.
+func (p *fakeProcs) reuse(pid int, listens bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.procs[pid] = &fakeProc{start: "other", token: "", listens: listens}
+}
+
+func (p *fakeProcs) kill(pid int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.procs, pid)
+}
+
+func newForward(t *testing.T, mac Mac, p *fakeProcs) *Forward {
+	t.Helper()
+	return &Forward{Mac: mac, Dir: t.TempDir(), Addr: "127.0.0.1:27753", Procs: p.procsOf(), Wait: 200 * time.Millisecond}
+}
+
+func recordedPID(t *testing.T, f *Forward) int {
+	t.Helper()
+	data, err := os.ReadFile(f.path())
+	var r forwardRecord
+	if err != nil || json.Unmarshal(data, &r) != nil {
+		t.Fatalf("no forward record: %v", err)
+	}
+	return r.PID
+}
+
+// fakeIWDP stands in for iwdp: a start or restart connects it to the
+// simulator.
+type fakeIWDP struct {
+	st       IWDPState
+	starts   int
+	restarts int
+	leases   int
+	pagesErr error
+	events   *[]string
+}
+
+func (f *fakeIWDP) State(context.Context) (IWDPState, error) { return f.st, nil }
+func (f *fakeIWDP) Start(context.Context) error {
+	f.starts++
+	f.st = IWDPState{Running: true, Own: true, Listed: true}
+	return nil
+}
+
+func (f *fakeIWDP) Restart(context.Context) error {
+	f.restarts++
+	if f.events != nil {
+		*f.events = append(*f.events, "restart")
+	}
+	f.st = IWDPState{Running: true, Own: true, Listed: true}
+	return nil
+}
+func (f *fakeIWDP) LeasesElsewhere(context.Context) (int, error) { return f.leases, nil }
+func (f *fakeIWDP) SimulatorPages(context.Context) (int, error) {
+	if f.pagesErr != nil {
+		return 0, f.pagesErr
+	}
+	if f.st.Listed {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func newTestSim(t *testing.T, fm *fakeMac, iw *fakeIWDP, cfg Config) (*Sim, *fakeProcs) {
+	t.Helper()
+	mac := NewMac(cfg, fm.run)
+	p := newFakeProcs()
+	return &Sim{Cfg: cfg, Mac: mac, Run: fm.run, Forward: newForward(t, mac, p), IWDP: iw, Poll: time.Millisecond, PageWait: 50 * time.Millisecond}, p
+}
+
+func readyMac() *fakeMac {
+	fm := &fakeMac{socket: "/s/com.apple.webinspectord_sim.socket", loggedIn: true, booted: true, window: true, safari: true}
+	fm.reachable = func() bool { return true }
+	return fm
+}
+
+// From a stopped Mac, Up runs the start command, waits for ssh and the
+// login, boots, opens the window, starts Safari, forwards the inspector
+// socket and starts iwdp.
+func TestUpFromStoppedMac(t *testing.T) {
+	started := false
+	fm := &fakeMac{socket: "/private/var/tmp/x/com.apple.webinspectord_sim.socket", loggedIn: true}
+	fm.reachable = func() bool { return started }
+	cfg := Config{SSH: "mac", Start: []string{"vmctl", "start", "mac"}, Device: "iPhone 17 Pro"}
+	iw := &fakeIWDP{}
+	s, p := newTestSim(t, fm, iw, cfg)
+	s.Run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		started = true
+		return fm.run(ctx, name, args...)
+	}
+	r, err := s.Up(context.Background(), "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.MacStarted || !r.Booted || !r.WindowOpened || !r.SafariStarted || !r.ForwardStarted || !r.IWDPStarted || r.IWDPRestarted || r.Pages != 1 || r.Device.UDID != udidA {
+		t.Fatalf("report %+v: want every step done and iwdp started, not restarted", r)
+	}
+	if fm.count("vmctl start mac") != 1 || p.liveSpawned() != 1 {
+		t.Fatalf("calls %q, %d live forwards", fm.calls, p.liveSpawned())
+	}
+}
+
+// When everything runs, Up changes nothing: no boot, no window, no Safari
+// launch (which would bring Safari to the front), the same forward, and no
+// iwdp start or restart. A new boot's socket replaces the forward and
+// restarts iwdp.
+func TestUpIdempotent(t *testing.T) {
+	fm := readyMac()
+	iw := &fakeIWDP{}
+	s, p := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	if _, err := s.Up(context.Background(), "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Up(context.Background(), "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.MacStarted || r.Booted || r.WindowOpened || r.SafariStarted || r.ForwardStarted || r.IWDPStarted || r.IWDPRestarted {
+		t.Fatalf("second Up did steps: %+v", r)
+	}
+	if fm.count("xcrun simctl launch") != 0 || len(p.spawned) != 1 || iw.starts != 1 || iw.restarts != 0 {
+		t.Fatalf("%d Safari launches, %d forwards, %d starts, %d restarts", fm.count("xcrun simctl launch"), len(p.spawned), iw.starts, iw.restarts)
+	}
+	fm.socket = "/t/com.apple.webinspectord_sim.socket"
+	iw.st.Listed = false
+	r, err = s.Up(context.Background(), "", "", true)
+	if err != nil || !r.ForwardStarted || !r.IWDPRestarted || len(p.spawned) != 2 || p.liveSpawned() != 1 {
+		t.Fatalf("after a new socket: %+v, %v, %d forwards, %d live", r, err, len(p.spawned), p.liveSpawned())
+	}
+}
+
+// A forward that serves the socket while iwdp still lists the simulator
+// through an older connection is not enough when the forward is new: Up
+// restarts iwdp whenever it replaced the forward, also when iwdp lists the
+// simulator.
+func TestUpRestartsIWDPAfterANewForward(t *testing.T) {
+	fm := readyMac()
+	iw := &fakeIWDP{st: IWDPState{Running: true, Own: true, Listed: true}}
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	r, err := s.Up(context.Background(), "", "", false)
+	if err != nil || !r.ForwardStarted || !r.IWDPRestarted {
+		t.Fatalf("%+v, %v: a listing from before the new forward must not count", r, err)
+	}
+}
+
+// Up refuses, before it changes the forward or iwdp, an iwdp that iwdp-cli
+// did not start, and a restart that would end other devices' leases.
+func TestUpRefusesBeforeAnyChange(t *testing.T) {
+	fm := readyMac()
+	iw := &fakeIWDP{st: IWDPState{Running: true, Own: false, Listed: true}}
+	s, p := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	if _, err := s.Up(context.Background(), "", "", false); !errors.Is(err, ErrNotOwnIWDP) {
+		t.Fatalf("foreign iwdp: %v", err)
+	}
+	if len(p.spawned) != 0 {
+		t.Fatal("a forward started before the refusal")
+	}
+	iw.st.Own = true
+	if _, err := s.Up(context.Background(), "", "", false); err != nil { // forward, restart
+		t.Fatal(err)
+	}
+	old := recordedPID(t, s.Forward)
+	fm.socket = "/t/com.apple.webinspectord_sim.socket"
+	iw.leases = 2
+	if _, err := s.Up(context.Background(), "", "", false); err == nil || !strings.Contains(err.Error(), "2 active page lease") {
+		t.Fatalf("leases: %v", err)
+	}
+	if recordedPID(t, s.Forward) != old || len(p.spawned) != 1 || iw.restarts != 1 {
+		t.Fatalf("the refused Up changed the forward or iwdp: pid %d (was %d), %d forwards, %d restarts", recordedPID(t, s.Forward), old, len(p.spawned), iw.restarts)
+	}
+	s.RestartAnyway = true
+	if r, err := s.Up(context.Background(), "", "", false); err != nil || !r.IWDPRestarted {
+		t.Fatalf("--restart-iwdp: %+v, %v", r, err)
+	}
+}
+
+// Up fails with the reason when the Mac is down and nothing can start it,
+// when nobody logs in, when the URL is not http(s) (before any call), and
+// when the page list keeps failing; another program on the forward's port
+// is refused.
+func TestUpFailures(t *testing.T) {
+	fm := &fakeMac{}
+	fm.reachable = func() bool { return false }
+	s, p := newTestSim(t, fm, &fakeIWDP{}, Config{SSH: "mac"})
+	if _, err := s.Up(context.Background(), "", "", false); err == nil || !strings.Contains(err.Error(), "no start command") {
+		t.Fatalf("down Mac without start: %v", err)
+	}
+	if _, err := s.Up(context.Background(), "", "file:///etc/passwd", false); err == nil || fm.count("") != 1 {
+		t.Fatalf("bad URL: %v after %d calls; want a refusal before any call", err, fm.count("")-1)
+	}
+	fm.reachable = func() bool { return true }
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := s.Up(ctx, "", "", false); err == nil || !strings.Contains(err.Error(), "logged in") {
+		t.Fatalf("no login: %v", err)
+	}
+	fm.loggedIn, fm.booted, fm.safari, fm.socket = true, true, true, "/s/com.apple.webinspectord_sim.socket"
+	p.reuse(4242, true) // another program listens on the port
+	if _, err := s.Up(context.Background(), udidA, "", true); err == nil || !strings.Contains(err.Error(), "another program") {
+		t.Fatalf("foreign listener: %v", err)
+	}
+	p.kill(4242)
+	s.IWDP = &fakeIWDP{pagesErr: errors.New("connection refused")}
+	if _, err := s.Up(context.Background(), udidA, "", true); err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("a failing page list: %v, want its error, not 0 tabs", err)
+	}
+}
+
+// Status and Down return the end of the deadline as an error, not as an
+// unreachable Mac.
+func TestDeadlineIsAnError(t *testing.T) {
+	fm := readyMac()
+	s, _ := newTestSim(t, fm, &fakeIWDP{}, Config{SSH: "mac", Device: udidA})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Status(ctx, ""); !errors.Is(err, context.Canceled) {
+		t.Errorf("Status: %v, want context.Canceled", err)
+	}
+	if _, err := s.Down(ctx, "", false); !errors.Is(err, context.Canceled) {
+		t.Errorf("Down: %v, want context.Canceled", err)
+	}
+}
+
 // Down stops the forward, shuts the booted simulator down, and runs the
 // stop command only with mac; mac without a stop command fails first.
 func TestDown(t *testing.T) {
-	fm := &fakeMac{socket: "/s/com.apple.webinspectord_sim.socket", loggedIn: true, booted: true, window: true}
-	fm.reachable = func() bool { return true }
-	s, _ := newTestSim(t, fm, &fakeIWDP{onStart: true}, Config{SSH: "mac", Device: udidA})
+	fm := readyMac()
+	s, p := newTestSim(t, fm, &fakeIWDP{}, Config{SSH: "mac", Device: udidA})
 	if _, err := s.Down(context.Background(), "", true); err == nil || !strings.Contains(err.Error(), "no stop command") {
 		t.Fatalf("--mac without stop: %v", err)
 	}
@@ -376,10 +549,160 @@ func TestDown(t *testing.T) {
 	}
 	s.Cfg.Stop = []string{"vmctl", "stop", "mac"}
 	r, err := s.Down(context.Background(), "", true)
-	if err != nil || r.ShutDown == nil || !r.MacStopped || fm.booted || !fm.did("vmctl stop mac") {
+	if err != nil || r.ShutDown == nil || !r.MacStopped || fm.booted || fm.count("vmctl stop mac") != 1 {
 		t.Fatalf("down: %+v, %v, booted %v", r, err, fm.booted)
 	}
-	if sock, _ := s.Forward.Socket(context.Background()); sock != "" {
-		t.Fatalf("forward still runs to %q after Down", sock)
+	if p.liveSpawned() != 0 {
+		t.Fatal("the forward still runs after Down")
+	}
+}
+
+// The forward signals only the process it started, as it started it: a
+// reused pid is never signaled, a failed identification keeps the record,
+// and so does a forward that does not end after SIGTERM.
+func TestForwardOwnership(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeProcs()
+	f := newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	if _, err := f.Ensure(ctx, "/a.socket"); err != nil {
+		t.Fatal(err)
+	}
+	pid := recordedPID(t, f)
+	p.reuse(pid, false)
+	if err := f.Stop(ctx); err != nil || len(p.terms) != 0 {
+		t.Fatalf("reused pid: %v, signaled %v", err, p.terms)
+	}
+	if _, err := f.Ensure(ctx, "/a.socket"); err != nil {
+		t.Fatal(err)
+	}
+	pid = recordedPID(t, f)
+	p.identifyErr = errors.New("permission denied")
+	if err := f.Stop(ctx); err == nil || len(p.terms) != 0 || recordedPID(t, f) != pid {
+		t.Fatalf("failed identification: %v, signaled %v; want an error and the record kept", err, p.terms)
+	}
+	p.identifyErr = nil
+	p.mu.Lock()
+	p.procs[pid].ignoresTERM = true
+	p.mu.Unlock()
+	if err := f.Stop(ctx); err == nil || recordedPID(t, f) != pid {
+		t.Fatalf("a forward that outlives SIGTERM: %v; want an error and the record kept", err)
+	}
+	p.kill(pid)
+	if err := f.Stop(ctx); err != nil {
+		t.Fatalf("after it ended: %v", err)
+	}
+	if len(p.badTERM) != 0 {
+		t.Fatalf("signaled processes it did not start: %v", p.badTERM)
+	}
+}
+
+// The forward serves only while its own process listens on the port, and
+// alone: when another program holds the port, Serves says no and Ensure
+// refuses, so iwdp never reaches that program as if it were the simulator.
+func TestForwardServesOnlyWhenItListensAlone(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeProcs()
+	f := newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	if _, err := f.Ensure(ctx, "/a.socket"); err != nil {
+		t.Fatal(err)
+	}
+	pid := recordedPID(t, f)
+	p.mu.Lock()
+	p.procs[pid].listens = false // its listener is gone, the process still runs
+	p.mu.Unlock()
+	p.reuse(4242, true)
+	if ok, err := f.Serves(ctx, "/a.socket"); ok || err != nil {
+		t.Fatalf("Serves = %v, %v with another program on the port", ok, err)
+	}
+	if _, err := f.Ensure(ctx, "/a.socket"); err == nil || !strings.Contains(err.Error(), "4242") {
+		t.Fatalf("Ensure with another program on the port: %v", err)
+	}
+	if p.liveSpawned() != 0 || len(p.badTERM) != 0 {
+		t.Fatalf("%d forwards left, bad signals %v", p.liveSpawned(), p.badTERM)
+	}
+}
+
+// A forward whose ssh ends before it listens, or whose port another
+// program takes first, is an error, and leaves no forward running.
+func TestForwardThatDoesNotListen(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeProcs()
+	p.listenLate = true
+	f := newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	if _, err := f.Ensure(ctx, "/a.socket"); err == nil || p.liveSpawned() != 0 {
+		t.Fatalf("an ssh that never listens: %v, %d live", err, p.liveSpawned())
+	}
+	if ok, _ := f.Serves(ctx, ""); ok {
+		t.Fatal("Serves after a failed start")
+	}
+}
+
+// Property: over any sequence of ensures, stops, deaths, pid reuses and
+// foreign listeners, the forward signals only processes that it started (as
+// started), runs at most one of them, serves the asked socket after every
+// successful Ensure, and runs none after a successful Stop.
+func TestForwardLifecycleProperty(t *testing.T) {
+	f := func(ops []byte) bool {
+		ctx := context.Background()
+		p := newFakeProcs()
+		fw := &Forward{Mac: NewMac(Config{SSH: "mac"}, nil), Dir: t.TempDir(), Addr: "127.0.0.1:27753", Procs: p.procsOf(), Wait: 20 * time.Millisecond}
+		const foreign = 7
+		for _, op := range ops {
+			switch op % 7 {
+			case 0, 1:
+				sock := fmt.Sprint("/s", op%2)
+				_, err := fw.Ensure(ctx, sock)
+				p.mu.Lock()
+				_, foreignUp := p.procs[foreign]
+				p.mu.Unlock()
+				if err == nil {
+					if ok, _ := fw.Serves(ctx, sock); !ok {
+						t.Logf("Ensure(%s) succeeded without serving it", sock)
+						return false
+					}
+				} else if !foreignUp {
+					t.Logf("Ensure failed without a foreign listener: %v", err)
+					return false
+				}
+			case 2:
+				if err := fw.Stop(ctx); err != nil || p.liveSpawned() != 0 {
+					t.Logf("Stop: %v, %d live", err, p.liveSpawned())
+					return false
+				}
+			case 3:
+				if st, _ := fw.read(); st.rec != nil {
+					p.kill(st.rec.PID)
+				}
+			case 4:
+				if st, _ := fw.read(); st.rec != nil && st.rec.PID > 0 {
+					p.reuse(st.rec.PID, false)
+				}
+			case 5:
+				p.reuse(foreign, true)
+			case 6:
+				p.kill(foreign)
+			}
+			if p.liveSpawned() > 1 || len(p.badTERM) > 0 {
+				t.Logf("%d live forwards, bad signals %v", p.liveSpawned(), p.badTERM)
+				return false
+			}
+		}
+		return true
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 300}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Property: shellQuote makes any string without NUL one word that a POSIX
+// shell reads back unchanged.
+func TestShellQuoteProperty(t *testing.T) {
+	f := func(s string) bool {
+		s = strings.ReplaceAll(s, "\x00", "")
+		out, err := exec.Command("sh", "-c", "printf %s "+shellQuote(s)).Output()
+		return err == nil && string(out) == s
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 200}); err != nil {
+		t.Fatal(err)
 	}
 }

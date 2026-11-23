@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
@@ -27,13 +28,19 @@ func init() {
 		Name: "sim up", Local: true, Timeout: 15 * time.Minute,
 		Summary: "Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: " +
 			"start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, " +
-			"forward 127.0.0.1:27753 to its Web Inspector over ssh, and restart the ios_webkit_debug_proxy that iwdp-cli started when it does not list the simulator. " +
-			"Refuses that restart while another device's page has an active lease, unless --restart-iwdp. Default deadline 15m.",
+			"forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. " +
+			"Refuses that restart while another device's page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Default deadline 15m.",
 		Flags: []Flag{
 			device,
 			{Name: "no-window", Type: FlagBool, Help: "do not open the Simulator window"},
 			{Name: "url", Type: FlagString, Help: "open this http or https URL in the simulator's Safari (a URL of this host: the Mac's address for it, for example http://10.0.2.2:8080/ in a QEMU VM)"},
 			{Name: "restart-iwdp", Type: FlagBool, Help: "restart iwdp even when that ends active page leases of other devices"},
+		},
+		Check: func(in Input) error {
+			if u, _ := in.Flags["url"].(string); u != "" {
+				return sim.CheckURL(u)
+			}
+			return nil
 		},
 		Run: runSimUp,
 	})
@@ -52,7 +59,7 @@ func init() {
 }
 
 // newSim builds the Sim of the configuration file, with real programs.
-var newSim = func(env Env, restartAnyway bool) (*sim.Sim, error) {
+var newSim = func(env Env) (*sim.Sim, error) {
 	path, err := sim.ConfigPath()
 	if err != nil {
 		return nil, err
@@ -66,10 +73,17 @@ var newSim = func(env Env, restartAnyway bool) (*sim.Sim, error) {
 		return nil, err
 	}
 	mac := sim.NewMac(cfg, sim.ExecRunner)
+	procs := sim.Processes{
+		Spawn:     sim.SpawnDetached(proxy.StartTokenEnv),
+		Identify:  proxy.ProcessIdentity,
+		Signal:    syscall.Kill,
+		Listeners: proxy.ListenerPIDs,
+		NewToken:  proxy.NewStartToken,
+	}
 	return &sim.Sim{
-		Cfg: cfg, Mac: mac, Run: sim.ExecRunner, Poll: 3 * time.Second, Settle: 2 * time.Second, PageWait: 30 * time.Second,
-		Forward: &sim.Forward{Mac: mac, Dir: dir, Addr: sim.InspectorAddr, Run: sim.ExecRunner, Spawn: sim.SpawnDetached, Wait: 15 * time.Second},
-		IWDP:    hostIWDP{env: env, restartAnyway: restartAnyway},
+		Cfg: cfg, Mac: mac, Run: sim.ExecRunner, Poll: 3 * time.Second, PageWait: 30 * time.Second,
+		Forward: &sim.Forward{Mac: mac, Dir: dir, Addr: sim.InspectorAddr, Procs: procs, Wait: 15 * time.Second},
+		IWDP:    hostIWDP{env: env},
 	}, nil
 }
 
@@ -83,39 +97,36 @@ var ActiveLeasesElsewhere func(ctx context.Context, env Env) (int, error)
 var SimStateDir = func() (string, error) { return "", errors.New("sim: no state directory in this build") }
 
 // hostIWDP is the iwdp on this host's listing address.
-type hostIWDP struct {
-	env           Env
-	restartAnyway bool
-}
+type hostIWDP struct{ env Env }
 
-func (h hostIWDP) SimulatorListed(ctx context.Context) (bool, error) {
-	listed, err := simulatorListed(ctx)
-	if errors.Is(err, proxy.ErrNotListening) {
-		if err := proxy.Start(ctx); err != nil {
-			return false, withUSBMuxHint(err)
-		}
-		listed, err = simulatorListed(ctx)
+func (h hostIWDP) State(ctx context.Context) (sim.IWDPState, error) {
+	listening, own, err := proxy.OwnsListing(ctx)
+	if err != nil || !listening {
+		return sim.IWDPState{}, err
 	}
-	return listed, err
-}
-
-// Restart restarts iwdp (proxy.Restart: only the one that iwdp-cli
-// started). A restart ends every page connection, so it refuses while a
-// page of another device has an active lease, unless restartAnyway.
-func (h hostIWDP) Restart(ctx context.Context) error {
-	if !h.restartAnyway {
-		if ActiveLeasesElsewhere == nil {
-			return errors.New("restarting ios_webkit_debug_proxy: the daemon's leases cannot be read in this build; run sim up --restart-iwdp")
-		}
-		n, err := ActiveLeasesElsewhere(ctx, h.env)
-		if err != nil {
-			return err
-		}
-		if n > 0 {
-			return fmt.Errorf("ios_webkit_debug_proxy must restart to reach the simulator, and that would end %d active page lease(s) of other devices: wait until those sessions end, or run sim up --restart-iwdp", n)
+	st := sim.IWDPState{Running: true, Own: own}
+	ds, err := proxy.ListDevicesContext(ctx)
+	if err != nil {
+		return st, fmt.Errorf("reading ios_webkit_debug_proxy's device list: %w", err)
+	}
+	for _, d := range ds {
+		if d.DeviceID == "SIMULATOR" {
+			st.Listed = true
 		}
 	}
-	return withUSBMuxHint(proxy.Restart(ctx))
+	return st, nil
+}
+
+func (h hostIWDP) Start(ctx context.Context) error { return withUSBMuxHint(proxy.Start(ctx)) }
+
+// Restart restarts iwdp (proxy.Restart: only the one that iwdp-cli started).
+func (h hostIWDP) Restart(ctx context.Context) error { return withUSBMuxHint(proxy.Restart(ctx)) }
+
+func (h hostIWDP) LeasesElsewhere(ctx context.Context) (int, error) {
+	if ActiveLeasesElsewhere == nil {
+		return 0, errors.New("the daemon's leases cannot be read in this build; run sim up --restart-iwdp")
+	}
+	return ActiveLeasesElsewhere(ctx, h.env)
 }
 
 // SimulatorPages counts the pages of the SIMULATOR device in iwdp's listing.
@@ -147,22 +158,7 @@ func (h hostIWDP) SimulatorPages(ctx context.Context) (int, error) {
 		}
 		return len(pages), nil
 	}
-	return 0, nil
-}
-
-// simulatorListed reads iwdp's listing for the SIMULATOR device; it starts
-// nothing.
-func simulatorListed(ctx context.Context) (bool, error) {
-	ds, err := proxy.ListDevicesContext(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, d := range ds {
-		if d.DeviceID == "SIMULATOR" {
-			return true, nil
-		}
-	}
-	return false, nil
+	return 0, errors.New("ios_webkit_debug_proxy does not list the simulator")
 }
 
 // usbmuxSocket is usbmuxd's socket on Linux.
@@ -184,12 +180,19 @@ func withUSBMuxHint(err error) error {
 	return fmt.Errorf("%w (usbmuxd does not answer on %s, and ios_webkit_debug_proxy exits without it: keep usbmuxd running also with no iPhone plugged in, docs/simulator.md)", err, usbmuxSocket)
 }
 
+func simDid(done bool, yes, no string) string {
+	if done {
+		return yes
+	}
+	return no
+}
+
 func runSimUp(ctx context.Context, env Env, in Input) (Result, error) {
-	restartAnyway, _ := in.Flags["restart-iwdp"].(bool)
-	s, err := newSim(env, restartAnyway)
+	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
 	}
+	s.RestartAnyway, _ = in.Flags["restart-iwdp"].(bool)
 	dev, _ := in.Flags["device"].(string)
 	noWindow, _ := in.Flags["no-window"].(bool)
 	openURL, _ := in.Flags["url"].(string)
@@ -197,47 +200,38 @@ func runSimUp(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	did := func(done bool, yes, no string) string {
-		if done {
-			return yes
-		}
-		return no
+	iwdp := "lists the simulator"
+	switch {
+	case r.IWDPRestarted:
+		iwdp = "restarted, lists the simulator"
+	case r.IWDPStarted:
+		iwdp = "started, lists the simulator"
 	}
 	lines := []string{
 		fmt.Sprintf("Simulator ready: %s (%s, %s) on %s", r.Device.Name, r.Device.Runtime, r.Device.UDID, s.Cfg.SSH),
-		"  mac:        " + did(r.MacStarted, "started", "was running"),
-		"  simulator:  " + did(r.Booted, "booted", "was booted"),
-		"  window:     " + did(noWindow, "not opened (--no-window)", did(r.WindowOpened, "opened", "was open")),
-		"  forward:    " + did(r.ForwardStarted, "started ", "running ") + sim.InspectorAddr + " -> " + r.InspectorSocket,
-		"  iwdp:       " + did(r.IWDPRestarted, "restarted, lists the simulator", "lists the simulator"),
+		"  mac:        " + simDid(r.MacStarted, "started", "was running"),
+		"  simulator:  " + simDid(r.Booted, "booted", "was booted"),
+		"  window:     " + simDid(noWindow, "not opened (--no-window)", simDid(r.WindowOpened, "opened", "was open")),
+		"  safari:     " + simDid(r.SafariStarted, "started", "was running"),
+		"  forward:    " + simDid(r.ForwardStarted, "started ", "running ") + sim.InspectorAddr + " -> " + r.InspectorSocket,
+		"  iwdp:       " + iwdp,
 		fmt.Sprintf("  tabs:       %d", r.Pages),
-		did(r.Pages > 0, "Next: iwdp-cli tab list", "Safari offers no tab for inspection yet (its start page is not inspectable): run iwdp-cli sim up --url <url>"),
+		simDid(r.Pages > 0, "Next: iwdp-cli tab list", "Safari offers no tab for inspection yet (its start page is not inspectable): run iwdp-cli sim up --url <url>"),
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: r}, nil
 }
 
 func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
-	s, err := newSim(env, false)
+	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
 	}
 	dev, _ := in.Flags["device"].(string)
-	st, err := s.Status(ctx, dev, func(ctx context.Context) (bool, error) {
-		listed, err := simulatorListed(ctx)
-		if errors.Is(err, proxy.ErrNotListening) {
-			return false, nil
-		}
-		return listed, err
-	})
+	st, err := s.Status(ctx, dev)
 	if err != nil {
 		return Result{}, err
 	}
-	yn := func(b bool) string {
-		if b {
-			return "yes"
-		}
-		return "no"
-	}
+	yn := func(b bool) string { return simDid(b, "yes", "no") }
 	device := st.DeviceError
 	if st.Device != nil {
 		device = fmt.Sprintf("%s (%s, %s): %s", st.Device.Name, st.Device.Runtime, st.Device.UDID, st.Device.State)
@@ -246,7 +240,7 @@ func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 		device = "unknown"
 	}
 	lines := []string{
-		"ready:      " + yn(st.Ready) + map[bool]string{true: "", false: " (run iwdp-cli sim up)"}[st.Ready],
+		"ready:      " + yn(st.Ready) + simDid(st.Ready, "", " (run iwdp-cli sim up)"),
 		"mac:        " + s.Cfg.SSH + ", answers over ssh: " + yn(st.MacReachable),
 		"login:      " + yn(st.LoggedIn),
 		"simulator:  " + device,
@@ -258,7 +252,7 @@ func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 }
 
 func runSimDown(ctx context.Context, env Env, in Input) (Result, error) {
-	s, err := newSim(env, false)
+	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
 	}
