@@ -25,9 +25,10 @@ type IWDP interface {
 	// Restart restarts the iwdp that iwdp-cli started, so that it connects
 	// to InspectorAddr again: iwdp connects to a simulator only at its start.
 	Restart(ctx context.Context) error
-	// LeasesElsewhere counts the active page leases on devices other than
-	// the simulator, which a restart of iwdp would end.
-	LeasesElsewhere(ctx context.Context) (int, error)
+	// ActiveLeases counts the daemon's active page leases on every device,
+	// the simulator's too: a restart of iwdp, and a new forward, end their
+	// page connections.
+	ActiveLeases(ctx context.Context) (int, error)
 	// SimulatorPages counts the pages that iwdp lists for the simulator.
 	SimulatorPages(ctx context.Context) (int, error)
 }
@@ -43,7 +44,7 @@ type Sim struct {
 	// PageWait bounds the wait for Safari's first inspectable tab: Safari
 	// restores its tabs some seconds after it starts.
 	PageWait time.Duration
-	// RestartAnyway lets a restart of iwdp end active leases of other devices.
+	// RestartAnyway lets a restart of iwdp end active page leases.
 	RestartAnyway bool
 }
 
@@ -179,7 +180,7 @@ func (s *Sim) up(ctx context.Context, device string, noWindow bool) (UpReport, e
 // check that can refuse runs before the first change: a refusal leaves the
 // forward and iwdp as they were.
 func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
-	serves, err := s.Forward.Serves(ctx, sock)
+	fs, err := s.Forward.State(ctx, sock)
 	if err != nil {
 		return err
 	}
@@ -190,19 +191,22 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 	if st.Running && !st.Own {
 		return ErrNotOwnIWDP
 	}
-	if serves && st.Listed {
+	// The listing is this forward's only when iwdp started after it
+	// listened (Synced): an earlier Up may have replaced the forward and
+	// then been refused the restart.
+	if fs.Serving && fs.Synced && st.Listed {
 		return nil
 	}
 	// iwdp connects to a simulator only at its start: a running iwdp that
-	// does not list the simulator, or that is connected to a forward that
-	// is about to be replaced, must restart.
+	// does not list the simulator, or that is connected to another
+	// forward, must restart.
 	restart := st.Running
-	if restart {
+	if restart { // without a running iwdp no page connection exists
 		if err := s.leaseCheck(ctx); err != nil {
 			return err
 		}
 	}
-	if !serves {
+	if !fs.Serving {
 		if r.ForwardStarted, err = s.Forward.Ensure(ctx, sock); err != nil {
 			return err
 		}
@@ -224,24 +228,33 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 		}
 		r.IWDPStarted = true
 	}
+	// Another program may have started an iwdp of its own first.
+	if st, err := s.IWDP.State(ctx); err != nil {
+		return err
+	} else if !st.Own {
+		return ErrNotOwnIWDP
+	}
+	if err := s.Forward.MarkSynced(ctx); err != nil {
+		return err
+	}
 	return s.until(ctx, "ios_webkit_debug_proxy lists the simulator", func() (bool, error) {
 		st, err := s.IWDP.State(ctx)
-		return st.Listed, err
+		return st.Listed && st.Own, err
 	})
 }
 
-// leaseCheck refuses a restart of iwdp while it would end active leases of
-// other devices, unless RestartAnyway.
+// leaseCheck refuses a restart of iwdp while it would end active leases,
+// unless RestartAnyway.
 func (s *Sim) leaseCheck(ctx context.Context) error {
 	if s.RestartAnyway {
 		return nil
 	}
-	n, err := s.IWDP.LeasesElsewhere(ctx)
+	n, err := s.IWDP.ActiveLeases(ctx)
 	if err != nil {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("ios_webkit_debug_proxy must restart to reach the simulator, and that would end %d active page lease(s) of other devices: wait until those sessions end, or run sim up --restart-iwdp", n)
+		return fmt.Errorf("ios_webkit_debug_proxy must restart to reach the simulator, and that would end the page connections of %d active page lease(s): wait until those sessions end, or run sim up --restart-iwdp", n)
 	}
 	return nil
 }
@@ -287,7 +300,7 @@ type Status struct {
 	Device       *Device `json:"device,omitempty"`
 	DeviceError  string  `json:"deviceError,omitempty"`
 	Window       bool    `json:"window"`
-	Forward      bool    `json:"forward"` // the forward runs, alone listens, and reaches the booted simulator's socket
+	Forward      bool    `json:"forward"` // the forward serves the booted simulator's socket, and iwdp started after it
 	Listed       bool    `json:"listed"`  // the iwdp that iwdp-cli started lists the simulator
 	Ready        bool    `json:"ready"`
 }
@@ -317,9 +330,11 @@ func (s *Sim) Status(ctx context.Context, device string) (Status, error) {
 	if st.Device != nil && st.Device.State == "Booted" {
 		sock, err := s.Mac.InspectorSocket(ctx, d.UDID)
 		if err == nil {
-			if st.Forward, err = s.Forward.Serves(ctx, sock); err != nil {
+			fs, err := s.Forward.State(ctx, sock)
+			if err != nil {
 				return st, err
 			}
+			st.Forward = fs.Serving && fs.Synced
 		} else if ctx.Err() != nil {
 			return st, err
 		}

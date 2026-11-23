@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"runtime"
 	"strings"
 	"syscall"
@@ -20,8 +21,8 @@ import (
 // Simulator on a Mac that this host reaches over SSH (internal/sim,
 // docs/simulator.md). They are Local: they run in the iwdp-cli process,
 // which starts the ssh forward. Before a restart of iwdp they count the
-// daemon's active leases on other devices through ActiveLeasesElsewhere,
-// which the daemon package sets (it holds the daemon client).
+// daemon's active leases through ActiveLeases, which the daemon package
+// sets (it holds the daemon client).
 func init() {
 	device := Flag{Name: "device", Type: FlagString, Help: "the simulator: its UDID or exact name (default: \"device\" of the configuration, else the one booted simulator)"}
 	Register(&Command{
@@ -29,12 +30,12 @@ func init() {
 		Summary: "Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: " +
 			"start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, " +
 			"forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. " +
-			"Refuses that restart while another device's page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Default deadline 15m.",
+			"Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Default deadline 15m.",
 		Flags: []Flag{
 			device,
 			{Name: "no-window", Type: FlagBool, Help: "do not open the Simulator window"},
 			{Name: "url", Type: FlagString, Help: "open this http or https URL in the simulator's Safari (a URL of this host: the Mac's address for it, for example http://10.0.2.2:8080/ in a QEMU VM)"},
-			{Name: "restart-iwdp", Type: FlagBool, Help: "restart iwdp even when that ends active page leases of other devices"},
+			{Name: "restart-iwdp", Type: FlagBool, Help: "restart iwdp even when that ends active page leases"},
 		},
 		Check: func(in Input) error {
 			if u, _ := in.Flags["url"].(string); u != "" {
@@ -74,11 +75,13 @@ var newSim = func(env Env) (*sim.Sim, error) {
 	}
 	mac := sim.NewMac(cfg, sim.ExecRunner)
 	procs := sim.Processes{
-		Spawn:     sim.SpawnDetached(proxy.StartTokenEnv),
-		Identify:  proxy.ProcessIdentity,
-		Signal:    syscall.Kill,
-		Listeners: proxy.ListenerPIDs,
-		NewToken:  proxy.NewStartToken,
+		Spawn:    sim.SpawnDetached(proxy.StartTokenEnv),
+		Identify: proxy.ProcessIdentity,
+		Signal:   syscall.Kill,
+		Endpoint: func(ctx context.Context, pgid int) (bool, bool, error) {
+			return proxy.EndpointOwner(ctx, pgid, netip.MustParseAddrPort(sim.InspectorAddr))
+		},
+		NewToken: proxy.NewStartToken,
 	}
 	return &sim.Sim{
 		Cfg: cfg, Mac: mac, Run: sim.ExecRunner, Poll: 3 * time.Second, PageWait: 30 * time.Second,
@@ -87,10 +90,9 @@ var newSim = func(env Env) (*sim.Sim, error) {
 	}, nil
 }
 
-// ActiveLeasesElsewhere counts the active page leases of the daemon on
-// devices other than the simulator; no running daemon is 0. The daemon
-// package sets it.
-var ActiveLeasesElsewhere func(ctx context.Context, env Env) (int, error)
+// ActiveLeases counts the active page leases of the daemon on every
+// device; no running daemon is 0. The daemon package sets it.
+var ActiveLeases func(ctx context.Context, env Env) (int, error)
 
 // SimStateDir is the private directory of the forward's record; the daemon
 // package sets it to its socket directory.
@@ -122,11 +124,11 @@ func (h hostIWDP) Start(ctx context.Context) error { return withUSBMuxHint(proxy
 // Restart restarts iwdp (proxy.Restart: only the one that iwdp-cli started).
 func (h hostIWDP) Restart(ctx context.Context) error { return withUSBMuxHint(proxy.Restart(ctx)) }
 
-func (h hostIWDP) LeasesElsewhere(ctx context.Context) (int, error) {
-	if ActiveLeasesElsewhere == nil {
+func (h hostIWDP) ActiveLeases(ctx context.Context) (int, error) {
+	if ActiveLeases == nil {
 		return 0, errors.New("the daemon's leases cannot be read in this build; run sim up --restart-iwdp")
 	}
-	return ActiveLeasesElsewhere(ctx, h.env)
+	return ActiveLeases(ctx, h.env)
 }
 
 // SimulatorPages counts the pages of the SIMULATOR device in iwdp's listing.

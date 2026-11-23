@@ -44,9 +44,11 @@ Safari's start page is not offered for inspection. When `sim up` reports `tabs: 
 
 ## Ownership and restarts
 
-- `sim up` signals only the ssh forward that it started and recorded (in the daemon's private directory, under a lock): the process must have the recorded pid, start time and start token, as for `restart-iwdp`. A record whose process is gone, or whose pid another process now has, is removed without a signal; a process that cannot be identified, or that does not end after SIGTERM, is an error and keeps its record. The forward counts only while its own process alone listens on `127.0.0.1:27753`; when another program listens there, `sim up` fails and starts nothing.
-- `sim up` uses only an iwdp that iwdp-cli started, which looks for a simulator on 127.0.0.1:27753. Another program's iwdp is refused: `sim up` cannot tell where that iwdp looks, nor restart it.
-- A restart of iwdp ends every page connection, those of physical devices too. `sim up` restarts iwdp when it does not list the simulator or when the forward was replaced, and refuses while a page of another device has an active lease, unless `--restart-iwdp`. It checks before it changes the forward, and again right before the restart; a lease taken between that check and the restart still ends (known-limits.md).
+- `sim up` signals only the ssh forward that it started and recorded (in the daemon's private directory, under a lock): the process must have the recorded pid, start time and start token, as for `restart-iwdp`, checked again right before each signal. A record whose pid no process has, or another process has now, is removed without a signal; a process that cannot be identified (EPERM included), or that does not end after SIGTERM, is an error and keeps its record. A new ssh that cannot be shown to be the one just started is not signaled.
+- The forward counts only while its own process receives the connections to `127.0.0.1:27753` (the most specific listening socket for that address, as for iwdp's start). When another program listens there, `sim up` fails and starts nothing.
+- `sim up` uses only an iwdp that iwdp-cli started, which looks for a simulator on 127.0.0.1:27753, also after its own start: another program's iwdp is refused, since `sim up` cannot tell where it looks nor restart it.
+- iwdp's SIMULATOR device counts as the forward's only when iwdp started or restarted after that forward listened (the record's `synced`). Otherwise `sim up` restarts iwdp.
+- A restart of iwdp ends every page connection, the simulator's and those of physical devices. `sim up` refuses it while the daemon holds an active page lease on any device, unless `--restart-iwdp`. It counts before it changes the forward and again right before the restart; a lease taken between that count and the restart still ends (known-limits.md).
 - Quitting the Simulator app on the Mac shuts its simulators down; `sim up` boots the simulator again.
 
 ## Linux: usbmuxd

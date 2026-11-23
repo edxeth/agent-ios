@@ -263,7 +263,11 @@ func (m Mac) SafariRunning(ctx context.Context, udid string) (bool, error) {
 	if !udidRE.MatchString(udid) {
 		return false, fmt.Errorf("checking Safari: bad UDID %q", udid)
 	}
-	out, err := m.shell(ctx, "xcrun simctl spawn "+udid+" launchctl list | grep -q 'UIKitApplication:com.apple.mobilesafari\\[' && echo yes || echo no")
+	// The list first, so that a failed simctl fails the call instead of
+	// reading as "not running" (which would launch, and bring forward, a
+	// running Safari).
+	out, err := m.shell(ctx, "l=$(xcrun simctl spawn "+udid+" launchctl list) || exit 1; "+
+		"case \"$l\" in *'UIKitApplication:com.apple.mobilesafari['*) echo yes ;; *) echo no ;; esac")
 	if err != nil {
 		return false, fmt.Errorf("checking Safari in the simulator: %w", err)
 	}

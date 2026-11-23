@@ -144,6 +144,7 @@ type fakeMac struct {
 	booted    bool
 	window    bool
 	safari    bool
+	safariErr bool // simctl fails when Safari's state is read
 	socket    string
 }
 
@@ -182,7 +183,10 @@ func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte,
 	case strings.HasPrefix(script, "open -a Simulator"):
 		f.window = true
 		return nil, nil
-	case strings.HasPrefix(script, "xcrun simctl spawn"):
+	case strings.HasPrefix(script, "l=$(xcrun simctl spawn"):
+		if f.safariErr {
+			return nil, errors.New("exit status 1")
+		}
 		return yes(f.safari), nil
 	case strings.HasPrefix(script, "xcrun simctl launch"):
 		f.safari = true
@@ -224,10 +228,13 @@ type fakeProcs struct {
 	next        int
 	procs       map[int]*fakeProc
 	spawned     map[int]fakeProc // every process that Spawn started, as started
+	args        [][]string       // the arguments of every Spawn
 	terms       []int
 	identifyErr error
-	listenLate  bool // a spawned ssh does not listen
-	ignoreTERM  bool // a spawned ssh ignores SIGTERM
+	probeErr    error // Signal(pid, 0) fails with it (EPERM: another user's process)
+	listenLate  bool  // a spawned ssh does not listen
+	ignoreTERM  bool  // a spawned ssh ignores SIGTERM
+	stolenPID   bool  // a spawned ssh ends at once and its pid goes to another process
 	badTERM     []string
 }
 
@@ -242,8 +249,12 @@ func (p *fakeProcs) procsOf() Processes {
 			defer p.mu.Unlock()
 			p.next++
 			pr := &fakeProc{start: fmt.Sprint("start", p.next), token: token, listens: !p.listenLate, ignoresTERM: p.ignoreTERM}
-			p.procs[p.next] = pr
 			p.spawned[p.next] = *pr
+			p.args = append(p.args, append([]string{name}, args...))
+			if p.stolenPID {
+				pr = &fakeProc{start: "other", listens: false}
+			}
+			p.procs[p.next] = pr
 			return p.next, nil
 		},
 		Identify: func(pid int) (string, string, error) {
@@ -265,6 +276,9 @@ func (p *fakeProcs) procsOf() Processes {
 			if !ok {
 				return syscall.ESRCH
 			}
+			if sig == 0 && p.probeErr != nil {
+				return p.probeErr
+			}
 			if sig == syscall.SIGTERM {
 				p.terms = append(p.terms, pid)
 				if s, mine := p.spawned[pid]; !mine || s.start != pr.start || s.token != pr.token {
@@ -276,17 +290,17 @@ func (p *fakeProcs) procsOf() Processes {
 			}
 			return nil
 		},
-		Listeners: func(context.Context, uint16) ([]int, error) {
+		Endpoint: func(_ context.Context, pgid int) (bool, bool, error) {
 			p.mu.Lock()
 			defer p.mu.Unlock()
-			var pids []int
+			own, foreign := false, false
 			for pid, pr := range p.procs {
 				if pr.listens {
-					pids = append(pids, pid)
+					own = own || pid == pgid
+					foreign = foreign || pid != pgid
 				}
 			}
-			slices.Sort(pids)
-			return pids, nil
+			return own && !foreign, foreign, nil
 		},
 		NewToken: func() string {
 			p.mu.Lock()
@@ -345,15 +359,16 @@ type fakeIWDP struct {
 	st       IWDPState
 	starts   int
 	restarts int
-	leases   int
+	leases   []int // ActiveLeases answers these in turn, then the last one
 	pagesErr error
 	events   *[]string
+	foreign  bool // a start or restart leaves another program's iwdp
 }
 
 func (f *fakeIWDP) State(context.Context) (IWDPState, error) { return f.st, nil }
 func (f *fakeIWDP) Start(context.Context) error {
 	f.starts++
-	f.st = IWDPState{Running: true, Own: true, Listed: true}
+	f.st = IWDPState{Running: true, Own: !f.foreign, Listed: true}
 	return nil
 }
 
@@ -365,7 +380,18 @@ func (f *fakeIWDP) Restart(context.Context) error {
 	f.st = IWDPState{Running: true, Own: true, Listed: true}
 	return nil
 }
-func (f *fakeIWDP) LeasesElsewhere(context.Context) (int, error) { return f.leases, nil }
+
+func (f *fakeIWDP) ActiveLeases(context.Context) (int, error) {
+	if len(f.leases) == 0 {
+		return 0, nil
+	}
+	n := f.leases[0]
+	if len(f.leases) > 1 {
+		f.leases = f.leases[1:]
+	}
+	return n, nil
+}
+
 func (f *fakeIWDP) SimulatorPages(context.Context) (int, error) {
 	if f.pagesErr != nil {
 		return 0, f.pagesErr
@@ -412,6 +438,10 @@ func TestUpFromStoppedMac(t *testing.T) {
 	}
 	if fm.count("vmctl start mac") != 1 || p.liveSpawned() != 1 {
 		t.Fatalf("calls %q, %d live forwards", fm.calls, p.liveSpawned())
+	}
+	// The forward reaches the inspector socket that the Mac named.
+	if want := "127.0.0.1:27753:" + fm.socket; !slices.Contains(p.args[0], want) || p.args[0][0] != "ssh" || !slices.Contains(p.args[0], "mac") {
+		t.Fatalf("forward %q, want ssh ... -L %s ... mac", p.args[0], want)
 	}
 }
 
@@ -476,7 +506,7 @@ func TestUpRefusesBeforeAnyChange(t *testing.T) {
 	}
 	old := recordedPID(t, s.Forward)
 	fm.socket = "/t/com.apple.webinspectord_sim.socket"
-	iw.leases = 2
+	iw.leases = []int{2}
 	if _, err := s.Up(context.Background(), "", "", false); err == nil || !strings.Contains(err.Error(), "2 active page lease") {
 		t.Fatalf("leases: %v", err)
 	}
@@ -611,14 +641,96 @@ func TestForwardServesOnlyWhenItListensAlone(t *testing.T) {
 	p.procs[pid].listens = false // its listener is gone, the process still runs
 	p.mu.Unlock()
 	p.reuse(4242, true)
-	if ok, err := f.Serves(ctx, "/a.socket"); ok || err != nil {
+	if ok, err := serves(f, ctx, "/a.socket"); ok || err != nil {
 		t.Fatalf("Serves = %v, %v with another program on the port", ok, err)
 	}
-	if _, err := f.Ensure(ctx, "/a.socket"); err == nil || !strings.Contains(err.Error(), "4242") {
+	if _, err := f.Ensure(ctx, "/a.socket"); err == nil || !strings.Contains(err.Error(), "another program") {
 		t.Fatalf("Ensure with another program on the port: %v", err)
 	}
 	if p.liveSpawned() != 0 || len(p.badTERM) != 0 {
 		t.Fatalf("%d forwards left, bad signals %v", p.liveSpawned(), p.badTERM)
+	}
+}
+
+// serves is Forward.State's Serving.
+func serves(f *Forward, ctx context.Context, socket string) (bool, error) {
+	st, err := f.State(ctx, socket)
+	return st.Serving, err
+}
+
+// A restart refused after the forward was replaced leaves iwdp listing the
+// simulator through the old forward: the next Up must not take that
+// listing as the new forward's, and restarts iwdp.
+func TestUpDoesNotTrustAListingFromBeforeTheForward(t *testing.T) {
+	fm := readyMac()
+	iw := &fakeIWDP{}
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	if _, err := s.Up(context.Background(), "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	fm.socket = "/t/com.apple.webinspectord_sim.socket"
+	iw.leases = []int{0, 1, 0} // a lease appears between the two checks
+	if _, err := s.Up(context.Background(), "", "", false); err == nil {
+		t.Fatal("the second check let the restart through")
+	}
+	r, err := s.Up(context.Background(), "", "", false)
+	if err != nil || !r.IWDPRestarted {
+		t.Fatalf("%+v, %v: want a restart, the listing predates the forward", r, err)
+	}
+}
+
+// An iwdp that another program started first, while Up started its own,
+// is refused; so is a Safari whose state cannot be read, rather than
+// launched (and brought forward) blindly.
+func TestUpRefusesAForeignWinnerAndAnUnreadableSafari(t *testing.T) {
+	fm := readyMac()
+	s, _ := newTestSim(t, fm, &fakeIWDP{foreign: true}, Config{SSH: "mac", Device: udidA})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := s.Up(ctx, "", "", false); !errors.Is(err, ErrNotOwnIWDP) {
+		t.Fatalf("foreign winner: %v", err)
+	}
+	fm.safariErr = true
+	s.IWDP = &fakeIWDP{}
+	if _, err := s.Up(context.Background(), "", "", false); err == nil || fm.count("xcrun simctl launch") != 0 {
+		t.Fatalf("unreadable Safari: %v, %d launches", err, fm.count("xcrun simctl launch"))
+	}
+}
+
+// A spawned ssh that cannot be shown to be the process just started (its
+// pid went to another process) is not signaled; a pid that answers EPERM
+// is not taken for gone, so the record stays; a cancel during the start
+// stops the new forward within seconds, not after Wait.
+func TestForwardStartAndProbeFailures(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeProcs()
+	p.stolenPID = true
+	f := newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	if _, err := f.Ensure(ctx, "/a.socket"); err == nil || len(p.terms) != 0 {
+		t.Fatalf("stolen pid: %v, signaled %v", err, p.terms)
+	}
+	p = newFakeProcs()
+	f = newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	if _, err := f.Ensure(ctx, "/a.socket"); err != nil {
+		t.Fatal(err)
+	}
+	pid := recordedPID(t, f)
+	p.identifyErr, p.probeErr = errors.New("permission denied"), syscall.EPERM
+	if err := f.Stop(ctx); err == nil || recordedPID(t, f) != pid || len(p.terms) != 0 {
+		t.Fatalf("EPERM: %v, signaled %v; want an error and the record kept", err, p.terms)
+	}
+	p = newFakeProcs()
+	p.listenLate, p.ignoreTERM = true, true // the stop of the new forward must not outlast the cancel by much
+	f = newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	f.Wait = 15 * time.Second
+	cctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	if _, err := f.Ensure(cctx, "/a.socket"); err == nil {
+		t.Fatal("Ensure succeeded without a listener")
+	}
+	if d := time.Since(began); d > 5*time.Second {
+		t.Fatalf("a canceled start took %s", d)
 	}
 }
 
@@ -632,7 +744,7 @@ func TestForwardThatDoesNotListen(t *testing.T) {
 	if _, err := f.Ensure(ctx, "/a.socket"); err == nil || p.liveSpawned() != 0 {
 		t.Fatalf("an ssh that never listens: %v, %d live", err, p.liveSpawned())
 	}
-	if ok, _ := f.Serves(ctx, ""); ok {
+	if ok, _ := serves(f, ctx, ""); ok {
 		t.Fatal("Serves after a failed start")
 	}
 }
@@ -656,7 +768,7 @@ func TestForwardLifecycleProperty(t *testing.T) {
 				_, foreignUp := p.procs[foreign]
 				p.mu.Unlock()
 				if err == nil {
-					if ok, _ := fw.Serves(ctx, sock); !ok {
+					if ok, _ := serves(fw, ctx, sock); !ok {
 						t.Logf("Ensure(%s) succeeded without serving it", sock)
 						return false
 					}

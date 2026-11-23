@@ -30,10 +30,17 @@ func ProcessIdentity(pid int) (start, token string, err error) {
 	return id.start, id.token, nil
 }
 
-// ListenerPIDs returns the pids of the processes of this user that listen
-// on the TCP port, on any address, sorted.
-func ListenerPIDs(ctx context.Context, port uint16) ([]int, error) {
-	return listenerPIDs(ctx, port)
+// EndpointOwner reports who receives a connection to the TCP endpoint ep:
+// own when the most specific listening socket that receives it belongs to
+// process group pgid, foreign when one of another process does (the checks
+// of an iwdp start's readiness, classify). Neither means that nobody
+// listens there. pgid 0 names no group, so any listener is foreign.
+func EndpointOwner(ctx context.Context, pgid int, ep netip.AddrPort) (own, foreign bool, err error) {
+	l, err := groupListens(ctx, pgid, ep)
+	if err != nil {
+		return false, false, err
+	}
+	return l == listenerOwn, l == listenerForeign, nil
 }
 
 // OwnsListing reports whether something listens on the default listing

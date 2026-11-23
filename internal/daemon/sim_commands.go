@@ -5,16 +5,11 @@ import (
 	"errors"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
 )
-
-// simulatorLabel is the device label of iwdp's SIMULATOR device in the
-// daemon's page status (core.PageStatus.Device).
-var simulatorLabel = iwdp.Label("SIMULATOR", "SIMULATOR")
 
 // The daemon's part of the sim commands (internal/commands/sim.go): the
 // forward's record goes in the daemon's private directory, and a restart of
-// iwdp counts the daemon's active leases on other devices first.
+// iwdp counts the daemon's active leases first.
 func init() {
 	commands.SimStateDir = func() (string, error) {
 		dir := SocketDir()
@@ -23,7 +18,7 @@ func init() {
 		}
 		return dir, nil
 	}
-	commands.ActiveLeasesElsewhere = func(ctx context.Context, env commands.Env) (int, error) {
+	commands.ActiveLeases = func(ctx context.Context, env commands.Env) (int, error) {
 		c, err := connectRunning(ctx, env)
 		if errors.Is(err, ErrNotRunning) {
 			return 0, nil
@@ -39,12 +34,18 @@ func init() {
 		if err != nil {
 			return 0, err
 		}
-		n := 0
-		for _, p := range st.Pages {
-			if p.Lease == "active" && p.Device != simulatorLabel {
-				n++
-			}
-		}
-		return n, nil
+		return activeLeases(st), nil
 	}
+}
+
+// activeLeases counts the pages of st whose lease is active: on every
+// device, since a restart of iwdp ends every page connection.
+func activeLeases(st Status) int {
+	n := 0
+	for _, p := range st.Pages {
+		if p.Lease == "active" {
+			n++
+		}
+	}
+	return n
 }
