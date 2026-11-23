@@ -93,6 +93,9 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`set offline`](#set-offline) | Fail every request of the page (on) or stop doing so (off), through request interception; navigator.onLine stays true. |
 | [`set useragent`](#set-useragent) | Override the user agent string of the page (--reset removes the override). |
 | [`set viewport`](#set-viewport) | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
+| [`sim down`](#sim-down) | Stop the forward that sim up started and shut the simulator down; with --mac also run the configuration's stop command (for example the shutdown of a VM). |
+| [`sim status`](#sim-status) | Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has "ready". |
+| [`sim up`](#sim-up) | Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and restart the ios_webkit_debug_proxy that iwdp-cli started when it does not list the simulator. Refuses that restart while another device's page has an active lease, unless --restart-iwdp. Default deadline 15m. |
 | [`skills get`](#skills-get) | Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill. |
 | [`skills list`](#skills-list) | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
 | [`skills path`](#skills-path) | Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all. |
@@ -1357,6 +1360,55 @@ Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Appl
 | Argument | Required | Description |
 |---|---|---|
 | `<args>...` | no | ignored |
+
+### `sim down`
+
+```
+iwdp-cli sim down [flags]
+```
+
+Stop the forward that sim up started and shut the simulator down; with --mac also run the configuration's stop command (for example the shutdown of a VM).
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 3m0s (`--timeout` overrides it)
+
+| Flag | Value | Description |
+|---|---|---|
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+| `--mac` | none | also stop the Mac with the configuration's stop command |
+
+### `sim status`
+
+```
+iwdp-cli sim status [flags]
+```
+
+Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has "ready".
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 1m0s (`--timeout` overrides it)
+
+| Flag | Value | Description |
+|---|---|---|
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+
+### `sim up`
+
+```
+iwdp-cli sim up [flags]
+```
+
+Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and restart the ios_webkit_debug_proxy that iwdp-cli started when it does not list the simulator. Refuses that restart while another device's page has an active lease, unless --restart-iwdp. Default deadline 15m.
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 15m0s (`--timeout` overrides it)
+
+| Flag | Value | Description |
+|---|---|---|
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+| `--no-window` | none | do not open the Simulator window |
+| `--url` | text | open this http or https URL in the simulator's Safari (a URL of this host: the Mac's address for it, for example http://10.0.2.2:8080/ in a QEMU VM) |
+| `--restart-iwdp` | none | restart iwdp even when that ends active page leases of other devices |
 
 ### `skills get`
 

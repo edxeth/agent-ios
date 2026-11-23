@@ -1,11 +1,11 @@
 ---
 name: iwdp
-description: Drive and debug real iPhone or iPad Safari pages (and local WebKitGTK pages) from Linux with iwdp-cli. Snapshot with @eN refs, synthetic actions, waits, dialogs, tabs, console, network, cookies, storage, screenshots, traces, and a CDP endpoint for agent-browser, Puppeteer and Playwright. Use when the user mentions iOS Safari, iPhone Safari, Web Inspector, iwdp, ios-webkit-debug-proxy, WebKit Inspector Protocol, mobile Safari bugs, real-device Safari screenshots, or asks to drive a connected iPhone browser.
+description: Drive and debug real iPhone or iPad Safari pages, an iOS Simulator's Safari on a Mac or macOS VM over SSH, and local WebKitGTK pages from Linux with iwdp-cli. Snapshot with @eN refs, synthetic actions, waits, dialogs, tabs, console, network, cookies, storage, screenshots, traces, and a CDP endpoint for agent-browser, Puppeteer and Playwright. Use when the user mentions iOS Safari, iPhone Safari, Web Inspector, iwdp, ios-webkit-debug-proxy, WebKit Inspector Protocol, mobile Safari bugs, real-device Safari screenshots, or asks to drive a connected iPhone browser.
 ---
 
 # iOS Safari with iwdp-cli
 
-`iwdp-cli` drives Safari pages on a USB-connected iPhone or iPad, and pages of a local WebKitGTK browser. It speaks the WebKit Inspector Protocol, not the Chrome DevTools Protocol (CDP). The command names and flags follow agent-browser where WebKit can support them.
+`iwdp-cli` drives Safari pages on a USB-connected iPhone or iPad, in an iOS Simulator on a Mac that this host reaches over SSH (`iwdp-cli sim up`), and pages of a local WebKitGTK browser. It speaks the WebKit Inspector Protocol, not the Chrome DevTools Protocol (CDP). The command names and flags follow agent-browser where WebKit can support them.
 
 ```text
 iPhone Safari -> ios_webkit_debug_proxy (iwdp) -> iwdp daemon -> iwdp-cli, CDP clients
@@ -19,7 +19,7 @@ The **daemon** is one background process per user. The first command starts it. 
 |---|---|
 | `iwdp-cli skills get iwdp-devtools` | HAR files, request routes, media and network emulation, traces, CPU profiles, init scripts |
 | `iwdp-cli skills get iwdp-cdp` | A CDP client: agent-browser, Puppeteer, Playwright, chrome-devtools-mcp |
-| `iwdp-cli skills get iwdp-device` | A device that is not listed, a page list that does not answer, the rules for a restart of iwdp |
+| `iwdp-cli skills get iwdp-device` | The iOS Simulator over SSH (sim up), a device that is not listed, a page list that does not answer, the rules for a restart of iwdp |
 
 ## Private mode
 
@@ -48,6 +48,10 @@ These rules bind every run that uses this skill.
 4. **Preserve and restore cookie owners.** Before you set or clear a cookie, save the current state (`state save`), and restore it (`state load`) at the end, so the cookies of the user or of another agent come back. Revoking a server-side session belongs to the sign-in helper that created it.
 5. **Bounded shell calls and a known evidence folder.** Give every shell call a timeout. `iwdp-cli` has its own deadline (30 s, `--timeout` or `IWDP_TIMEOUT`; exit 124); other helpers need their own, such as `curl --max-time`. Write every file by absolute path into the evidence folder that the task names. Never search the filesystem (`find /`, `find ~`, `grep -r` over home): search only the checkout, the evidence folder and paths the task names.
 6. **The device is shared.** Never stop, restart or kill an iwdp that another agent may use; `iwdp-cli skills get iwdp-device` has the rules for a restart. Reserve the device at the start of a run (`device reserve`) and release it at the end (`device release`). Use a distinct session name per agent, and never run `lease break` or `--takeover` on a page of another session without the approval of the device owner.
+
+## Choose the device
+
+Use the iOS Simulator unless the user or the task names a physical device. When `iwdp-cli sim status` finds a simulator configuration, run `iwdp-cli sim up` before the first page command: it starts the Mac or VM and connects the simulator, whose tabs need no reservation. `iwdp-cli skills get iwdp-device` has the details. Use and reserve the physical device only when the user asks for it.
 
 ## Start a run
 

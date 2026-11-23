@@ -191,6 +191,8 @@ var privateSummaries = map[string]func(data json.RawMessage) (text string, value
 	"tab":          tabsSummary, // without an id it lists the tabs
 	"session info": sessionSummary,
 	"status":       statusSummary,
+	"sim up":       simUpSummary,
+	"sim status":   simStatusSummary,
 }
 
 // privateData is the JSON data of a result in private mode. Its content
@@ -916,6 +918,56 @@ func statusSummary(data json.RawMessage) (string, any, bool) {
 		text += fmt.Sprintf("\ndevices %d", *st.Devices)
 		value["devices"] = *st.Devices
 	}
+	return text, value, true
+}
+
+// simUpSummary prints which steps sim up did and how many tabs Safari
+// lists, without the simulator's name, UDID, host or socket path.
+func simUpSummary(data json.RawMessage) (string, any, bool) {
+	var r struct {
+		MacStarted     *bool `json:"macStarted"`
+		Booted         bool  `json:"booted"`
+		WindowOpened   bool  `json:"windowOpened"`
+		ForwardStarted bool  `json:"forwardStarted"`
+		IWDPRestarted  bool  `json:"iwdpRestarted"`
+		Pages          *int  `json:"pages"`
+	}
+	if json.Unmarshal(data, &r) != nil || r.MacStarted == nil || r.Pages == nil {
+		return "", nil, false
+	}
+	value := map[string]any{
+		"macStarted": *r.MacStarted, "booted": r.Booted, "windowOpened": r.WindowOpened,
+		"forwardStarted": r.ForwardStarted, "iwdpRestarted": r.IWDPRestarted, "pages": *r.Pages,
+	}
+	text := fmt.Sprintf("mac started %t\nbooted %t\nwindow opened %t\nforward started %t\niwdp restarted %t\ntabs %d",
+		*r.MacStarted, r.Booted, r.WindowOpened, r.ForwardStarted, r.IWDPRestarted, *r.Pages)
+	return text, value, true
+}
+
+// simStatusSummary prints the state of each part that sim status checks,
+// without the simulator's name, UDID or host.
+func simStatusSummary(data json.RawMessage) (string, any, bool) {
+	var st struct {
+		Ready        *bool `json:"ready"`
+		MacReachable bool  `json:"macReachable"`
+		LoggedIn     bool  `json:"loggedIn"`
+		Device       *struct {
+			State string `json:"state"`
+		} `json:"device"`
+		Window  bool `json:"window"`
+		Forward bool `json:"forward"`
+		Listed  bool `json:"listed"`
+	}
+	if json.Unmarshal(data, &st) != nil || st.Ready == nil {
+		return "", nil, false
+	}
+	booted := st.Device != nil && st.Device.State == "Booted"
+	value := map[string]any{
+		"ready": *st.Ready, "macReachable": st.MacReachable, "loggedIn": st.LoggedIn,
+		"booted": booted, "window": st.Window, "forward": st.Forward, "listed": st.Listed,
+	}
+	text := fmt.Sprintf("ready %t\nmac answers %t\nlogged in %t\nbooted %t\nwindow %t\nforward %t\niwdp lists %t",
+		*st.Ready, st.MacReachable, st.LoggedIn, booted, st.Window, st.Forward, st.Listed)
 	return text, value, true
 }
 

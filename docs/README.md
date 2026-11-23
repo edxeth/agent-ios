@@ -8,6 +8,7 @@ User documentation:
 | [sessions.md](sessions.md) | Sessions, page leases and device reservations: the rules for agents |
 | [synthetic-input.md](synthetic-input.md) | The synthetic-input statement and the features that iOS WebKit cannot support |
 | [cdp.md](cdp.md) | The CDP endpoint: get a tokenized URL, connect agent-browser, Puppeteer, Playwright or chrome-devtools-mcp, the method table, the limits per domain and the compatibility suite |
+| [simulator.md](simulator.md) | An iOS Simulator on a Mac or a macOS VM over SSH: the configuration, sim up, sim status and sim down, usbmuxd on Linux |
 | [device-runbook.md](device-runbook.md) | Work on a physical iPhone: reserve and release, iwdp ownership, restart-iwdp, a lost page, pause-on-start |
 | [migration.md](migration.md) | From the removed commands of earlier versions and the removed MCP server to the registry commands |
 | [known-limits.md](known-limits.md) | Every accepted limit with its reason |

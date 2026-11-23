@@ -102,6 +102,7 @@ One binary over the `internal/` package tree:
   - `domains.go` — Domain enable/disable helpers
   - `testutil/mock.go` — Mock WebSocket server for unit tests
 - `internal/tools/` — WebKit Inspector Protocol helpers that commands, the CDP endpoint and devtools share: evaluation, screenshots, DOM lookup, cookies
+- `internal/sim/` — an iOS Simulator on a Mac over SSH for `sim up`, `sim status`, `sim down` (internal/commands/sim.go, docs/simulator.md): the Mac's simctl calls, the ssh forward of 127.0.0.1:27753 to its webinspectord_sim socket, and the order of the steps
 - `internal/proxy/` — iwdp process detection, start and restart
   - `CheckListing(ctx, addr)` — checks the listing port 9221. Never use a device port for detection.
   - `ListDevicesContext(ctx)` — HTTP GET on port 9221
