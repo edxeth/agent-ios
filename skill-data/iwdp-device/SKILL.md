@@ -1,6 +1,6 @@
 ---
 name: iwdp-device
-description: Device setup and faults of iwdp-cli with a USB-connected iPhone or iPad, and the iOS Simulator on a Mac over SSH (sim up). A device that is not listed, a page list that does not answer, a hidden tab, and the rules for a restart or stop of ios_webkit_debug_proxy on a shared device. Load it from the iwdp guide when a device or its pages do not answer.
+description: Device setup and faults of iwdp-cli with a USB-connected iPhone or iPad, and the iOS Simulator (sim up). A device that is not listed, a page list that does not answer, a hidden tab, and the rules for a restart or stop of ios_webkit_debug_proxy on a shared device. Load it from the iwdp guide when a device or its pages do not answer.
 ---
 
 # iwdp-cli: the device and its faults
@@ -48,7 +48,7 @@ The device and its iwdp serve every agent of the computer.
 
 ## The simulator
 
-An iOS Simulator on a Mac that this host reaches over SSH (a macOS VM or a real Mac) works like a device once `iwdp-cli sim up` connected it; docs/simulator.md has its configuration (`~/.config/iwdp-cli/simulator.json`). `sim up` does only what is still needed: it starts the Mac with the configured command, waits for the desktop login, boots the simulator, opens its window, starts Safari, forwards its Web Inspector to 127.0.0.1:27753 and restarts the iwdp that iwdp-cli started when that iwdp does not list the simulator. It refuses that restart while another device's page has an active lease. It takes up to 15 minutes when it starts a VM. `iwdp-cli sim status` changes nothing.
+`iwdp-cli sim up` starts the configured Mac or VM, boots the simulator, starts Safari and connects it, doing only what is missing (`sim up --help`, docs/simulator.md); it takes up to 15 minutes when it starts a VM. It refuses to restart iwdp while a page has an active lease (`--restart-iwdp` overrides), and refuses an iwdp that iwdp-cli did not start: report either refusal.
 
 <!-- doc-test: skip simulator: needs a Mac over SSH and its configuration -->
 ```bash
@@ -57,7 +57,7 @@ iwdp-cli sim up --url "http://10.0.2.2:8080/" || exit "$?"   # --url: optional; 
 iwdp-cli tab list
 ```
 
-Safari's start page is not inspectable: when `sim up` reports `tabs 0`, run it with `--url`. Run `sim down` only when the task says so: the user may watch the simulator.
+Safari's start page is not inspectable: on `tabs 0`, run `sim up --url <url>`. Run `sim down` only when the task says so: the user may watch the simulator.
 
 ## Faults
 

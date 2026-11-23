@@ -1,11 +1,11 @@
 ---
 name: iwdp
-description: Drive and debug real iPhone or iPad Safari pages, an iOS Simulator's Safari on a Mac or macOS VM over SSH, and local WebKitGTK pages from Linux with iwdp-cli. Snapshot with @eN refs, synthetic actions, waits, dialogs, tabs, console, network, cookies, storage, screenshots, traces, and a CDP endpoint for agent-browser, Puppeteer and Playwright. Use when the user mentions iOS Safari, iPhone Safari, Web Inspector, iwdp, ios-webkit-debug-proxy, WebKit Inspector Protocol, mobile Safari bugs, real-device Safari screenshots, or asks to drive a connected iPhone browser.
+description: Drive and debug Safari on a real iPhone or iPad or in an iOS Simulator over SSH, and local WebKitGTK pages, from Linux with iwdp-cli. Snapshot with @eN refs, synthetic actions, waits, dialogs, tabs, console, network, cookies, storage, screenshots, traces, and a CDP endpoint for agent-browser, Puppeteer and Playwright. Use when the user mentions iOS Safari, iPhone Safari, Web Inspector, iwdp, ios-webkit-debug-proxy, WebKit Inspector Protocol, mobile Safari bugs, real-device Safari screenshots, or asks to drive a connected iPhone browser.
 ---
 
 # iOS Safari with iwdp-cli
 
-`iwdp-cli` drives Safari pages on a USB-connected iPhone or iPad, in an iOS Simulator on a Mac that this host reaches over SSH (`iwdp-cli sim up`), and pages of a local WebKitGTK browser. It speaks the WebKit Inspector Protocol, not the Chrome DevTools Protocol (CDP). The command names and flags follow agent-browser where WebKit can support them.
+`iwdp-cli` drives Safari pages on a USB-connected iPhone or iPad or in an iOS Simulator over SSH, and pages of a local WebKitGTK browser. It speaks the WebKit Inspector Protocol, not the Chrome DevTools Protocol (CDP). The command names and flags follow agent-browser where WebKit can support them.
 
 ```text
 iPhone Safari -> ios_webkit_debug_proxy (iwdp) -> iwdp daemon -> iwdp-cli, CDP clients
@@ -19,7 +19,7 @@ The **daemon** is one background process per user. The first command starts it. 
 |---|---|
 | `iwdp-cli skills get iwdp-devtools` | HAR files, request routes, media and network emulation, traces, CPU profiles, init scripts |
 | `iwdp-cli skills get iwdp-cdp` | A CDP client: agent-browser, Puppeteer, Playwright, chrome-devtools-mcp |
-| `iwdp-cli skills get iwdp-device` | The iOS Simulator over SSH (sim up), a device that is not listed, a page list that does not answer, the rules for a restart of iwdp |
+| `iwdp-cli skills get iwdp-device` | The simulator (sim up), a device that is not listed, a page list that does not answer, the rules for a restart of iwdp |
 
 ## Private mode
 
@@ -51,7 +51,7 @@ These rules bind every run that uses this skill.
 
 ## Choose the device
 
-Use the iOS Simulator unless the user or the task names a physical device. When `iwdp-cli sim status` finds a simulator configuration, run `iwdp-cli sim up` before the first page command: it starts the Mac or VM and connects the simulator, whose tabs need no reservation. `iwdp-cli skills get iwdp-device` has the details. Use and reserve the physical device only when the user asks for it.
+Use the iOS Simulator unless the user names a physical device: when `iwdp-cli sim status` finds a configuration, run `iwdp-cli sim up` first. It starts the VM and connects the simulator, whose tabs need no reservation. Reserve and use a physical device only when the user asks.
 
 ## Start a run
 
