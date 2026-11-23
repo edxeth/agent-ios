@@ -16,6 +16,8 @@ This file is a discovery stub, not the guide. Before you run any other `iwdp-cli
 - Run `iwdp-cli skills get iwdp`. The guide has a few hundred lines: read it by line range, for example `iwdp-cli skills get iwdp | sed -n '1,80p'`, then the next range. Read the safety rules in full; they bind every run.
 - Or run `iwdp-cli skills path iwdp`: it writes the guide to the user cache and prints its directory, and you read `SKILL.md` there with line offsets.
 
+To test on iOS, the guide's default device is the iOS Simulator, which `iwdp-cli sim up` starts even when its VM is off; a plugged-in iPhone only when the user asks for it. Pass this on to any agent you delegate the check to.
+
 `iwdp-cli <command> --help` prints the flags of one command and never connects to a page.
 
 The CLI serves the guide of its own version. This stub does not change between releases, so it only points at the CLI: a copy of the guide here would drift from the installed binary.
