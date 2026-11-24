@@ -593,8 +593,9 @@ func TestUpFailures(t *testing.T) {
 	if _, err := s.Up(context.Background(), "", "", false); err == nil || !strings.Contains(err.Error(), "no start command") {
 		t.Fatalf("down Mac without start: %v", err)
 	}
-	if _, err := s.Up(context.Background(), "", "file:///etc/passwd", false); err == nil || fm.count("") != 1 {
-		t.Fatalf("bad URL: %v after %d calls; want a refusal before any call", err, fm.count("")-1)
+	before := fm.count("")
+	if _, err := s.Up(context.Background(), "", "file:///etc/passwd", false); err == nil || fm.count("") != before {
+		t.Fatalf("bad URL: %v after %d calls; want a refusal before any call", err, fm.count("")-before)
 	}
 	fm.reachable = func() bool { return true }
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -905,6 +906,30 @@ func TestSetHardwareKeyboardScript(t *testing.T) {
 	if err != nil || !strings.Contains(out, "xcrun simctl shutdown "+udidA) || strings.Contains(out, "shutdown all") ||
 		strings.Index(out, "defaults write") < strings.Index(out, "xcrun simctl shutdown") {
 		t.Fatalf("a booted simulator: %v\n%s", err, out)
+	}
+}
+
+// One failed ssh login (a busy Mac) is not a down Mac: Reachable asks
+// again before it answers no.
+func TestReachableAsksTwice(t *testing.T) {
+	calls := 0
+	m := NewMac(Config{SSH: "mac"}, func(context.Context, string, ...string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("ssh: connect to host: Connection timed out")
+		}
+		return nil, nil
+	})
+	if ok, err := m.Reachable(context.Background()); !ok || err != nil || calls != 2 {
+		t.Fatalf("Reachable = %v, %v after %d calls; want true after a second try", ok, err, calls)
+	}
+	calls = 0
+	down := NewMac(Config{SSH: "mac"}, func(context.Context, string, ...string) ([]byte, error) {
+		calls++
+		return nil, errors.New("connection refused")
+	})
+	if ok, err := down.Reachable(context.Background()); ok || err != nil || calls != 2 {
+		t.Fatalf("down Mac: %v, %v after %d calls", ok, err, calls)
 	}
 }
 

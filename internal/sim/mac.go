@@ -57,7 +57,7 @@ func (m Mac) sshArgs(opts []string, script string) []string {
 	if m.cfg.SSHConfig != "" {
 		a = append(a, "-F", m.cfg.SSHConfig)
 	}
-	a = append(a, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5")
+	a = append(a, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
 	a = append(a, opts...)
 	a = append(a, m.cfg.SSH)
 	if script != "" {
@@ -73,12 +73,22 @@ func (m Mac) shell(ctx context.Context, script string) ([]byte, error) {
 
 // Reachable reports whether ssh logs in to the Mac. The end of ctx is an
 // error, not an unreachable Mac.
+//
+// A busy Mac (another agent's simulator starting) can be slow to accept a
+// login, and a "no" here makes sim up run the start command and sim status
+// say the Mac is down, so it asks twice before it answers no (live run,
+// 2026-11-24: one 5 s attempt failed while another agent's sim up ran).
 func (m Mac) Reachable(ctx context.Context) (bool, error) {
-	_, err := m.shell(ctx, "true")
-	if err != nil && ctx.Err() != nil {
-		return false, fmt.Errorf("checking ssh to %s: %w", m.cfg.SSH, ctx.Err())
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err = m.shell(ctx, "true"); err == nil {
+			return true, nil
+		}
+		if ctx.Err() != nil {
+			return false, fmt.Errorf("checking ssh to %s: %w", m.cfg.SSH, ctx.Err())
+		}
 	}
-	return err == nil, nil
+	return false, nil
 }
 
 // LoggedIn reports whether a user is logged in to the Mac's desktop (the
