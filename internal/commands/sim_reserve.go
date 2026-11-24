@@ -35,10 +35,10 @@ func init() {
 		Summary: "Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. " +
 			"While an owner holds it, other owners' page commands on the simulator fail (exit 6), its tabs are hidden from them, and their sim commands that act on it fail. " +
 			"Exit 3 when the wait ends first: the simulator is still another owner's; run the same command again (do not use the simulator meanwhile). " +
-			"The reservation ends with sim release, or --ttl (5m) after the owner's last use (page leases and sim commands renew it). The owner must be your own name: the default session is refused.",
+			"The reservation ends with sim release, or --ttl (2m) after the owner's last use (sim commands renew it, and an open page lease keeps renewing it). The owner must be your own name: the default session is refused.",
 		Flags: []Flag{
 			owner,
-			{Name: "ttl", Type: FlagDuration, Default: "5m", Help: "lifetime after the owner's last use (page leases and sim commands renew it)"},
+			{Name: "ttl", Type: FlagDuration, Default: "2m", Help: "lifetime after the owner's last use (sim commands renew it, and an open page lease keeps renewing it)"},
 			{Name: "wait", Type: FlagDuration, Default: "50s", Help: "how long to wait for another owner's reservation to end, at most 10m (keep it under your tool's timeout)"},
 		},
 		Check: func(in Input) error {
