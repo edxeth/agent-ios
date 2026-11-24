@@ -35,10 +35,10 @@ func init() {
 		Summary: "Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. " +
 			"While an owner holds it, other owners' page commands on the simulator fail (exit 6), its tabs are hidden from them, and their sim commands that act on it fail. " +
 			"Exit 3 when the wait ends first: the simulator is still another owner's; run the same command again (do not use the simulator meanwhile). " +
-			"The reservation ends with sim release, or --ttl after the owner's last use (page leases and sim commands renew it).",
+			"The reservation ends with sim release, or --ttl (10m) after the owner's last use (page leases and sim commands renew it). The owner must be your own name: the default session is refused.",
 		Flags: []Flag{
 			owner,
-			{Name: "ttl", Type: FlagDuration, Default: "30m", Help: "lifetime, renewed while the owner uses the simulator"},
+			{Name: "ttl", Type: FlagDuration, Default: "10m", Help: "lifetime after the owner's last use (page leases and sim commands renew it)"},
 			{Name: "wait", Type: FlagDuration, Default: "50s", Help: "how long to wait for another owner's reservation to end, at most 10m (keep it under your tool's timeout)"},
 		},
 		Check: func(in Input) error {
@@ -104,6 +104,12 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	o := reservationOwner(in)
+	if o == "" || o == "default" {
+		// Every agent that sets no session is "default": two of them would
+		// share one turn, and one that forgets its release holds the
+		// simulator for the others (live run, 2026-11-24).
+		return Result{}, usagef("sim reserve: set IWDP_SESSION (or --owner) to a name of your own; the default session is every agent's")
+	}
 	ttl := in.Flags["ttl"].(time.Duration)
 	wait := in.Flags["wait"].(time.Duration)
 	start := time.Now()
@@ -133,7 +139,7 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 			_, other, _ := rs.Check(core.SimulatorDevice, o)
 			holder := "another owner"
 			if other != nil {
-				holder = fmt.Sprintf("%q until %s at the latest", other.Owner, other.Expires.Format(time.RFC3339))
+				holder = fmt.Sprintf("%q (last used %s ago; it ends by %s at the latest)", other.Owner, time.Since(other.Expires.Add(-other.TTL)).Round(time.Second), other.Expires.Format(time.RFC3339))
 			}
 			return Result{}, &core.CodedError{Code: ExitWaitTimeout, Err: fmt.Errorf(
 				"the simulator is still reserved by %s after waiting %s: another agent is using it. Run 'iwdp-cli sim reserve' again to keep waiting, and do not use the simulator or its pages meanwhile",

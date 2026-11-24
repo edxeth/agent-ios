@@ -115,6 +115,28 @@ func TestSimReserveSaysAtOnceThatItWaits(t *testing.T) {
 	_ = res
 }
 
+// sim reserve refuses the default session as owner: every agent that sets
+// no session is "default", and one such agent's forgotten reservation held
+// the simulator for the others (live run, 2026-11-24).
+func TestSimReserveNeedsAnOwnerOfItsOwn(t *testing.T) {
+	res := withSimReservations(t)
+	for _, in := range []Input{
+		{Flags: map[string]any{"ttl": 10 * time.Minute, "wait": time.Duration(0)}, Global: Globals{Session: "default"}},
+		{Flags: map[string]any{"owner": "default", "ttl": 10 * time.Minute, "wait": time.Duration(0)}},
+	} {
+		var u *UsageError
+		if _, err := runSimReserve(context.Background(), nil, in); !errors.As(err, &u) {
+			t.Fatalf("%+v: %v, want a usage error", in, err)
+		}
+	}
+	if l, _ := res.List(); len(l) != 0 {
+		t.Fatalf("a refused sim reserve left %+v", l)
+	}
+	if _, err := runSimReserve(context.Background(), nil, Input{Flags: map[string]any{"ttl": 10 * time.Minute, "wait": time.Duration(0)}, Global: Globals{Session: "agent-7"}}); err != nil {
+		t.Fatalf("a named session: %v", err)
+	}
+}
+
 // simGate refuses another owner's sim command while the simulator is
 // reserved, renews the owner's own reservation, and admits everyone on a
 // free simulator.
