@@ -48,8 +48,8 @@ mkdir -p -m 700 "$EVIDENCE" || exit "$?"
 iwdp-cli cookies || exit "$?"
 iwdp-cli storage local || exit "$?"
 iwdp-cli state save "$EVIDENCE/state-before.json" || exit "$?"   # change nothing without a saved state
-iwdp-cli cookies set session_hint abc123 --http-only --same-site Lax --expires 0
-changed=$?                                                       # restore also after a failed change
+changed=0
+iwdp-cli cookies set session_hint abc123 --http-only --same-site Lax --expires 0 || changed=$?   # restore also after a failed change
 iwdp-cli state load "$EVIDENCE/state-before.json" || exit "$?"   # keep the file when the restore fails
 rm -f -- "$EVIDENCE/state-before.json" || exit "$?"
 [ "$changed" = 0 ]

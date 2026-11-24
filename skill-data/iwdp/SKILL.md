@@ -46,20 +46,20 @@ These rules bind every run that uses this skill.
 Use the iOS Simulator unless the user names a physical device, also when an iPhone is plugged in; for a physical device or local WebKitGTK pages, `iwdp-cli skills get iwdp-device` has the start and end of a run. Agents share the simulator in turns, so every run does these steps:
 
 1. **Serve your page first, before you reserve.** Serve it on a random free port of this host (not a common one such as 8000, 8080 or 8765: other agents and programs use them) in a background job that outlives your tool call, and check that `http://127.0.0.1:<port>/` answers with your page. If you cannot serve it, report that without reserving.
-2. **Take your turn and open your own tab.** `sim reserve` waits while another agent holds the simulator. Exit 3 or a tool timeout means it is still theirs: run the call again until it succeeds, and run no other `iwdp-cli` command on the simulator meanwhile. Waiting is normal, never a reason to stop, skip the check or ask the user. The agent that drives the simulator reserves it, not an agent that waits for a delegate. `sim up --url` then starts the Mac or VM if needed, which can take 15 minutes, and opens your URL in a new tab; 10.0.2.2 is this host as the simulator sees it.
+2. **Take your turn and open your own tab.** `sim reserve` waits while another agent holds the simulator. Exit 3 or a tool timeout of `sim reserve` means it is still theirs: run the call again until it succeeds, and run no other `iwdp-cli` command on the simulator meanwhile. Waiting is normal, never a reason to stop, skip the check or ask the user. The agent that drives the simulator reserves it, not an agent that waits for a delegate. `sim up --url` then starts the Mac or VM if needed, which can take 15 minutes (give the call a tool timeout over 15 minutes), and opens your URL in a new tab. In a QEMU VM, 10.0.2.2 is this host as the simulator sees it; on a real Mac, use this host's address on the Mac's network.
 
 <!-- doc-test: skip simulator: needs a Mac over SSH and its configuration -->
 ```bash
 export IWDP_SESSION=qa-login IWDP_PRIVATE=1
 iwdp-cli sim reserve || exit "$?"                # exit 3: another agent's turn; run it again
-iwdp-cli sim up --url "http://10.0.2.2:41873/"   # 41873: the port of your server
+iwdp-cli sim up --url "http://10.0.2.2:${PORT:?}/"   # PORT: your own server's port (step 1)
 ```
 
-3. **Select the tab that `sim up` printed** (`new tab t1`) before any page command: a command without it may land on another agent's tab. When it prints no tab id, do what its line says, and stop when that fails. Never select, navigate, close or `lease break` a tab that you did not open.
+3. **Select the tab that `sim up` printed** (`new tab t<N>`) before any page command: a command without it may land on another agent's tab. When it prints no tab id, do what its line says, and stop when that fails. Never select, navigate, close or `lease break` a tab that you did not open.
 
 ```bash
 export IWDP_SESSION=qa-login IWDP_PRIVATE=1
-iwdp-cli tab t1                                  # the id that sim up printed
+iwdp-cli tab "${TAB:?}"                          # TAB: the t<N> that your sim up printed
 ```
 
 <!-- doc-test: expect -->
@@ -68,13 +68,13 @@ tab exit 0
 ```
 
 4. **Work in your tab**, as the sections below show.
-5. **End your turn, also after a failure.** Close your tab, then release the simulator, which also closes your session. When `tab close` fails, leave the tab and still release. Neither undoes forms you submitted or sign-ins you made.
+5. **End your turn, also after a failure.** Close the tab you selected in step 3, by its id, then release the simulator, which also closes your session; with no tab selected, run only `iwdp-cli sim release`. When `tab close` fails, leave the tab and still release. Neither undoes forms you submitted or sign-ins you made.
 
 <!-- doc-test: skip simulator: needs a Mac over SSH and its configuration -->
 ```bash
 export IWDP_SESSION=qa-login IWDP_PRIVATE=1
-iwdp-cli tab close
-closed=$?                                        # release also when Safari keeps the tab
+closed=0
+iwdp-cli tab close "${TAB:-}" || closed=$?       # unset TAB: refused unless you selected a tab; release still runs
 iwdp-cli sim release || exit "$?"
 [ "$closed" = 0 ]
 ```
@@ -186,7 +186,7 @@ iwdp-cli vitals
 ```
 
 - `screenshot --full-page` captures the whole document. Do not capture pages that show secrets unless the task allows it.
-- `console`, `errors` and `network requests` print what the daemon captured since your session took the page. For new messages only, run `console --since <id>` with the last id that `console` printed; `network request <id> --body` shows one request.
+- `console`, `errors` and `network requests` print what the daemon captured since your session took the page; `console` and `errors` also up to 100 earlier messages that WebKit replays. For new messages only, run `console --since <id>` with the last id that `console` printed; `network request <id> --body` shows one request.
 
 ### Navigation, tabs and frames
 
@@ -199,7 +199,7 @@ iwdp-cli forward || exit "$?"
 iwdp-cli reload
 ```
 
-`open`, `back`, `forward` and `reload` wait for the load event. Open no tab (`tab new`) that the task did not ask for. `frame @eN` moves your later commands into a same-origin iframe, and `frame main` moves them back. Before the first action on another tab, find it with `tab find`, then select it (`tab <id>`, or `--page <id>` for one command).
+`open`, `back`, `forward` and `reload` wait for the load event. Open no tab (`tab new`) that the task did not ask for. `frame @eN` moves your later commands into a same-origin iframe, and `frame main` moves them back. Before the first action on another tab, find it with `tab find` (on the simulator with `--device SIMULATOR`), then select it (`tab <id>`, or `--page <id>` for one command).
 
 ## Errors and exit codes
 
@@ -218,4 +218,4 @@ iwdp-cli reload
 ## Known limits
 
 - Only one inspector connection per page. The daemon holds it; another tool that attaches (Safari Web Inspector on a Mac, a hand-written WebSocket client) takes the page from the daemon. Never write your own WebSocket client.
-- Not possible on iOS WebKit: trusted input, `set viewport` and `set device` (the viewport is the device's), PDF, downloads, video recording, browser contexts (every session shares one cookie jar), native pickers, `beforeunload` dialogs, cross-origin iframes.
+- Not possible on iOS WebKit: trusted input other than `sim tap`, `sim swipe` and `sim type`, `set viewport` and `set device` (the viewport is the device's), PDF, downloads, video recording, browser contexts (every session shares one cookie jar), native pickers, `beforeunload` dialogs, cross-origin iframes.

@@ -247,7 +247,7 @@ func TestSkillExamplesRunOnWebKitGTK(t *testing.T) {
 			cmd := exec.Command("bash", script)
 			cmd.Dir = work
 			cmd.Env = append(os.Environ(), "PATH="+filepath.Dir(cliBin)+string(os.PathListSeparator)+os.Getenv("PATH"),
-				"EVIDENCE="+evidence, "QA_PASSWORD=stand-in-password", "TARGET_FILE="+target, "TMPDIR="+work)
+				"EVIDENCE="+evidence, "QA_PASSWORD=stand-in-password", "TARGET_FILE="+target, "TMPDIR="+work, "TAB=t1")
 			runErr := cmd.Run()
 			// The last block with an output file is the one that ran last.
 			last := -1

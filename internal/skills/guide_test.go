@@ -94,6 +94,7 @@ func TestEveryGuideCommandParsesAndRunsInPrivateMode(t *testing.T) {
 				cmd.Env = []string{
 					"PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH"), "HOME=" + dir, "STUB_LOG=" + log,
 					"EVIDENCE=" + filepath.Join(dir, "evidence"), "TARGET_FILE=" + target, "QA_PASSWORD=stand-in",
+					"TAB=t1", "PORT=41873", // what sim up printed, and the agent's server
 				}
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Errorf("block %d failed against the stand-in: %v\n%s\n%s", i+1, err, body, out)
@@ -274,7 +275,20 @@ func runFailingAt(t *testing.T, block string, at, code int) blockRun {
 	return runBlock(t, block, "FAIL=", "FAIL_AT="+strconv.Itoa(at), "FAIL_CODE="+strconv.Itoa(code))
 }
 
+// runFailingAtWithE is runFailingAt in a bash with -e, as a harness or a
+// script with set -e runs a block.
+func runFailingAtWithE(t *testing.T, block string, at, code int) blockRun {
+	t.Helper()
+	return runBlockIn(t, []string{"-e"}, block, "FAIL=", "FAIL_AT="+strconv.Itoa(at), "FAIL_CODE="+strconv.Itoa(code))
+}
+
 func runBlock(t *testing.T, block string, failure ...string) blockRun {
+	t.Helper()
+	return runBlockIn(t, nil, block, failure...)
+}
+
+// runBlockIn runs a block in bash with the options opts.
+func runBlockIn(t *testing.T, opts []string, block string, failure ...string) blockRun {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
@@ -303,11 +317,12 @@ func runBlock(t *testing.T, block string, failure ...string) blockRun {
 		t.Fatal(err)
 	}
 	log := filepath.Join(dir, "calls.log")
-	cmd := exec.Command("bash", "-c", block)
+	cmd := exec.Command("bash", append(append([]string(nil), opts...), "-c", block)...)
 	cmd.Dir = dir
 	cmd.Env = append([]string{
 		"PATH=" + bin, "BASH_ENV=" + env, "COUNT=" + count, "HOME=" + dir, "STUB_LOG=" + log,
 		"EVIDENCE=" + evidence, "TARGET_FILE=" + filepath.Join(dir, "target-url"), "QA_PASSWORD=stand-in",
+		"TAB=t1", "PORT=41873", // what sim up printed, and the agent's server
 	}, failure...)
 	out, err := cmd.CombinedOutput()
 	r := blockRun{output: string(out), evidence: evidence}
@@ -447,7 +462,8 @@ func TestGuideFindsTheTargetBeforeAnyPageCommand(t *testing.T) {
 const stopSuffix = `|| exit "$?"`
 
 // goesOn lists the commands that do not stop their block when they fail,
-// each with its reason. In every bash block of every guide, every other
+// each with its reason. Each records its status with captureSuffix
+// (|| closed=$?), so that a shell with -e also goes on to the cleanup. In every bash block of every guide, every other
 // command except the last of its block ends with stopSuffix. A read whose
 // result no later command uses stops too: after a failed read the page or
 // the session is in a state that the agent must look at. A block that goes
@@ -467,7 +483,7 @@ var goesOn = []struct {
 		"device release frees the shared device also after a failed close (safety rule 6)",
 	},
 	{
-		"iwdp", "sim release", "iwdp-cli tab close",
+		"iwdp", "sim release", `iwdp-cli tab close "${TAB:-}"`,
 		"sim release frees the shared simulator also after a failed tab close, which Safari can refuse (safety rule 6)",
 	},
 }
@@ -485,11 +501,16 @@ func goesOnRow(guide, block string, c blockCommand) int {
 
 // blockCommand is one command of a bash block.
 type blockCommand struct {
-	line  int    // the line of the command in the block, from 1
-	name  string // the command word, such as iwdp-cli or [
-	text  string // the line without its stop and its comment
-	stops bool   // the line ends with stopSuffix
+	line     int    // the line of the command in the block, from 1
+	name     string // the command word, such as iwdp-cli or [
+	text     string // the line without its stop or capture and its comment
+	stops    bool   // the line ends with stopSuffix
+	captures bool   // the line ends with captureSuffix
 }
+
+// captureSuffix ends a command of goesOn: it records the status of the
+// command in a variable, which a shell with -e does not stop at.
+var captureSuffix = regexp.MustCompile(`\|\| [A-Za-z_][A-Za-z0-9_]*=\$\?$`)
 
 // blockCommands returns the commands of a bash block in order, after its
 // first line (startLine). It knows the forms that the guides use and
@@ -531,6 +552,8 @@ func blockCommands(body string) ([]blockCommand, error) {
 		c := blockCommand{line: at, text: code}
 		if rest, ok := strings.CutSuffix(code, stopSuffix); ok {
 			c.text, c.stops = strings.TrimSpace(rest), true
+		} else if m := captureSuffix.FindStringIndex(code); m != nil {
+			c.text, c.captures = strings.TrimSpace(code[:m[0]]), true
 		}
 		if c.name, err = commandName(c.text); err != nil {
 			return nil, fmt.Errorf("line %d %q: %w", at, line, err)
@@ -604,8 +627,8 @@ func shellWords(s string) []string {
 
 // scanShellLine returns a line without its comment, the delimiters of
 // its heredocs and the number of its command substitutions. It refuses
-// a control operator other than the one of stopSuffix at the end of the
-// line, a subshell, a backquote and an open quote.
+// a control operator other than the one of stopSuffix or captureSuffix
+// at the end of the line, a subshell, a backquote and an open quote.
 func scanShellLine(line string) (string, []string, int, error) {
 	var heredocs []string
 	var quote byte // the open quote, ' or "
@@ -685,8 +708,14 @@ func scanShellLine(line string) (string, []string, int, error) {
 	}
 	code := strings.TrimSpace(line[:end])
 	lead := len(line[:end]) - len(strings.TrimLeft(line[:end], " \t"))
-	if ops > 1 || (ops == 1 && (!strings.HasSuffix(code, stopSuffix) || opAt != lead+len(code)-len(stopSuffix))) {
-		return "", nil, 0, fmt.Errorf("a pipeline or a list: write one command per line, with %s as its only operator", stopSuffix)
+	suffixAt := -1
+	if strings.HasSuffix(code, stopSuffix) {
+		suffixAt = len(code) - len(stopSuffix)
+	} else if m := captureSuffix.FindStringIndex(code); m != nil {
+		suffixAt = m[0]
+	}
+	if ops > 1 || (ops == 1 && (suffixAt < 0 || opAt != lead+suffixAt)) {
+		return "", nil, 0, fmt.Errorf("a pipeline or a list: write one command per line, with %s or || <name>=$? as its only operator", stopSuffix)
 	}
 	return code, heredocs, substs, nil
 }
@@ -711,6 +740,7 @@ func TestBlockCommandsFindsEveryCommand(t *testing.T) {
 		{"a line continuation", "iwdp-cli a \\\n  --b || exit \"$?\"\nmkdir d", []cmd{{"iwdp-cli", "iwdp-cli a    --b", true}, {"mkdir", "mkdir d", false}}},
 		{"$( in single quotes is no substitution", "iwdp-cli eval '$(\"#a\").length' || exit \"$?\"", []cmd{{"iwdp-cli", "iwdp-cli eval '$(\"#a\").length'", true}}},
 		{"assignments", "closed=$?\nX=1 iwdp-cli a || exit \"$?\"\n[ \"$closed\" = 0 ]", []cmd{{"iwdp-cli", "X=1 iwdp-cli a", true}, {"[", "[ \"$closed\" = 0 ]", false}}},
+		{"a capture", "closed=0\niwdp-cli tab close \"${TAB:?}\" || closed=$?   # why\n[ \"$closed\" = 0 ]", []cmd{{"iwdp-cli", "iwdp-cli tab close \"${TAB:?}\"", false}, {"[", "[ \"$closed\" = 0 ]", false}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := blockCommands(startLine + "\n" + c.body + "\n")
@@ -732,6 +762,9 @@ func TestBlockCommandsFindsEveryCommand(t *testing.T) {
 		"iwdp-cli a && iwdp-cli b",
 		"iwdp-cli a || iwdp-cli b",
 		"iwdp-cli a || exit \"$?\" || true",
+		"iwdp-cli a || closed=$? || exit \"$?\"",
+		"iwdp-cli a || closed=1",
+		"iwdp-cli a && closed=$?",
 		"iwdp-cli a &",
 		"(exit 1)",
 		"{ iwdp-cli a; }",
@@ -776,6 +809,10 @@ func TestEveryGuideCommandStopsItsBlockOrGoesOnForAReason(t *testing.T) {
 					used[row]++
 				}
 				switch {
+				case row >= 0 && !c.captures:
+					t.Errorf("guide %s, block %d, line %d: goesOn row %d names %q, which does not record its status: end it with || <name>=$?, or a shell with -e stops before the cleanup", s.Name, i+1, c.line, row, c.text)
+				case row < 0 && c.captures:
+					t.Errorf("guide %s, block %d, line %d: %q records its status and goes on: add a row with the reason to goesOn", s.Name, i+1, c.line, c.text)
 				case row >= 0 && (c.stops || j == len(cmds)-1):
 					t.Errorf("guide %s, block %d, line %d: goesOn row %d names %q, which stops the block or ends it: delete the row", s.Name, i+1, c.line, row, c.text)
 				case row < 0 && !c.stops && j < len(cmds)-1:
@@ -791,13 +828,15 @@ func TestEveryGuideCommandStopsItsBlockOrGoesOnForAReason(t *testing.T) {
 	}
 }
 
-// Every block, run in a plain bash without -e once with no failure and
-// once per command with a stand-in that fails that command: after a
-// failure no later command runs, except after a command of goesOn, and
-// the block ends with the exit code of the failure, or after a command of
-// goesOn with a nonzero status. Without a failure every command runs and
-// the block ends with 0. The cases come from the blocks, so a new block
-// or a new line gets its cases.
+// Every block, run in a plain bash without -e and in a bash with -e, once
+// with no failure and once per command with a stand-in that fails that
+// command: after a failure no later command runs, except after a command
+// of goesOn, and the block ends with the exit code of the failure, or
+// after a command of goesOn with a nonzero status. Without a failure
+// every command runs and the block ends with 0. The cases come from the
+// blocks, so a new block or a new line gets its cases. With -e too, a
+// failed close or cookie change still runs the release or the restore
+// (closure review of the skill rewrite, 2026-11-24).
 func TestEveryGuideBlockStopsAtEveryFailedCommand(t *testing.T) {
 	const code = 8 // no exit code of iwdp-cli, so the status is the stand-in's
 	for _, s := range guides(t) {
@@ -817,26 +856,31 @@ func TestEveryGuideBlockStopsAtEveryFailedCommand(t *testing.T) {
 				if k > 0 {
 					name = fmt.Sprintf("%s/block %d/line %d fails", s.Name, i+1, cmds[k-1].line)
 				}
-				t.Run(name, func(t *testing.T) {
-					r := runFailingAt(t, b[1], k, code)
-					ran, exit := len(cmds), 0
-					switch {
-					case k > 0 && goesOnRow(s.Name, b[1], cmds[k-1]) >= 0:
-						exit = -1 // any status but 0
-					case k > 0:
-						ran, exit = k, code
-					}
-					var want []string
-					for _, c := range cmds[:ran] {
-						want = append(want, c.name)
-					}
-					if fmt.Sprint(r.names) != fmt.Sprint(want) {
-						t.Errorf("the commands %q ran, want %q", r.names, want)
-					}
-					if (exit < 0 && r.exit == 0) || (exit >= 0 && r.exit != exit) {
-						t.Errorf("the block exits %d, want %d (-1: not 0); output:\n%s", r.exit, exit, r.output)
-					}
-				})
+				for _, mode := range []struct {
+					name string
+					run  func(*testing.T, string, int, int) blockRun
+				}{{"plain", runFailingAt}, {"set -e", runFailingAtWithE}} {
+					t.Run(name+"/"+mode.name, func(t *testing.T) {
+						r := mode.run(t, b[1], k, code)
+						ran, exit := len(cmds), 0
+						switch {
+						case k > 0 && goesOnRow(s.Name, b[1], cmds[k-1]) >= 0:
+							exit = -1 // any status but 0
+						case k > 0:
+							ran, exit = k, code
+						}
+						var want []string
+						for _, c := range cmds[:ran] {
+							want = append(want, c.name)
+						}
+						if fmt.Sprint(r.names) != fmt.Sprint(want) {
+							t.Errorf("the commands %q ran, want %q", r.names, want)
+						}
+						if (exit < 0 && r.exit == 0) || (exit >= 0 && r.exit != exit) {
+							t.Errorf("the block exits %d, want %d (-1: not 0); output:\n%s", r.exit, exit, r.output)
+						}
+					})
+				}
 			}
 		}
 	}

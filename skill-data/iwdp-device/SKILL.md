@@ -73,8 +73,8 @@ End the run, also after a failure:
 
 ```bash
 export IWDP_SESSION=qa-login IWDP_PRIVATE=1
-iwdp-cli close
-closed=$?                                  # release the device also after a failed close
+closed=0
+iwdp-cli close || closed=$?                # release the device also after a failed close
 iwdp-cli device release --owner "$IWDP_SESSION" || exit "$?"
 [ "$closed" = 0 ]
 ```
@@ -94,7 +94,7 @@ The iwdp guide has the steps of a turn. The details:
 
 - `sim reserve` waits up to `--wait` (50 s; at most 10m, keep it under your tool's timeout). Never hold the turn while you wait for a delegate that drives the simulator; pass the delegate your owner in `IWDP_DEVICE_RESERVATION` instead.
 - A reservation that you stop using ends 2 minutes after your last command; your open tab keeps it while you work on it. A command that lost the turn stops with exit 6: run `sim reserve` again. `device reserve` and `device release` are not for the simulator.
-- When `sim up` prints `new tab unknown` and names `tab find`: its `--device SIMULATOR` searches the simulator alone, so a plugged-in iPhone that you have not reserved does not stop it.
+- When `sim up` prints `new tab unknown: run iwdp-cli tab find ...`, run it as printed: its `--device SIMULATOR` searches the simulator alone, so a plugged-in iPhone that you have not reserved does not stop it.
 - `sim up` refuses to restart iwdp while a page has an active lease (`--restart-iwdp` overrides, only for your own leases) and refuses an iwdp that iwdp-cli did not start: report either refusal. Safari's start page is not inspectable: on `tabs 0`, run `sim up --url <url>`.
 
 When the page is not enough, act on the simulator's whole screen: `sim screenshot` captures it with the keyboard and Safari's bars; `sim tap <x> <y>` (screen points; `sim ui` lists elements and their centers), `sim swipe` and `sim type` are real touches, so a tapped field opens the keyboard, unlike `click`. For keyboard bugs run `sim keyboard onscreen` first (it restarts the simulator; `sim type` then refuses Shift characters), and `sim keyboard hardware` after. Never `sim type` a secret. Run `sim down` only when the task says so: the user may watch the simulator.
