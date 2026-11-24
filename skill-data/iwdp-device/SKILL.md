@@ -57,7 +57,9 @@ iwdp-cli sim up --url "http://10.0.2.2:8080/" || exit "$?"   # --url: optional; 
 iwdp-cli tab list
 ```
 
-Safari's start page is not inspectable: on `tabs 0`, run `sim up --url <url>`. Run `sim down` only when the task says so: the user may watch the simulator.
+Safari's start page is not inspectable: on `tabs 0`, run `sim up --url <url>`.
+
+When the page is not enough, act on the simulator's whole screen: `sim screenshot` captures it with the keyboard and Safari's bars; `sim tap <x> <y>` (screen points; `sim ui` lists elements and their centers), `sim swipe` and `sim type` are real touches, so a tapped field opens the keyboard, unlike `click`. For keyboard bugs run `sim keyboard onscreen` first (it restarts the simulator; `sim type` then refuses Shift characters), and `sim keyboard hardware` after. Never `sim type` a secret. Run `sim down` only when the task says so: the user may watch the simulator.
 
 ## Faults
 

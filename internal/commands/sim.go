@@ -1,14 +1,17 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"net"
 	"net/http"
 	"net/netip"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -50,6 +53,84 @@ func init() {
 		Summary: "Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has \"ready\".",
 		Flags:   []Flag{device},
 		Run:     runSimStatus,
+	})
+	Register(&Command{
+		Name: "sim screenshot", Local: true, Timeout: time.Minute,
+		Summary: "Capture the simulator's whole screen as PNG (simctl io screenshot): the status bar, Safari's bars, the on-screen keyboard and other apps, which the page capture of screenshot leaves out. " +
+			"The simulator must be booted (sim up); it starts nothing.",
+		Args:  []Arg{{Name: "path", Help: "PNG file to write (default $TMPDIR/iwdp-screenshot-<time>.png)"}},
+		Flags: []Flag{{Name: "output", Short: "o", Type: FlagString, Help: "PNG file to write (same as path)"}, device},
+		Check: func(in Input) error { _, err := simShotPath(in); return err },
+		Run:   runSimScreenshot,
+	})
+	touch := " A real touch through AXe (the configuration's \"axe\"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone)."
+	Register(&Command{
+		Name: "sim tap", Local: true, Timeout: time.Minute,
+		Summary: "Tap the simulator's screen at <x> <y>, or the element with --label or --id (sim ui lists them)." + touch,
+		Args:    []Arg{{Name: "x", Help: "x in points"}, {Name: "y", Help: "y in points"}},
+		Flags: []Flag{
+			{Name: "label", Type: FlagString, Help: "tap the element with this accessibility label"},
+			{Name: "id", Type: FlagString, Help: "tap the element with this accessibility identifier"},
+			{Name: "hold", Type: FlagString, Help: "seconds the finger stays down: a long press"},
+			device,
+		},
+		Check: simTapValues,
+		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
+			args, err := simTapArgs(in)
+			if err != nil {
+				return Result{}, err
+			}
+			return runSimTouch(ctx, env, in, args, "Tapped.")
+		},
+	})
+	Register(&Command{
+		Name: "sim swipe", Local: true, Timeout: time.Minute,
+		Summary: "Swipe on the simulator's screen from <x1> <y1> to <x2> <y2> in points (one second; --duration changes it)." + touch,
+		Args:    []Arg{{Name: "x1", Help: "start x in points", Required: true}, {Name: "y1", Help: "start y in points", Required: true}, {Name: "x2", Help: "end x in points", Required: true}, {Name: "y2", Help: "end y in points", Required: true}},
+		Flags:   []Flag{{Name: "duration", Type: FlagString, Help: "seconds the swipe takes"}, device},
+		Check: func(in Input) error {
+			if d := flagString(in, "duration"); d != "" {
+				return simNumbers("sim swipe --duration", []string{d})
+			}
+			return nil
+		},
+		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
+			args, err := simSwipeArgs(in)
+			if err != nil {
+				return Result{}, err
+			}
+			return runSimTouch(ctx, env, in, args, "Swiped.")
+		},
+	})
+	Register(&Command{
+		Name: "sim type", Local: true, Timeout: time.Minute,
+		Summary: "Type <text> into the simulator's focused field as key presses (sim tap the field first). The text is on the command lines of this host and the Mac: never type a secret this way; fill --stdin types into a page without that." + touch,
+		Args:    []Arg{{Name: "text", Help: "the text to type", Required: true}},
+		Flags:   []Flag{device},
+		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
+			s, err := newSim(env)
+			if err != nil {
+				return Result{}, err
+			}
+			if _, err := s.Type(ctx, flagString(in, "device"), in.Args[0]); err != nil {
+				return Result{}, err
+			}
+			return Result{Text: "Typed."}, nil
+		},
+	})
+	Register(&Command{
+		Name: "sim keyboard", Local: true, Timeout: 15 * time.Minute,
+		Summary: "Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols. " +
+			"hardware (the Simulator's default) types any text but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp.",
+		Args:  []Arg{{Name: "mode", Help: "onscreen or hardware; without it, print the mode"}},
+		Flags: []Flag{device, {Name: "restart-iwdp", Type: FlagBool, Help: "restart even when that ends active page leases"}},
+		Run:   runSimKeyboard,
+	})
+	Register(&Command{
+		Name: "sim ui", Local: true, Timeout: time.Minute,
+		Summary: "List the elements of the simulator's screen that have a label, value or identifier, with their frames in points (its accessibility tree, through AXe): the targets of sim tap. It shows page and app text.",
+		Flags:   []Flag{device},
+		Run:     runSimUI,
 	})
 	Register(&Command{
 		Name: "sim down", Local: true, Timeout: 3 * time.Minute,
@@ -251,6 +332,187 @@ func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 		"iwdp lists: " + yn(st.Listed),
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: st}, nil
+}
+
+// simShotPath is the file of sim screenshot: path or -o, given once.
+func simShotPath(in Input) (string, error) {
+	out := arg(in, 0)
+	if o := flagString(in, "output"); o != "" {
+		if out != "" {
+			return "", usagef("sim screenshot: give the file once, as path or with -o")
+		}
+		out = o
+	}
+	return out, nil
+}
+
+func runSimScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
+	out, err := simShotPath(in)
+	if err != nil {
+		return Result{}, err
+	}
+	s, err := newSim(env)
+	if err != nil {
+		return Result{}, err
+	}
+	dev, _ := in.Flags["device"].(string)
+	_, data, err := s.Screenshot(ctx, dev)
+	if err != nil {
+		return Result{}, err
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return Result{}, fmt.Errorf("reading the simulator screenshot: %w", err)
+	}
+	if out != "" {
+		out = env.ResolvePath(out)
+	}
+	path, err := writeCapture(out, data)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{
+		Text: fmt.Sprintf("Screenshot saved to %s (%dx%d)", path, cfg.Width, cfg.Height),
+		Data: map[string]any{"path": path, "width": cfg.Width, "height": cfg.Height},
+	}, nil
+}
+
+// simNumbers parses the arguments of a touch command as numbers.
+func simNumbers(cmd string, args []string) error {
+	for _, a := range args {
+		if _, err := strconv.ParseFloat(a, 64); err != nil {
+			return usagef("%s: %q is not a number of points", cmd, a)
+		}
+	}
+	return nil
+}
+
+// simTapValues checks the flags that sim tap was given (Check runs for
+// --help too, with the arguments' names as arguments, so it checks no
+// argument): not both --label and --id, and a number for --hold.
+func simTapValues(in Input) error {
+	if flagString(in, "label") != "" && flagString(in, "id") != "" {
+		return usagef("sim tap: give one of --label and --id")
+	}
+	if h := flagString(in, "hold"); h != "" {
+		return simNumbers("sim tap --hold", []string{h})
+	}
+	return nil
+}
+
+// simTapArgs are the axe arguments of sim tap: a point, or one element.
+func simTapArgs(in Input) ([]string, error) {
+	label, id := flagString(in, "label"), flagString(in, "id")
+	args := []string{"tap"}
+	switch {
+	case len(in.Args) == 2 && label == "" && id == "":
+		if err := simNumbers("sim tap", in.Args); err != nil {
+			return nil, err
+		}
+		args = append(args, "-x", in.Args[0], "-y", in.Args[1])
+	case len(in.Args) == 0 && (label == "") != (id == ""):
+		if label != "" {
+			args = append(args, "--label", label)
+		} else {
+			args = append(args, "--id", id)
+		}
+	default:
+		return nil, usagef("sim tap: give <x> <y>, or one of --label and --id")
+	}
+	if h := flagString(in, "hold"); h != "" {
+		if err := simNumbers("sim tap --hold", []string{h}); err != nil {
+			return nil, err
+		}
+		args = append(args, "--hold", h)
+	}
+	return args, nil
+}
+
+// simSwipeArgs are the axe arguments of sim swipe.
+func simSwipeArgs(in Input) ([]string, error) {
+	if err := simNumbers("sim swipe", in.Args); err != nil {
+		return nil, err
+	}
+	args := []string{"swipe", "--start-x", in.Args[0], "--start-y", in.Args[1], "--end-x", in.Args[2], "--end-y", in.Args[3]}
+	if d := flagString(in, "duration"); d != "" {
+		if err := simNumbers("sim swipe --duration", []string{d}); err != nil {
+			return nil, err
+		}
+		args = append(args, "--duration", d)
+	}
+	return args, nil
+}
+
+func runSimTouch(ctx context.Context, env Env, in Input, args []string, done string) (Result, error) {
+	s, err := newSim(env)
+	if err != nil {
+		return Result{}, err
+	}
+	if _, err := s.Touch(ctx, flagString(in, "device"), args...); err != nil {
+		return Result{}, err
+	}
+	return Result{Text: done}, nil
+}
+
+func runSimKeyboard(ctx context.Context, env Env, in Input) (Result, error) {
+	mode := arg(in, 0)
+	if mode != "" && mode != "onscreen" && mode != "hardware" {
+		return Result{}, usagef("sim keyboard: the mode is onscreen or hardware, not %q", mode)
+	}
+	s, err := newSim(env)
+	if err != nil {
+		return Result{}, err
+	}
+	if mode == "" {
+		hw, err := s.Mac.HardwareKeyboard(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		m := simDid(hw, "hardware", "onscreen")
+		return Result{Text: "keyboard: " + m, Data: map[string]any{"mode": m, "changed": false}}, nil
+	}
+	s.RestartAnyway, _ = in.Flags["restart-iwdp"].(bool)
+	changed, r, err := s.Keyboard(ctx, flagString(in, "device"), mode == "onscreen")
+	if err != nil {
+		return Result{}, err
+	}
+	text := "keyboard: " + mode + simDid(changed, " (the simulator restarted)", " (unchanged)")
+	if changed {
+		text += fmt.Sprintf("\ntabs: %d", r.Pages)
+	}
+	return Result{Text: text, Data: map[string]any{"mode": mode, "changed": changed}}, nil
+}
+
+func runSimUI(ctx context.Context, env Env, in Input) (Result, error) {
+	s, err := newSim(env)
+	if err != nil {
+		return Result{}, err
+	}
+	els, err := s.UI(ctx, flagString(in, "device"))
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Text: simUIText(els), Data: map[string]any{"elements": els}}, nil
+}
+
+// simUIText prints one element per line: its type, label, value or id,
+// and the center of its frame, where sim tap would touch it.
+func simUIText(els []sim.Element) string {
+	lines := make([]string, 0, len(els))
+	for _, e := range els {
+		var name []string
+		if e.Label != "" {
+			name = append(name, strconv.Quote(e.Label))
+		}
+		if e.Value != "" {
+			name = append(name, "value "+strconv.Quote(e.Value))
+		}
+		if e.ID != "" {
+			name = append(name, "id "+strconv.Quote(e.ID))
+		}
+		lines = append(lines, fmt.Sprintf("%s %s at %.0f %.0f (%.0fx%.0f)", e.Type, strings.Join(name, " "), e.X+e.W/2, e.Y+e.H/2, e.W, e.H))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func runSimDown(ctx context.Context, env Env, in Input) (Result, error) {

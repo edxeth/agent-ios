@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -20,6 +22,85 @@ func TestSimUpChecksTheURLBeforeItRuns(t *testing.T) {
 	}
 	if err := c.Check(Input{Flags: map[string]any{"url": "http://10.0.2.2:8080/"}}); err != nil {
 		t.Errorf("a good URL: %v", err)
+	}
+}
+
+// sim screenshot takes its file once, as path or -o, and refuses both as
+// a usage error before it reaches the Mac.
+func TestSimScreenshotTakesTheFileOnce(t *testing.T) {
+	c, _ := Lookup([]string{"sim", "screenshot"})
+	if c == nil || c.Check == nil {
+		t.Fatal("sim screenshot has no Check")
+	}
+	if err := c.Check(Input{Args: []string{"a.png"}, Flags: map[string]any{"output": "b.png"}}); err == nil {
+		t.Error("path and -o together passed the check")
+	}
+	for _, in := range []Input{{Args: []string{"a.png"}, Flags: map[string]any{}}, {Flags: map[string]any{"output": "b.png"}}, {Flags: map[string]any{}}} {
+		if err := c.Check(in); err != nil {
+			t.Errorf("%+v: %v", in, err)
+		}
+	}
+}
+
+// The touch commands check their flags as usage errors before they reach
+// the Mac: one of --label and --id, numbers for --hold and --duration. Arguments are not Check's (help runs it with the
+// arguments' names); TestSimTapNeedsAPointOrAnElement covers them.
+func TestSimTouchChecks(t *testing.T) {
+	check := func(name string, in Input) error {
+		c, _ := Lookup(strings.Fields(name))
+		if c == nil || c.Check == nil {
+			t.Fatalf("%s has no Check", name)
+		}
+		if in.Flags == nil {
+			in.Flags = map[string]any{}
+		}
+		return c.Check(in)
+	}
+	for _, bad := range []struct {
+		name string
+		in   Input
+	}{
+		{"sim tap", Input{Flags: map[string]any{"label": "Done", "id": "d"}}},
+		{"sim tap", Input{Flags: map[string]any{"label": "Done", "hold": "long"}}},
+		{"sim swipe", Input{Args: []string{"1", "2", "3", "4"}, Flags: map[string]any{"duration": "1s"}}},
+	} {
+		if err := check(bad.name, bad.in); err == nil {
+			t.Errorf("%s %+v passed the check", bad.name, bad.in)
+		}
+	}
+	for _, good := range []struct {
+		name string
+		in   Input
+	}{
+		{"sim tap", Input{Args: []string{"201", "571.5"}}},
+		{"sim tap", Input{Flags: map[string]any{"label": "Done", "hold": "1"}}},
+		{"sim swipe", Input{Args: []string{"200", "600", "200", "300"}, Flags: map[string]any{"duration": "0.5"}}},
+	} {
+		if err := check(good.name, good.in); err != nil {
+			t.Errorf("%s %+v: %v", good.name, good.in, err)
+		}
+	}
+}
+
+// sim tap without a point or an element, with a lone x, or with a point
+// that is not a number, is a usage error when it runs, before it reaches
+// the Mac; so is a swipe whose points are not numbers.
+func TestSimTapNeedsAPointOrAnElement(t *testing.T) {
+	for _, in := range []Input{{Flags: map[string]any{}}, {Args: []string{"1"}, Flags: map[string]any{}}, {Args: []string{"1", "x"}, Flags: map[string]any{}}, {Args: []string{"1", "2"}, Flags: map[string]any{"label": "Done"}}} {
+		var u *UsageError
+		if _, err := simTapArgs(in); !errors.As(err, &u) {
+			t.Errorf("%+v: %v, want a usage error", in, err)
+		}
+	}
+	if args, err := simTapArgs(Input{Args: []string{"201", "571"}, Flags: map[string]any{"hold": "1"}}); err != nil || strings.Join(args, " ") != "tap -x 201 -y 571 --hold 1" {
+		t.Errorf("point: %q, %v", args, err)
+	}
+	var u *UsageError
+	if _, err := runSimKeyboard(context.Background(), nil, Input{Args: []string{"virtual"}, Flags: map[string]any{}}); !errors.As(err, &u) {
+		t.Errorf("sim keyboard virtual: %v, want a usage error before anything runs", err)
+	}
+	if _, err := simSwipeArgs(Input{Args: []string{"1", "2", "3", "x"}, Flags: map[string]any{}}); !errors.As(err, &u) {
+		t.Errorf("swipe to x: %v, want a usage error", err)
 	}
 }
 

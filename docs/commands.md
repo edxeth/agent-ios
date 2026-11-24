@@ -94,7 +94,13 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`set useragent`](#set-useragent) | Override the user agent string of the page (--reset removes the override). |
 | [`set viewport`](#set-viewport) | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
 | [`sim down`](#sim-down) | Stop the forward that sim up started and shut the simulator down; with --mac also run the configuration's stop command (for example the shutdown of a VM). |
+| [`sim keyboard`](#sim-keyboard) | Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols. hardware (the Simulator's default) types any text but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp. |
+| [`sim screenshot`](#sim-screenshot) | Capture the simulator's whole screen as PNG (simctl io screenshot): the status bar, Safari's bars, the on-screen keyboard and other apps, which the page capture of screenshot leaves out. The simulator must be booted (sim up); it starts nothing. |
 | [`sim status`](#sim-status) | Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has "ready". |
+| [`sim swipe`](#sim-swipe) | Swipe on the simulator's screen from \<x1\> \<y1\> to \<x2\> \<y2\> in points (one second; --duration changes it). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone). |
+| [`sim tap`](#sim-tap) | Tap the simulator's screen at \<x\> \<y\>, or the element with --label or --id (sim ui lists them). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone). |
+| [`sim type`](#sim-type) | Type \<text\> into the simulator's focused field as key presses (sim tap the field first). The text is on the command lines of this host and the Mac: never type a secret this way; fill --stdin types into a page without that. A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone). |
+| [`sim ui`](#sim-ui) | List the elements of the simulator's screen that have a label, value or identifier, with their frames in points (its accessibility tree, through AXe): the targets of sim tap. It shows page and app text. |
 | [`sim up`](#sim-up) | Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Default deadline 15m. |
 | [`skills get`](#skills-get) | Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill. |
 | [`skills list`](#skills-list) | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
@@ -1377,6 +1383,46 @@ Stop the forward that sim up started and shut the simulator down; with --mac als
 | `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
 | `--mac` | none | also stop the Mac with the configuration's stop command |
 
+### `sim keyboard`
+
+```
+iwdp-cli sim keyboard [<mode>] [flags]
+```
+
+Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols. hardware (the Simulator's default) types any text but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp.
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 15m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<mode>` | no | onscreen or hardware; without it, print the mode |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+| `--restart-iwdp` | none | restart even when that ends active page leases |
+
+### `sim screenshot`
+
+```
+iwdp-cli sim screenshot [<path>] [flags]
+```
+
+Capture the simulator's whole screen as PNG (simctl io screenshot): the status bar, Safari's bars, the on-screen keyboard and other apps, which the page capture of screenshot leaves out. The simulator must be booted (sim up); it starts nothing.
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 1m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<path>` | no | PNG file to write (default $TMPDIR/iwdp-screenshot-\<time\>.png) |
+
+| Flag | Value | Description |
+|---|---|---|
+| `-o`, `--output` | text | PNG file to write (same as path) |
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+
 ### `sim status`
 
 ```
@@ -1384,6 +1430,86 @@ iwdp-cli sim status [flags]
 ```
 
 Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has "ready".
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 1m0s (`--timeout` overrides it)
+
+| Flag | Value | Description |
+|---|---|---|
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+
+### `sim swipe`
+
+```
+iwdp-cli sim swipe <x1> <y1> <x2> <y2> [flags]
+```
+
+Swipe on the simulator's screen from \<x1\> \<y1\> to \<x2\> \<y2\> in points (one second; --duration changes it). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone).
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 1m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<x1>` | yes | start x in points |
+| `<y1>` | yes | start y in points |
+| `<x2>` | yes | end x in points |
+| `<y2>` | yes | end y in points |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--duration` | text | seconds the swipe takes |
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+
+### `sim tap`
+
+```
+iwdp-cli sim tap [<x>] [<y>] [flags]
+```
+
+Tap the simulator's screen at \<x\> \<y\>, or the element with --label or --id (sim ui lists them). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone).
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 1m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<x>` | no | x in points |
+| `<y>` | no | y in points |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--label` | text | tap the element with this accessibility label |
+| `--id` | text | tap the element with this accessibility identifier |
+| `--hold` | text | seconds the finger stays down: a long press |
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+
+### `sim type`
+
+```
+iwdp-cli sim type <text> [flags]
+```
+
+Type \<text\> into the simulator's focused field as key presses (sim tap the field first). The text is on the command lines of this host and the Mac: never type a secret this way; fill --stdin types into a page without that. A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone).
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 1m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<text>` | yes | the text to type |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
+
+### `sim ui`
+
+```
+iwdp-cli sim ui [flags]
+```
+
+List the elements of the simulator's screen that have a label, value or identifier, with their frames in points (its accessibility tree, through AXe): the targets of sim tap. It shows page and app text.
 
 - Page: none; runs in the client process, not in the daemon
 - Default deadline: 1m0s (`--timeout` overrides it)

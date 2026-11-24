@@ -146,6 +146,10 @@ type fakeMac struct {
 	safari    bool
 	safariErr bool // simctl fails when Safari's state is read
 	socket    string
+	screen    []byte // what the screenshot script prints
+	hwKbd     bool   // the Simulator's hardware keyboard setting
+	axe       []string
+	ui        []byte // what axe describe-ui prints
 }
 
 func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -193,6 +197,23 @@ func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte,
 		return nil, nil
 	case strings.HasPrefix(script, "xcrun simctl openurl"):
 		return nil, nil
+	case strings.HasPrefix(script, "defaults read com.apple.iphonesimulator ConnectHardwareKeyboard"):
+		return []byte(map[bool]string{true: "1\n", false: "0\n"}[f.hwKbd]), nil
+	case strings.HasPrefix(script, "osascript -e 'quit app"):
+		f.hwKbd = strings.HasSuffix(script, "-bool true")
+		f.booted, f.window, f.safari = false, false, false
+		return nil, nil
+	case strings.HasPrefix(script, "'/opt/axe dir/axe' "):
+		f.axe = append(f.axe, script)
+		if strings.Contains(script, "describe-ui") {
+			return f.ui, nil
+		}
+		return nil, nil
+	case strings.HasPrefix(script, "d=$(mktemp -d)"):
+		if !strings.Contains(script, "xcrun simctl io "+udidA+" screenshot --type=png") {
+			return nil, fmt.Errorf("fakeMac: unexpected screenshot script %q", script)
+		}
+		return f.screen, nil
 	case strings.HasPrefix(script, "p=$(pgrep -f 'launchd_sim"):
 		if !f.booted {
 			return nil, errors.New("exit status 1")
@@ -548,6 +569,111 @@ func TestUpFailures(t *testing.T) {
 	s.IWDP = &fakeIWDP{pagesErr: errors.New("connection refused")}
 	if _, err := s.Up(context.Background(), udidA, "", true); err == nil || !strings.Contains(err.Error(), "connection refused") {
 		t.Fatalf("a failing page list: %v, want its error, not 0 tabs", err)
+	}
+}
+
+// Screenshot returns the simulator's PNG, refuses output that is not a PNG,
+// and refuses a simulator that is not booted without starting anything.
+func TestScreenshot(t *testing.T) {
+	fm := readyMac()
+	fm.screen = append([]byte("\x89PNG\r\n\x1a\n"), "rest"...)
+	s, _ := newTestSim(t, fm, &fakeIWDP{}, Config{SSH: "mac", Device: udidA})
+	d, png, err := s.Screenshot(context.Background(), "")
+	if err != nil || d.UDID != udidA || string(png) != string(fm.screen) {
+		t.Fatalf("Screenshot = %v, %q, %v", d.UDID, png, err)
+	}
+	fm.screen = []byte("Wrote screenshot to: -")
+	if _, _, err := s.Screenshot(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "not a PNG") {
+		t.Fatalf("non-PNG output: %v", err)
+	}
+	fm.booted = false
+	calls := len(fm.calls)
+	if _, _, err := s.Screenshot(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "sim up") {
+		t.Fatalf("not booted: %v", err)
+	}
+	for _, c := range fm.calls[calls:] {
+		if strings.Contains(c, "bootstatus") || strings.Contains(c, "open -a") {
+			t.Fatalf("Screenshot started something: %q", c)
+		}
+	}
+}
+
+// The touch commands quote every argument for the Mac's shell, name the
+// device, and need a configured axe.
+func TestTouchRunsAXe(t *testing.T) {
+	fm := readyMac()
+	s, _ := newTestSim(t, fm, &fakeIWDP{}, Config{SSH: "mac", Device: udidA})
+	if _, err := s.Touch(context.Background(), "", "tap", "-x", "1", "-y", "2"); !errors.Is(err, ErrNoAXe) {
+		t.Fatalf("no axe configured: %v", err)
+	}
+	s.Cfg.AXe = "/opt/axe dir/axe"
+	s.Mac = NewMac(s.Cfg, fm.run)
+	if _, err := s.Touch(context.Background(), "", "tap", "--label", "it's $(x)"); err != nil {
+		t.Fatal(err)
+	}
+	want := "'/opt/axe dir/axe' 'tap' '--label' 'it'\\''s $(x)' --udid " + udidA
+	if len(fm.axe) != 1 || fm.axe[0] != want {
+		t.Fatalf("axe calls %q, want %q", fm.axe, want)
+	}
+}
+
+// With the on-screen keyboard, sim type refuses text that needs Shift
+// before typing anything; with the hardware keyboard it types any text.
+func TestTypeRefusesShiftWithTheOnscreenKeyboard(t *testing.T) {
+	fm := readyMac()
+	cfg := Config{SSH: "mac", Device: udidA, AXe: "/opt/axe dir/axe"}
+	s, _ := newTestSim(t, fm, &fakeIWDP{}, cfg)
+	for _, text := range []string{"A", "a@b", "ü", "x!"} {
+		if _, err := s.Type(context.Background(), "", text); err == nil || len(fm.axe) != 0 {
+			t.Fatalf("onscreen %q: %v, %d axe calls", text, err, len(fm.axe))
+		}
+	}
+	if _, err := s.Type(context.Background(), "", "hello.world-2/x"); err != nil || len(fm.axe) != 1 {
+		t.Fatalf("unshifted text: %v", err)
+	}
+	fm.hwKbd = true
+	if _, err := s.Type(context.Background(), "", "A@b!"); err != nil || len(fm.axe) != 2 {
+		t.Fatalf("hardware keyboard: %v", err)
+	}
+}
+
+// sim keyboard changes nothing when the mode is already set, refuses a
+// restart while a page has an active lease before it quits the Simulator,
+// and otherwise switches the setting and brings the simulator back up.
+func TestKeyboard(t *testing.T) {
+	fm := readyMac()
+	fm.hwKbd = true
+	iw := &fakeIWDP{st: IWDPState{Running: true, Own: true, Listed: true}, leases: []int{1}}
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	if changed, _, err := s.Keyboard(context.Background(), "", false); err != nil || changed {
+		t.Fatalf("already hardware: %v, %v", changed, err)
+	}
+	if _, _, err := s.Keyboard(context.Background(), "", true); err == nil || fm.count("osascript") != 0 {
+		t.Fatalf("active lease: %v; the Simulator was quit %d times", err, fm.count("osascript"))
+	}
+	iw.leases = []int{0}
+	changed, r, err := s.Keyboard(context.Background(), "", true)
+	if err != nil || !changed || fm.hwKbd || !r.Booted || !r.WindowOpened {
+		t.Fatalf("switch: %v, %+v, %v, hardware %v", changed, r, err, fm.hwKbd)
+	}
+}
+
+// sim ui keeps the elements with a label, value or identifier, in order,
+// with their frames.
+func TestParseUI(t *testing.T) {
+	out := []byte(`[{"type":"Application","AXLabel":"Safari","frame":{"x":0,"y":0,"width":402,"height":874},"children":[
+	 {"type":"Group","AXLabel":null,"frame":{"x":0,"y":0,"width":1,"height":1},"children":[
+	  {"type":"Button","AXLabel":"Done","AXUniqueId":"done","frame":{"x":341,"y":513,"width":40,"height":38},"children":[]}]},
+	 {"type":"Slider","AXLabel":"Scroll","AXValue":"43%","frame":{"x":369,"y":62,"width":30,"height":404}}]}]`)
+	els, err := parseUI(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(els) != 3 || els[1].Label != "Done" || els[1].ID != "done" || els[1].X != 341 || els[1].H != 38 || els[2].Value != "43%" {
+		t.Fatalf("parseUI = %+v", els)
+	}
+	if _, err := parseUI([]byte("Error: no simulator")); err == nil {
+		t.Fatal("parseUI accepted text that is not JSON")
 	}
 }
 

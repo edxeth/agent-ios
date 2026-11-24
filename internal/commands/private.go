@@ -11,6 +11,7 @@ import (
 
 	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/iwdp-cli/internal/sim"
 	"github.com/nnemirovsky/iwdp-cli/internal/skills"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
@@ -167,6 +168,16 @@ var privateReads = map[string]privateRead{
 		}),
 		screenshotShown,
 	},
+	"sim ui": {
+		"the screen's elements that the caller asked for, page and app text included",
+		object(fields{"elements": content}),
+		simUIShown,
+	},
+	"sim screenshot": {
+		"the path of the simulator's screen capture and its size",
+		object(fields{"path": scalar, "width": scalar, "height": scalar}),
+		screenshotShown,
+	},
 	"network har stop": {"the caller's path and counts", object(fields{"path": scalar, "entries": scalar}), harStopShown},
 	"trace stop":       {"the caller's path and counts", object(fields{"path": scalar, "records": scalar, "events": scalar}), traceStopShown},
 	"profiler stop":    {"the caller's path and counts", object(fields{"path": scalar, "samples": scalar, "nodes": scalar}), profilerStopShown},
@@ -192,6 +203,7 @@ var privateSummaries = map[string]func(data json.RawMessage) (text string, value
 	"session info": sessionSummary,
 	"status":       statusSummary,
 	"sim up":       simUpSummary,
+	"sim keyboard": simKeyboardSummary,
 	"sim status":   simStatusSummary,
 }
 
@@ -679,6 +691,17 @@ func requestShown(value json.RawMessage, _ string) (string, bool) {
 	return strings.TrimRight(text, "\n"), true
 }
 
+// simUIShown prints the elements in sim ui's text form.
+func simUIShown(value json.RawMessage, _ string) (string, bool) {
+	var v struct {
+		Elements []sim.Element `json:"elements"`
+	}
+	if json.Unmarshal(value, &v) != nil {
+		return "", false
+	}
+	return simUIText(v.Elements), true
+}
+
 // screenshotShown prints the caller's path and the labels; the size of
 // the image is not in the data, so the text does not say it.
 func screenshotShown(value json.RawMessage, _ string) (string, bool) {
@@ -944,6 +967,18 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 	text := fmt.Sprintf("mac started %t\nbooted %t\nwindow opened %t\nsafari started %t\nforward started %t\niwdp started %t\niwdp restarted %t\ntabs %d",
 		*r.MacStarted, r.Booted, r.WindowOpened, r.SafariStarted, r.ForwardStarted, r.IWDPStarted, r.IWDPRestarted, *r.Pages)
 	return text, value, true
+}
+
+// simKeyboardSummary prints the keyboard mode and whether it changed.
+func simKeyboardSummary(data json.RawMessage) (string, any, bool) {
+	var v struct {
+		Mode    *string `json:"mode"`
+		Changed bool    `json:"changed"`
+	}
+	if json.Unmarshal(data, &v) != nil || v.Mode == nil || (*v.Mode != "onscreen" && *v.Mode != "hardware") {
+		return "", nil, false
+	}
+	return fmt.Sprintf("keyboard %s\nchanged %t", *v.Mode, v.Changed), map[string]any{"mode": *v.Mode, "changed": v.Changed}, true
 }
 
 // simStatusSummary prints the state of each part that sim status checks,

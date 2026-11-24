@@ -2,6 +2,7 @@ package sim
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -346,6 +347,175 @@ func (s *Sim) Status(ctx context.Context, device string) (Status, error) {
 	st.Listed = is.Own && is.Listed
 	st.Ready = st.LoggedIn && st.Device != nil && st.Device.State == "Booted" && st.Forward && st.Listed
 	return st, nil
+}
+
+// Booted returns the simulator, which must be booted: one that is not, or
+// a Mac that does not answer, is an error that says to run sim up. It
+// starts nothing.
+func (s *Sim) Booted(ctx context.Context, device string) (Device, error) {
+	reachable, err := s.Mac.Reachable(ctx)
+	if err != nil {
+		return Device{}, err
+	}
+	if !reachable {
+		return Device{}, fmt.Errorf("the Mac %s does not answer over ssh: run iwdp-cli sim up", s.Cfg.SSH)
+	}
+	d, err := s.device(ctx, device)
+	if err != nil {
+		return Device{}, err
+	}
+	if d.State != "Booted" {
+		return d, fmt.Errorf("the simulator %s (%s) is not booted: run iwdp-cli sim up", d.Name, d.UDID)
+	}
+	return d, nil
+}
+
+// Screenshot returns the simulator and a PNG of its whole screen.
+func (s *Sim) Screenshot(ctx context.Context, device string) (Device, []byte, error) {
+	d, err := s.Booted(ctx, device)
+	if err != nil {
+		return d, nil, err
+	}
+	png, err := s.Mac.Screenshot(ctx, d.UDID)
+	return d, png, err
+}
+
+// Touch runs one axe input command (tap, swipe, type) with args on the
+// booted simulator: a real touch or key press, which iOS handles as the
+// user's, so a tapped text field opens the on-screen keyboard.
+func (s *Sim) Touch(ctx context.Context, device string, args ...string) (Device, error) {
+	d, err := s.Booted(ctx, device)
+	if err != nil {
+		return d, err
+	}
+	_, err = s.Mac.AXe(ctx, d.UDID, args...)
+	return d, err
+}
+
+// unshifted are the characters that a US keyboard types without Shift:
+// all that sim type can send while the on-screen keyboard is shown.
+const unshifted = "abcdefghijklmnopqrstuvwxyz0123456789 `-=[]\\;',./"
+
+// Type types text into the simulator's focused field. With the on-screen
+// keyboard (no hardware keyboard), key presses lose Shift, so text that
+// needs Shift is refused before anything is typed instead of arriving
+// changed ("A@" as "a2").
+func (s *Sim) Type(ctx context.Context, device, text string) (Device, error) {
+	hw, err := s.Mac.HardwareKeyboard(ctx)
+	if err != nil {
+		return Device{}, err
+	}
+	if !hw {
+		for _, r := range text {
+			if !strings.ContainsRune(unshifted, r) {
+				return Device{}, fmt.Errorf("sim type: %q needs Shift, which key presses lose while the on-screen keyboard is shown: run iwdp-cli sim keyboard hardware, or tap the keys (sim ui lists them)", string(r))
+			}
+		}
+	}
+	return s.Touch(ctx, device, "type", text)
+}
+
+// Keyboard sets the keyboard mode: onscreen shows iOS's on-screen keyboard
+// for a tapped field, as on an iPhone; hardware types exactly but hides it.
+// A change restarts the Simulator app and the simulator, so it refuses
+// while a page has an active lease (unless RestartAnyway), then runs Up.
+// It reports whether the mode changed.
+func (s *Sim) Keyboard(ctx context.Context, device string, onscreen bool) (bool, UpReport, error) {
+	hw, err := s.Mac.HardwareKeyboard(ctx)
+	if err != nil {
+		return false, UpReport{}, err
+	}
+	if hw != onscreen {
+		return false, UpReport{}, nil
+	}
+	st, err := s.IWDP.State(ctx)
+	if err != nil {
+		return false, UpReport{}, err
+	}
+	if st.Running {
+		if err := s.leaseCheck(ctx); err != nil {
+			return false, UpReport{}, err
+		}
+	}
+	if err := s.Mac.SetHardwareKeyboard(ctx, !onscreen); err != nil {
+		return false, UpReport{}, err
+	}
+	r, err := s.Up(ctx, device, "", false)
+	return true, r, err
+}
+
+// Element is an element of the simulator's screen, from its accessibility
+// tree: frames are in points, as sim tap takes them.
+type Element struct {
+	Type  string  `json:"type"`
+	Label string  `json:"label,omitempty"`
+	Value string  `json:"value,omitempty"`
+	ID    string  `json:"id,omitempty"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	W     float64 `json:"width"`
+	H     float64 `json:"height"`
+}
+
+// UI lists the elements of the simulator's screen that have a label, a
+// value or an identifier, in the tree's order (axe describe-ui).
+func (s *Sim) UI(ctx context.Context, device string) ([]Element, error) {
+	d, err := s.Booted(ctx, device)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.Mac.AXe(ctx, d.UDID, "describe-ui")
+	if err != nil {
+		return nil, err
+	}
+	return parseUI(out)
+}
+
+// uiNode is a node of axe describe-ui's JSON.
+type uiNode struct {
+	Type     string   `json:"type"`
+	Label    *string  `json:"AXLabel"`
+	Value    *string  `json:"AXValue"`
+	ID       *string  `json:"AXUniqueId"`
+	Frame    uiFrame  `json:"frame"`
+	Children []uiNode `json:"children"`
+}
+
+type uiFrame struct{ X, Y, Width, Height float64 }
+
+func parseUI(out []byte) ([]Element, error) {
+	var roots []uiNode
+	if err := json.Unmarshal(out, &roots); err != nil {
+		var one uiNode
+		if err2 := json.Unmarshal(out, &one); err2 != nil {
+			return nil, fmt.Errorf("reading axe describe-ui: %w", err)
+		}
+		roots = []uiNode{one}
+	}
+	var els []Element
+	var walk func(n uiNode)
+	walk = func(n uiNode) {
+		e := Element{Type: n.Type, X: n.Frame.X, Y: n.Frame.Y, W: n.Frame.Width, H: n.Frame.Height}
+		if n.Label != nil {
+			e.Label = *n.Label
+		}
+		if n.Value != nil {
+			e.Value = *n.Value
+		}
+		if n.ID != nil {
+			e.ID = *n.ID
+		}
+		if e.Label != "" || e.Value != "" || e.ID != "" {
+			els = append(els, e)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	for _, r := range roots {
+		walk(r)
+	}
+	return els, nil
 }
 
 // DownReport is what Down did.

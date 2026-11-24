@@ -312,6 +312,80 @@ func (m Mac) OpenURL(ctx context.Context, udid, rawURL string) error {
 // shellQuote quotes s as one word for a POSIX shell.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// ErrNoAXe is the error of the touch commands when the configuration names
+// no axe program.
+var ErrNoAXe = errors.New("the simulator configuration names no axe program (\"axe\"): real touches need AXe on the Mac, docs/simulator.md")
+
+// AXe runs the configured axe program on the Mac for the simulator udid,
+// with args (each quoted for the Mac's shell), and returns its output.
+func (m Mac) AXe(ctx context.Context, udid string, args ...string) ([]byte, error) {
+	if m.cfg.AXe == "" {
+		return nil, ErrNoAXe
+	}
+	if !udidRE.MatchString(udid) {
+		return nil, fmt.Errorf("running axe: bad UDID %q", udid)
+	}
+	words := []string{shellQuote(m.cfg.AXe)}
+	for _, a := range args {
+		words = append(words, shellQuote(a))
+	}
+	words = append(words, "--udid", udid)
+	out, err := m.shell(ctx, strings.Join(words, " "))
+	if err != nil {
+		return out, fmt.Errorf("axe %s on the simulator: %w", args[0], err)
+	}
+	return out, nil
+}
+
+// HardwareKeyboard reports the Simulator app's "Connect Hardware Keyboard"
+// setting, which is on unless set off. While it is on, iOS hides the
+// on-screen keyboard; while it is off, typed key presses lose Shift.
+func (m Mac) HardwareKeyboard(ctx context.Context) (bool, error) {
+	out, err := m.shell(ctx, "defaults read com.apple.iphonesimulator ConnectHardwareKeyboard 2>/dev/null || echo 1")
+	if err != nil {
+		return false, fmt.Errorf("reading the Simulator's keyboard setting: %w", err)
+	}
+	return strings.TrimSpace(string(out)) != "0", nil
+}
+
+// SetHardwareKeyboard quits the Simulator app, which shuts its simulators
+// down, and sets "Connect Hardware Keyboard", which the app reads when it
+// starts.
+func (m Mac) SetHardwareKeyboard(ctx context.Context, on bool) error {
+	script := "osascript -e 'quit app \"Simulator\"' >/dev/null 2>&1; " +
+		"for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -xq Simulator || break; sleep 1; done; " +
+		"xcrun simctl shutdown all >/dev/null 2>&1; " +
+		"defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool " + strconv.FormatBool(on)
+	if _, err := m.shell(ctx, script); err != nil {
+		return fmt.Errorf("setting the Simulator's keyboard: %w", err)
+	}
+	return nil
+}
+
+// pngMagic starts every PNG file.
+var pngMagic = []byte("\x89PNG\r\n\x1a\n")
+
+// Screenshot returns a PNG of the simulator's whole screen (simctl io
+// screenshot): the status bar, Safari's own bars, the on-screen keyboard
+// and other apps too, where a Web Inspector capture has the page only.
+func (m Mac) Screenshot(ctx context.Context, udid string) ([]byte, error) {
+	if !udidRE.MatchString(udid) {
+		return nil, fmt.Errorf("taking a simulator screenshot: bad UDID %q", udid)
+	}
+	// simctl's "-" for standard output writes a file named "-" (Xcode
+	// 26.6), so the PNG goes through a private temporary directory.
+	out, err := m.shell(ctx, "d=$(mktemp -d) || exit 1; "+
+		"xcrun simctl io "+udid+" screenshot --type=png \"$d/screen.png\" >/dev/null 2>&1 && cat \"$d/screen.png\"; "+
+		"rc=$?; rm -rf \"$d\"; exit $rc")
+	if err != nil {
+		return nil, fmt.Errorf("taking a screenshot of the simulator %s: %w", udid, err)
+	}
+	if !bytes.HasPrefix(out, pngMagic) {
+		return nil, fmt.Errorf("taking a screenshot of the simulator %s: simctl wrote %d bytes that are not a PNG", udid, len(out))
+	}
+	return out, nil
+}
+
 // InspectorSocket is the path of the simulator's webinspectord_sim socket on
 // the Mac: a socket of the simulator's launchd_sim, whose command line names
 // the device directory. It changes at every boot.

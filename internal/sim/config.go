@@ -32,6 +32,10 @@ type Config struct {
 	// Device is the simulator to use: its UDID or its exact name. "" means
 	// the one booted iOS simulator.
 	Device string `json:"device,omitempty"`
+	// AXe is the path of the axe program on the Mac (github.com/cameroncooke/AXe),
+	// which sim tap, sim type, sim swipe and sim ui use for real touches;
+	// "" means those commands are unavailable.
+	AXe string `json:"axe,omitempty"`
 }
 
 // ErrNoConfig is the error of Load when the configuration file is missing.

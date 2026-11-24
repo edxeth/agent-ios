@@ -29,6 +29,7 @@ ios_webkit_debug_proxy (iwdp) looks for a simulator on `127.0.0.1:27753`, its `-
 | `start` | The command that this host runs when the Mac does not answer over ssh, for example the start of a VM. Optional; without it `sim up` fails when the Mac is down. |
 | `stop` | The command that `sim down --mac` runs on this host. Optional. |
 | `device` | The simulator: its UDID or its exact name (the newest runtime's device of that name). Optional; without it the one booted iOS simulator. `--device` overrides it. |
+| `axe` | The path of AXe's `axe` program on the Mac, for the touch commands. Optional; without it `sim tap`, `sim swipe`, `sim type` and `sim ui` fail. |
 
 The Mac needs Xcode with an iOS Simulator runtime, Remote Login (sshd) for the user, and that user logged in to the desktop: a simulator does not run without a desktop session, so a Mac that starts unattended needs automatic login.
 
@@ -41,6 +42,25 @@ The Mac needs Xcode with an iOS Simulator runtime, Remote Login (sshd) for the u
 A URL of this host, opened in the simulator, uses the Mac's address for this host: `http://10.0.2.2:<port>/` from a QEMU VM with user networking.
 
 Safari's start page is not offered for inspection. When `sim up` reports `tabs: 0`, run it again with `--url`, then `iwdp-cli tab list`. A page list that iwdp does not answer is an error, not `tabs: 0`.
+
+## The whole screen and real touches
+
+The page commands see only Safari's page. For what lies outside it, or what only a real finger triggers, the sim commands act on the simulator's screen:
+
+- `iwdp-cli sim screenshot [path]` captures the whole screen (`simctl io screenshot`): the status bar, Safari's bars, the on-screen keyboard and other apps. `screenshot` captures the page alone.
+- `iwdp-cli sim tap <x> <y>`, `sim tap --label <label>` or `--id <id>` (`--hold <seconds>` for a long press), `sim swipe <x1> <y1> <x2> <y2>` and `sim type <text>` send real touches and key presses through [AXe](https://github.com/cameroncooke/AXe), which iOS handles as the user's: a tapped text field opens the on-screen keyboard and can zoom the page, which a synthetic `click` does not do. Coordinates are screen points: `sim screenshot`'s pixel size divided by the scale (3 on an iPhone 17 Pro, 402×874 points). Safari's page starts below the status bar, at 62 points on that iPhone.
+- `iwdp-cli sim ui` lists the screen's elements that have a label, value or identifier (Safari's bars, the keyboard's keys, alerts), with the center that `sim tap` would touch. It shows page and app text.
+- `iwdp-cli sim keyboard [onscreen|hardware]` shows or sets the keyboard. `hardware` (the Simulator's default) types any text but hides the on-screen keyboard, as an iPad with a keyboard does. `onscreen` shows it for a tapped field, as on an iPhone, for keyboard bugs; AXe's key presses then lose Shift, so `sim type` refuses text outside lowercase letters, digits and unshifted symbols (tap the keys with `sim tap --label` instead). A change restarts the Simulator app and the simulator (about a minute) and runs `sim up`; it refuses while a page has an active lease, unless `--restart-iwdp`.
+
+`sim type` puts its text on the command lines of this host and the Mac: never type a secret with it. `fill --stdin` types into a page without that.
+
+AXe runs on the Mac. Install its release (a universal binary for Intel and Apple silicon; GPL-3.0, run as a separate program) and name it in the configuration as `"axe"`, for example:
+
+```sh
+curl -fL -o AXe.tgz https://github.com/cameroncooke/AXe/releases/download/v2.1.1/AXe-macOS-v2.1.1-universal.tar.gz
+scp AXe.tgz my-mac:/tmp/ && ssh my-mac 'mkdir -p ~/axe && tar xzf /tmp/AXe.tgz -C ~/axe'
+# simulator.json: "axe": "/Users/<user>/axe/axe"
+```
 
 ## Ownership and restarts
 
