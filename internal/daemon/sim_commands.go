@@ -2,16 +2,20 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/commands"
 	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
 )
 
 // The daemon's part of the sim commands (internal/commands/sim.go): the
 // forward's record goes in the daemon's private directory, and a restart of
-// iwdp counts the daemon's active leases first.
+// iwdp counts the daemon's active leases first, and sim up --url prints
+// the tab id that the daemon gives its new tab.
 func init() {
 	commands.SimStateDir = simDir
 	commands.SimReservations = func() (*core.Reservations, error) {
@@ -39,6 +43,49 @@ func init() {
 		}
 		return activeLeases(st), nil
 	}
+	commands.SimulatorTab = simulatorTab
+}
+
+// simulatorTab is commands.SimulatorTab: it runs tab list --device
+// SIMULATOR in the daemon, for in's session and reservation owner, and
+// returns the id of the tab whose page key is the iwdp page pageID of the
+// simulator ("" when the listing does not have it). It starts the daemon
+// when none runs, as the tab command that selects the tab would: the
+// daemon keeps the ids for its life.
+func simulatorTab(ctx context.Context, env commands.Env, in commands.Input, pageID string) (string, error) {
+	h, err := hostOf(env)
+	if err != nil {
+		return "", err
+	}
+	c, err := Connect(ctx, h.ClientOptions())
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	cwd, _ := os.Getwd()
+	g := in.Global
+	res, err := c.Run(ctx, RunRequest{
+		Argv: []string{"tab", "list", "--device", core.SimulatorDevice}, Cwd: cwd, JSON: true,
+		PageReq: PageReq{Transport: g.Transport}, // as the CLI's tab list sends it
+		Owner:   Owner{Session: g.Session, Reservation: g.Reservation},
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+	var list struct {
+		Tabs []core.Tab `json:"tabs"`
+	}
+	if err := json.Unmarshal(res.Data, &list); err != nil {
+		return "", fmt.Errorf("reading the daemon's tab list: %w", err)
+	}
+	// A page key is "<kind>|<device id>|<page id>" (core's findListed).
+	key := string(transport.KindIWDP) + "|" + core.SimulatorDevice + "|" + pageID
+	for _, t := range list.Tabs {
+		if t.Key == key {
+			return t.ID, nil
+		}
+	}
+	return "", nil
 }
 
 // activeLeases counts the pages of st whose lease is active: on every

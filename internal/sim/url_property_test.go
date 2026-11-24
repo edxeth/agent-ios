@@ -4,68 +4,186 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/quick"
 )
 
-// urlParts are the parts of a generated URL; the oracle compares them,
-// not text.
+// atom is a piece of a generated path segment, query or fragment: text as
+// the caller writes it, and form as a browser writes it (WHATWG URL),
+// taken from the URL standard's percent-encode sets, not from browserForm.
+// escape is true when text is an escape that the caller wrote ("%41"),
+// which a spelling may write in either hex case; browserEscapes is true
+// when the browser escapes text, so that a spelling may write it either as
+// text or as its escape.
+type atom struct {
+	text, form             string
+	escape, browserEscapes bool
+}
+
+func lit(s string) atom    { return atom{text: s, form: s} }
+func enc(s, f string) atom { return atom{text: s, form: f, browserEscapes: true} }
+func esc(s string) atom    { return atom{text: s, form: strings.ToUpper(s), escape: true} }
+
+var (
+	pathAtoms = []atom{
+		lit("a"), lit("b"), lit("x.y"), lit("~"), lit("'"), lit("!$&()*+,;=:@"),
+		enc(" ", "%20"), enc("\"", "%22"), enc("<", "%3C"), enc(">", "%3E"), enc("`", "%60"), enc("{", "%7B"), enc("}", "%7D"),
+		enc("€", "%E2%82%AC"), enc("é", "%C3%A9"), enc("日本", "%E6%97%A5%E6%9C%AC"),
+		esc("%41"), esc("%20"), esc("%2f"), esc("%e2%82%ac"), esc("%7e"),
+	}
+	queryAtoms = []atom{
+		lit("x"), lit("="), lit("&"), lit("1"), lit("+"), lit("?"), lit("/"),
+		enc(" ", "%20"), enc("\"", "%22"), enc("<", "%3C"), enc("€", "%E2%82%AC"), enc("ü", "%C3%BC"),
+		esc("%20"), esc("%2b"), esc("%41"), esc("%3d"),
+	}
+	fragmentAtoms = []atom{
+		lit("top"), lit("k"), lit("'"), lit("?"), lit("/"),
+		enc("`", "%60"), enc(" ", "%20"), enc(">", "%3E"), enc("é", "%C3%A9"),
+		esc("%60"), esc("%41"), esc("%c3%a9"),
+	}
+)
+
+// urlParts are the parts of a generated URL; the oracle (key) compares
+// them, not text.
 type urlParts struct {
 	https    bool
-	host     string   // lower case
+	host     host
 	port     string   // "" or a port that is not the scheme's default
-	segments []string // path segments, without dot segments
-	query    *string  // nil: no "?"
-	fragment *string  // nil: no "#"
+	segments [][]atom // path segments, each of one atom or more
+	query    []atom   // nil: no "?"
+	fragment []atom   // nil: no "#"
+}
+
+// host is a host name in lower case, a plain IPv4 address, or an IPv6
+// address.
+type host struct {
+	name string
+	ipv4 *[4]byte
+	ipv6 *[8]uint16
+}
+
+func (h host) key() string {
+	switch {
+	case h.ipv4 != nil:
+		return fmt.Sprintf("v4%v", *h.ipv4)
+	case h.ipv6 != nil:
+		return fmt.Sprintf("v6%v", *h.ipv6)
+	}
+	return h.name
+}
+
+func formOf(as []atom) string {
+	var b strings.Builder
+	for _, a := range as {
+		b.WriteString(a.form)
+	}
+	return b.String()
 }
 
 // key is the URL as a browser writes it, from the parts alone: what sim up
-// and tab find compare.
+// compares.
 func (p urlParts) key() string {
+	path := make([]string, len(p.segments))
+	for i, s := range p.segments {
+		path[i] = formOf(s)
+	}
 	q, f := "-", "-"
 	if p.query != nil {
-		q = "?" + *p.query
+		q = "?" + formOf(p.query)
 	}
 	if p.fragment != nil {
-		f = "#" + *p.fragment
+		f = "#" + formOf(p.fragment)
 	}
-	return fmt.Sprintf("%t|%s|%s|/%s|%s|%s", p.https, p.host, p.port, strings.Join(p.segments, "/"), q, f)
+	return fmt.Sprintf("%t|%s|%s|/%s|%s|%s", p.https, p.host.key(), p.port, strings.Join(path, "/"), q, f)
 }
 
 // spell writes p in one of the forms that a browser reads as p: the
-// scheme and host in any case, the default port written or not (with
-// leading zeros), "." and "x/.." segments before a segment, and an empty
-// path as "" or "/".
+// scheme, a host name and IPv6 hex digits in any case, an IPv6 address
+// with or without "::" and leading zeros, the default port written or not
+// (with leading zeros), "." and "x/.." segments, also escaped, before a
+// segment, an empty path as "" or "/", escapes in either hex case, and a
+// character that a browser escapes as itself or as its escape (except a
+// space at the very end, which a browser strips).
 func (p urlParts) spell(r *rand.Rand) string {
 	var b strings.Builder
 	scheme, def := "http", "80"
 	if p.https {
 		scheme, def = "https", "443"
 	}
-	b.WriteString(randomCase(r, scheme) + "://" + randomCase(r, p.host))
+	b.WriteString(randomCase(r, scheme) + "://" + p.host.spell(r))
 	switch {
 	case p.port != "":
-		b.WriteString(":" + p.port)
+		b.WriteString(":" + strings.Repeat("0", r.Intn(2)) + p.port)
 	case r.Intn(3) == 0:
 		b.WriteString(":" + strings.Repeat("0", r.Intn(2)) + def)
 	}
 	for _, s := range p.segments {
 		if r.Intn(4) == 0 {
-			b.WriteString([]string{"/.", "/zz/.."}[r.Intn(2)])
+			b.WriteString(pick(r, "/.", "/zz/..", "/%2e", "/zz/.%2E", "/zz/%2e%2e"))
 		}
-		b.WriteString("/" + s)
+		b.WriteString("/" + spellAtoms(r, s))
 	}
 	if len(p.segments) == 0 && r.Intn(2) == 0 {
 		b.WriteString("/")
 	}
 	if p.query != nil {
-		b.WriteString("?" + *p.query)
+		b.WriteString("?" + spellAtoms(r, p.query))
 	}
 	if p.fragment != nil {
-		b.WriteString("#" + *p.fragment)
+		b.WriteString("#" + spellAtoms(r, p.fragment))
+	}
+	// A browser strips a space at the end of the text; only a space atom,
+	// which it escapes, can end it.
+	if s, ok := strings.CutSuffix(b.String(), " "); ok {
+		return s + "%20"
 	}
 	return b.String()
+}
+
+func spellAtoms(r *rand.Rand, as []atom) string {
+	var b strings.Builder
+	for _, a := range as {
+		switch {
+		case a.escape:
+			b.WriteString(randomCase(r, a.text))
+		case a.browserEscapes && r.Intn(2) == 0:
+			b.WriteString(randomCase(r, a.form))
+		default:
+			b.WriteString(a.text)
+		}
+	}
+	return b.String()
+}
+
+func (h host) spell(r *rand.Rand) string {
+	switch {
+	case h.ipv4 != nil:
+		return fmt.Sprintf("%d.%d.%d.%d", h.ipv4[0], h.ipv4[1], h.ipv4[2], h.ipv4[3])
+	case h.ipv6 != nil:
+		groups := make([]string, 8)
+		for i, g := range h.ipv6 {
+			s := strconv.FormatUint(uint64(g), 16)
+			if n := r.Intn(5 - len(s)); n > 0 {
+				s = strings.Repeat("0", n) + s
+			}
+			groups[i] = randomCase(r, s)
+		}
+		// "::" may stand for any run of zero groups.
+		var runs [][2]int
+		for i := range 8 {
+			for j := i; j < 8 && h.ipv6[j] == 0; j++ {
+				runs = append(runs, [2]int{i, j + 1})
+			}
+		}
+		if len(runs) > 0 && r.Intn(3) != 0 {
+			run := runs[r.Intn(len(runs))]
+			return "[" + strings.Join(groups[:run[0]], ":") + "::" + strings.Join(groups[run[1]:], ":") + "]"
+		}
+		return "[" + strings.Join(groups, ":") + "]"
+	}
+	return randomCase(r, h.name)
 }
 
 func randomCase(r *rand.Rand, s string) string {
@@ -80,21 +198,50 @@ func randomCase(r *rand.Rand, s string) string {
 
 func pick(r *rand.Rand, xs ...string) string { return xs[r.Intn(len(xs))] }
 
+func randomAtoms(r *rand.Rand, pool []atom, min int) []atom {
+	as := []atom{}
+	for range min + r.Intn(3) {
+		as = append(as, pool[r.Intn(len(pool))])
+	}
+	return as
+}
+
+func randomHost(r *rand.Rand) host {
+	switch r.Intn(3) {
+	case 0:
+		var a [4]byte
+		for i := range a {
+			a[i] = []byte{0, 1, 2, 10, 127, 255}[r.Intn(6)]
+		}
+		return host{ipv4: &a}
+	case 1:
+		var a [8]uint16
+		for i := range a {
+			// Mostly zeros and small values, so that runs of zero groups
+			// and equal addresses come up.
+			a[i] = []uint16{0, 0, 0, 1, 2, 0xdb8, 0xffff, 0xabcd}[r.Intn(8)]
+		}
+		if a[0]|a[1]|a[2]|a[3]|a[4] == 0 && a[5] == 0xffff {
+			a[4] = 1 // an IPv4-mapped address has no certain browser form
+		}
+		return host{ipv6: &a}
+	}
+	return host{name: pick(r, "localhost", "app.test", "a-b.example", "x1.y2.test")}
+}
+
 func randomParts(r *rand.Rand) urlParts {
-	p := urlParts{https: r.Intn(2) == 0, host: pick(r, "10.0.2.2", "localhost", "app.test", "a-b.example")}
+	p := urlParts{https: r.Intn(2) == 0, host: randomHost(r)}
 	if r.Intn(2) == 0 {
-		p.port = pick(r, "8791", "18080", "8443")
+		p.port = pick(r, "8791", "18080", "8443", "1")
 	}
 	for range r.Intn(3) {
-		p.segments = append(p.segments, pick(r, "a", "b", "index.html", "x~y", "%41"))
+		p.segments = append(p.segments, randomAtoms(r, pathAtoms, 1))
 	}
 	if r.Intn(2) == 0 {
-		q := pick(r, "", "x=1", "x=2", "a=b&c")
-		p.query = &q
+		p.query = randomAtoms(r, queryAtoms, 0)
 	}
 	if r.Intn(3) == 0 {
-		f := pick(r, "", "top", "k")
-		p.fragment = &f
+		p.fragment = randomAtoms(r, fragmentAtoms, 0)
 	}
 	return p
 }
@@ -132,9 +279,12 @@ type urlPair struct {
 }
 
 // Review F13 and F7: sim up takes a listed URL for its --url exactly when
-// a browser writes both alike: generated pairs of URLs, spelled in forms
-// that a browser reads alike (case, default ports, dot segments, an empty
-// path), match exactly when their parts are equal; the query and the
+// a browser writes both alike: generated pairs of URLs (host names, plain
+// IPv4 and IPv6 addresses; paths, queries and fragments with characters
+// outside ASCII, characters that a browser escapes, and escapes), spelled
+// in forms that a browser reads alike (case, IPv6 notation, default
+// ports, dot segments, an empty path, escapes), match exactly when their
+// browser forms, built from the parts, are equal; the query and the
 // fragment, also an empty one, count.
 func TestSameURLProperty(t *testing.T) {
 	prop := func(pair urlPair) bool {
@@ -147,7 +297,7 @@ func TestSameURLProperty(t *testing.T) {
 		}
 		return true
 	}
-	if err := quick.Check(prop, &quick.Config{MaxCount: 3000, Rand: rand.New(rand.NewSource(20261124))}); err != nil {
+	if err := quick.Check(prop, &quick.Config{MaxCount: 5000, Rand: rand.New(rand.NewSource(20261124))}); err != nil {
 		t.Fatal(err)
 	}
 }

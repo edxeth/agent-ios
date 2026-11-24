@@ -185,6 +185,12 @@ var newSim = func(env Env) (*sim.Sim, error) {
 // device; no running daemon is 0. The daemon package sets it.
 var ActiveLeases func(ctx context.Context, env Env) (int, error)
 
+// SimulatorTab returns the tab id (t<N>, as tab list shows it to in's
+// session and reservation owner) of the simulator's page whose id in
+// iwdp's listing is pageID (sim.Page.ID); "" when the daemon does not list
+// it. The daemon package sets it: the daemon hands out the tab ids.
+var SimulatorTab func(ctx context.Context, env Env, in Input, pageID string) (string, error)
+
 // SimStateDir is the private directory of the forward's record; the daemon
 // package sets it to its socket directory.
 var SimStateDir = func() (string, error) { return "", errors.New("sim: no state directory in this build") }
@@ -236,26 +242,37 @@ func (h hostIWDP) SimulatorPages(ctx context.Context) ([]sim.Page, error) {
 		if err != nil {
 			return nil, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/json", port), nil)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("reading the simulator's pages: %w", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		var entries []webkit.PageEntry
-		if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
-			return nil, fmt.Errorf("reading the simulator's pages: %w", err)
-		}
-		pages := make([]sim.Page, len(entries))
-		for i, e := range entries {
-			pages[i] = sim.Page{ID: e.WebSocketDebuggerURL, URL: e.URL}
-		}
-		return pages, nil
+		return simulatorPagesAt(ctx, fmt.Sprintf("http://127.0.0.1:%d/json", port))
 	}
 	return nil, errors.New("ios_webkit_debug_proxy does not list the simulator")
+}
+
+// simulatorPagesAt reads the page list of the simulator's iwdp port at
+// listURL. Only a 200 answer is a listing: another status is an error,
+// whatever its body, so that sim up never takes a failed read for a list
+// without the tab of its --url.
+func simulatorPagesAt(ctx context.Context, listURL string) ([]sim.Page, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("reading the simulator's pages: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("reading the simulator's pages: ios_webkit_debug_proxy answered HTTP %d", resp.StatusCode)
+	}
+	var entries []webkit.PageEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		return nil, fmt.Errorf("reading the simulator's pages: %w", err)
+	}
+	pages := make([]sim.Page, len(entries))
+	for i, e := range entries {
+		pages[i] = sim.Page{ID: e.WebSocketDebuggerURL, URL: e.URL}
+	}
+	return pages, nil
 }
 
 // usbmuxSocket is usbmuxd's socket on Linux.
@@ -307,6 +324,7 @@ func runSimUp(ctx context.Context, env Env, in Input) (_ Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
+	r.Tab = simUpTab(ctx, env, in, r.NewPage)
 	iwdp := "lists the simulator"
 	switch {
 	case r.IWDPRestarted:
@@ -323,9 +341,37 @@ func runSimUp(ctx context.Context, env Env, in Input) (_ Result, err error) {
 		"  forward:    " + simDid(r.ForwardStarted, "started ", "running ") + sim.InspectorAddr + " -> " + r.InspectorSocket,
 		"  iwdp:       " + iwdp,
 		fmt.Sprintf("  tabs:       %d", r.Pages),
-		simDid(r.Pages > 0, "Next: iwdp-cli tab list", "Safari offers no tab for inspection yet (its start page is not inspectable): run iwdp-cli sim up --url <url>"),
 	}
+	lines = append(lines, simUpNext(r, openURL)...)
 	return Result{Text: strings.Join(lines, "\n"), Data: r}, nil
+}
+
+// simUpTab is the tab id of the new tab of sim up's --url, newPage
+// (sim.UpReport.NewPage), as the daemon lists it (SimulatorTab); "" when
+// there is no such tab or the daemon does not list it. Review F18: tab
+// find cannot tell the new tab from an earlier tab of the same URL. A
+// failure here does not fail sim up, which then points to tab find.
+func simUpTab(ctx context.Context, env Env, in Input, newPage string) string {
+	if newPage == "" || SimulatorTab == nil {
+		return ""
+	}
+	id, err := SimulatorTab(ctx, env, in, newPage)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// simUpNext is the end of sim up's text: the new tab of --url and how to
+// select it, or what to run next.
+func simUpNext(r sim.UpReport, openURL string) []string {
+	switch {
+	case r.Tab != "":
+		return []string{"  new tab:    " + r.Tab + " (shows --url)", "Next: iwdp-cli tab " + r.Tab}
+	case openURL != "":
+		return []string{"  new tab:    its id is not known", "Next: iwdp-cli tab find --device SIMULATOR --url-file <file of the --url>, then iwdp-cli tab <id>"}
+	}
+	return []string{simDid(r.Pages > 0, "Next: iwdp-cli tab list", "Safari offers no tab for inspection yet (its start page is not inspectable): run iwdp-cli sim up --url <url>")}
 }
 
 func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {

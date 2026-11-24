@@ -955,14 +955,16 @@ func statusSummary(data json.RawMessage) (string, any, bool) {
 // lists, without the simulator's name, UDID, host or socket path.
 func simUpSummary(data json.RawMessage) (string, any, bool) {
 	var r struct {
-		MacStarted     *bool `json:"macStarted"`
-		Booted         bool  `json:"booted"`
-		WindowOpened   bool  `json:"windowOpened"`
-		SafariStarted  bool  `json:"safariStarted"`
-		ForwardStarted bool  `json:"forwardStarted"`
-		IWDPStarted    bool  `json:"iwdpStarted"`
-		IWDPRestarted  bool  `json:"iwdpRestarted"`
-		Pages          *int  `json:"pages"`
+		MacStarted     *bool  `json:"macStarted"`
+		Booted         bool   `json:"booted"`
+		WindowOpened   bool   `json:"windowOpened"`
+		SafariStarted  bool   `json:"safariStarted"`
+		ForwardStarted bool   `json:"forwardStarted"`
+		IWDPStarted    bool   `json:"iwdpStarted"`
+		IWDPRestarted  bool   `json:"iwdpRestarted"`
+		Pages          *int   `json:"pages"`
+		TabOpened      bool   `json:"tabOpened"`
+		Tab            string `json:"tab"`
 	}
 	if json.Unmarshal(data, &r) != nil || r.MacStarted == nil || r.Pages == nil {
 		return "", nil, false
@@ -973,6 +975,14 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 	}
 	text := fmt.Sprintf("mac started %t\nbooted %t\nwindow opened %t\nsafari started %t\nforward started %t\niwdp started %t\niwdp restarted %t\ntabs %d",
 		*r.MacStarted, r.Booted, r.WindowOpened, r.SafariStarted, r.ForwardStarted, r.IWDPStarted, r.IWDPRestarted, *r.Pages)
+	// The new tab's id (review F18) names no page: tab find prints ids too.
+	switch {
+	case r.Tab != "":
+		text += "\nnew tab " + r.Tab
+		value["tab"] = r.Tab
+	case r.TabOpened:
+		text += "\nnew tab unknown: run iwdp-cli tab find --device SIMULATOR --url-file <file of the --url>"
+	}
 	return text, value, true
 }
 

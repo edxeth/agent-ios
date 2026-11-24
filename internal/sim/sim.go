@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/nnemirovsky/iwdp-cli/internal/browserurl"
 )
 
 // IWDPState is the state of ios_webkit_debug_proxy on this host.
@@ -72,6 +70,13 @@ type UpReport struct {
 	InspectorSocket string `json:"inspectorSocket"`
 	Pages           int    `json:"pages"`     // Safari tabs that iwdp lists
 	TabOpened       bool   `json:"tabOpened"` // a tab shows the URL that Up opened
+	// NewPage is the page id (Page.ID) of the one new tab that shows the
+	// URL that Up opened; "" when there is none, or more than one. It
+	// stays out of the output: the command prints the tab's id (Tab).
+	NewPage string `json:"-"`
+	// Tab is the tab id (t<N>, as tab list shows it) of NewPage, which the
+	// command sets when the daemon lists it; "" otherwise.
+	Tab string `json:"tab,omitempty"`
 }
 
 // ErrNotOwnIWDP is the error of Up when the iwdp on the listing address is
@@ -107,7 +112,9 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 	// listed before the open shows it, so that tab find finds it at once
 	// (live run, 2026-11-24: an agent's tab find right after sim up ran
 	// before Safari listed the page); a tab of an earlier turn with the
-	// same URL proves nothing. Exit 7 (ErrNoURLTab) needs a listing that
+	// same URL proves nothing. The report names the new tab (NewPage), so
+	// that the command can print its tab id: tab find cannot tell it from
+	// an earlier tab of the same URL (review F18). Exit 7 (ErrNoURLTab) needs a listing that
 	// was read: a page list that keeps failing is that error instead.
 	wait, cancel := context.WithTimeout(ctx, s.PageWait)
 	defer cancel()
@@ -149,6 +156,7 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 			return r.Pages > 0, nil
 		}
 		earlier = false
+		var opened []string // the new tabs of openURL
 		for _, p := range pages {
 			switch {
 			case !sameURL(p.URL, openURL):
@@ -157,8 +165,13 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 				// not known to be new.
 				earlier = true
 			default:
-				r.TabOpened = true
+				opened = append(opened, p.ID)
 			}
+		}
+		r.TabOpened = len(opened) > 0
+		r.NewPage = ""
+		if len(opened) == 1 {
+			r.NewPage = opened[0]
 		}
 		return r.TabOpened, nil
 	})
@@ -175,24 +188,6 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 		return r, fmt.Errorf("%w %s after %s: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2", ErrNoURLTab, openURL, s.PageWait)
 	}
 	return r, nil
-}
-
-// sameURL reports whether a page URL that Safari lists is target as tab
-// find compares them: the same document (browserurl.SameDocument: scheme,
-// host, port and path in the form that a browser writes, so a default port
-// or a dot segment of target does not count), and the same query and
-// fragment, each as written, also when empty ("?" or "#" alone).
-func sameURL(page, target string) bool {
-	return browserurl.SameDocument(page, target) && queryAndFragment(page) == queryAndFragment(target)
-}
-
-// queryAndFragment is u from its first "?" or "#" on, "" when it has
-// neither.
-func queryAndFragment(u string) string {
-	if i := strings.IndexAny(u, "?#"); i >= 0 {
-		return u[i:]
-	}
-	return ""
 }
 
 func (s *Sim) up(ctx context.Context, device string, noWindow bool) (UpReport, error) {
