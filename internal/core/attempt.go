@@ -399,6 +399,12 @@ func (op *Op) sendAttempt(a Action, fn string, step int, probed bool) (AttemptRe
 	op.mu.Unlock()
 	replyAt := s.o.Clock.Now()
 	if r.err != nil {
+		if errors.Is(r.err, context.DeadlineExceeded) && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+			// The call's own reply wait (boundary plus ReplyGrace) ended
+			// it before the lost timer fired: the same lost reply, not the
+			// operation's deadline (which would exit 124).
+			r.err = ErrReplyLost
+		}
 		if !inf.isCommitted() || errors.Is(r.err, webkit.ErrNotSent) {
 			return AttemptReply{}, attemptStopped, r.err
 		}
