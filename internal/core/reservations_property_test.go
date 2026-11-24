@@ -16,12 +16,17 @@ import (
 type resModel struct {
 	now   time.Time
 	files map[string]modelRes // device -> its reservation (one file per device)
+	turns int                 // the turns created so far
 }
 
+// modelRes is a reservation of the model; turn numbers its turn (the
+// store's ID): a new reservation starts a new turn, and a renewal by its
+// owner (Reserve of its own live reservation, Renew, RenewTurn) keeps it.
 type modelRes struct {
 	owner   string
 	expires time.Time
 	ttl     time.Duration
+	turn    int
 }
 
 // modelCovers: a reservation of the simulator covers the simulator alone,
@@ -61,7 +66,12 @@ func (m *resModel) reserve(device, owner string, ttl time.Duration) bool {
 			return false
 		}
 	}
-	m.files[device] = modelRes{owner, m.now.Add(ttl), ttl}
+	r, live := m.live(device)
+	if !live || r.owner != owner {
+		m.turns++
+		r.turn = m.turns
+	}
+	m.files[device] = modelRes{owner, m.now.Add(ttl), ttl, r.turn}
 	return true
 }
 
@@ -77,10 +87,11 @@ func (m *resModel) release(device, owner string) bool {
 	return true
 }
 
-func (m *resModel) renew(owner, device string) bool {
+// renew is Renew, or, with turn > 0, RenewTurn of that turn alone.
+func (m *resModel) renew(owner, device string, turn int) bool {
 	renewed := false
 	for d, r := range m.files {
-		if _, ok := m.live(d); ok && r.owner == owner && modelCovers(d, device) {
+		if _, ok := m.live(d); ok && r.owner == owner && modelCovers(d, device) && (turn == 0 || r.turn == turn) {
 			r.expires = m.now.Add(r.ttl)
 			m.files[d] = r
 			renewed = true
@@ -92,7 +103,7 @@ func (m *resModel) renew(owner, device string) bool {
 // resStep is one generated step: an operation, a device, an owner, a TTL
 // and a clock advance, each picked from a small set so that owners and
 // devices collide.
-type resStep struct{ Op, Device, Owner, TTL, Advance uint8 }
+type resStep struct{ Op, Device, Owner, TTL, Advance, Turn uint8 }
 
 var (
 	propDevices = []string{SimulatorDevice, "udid-1", "udid-2", AnyDevice}
@@ -102,17 +113,22 @@ var (
 )
 
 func (s resStep) String() string {
-	return fmt.Sprintf("%s(%s,%s,ttl %s)+%s", [...]string{"reserve", "release", "renew", "wait"}[s.Op%4],
+	return fmt.Sprintf("%s(%s,%s,ttl %s,turn #%d)+%s", [...]string{"reserve", "release", "renew", "renew-turn", "wait"}[s.Op%5],
 		propDevices[int(s.Device)%len(propDevices)], propOwners[int(s.Owner)%len(propOwners)],
-		propTTLs[int(s.TTL)%len(propTTLs)], propAdvance[int(s.Advance)%len(propAdvance)])
+		propTTLs[int(s.TTL)%len(propTTLs)], s.Turn, propAdvance[int(s.Advance)%len(propAdvance)])
 }
 
-// Review F13: generated sequences of reserve, release, renew (the
-// sweep's and a running sim command's) and expiry by competing owners on
-// the simulator and physical devices, against the Reservations store, a
-// Manager's simulator admission and the model above. After each step:
+// Review F13 and final review F5: generated sequences of reserve, release,
+// renew (the sweep's), renewal of one turn by its ID (a running sim
+// command's RenewTurn, with the ID of the current turn or of an earlier,
+// stale one) and expiry by competing owners on the simulator and physical
+// devices, against the Reservations store, a Manager's simulator admission
+// and the model above. After each step:
 //   - each operation succeeds exactly when the model's does, and Renew
-//     reports a renewal exactly when the model renews;
+//     and RenewTurn report a renewal exactly when the model renews;
+//   - a reservation that Reserve creates has an ID that no earlier turn
+//     had, and a renewal keeps its turn's ID;
+//   - each live reservation in the store has the ID of its model turn;
 //   - Check of every device and owner gives the model's own and other
 //     reservation;
 //   - no device is covered by live reservations of two owners in the
@@ -129,19 +145,38 @@ func TestReservationTransitionsProperty(t *testing.T) {
 		model := &resModel{now: start, files: map[string]modelRes{}}
 		rs := &Reservations{Dir: t.TempDir(), Now: func() time.Time { return model.now }}
 		m := &Manager{o: ManagerOptions{Reservations: rs}}
+		ids := map[int]string{} // model turn -> the store's ID of it
+		var seen []int          // the turns in the order they were created
 		for i, s := range steps {
 			dev := propDevices[int(s.Device)%len(propDevices)]
 			owner := propOwners[int(s.Owner)%len(propOwners)]
 			ttl := propTTLs[int(s.TTL)%len(propTTLs)]
 			var got, want bool
-			switch s.Op % 4 {
+			switch s.Op % 5 {
 			case 0:
-				_, err := rs.Reserve(dev, owner, ttl)
+				r, err := rs.Reserve(dev, owner, ttl)
 				if err != nil && !errors.Is(err, ErrReserved) {
 					t.Errorf("step %d %v: %v", i, s, err)
 					return false
 				}
+				before := model.turns
 				got, want = err == nil, model.reserve(dev, owner, ttl)
+				if got && want {
+					turn := model.files[dev].turn
+					if turn > before {
+						for old, id := range ids {
+							if id == r.ID {
+								t.Errorf("steps %v: step %d started turn %d with the ID of turn %d", steps, i, turn, old)
+								return false
+							}
+						}
+						ids[turn] = r.ID
+						seen = append(seen, turn)
+					} else if ids[turn] != r.ID {
+						t.Errorf("steps %v: step %d renewed turn %d and changed its ID", steps, i, turn)
+						return false
+					}
+				}
 			case 1:
 				err := rs.Release(dev, owner)
 				if err != nil && !errors.Is(err, ErrReserved) {
@@ -155,7 +190,18 @@ func TestReservationTransitionsProperty(t *testing.T) {
 					t.Errorf("step %d %v: %v", i, s, err)
 					return false
 				}
-				got, want = ok, model.renew(owner, dev)
+				got, want = ok, model.renew(owner, dev, 0)
+			case 3:
+				if len(seen) == 0 {
+					break
+				}
+				turn := seen[int(s.Turn)%len(seen)] // current or stale
+				ok, err := rs.RenewTurn(owner, dev, ids[turn])
+				if err != nil {
+					t.Errorf("step %d %v: %v", i, s, err)
+					return false
+				}
+				got, want = ok, model.renew(owner, dev, turn)
 			}
 			if got != want {
 				t.Errorf("steps %v: step %d succeeded %t, the model %t", steps, i, got, want)
@@ -166,6 +212,10 @@ func TestReservationTransitionsProperty(t *testing.T) {
 				t.Errorf("steps %v: after step %d: %s", steps, i, why)
 				return false
 			}
+			if why := checkResTurns(rs, model, ids); why != "" {
+				t.Errorf("steps %v: after step %d: %s", steps, i, why)
+				return false
+			}
 		}
 		return true
 	}
@@ -173,6 +223,25 @@ func TestReservationTransitionsProperty(t *testing.T) {
 	if err := quick.Check(prop, cfg); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// checkResTurns compares the IDs of the store's live reservations with the
+// model's turns; "" when they agree.
+func checkResTurns(rs *Reservations, model *resModel, ids map[int]string) string {
+	live, err := rs.List()
+	if err != nil {
+		return fmt.Sprintf("List: %v", err)
+	}
+	for _, r := range live {
+		mr, ok := model.live(r.Device)
+		if !ok {
+			return fmt.Sprintf("the store has a live reservation of %s that the model does not", r.Device)
+		}
+		if r.ID == "" || r.ID != ids[mr.turn] {
+			return fmt.Sprintf("the reservation of %s has ID %q; the model's turn %d has %q", r.Device, r.ID, mr.turn, ids[mr.turn])
+		}
+	}
+	return ""
 }
 
 // checkResModel compares the store and the manager with the model; "" when
