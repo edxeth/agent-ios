@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,7 +30,10 @@ type tabFake struct {
 	servers map[string]*fakewebkit.Server
 	n       int
 	kind    transport.Kind // "": a local browser (WebKitGTK)
+	device  string         // "": "fake"
 }
+
+func (f *tabFake) deviceID() string { return cmp.Or(f.device, "fake") }
 
 func (f *tabFake) Kind() transport.Kind {
 	if f.kind != "" {
@@ -39,7 +43,7 @@ func (f *tabFake) Kind() transport.Kind {
 }
 
 func (f *tabFake) Devices(context.Context) ([]transport.Device, error) {
-	return []transport.Device{{ID: "fake", Label: "Fake browser", Transport: transport.KindWebKitGTK}}, nil
+	return []transport.Device{{ID: f.deviceID(), Label: "Fake browser", Transport: f.Kind()}}, nil
 }
 
 func (f *tabFake) Pages(context.Context, string) ([]transport.Page, error) {
@@ -68,7 +72,7 @@ func (f *tabFake) add(title, url string) *fakewebkit.Server {
 	f.mu.Lock()
 	f.n++
 	id := fmt.Sprintf("page-%d", f.n)
-	f.pages = append(f.pages, transport.Page{DeviceID: "fake", ID: id, Title: title, URL: url, Debuggable: true})
+	f.pages = append(f.pages, transport.Page{DeviceID: f.deviceID(), ID: id, Title: title, URL: url, Debuggable: true})
 	if f.servers == nil {
 		f.servers = map[string]*fakewebkit.Server{}
 	}
@@ -122,11 +126,17 @@ func (e *mgrEnv) Emit(string)                 {}
 func (e *mgrEnv) ResolvePath(p string) string { return p }
 
 func newTabManager(t *testing.T) (*core.Manager, *tabFake) {
+	return newTabManagerWith(t, nil)
+}
+
+// newTabManagerWith is newTabManager with a reservations store.
+func newTabManagerWith(t *testing.T, res *core.Reservations) (*core.Manager, *tabFake) {
 	t.Helper()
 	f := &tabFake{t: t}
 	m := core.NewManager(core.ManagerOptions{
-		Transport: func(context.Context, string, string) (transport.Transport, error) { return f, nil },
-		Session:   webkit.SessionOptions{TargetWait: time.Second},
+		Transport:    func(context.Context, string, string) (transport.Transport, error) { return f, nil },
+		Session:      webkit.SessionOptions{TargetWait: time.Second},
+		Reservations: res,
 	})
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -285,7 +295,7 @@ func TestTabListLeavesOutUnreservedDevicePages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "No tabs.\n1 page(s) of physical devices without a reservation of owner \"a\" are not listed; run 'iwdp-cli device reserve --owner a' or pass --reservation <owner>"
+	want := "No tabs.\n1 page(s) of physical devices without a reservation of owner \"a\" are not listed; run 'iwdp-cli device reserve --owner a' or pass --reservation <owner>. The simulator's pages are not listed either while another owner reserves the simulator (iwdp-cli sim reserve waits for it)"
 	if r.Text != want || strings.Contains(r.Text, "Bank") || r.Data.(map[string]any)["hidden"] != 1 {
 		t.Fatalf("tab list of an unreserved device:\n%s\n%v\nwant:\n%s", r.Text, r.Data, want)
 	}

@@ -90,7 +90,7 @@ func (m *Manager) Tabs(ctx context.Context, req PageRequest, ao AcquireOptions) 
 	ao = ao.normalized()
 	session := ao.Session
 	var out []Tab
-	reserved := map[string]bool{} // physical device id -> ao's reservation covers it
+	reserved := map[string]bool{} // device id -> its pages are listed for ao's reservation owner
 	var resErr error
 	_, _, err = m.findListed(ctx, req, func(key string, p transport.Page) bool {
 		// The key is "<kind>|<device id>|<page id>" (findListed).
@@ -105,6 +105,20 @@ func (m *Manager) Tabs(ctx context.Context, req PageRequest, ao AcquireOptions) 
 				reserved[device] = mine
 			}
 			if !mine {
+				hidden++
+				return false
+			}
+		} else if device == SimulatorDevice && m.o.Reservations != nil && resErr == nil {
+			// The simulator's pages are another owner's while that owner
+			// reserves it (sim reserve): hidden like an unreserved device's.
+			free, seen := reserved[device]
+			if !seen {
+				var mine, other *Reservation
+				mine, other, resErr = m.o.Reservations.Check(device, ao.Reservation)
+				free = mine != nil || other == nil
+				reserved[device] = free
+			}
+			if !free {
 				hidden++
 				return false
 			}

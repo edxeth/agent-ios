@@ -116,7 +116,7 @@ func runTabList(ctx context.Context, env Env, in Input) (Result, error) {
 		if owner == "" {
 			owner = in.Global.Session
 		}
-		fmt.Fprintf(&b, "%d page(s) of physical devices without a reservation of owner %q are not listed; run 'iwdp-cli device reserve --owner %s' or pass --reservation <owner>", hidden, owner, owner)
+		fmt.Fprintf(&b, "%d page(s) of physical devices without a reservation of owner %q are not listed; run 'iwdp-cli device reserve --owner %s' or pass --reservation <owner>. The simulator's pages are not listed either while another owner reserves the simulator (iwdp-cli sim reserve waits for it)", hidden, owner, owner)
 	}
 	return Result{Text: strings.TrimRight(b.String(), "\n"), Data: map[string]any{"tabs": tabs, "hidden": hidden}}, nil
 }

@@ -58,3 +58,28 @@ func TestReservations(t *testing.T) {
 		t.Fatal("Reserve without an owner succeeded")
 	}
 }
+
+// The simulator's reservation stands apart from the physical devices':
+// a reservation of every device (*) neither covers nor blocks it, and it
+// blocks only another owner of the simulator.
+func TestSimulatorReservationStandsApart(t *testing.T) {
+	rs := &Reservations{Dir: t.TempDir()}
+	if _, err := rs.Reserve(AnyDevice, "phone", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rs.Reserve(SimulatorDevice, "a", time.Hour); err != nil {
+		t.Fatalf("* blocked the simulator: %v", err)
+	}
+	if _, err := rs.Reserve(AnyDevice, "phone", time.Hour); err != nil {
+		t.Fatalf("the simulator's reservation blocked *: %v", err)
+	}
+	if _, err := rs.Reserve(SimulatorDevice, "b", time.Hour); !errors.Is(err, ErrReserved) {
+		t.Fatalf("b took a's simulator: %v", err)
+	}
+	if mine, other, _ := rs.Check(SimulatorDevice, "phone"); mine != nil || other == nil || other.Owner != "a" {
+		t.Fatalf("Check(simulator, phone) = %+v, %+v; want a's as another owner's", mine, other)
+	}
+	if mine, other, _ := rs.Check("udid-1", "a"); mine != nil || other == nil || other.Owner != "phone" {
+		t.Fatalf("Check(udid-1, a) = %+v, %+v; want phone's *", mine, other)
+	}
+}

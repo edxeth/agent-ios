@@ -29,8 +29,18 @@ type Reservation struct {
 // Live reports whether r has not expired at now.
 func (r Reservation) Live(now time.Time) bool { return now.Before(r.Expires) }
 
+// SimulatorDevice is the device id of iwdp's simulator (the SIMULATOR entry
+// of its listing). Its reservation stands apart from the physical
+// devices': AnyDevice does not cover it and it covers none of them, so an
+// agent on a plugged-in iPhone and agents taking turns on the simulator
+// (iwdp-cli sim reserve) do not block one another.
+const SimulatorDevice = "SIMULATOR"
+
 // Covers reports whether r applies to device.
 func (r Reservation) Covers(device string) bool {
+	if r.Device == SimulatorDevice || device == SimulatorDevice {
+		return r.Device == device
+	}
 	return r.Device == AnyDevice || r.Device == device || device == AnyDevice
 }
 

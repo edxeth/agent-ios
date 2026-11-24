@@ -51,7 +51,7 @@ These rules bind every run that uses this skill.
 
 ## Choose the device
 
-Use the iOS Simulator unless the user names a physical device, also when an iPhone is plugged in. When `iwdp-cli sim status` finds a configuration and is not ready, run `iwdp-cli sim up` first: a Mac or VM that does not answer is expected, and `sim up` starts it. Simulator tabs need no reservation; the device guide has whole-screen screenshots and real touches (keyboard bugs). Reserve and use a physical device only when the user asks.
+Use the iOS Simulator unless the user names a physical device, also when an iPhone is plugged in. Other agents share it in turns: first run `iwdp-cli sim reserve`, which waits for them; on exit 3 or a tool timeout run it again. Then `iwdp-cli sim up --url <your page>` starts the VM if needed and opens your own tab. Touch only tabs you opened; at the end `tab close` yours and `iwdp-cli sim release`, also after a failure. The device guide has the details, whole-screen screenshots and real touches. Reserve and use a physical device only when the user asks.
 
 ## Start a run
 

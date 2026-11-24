@@ -306,6 +306,11 @@ type Status struct {
 	Forward      bool    `json:"forward"` // the forward serves the booted simulator's socket, and iwdp started after it
 	Listed       bool    `json:"listed"`  // the iwdp that iwdp-cli started lists the simulator
 	Ready        bool    `json:"ready"`
+	// The simulator's reservation (sim reserve), filled in by the caller:
+	// its owner and end, and whether the caller's owner holds it.
+	ReservedBy    string    `json:"reservedBy,omitempty"`
+	ReservedUntil time.Time `json:"reservedUntil,omitzero"`
+	ReservedByYou bool      `json:"reservedByYou"`
 }
 
 // Status checks each part without changing any; it starts nothing.

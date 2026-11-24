@@ -131,7 +131,7 @@ func TestPrivateModeNeverPrintsTheTextOfAnError(t *testing.T) {
 		{&core.CodedError{Code: ExitWaitTimeout, Err: text}, ExitWaitTimeout, "click exit 3: a wait timed out (private mode hides the message)\n"},
 		{&core.CodedError{Code: core.CodeBusy, Err: text}, ExitBusy, "click exit 4: the page is leased by another session, or its connection was lost (private mode hides the message)\n"},
 		{&core.CodedError{Code: core.CodeNoPage, Err: text}, ExitNoPage, "click exit 5: no device or page (private mode hides the message)\n"},
-		{&core.CodedError{Code: core.CodeReservation, Err: text}, ExitReservation, "click exit 6: the device reservation is missing (private mode hides the message)\n"},
+		{&core.CodedError{Code: core.CodeReservation, Err: text}, ExitReservation, "click exit 6: the device reservation is missing, or another owner holds it (on the simulator: run 'iwdp-cli sim reserve', which waits) (private mode hides the message)\n"},
 		{&core.CodedError{Code: core.CodeTimeout, Err: text}, ExitTimeout, "click exit 124: the command deadline passed (private mode hides the message)\n"},
 	} {
 		code, out, errOut := runPrivate(t, &remoteStub{t: t, fail: tc.err}, "--private", "click", "@e1")

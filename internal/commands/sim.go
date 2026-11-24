@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
 	"github.com/nnemirovsky/iwdp-cli/internal/sim"
 )
@@ -109,6 +111,9 @@ func init() {
 		Args:    []Arg{{Name: "text", Help: "the text to type", Required: true}},
 		Flags:   []Flag{device},
 		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
+			if err := simGate(in); err != nil {
+				return Result{}, err
+			}
 			s, err := newSim(env)
 			if err != nil {
 				return Result{}, err
@@ -272,6 +277,9 @@ func simDid(done bool, yes, no string) string {
 }
 
 func runSimUp(ctx context.Context, env Env, in Input) (Result, error) {
+	if err := simGate(in); err != nil {
+		return Result{}, err
+	}
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
@@ -315,6 +323,15 @@ func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if rs, err := SimReservations(); err == nil {
+		mine, other, err := rs.Check(core.SimulatorDevice, reservationOwner(in))
+		if err != nil {
+			return Result{}, err
+		}
+		if r := cmp.Or(mine, other); r != nil {
+			st.ReservedBy, st.ReservedUntil, st.ReservedByYou = r.Owner, r.Expires, mine != nil
+		}
+	}
 	yn := func(b bool) string { return simDid(b, "yes", "no") }
 	device := st.DeviceError
 	if st.Device != nil {
@@ -331,6 +348,7 @@ func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 		"window:     " + yn(st.Window),
 		"forward:    " + yn(st.Forward),
 		"iwdp lists: " + yn(st.Listed),
+		"reserved:   " + simReservedText(st),
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: st}, nil
 }
@@ -348,6 +366,9 @@ func simShotPath(in Input) (string, error) {
 }
 
 func runSimScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
+	if err := simGate(in); err != nil {
+		return Result{}, err
+	}
 	out, err := simShotPath(in)
 	if err != nil {
 		return Result{}, err
@@ -468,6 +489,9 @@ func simSwipeArgs(in Input) ([]string, error) {
 }
 
 func runSimTouch(ctx context.Context, env Env, in Input, args []string, done string) (Result, error) {
+	if err := simGate(in); err != nil {
+		return Result{}, err
+	}
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
@@ -495,6 +519,9 @@ func runSimKeyboard(ctx context.Context, env Env, in Input) (Result, error) {
 		m := simDid(hw, "hardware", "onscreen")
 		return Result{Text: "keyboard: " + m, Data: map[string]any{"mode": m, "changed": false}}, nil
 	}
+	if err := simGate(in); err != nil {
+		return Result{}, err
+	}
 	s.RestartAnyway, _ = in.Flags["restart-iwdp"].(bool)
 	changed, r, err := s.Keyboard(ctx, flagString(in, "device"), mode == "onscreen")
 	if err != nil {
@@ -508,6 +535,9 @@ func runSimKeyboard(ctx context.Context, env Env, in Input) (Result, error) {
 }
 
 func runSimUI(ctx context.Context, env Env, in Input) (Result, error) {
+	if err := simGate(in); err != nil {
+		return Result{}, err
+	}
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
@@ -539,7 +569,21 @@ func simUIText(els []sim.Element) string {
 	return strings.Join(lines, "\n")
 }
 
+// simReservedText says who reserves the simulator (sim reserve).
+func simReservedText(st sim.Status) string {
+	switch {
+	case st.ReservedBy == "":
+		return "no (free; agents taking turns run iwdp-cli sim reserve first)"
+	case st.ReservedByYou:
+		return fmt.Sprintf("by you (%q) until %s", st.ReservedBy, st.ReservedUntil.Format(time.RFC3339))
+	}
+	return fmt.Sprintf("by %q until %s at the latest: another agent's run; run iwdp-cli sim reserve, which waits", st.ReservedBy, st.ReservedUntil.Format(time.RFC3339))
+}
+
 func runSimDown(ctx context.Context, env Env, in Input) (Result, error) {
+	if err := simGate(in); err != nil {
+		return Result{}, err
+	}
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err

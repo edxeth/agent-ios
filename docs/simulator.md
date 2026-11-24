@@ -62,6 +62,17 @@ scp AXe.tgz my-mac:/tmp/ && ssh my-mac 'mkdir -p ~/axe && tar xzf /tmp/AXe.tgz -
 # simulator.json: "axe": "/Users/<user>/axe/axe"
 ```
 
+## Several agents
+
+Several agents, each on its own repository, share one simulator in turns: Safari answers only for its visible tab, and the sim commands act on one screen.
+
+- `iwdp-cli sim reserve [--owner O] [--ttl 30m] [--wait 50s]` reserves the simulator for an owner (`--owner`, else `--reservation` / `IWDP_DEVICE_RESERVATION`, else the session). While another owner holds it, it waits up to `--wait` (at most 10m), checking every 2 s, and then fails with exit 3 and a message that says to run it again: an agent whose tool call ended first also runs it again. A free simulator, or the owner's own reservation, returns at once (the latter renewed).
+- While an owner holds it: other owners' page commands on the simulator fail with exit 6, `tab list` hides its pages from them, and their sim commands except `sim status` fail with exit 6. The owner's page leases and sim commands renew it; it ends with `iwdp-cli sim release`, or `--ttl` after the owner's last use. `sim status` names the owner.
+- Without a reservation the simulator is free for all, as for a single agent.
+- The simulator's reservation stands apart from the physical devices': `device reserve` of every device (`*`) neither covers nor blocks it.
+- `sim up --url` opens a new tab, which becomes the visible one: each agent works in its own tab and leaves the tabs of earlier turns alone. At the end it closes its own tab (`tab close`) and releases the simulator.
+- Not isolated: Safari's cookies and storage of one origin are shared by all tabs, so two agents on the same origin (host and port) see each other's state.
+
 ## Ownership and restarts
 
 - `sim up` signals only the ssh forward that it started and recorded (in the daemon's private directory, under a lock): the process must have the recorded pid, start time and start token, as for `restart-iwdp`, checked again right before each signal. A record whose pid no process has, or another process has now, is removed without a signal; a process that cannot be identified (EPERM included), or that does not end after SIGTERM, is an error and keeps its record. A new ssh that cannot be shown to be the one just started is not signaled.

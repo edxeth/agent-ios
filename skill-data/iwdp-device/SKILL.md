@@ -48,16 +48,21 @@ The device and its iwdp serve every agent of the computer.
 
 ## The simulator
 
-`iwdp-cli sim up` starts the configured Mac or VM, boots the simulator, starts Safari and connects it, doing only what is missing (`sim up --help`, docs/simulator.md); it takes up to 15 minutes when it starts a VM. It refuses to restart iwdp while a page has an active lease (`--restart-iwdp` overrides), and refuses an iwdp that iwdp-cli did not start: report either refusal.
+An iOS Simulator on a Mac or VM over SSH (docs/simulator.md) is shared: several agents, each on its own repository, use it one at a time, because Safari answers only for its visible tab and the sim commands act on one screen.
+
+1. **Take your turn.** `iwdp-cli sim reserve` reserves the simulator for your owner (`--reservation`, `IWDP_DEVICE_RESERVATION`, else your session) and waits up to `--wait` (50 s; at most 10m, keep it under your tool's timeout) while another agent holds it. Exit 3, or your tool's timeout, means it is still theirs: run the same command again until it succeeds, and meanwhile run no other `iwdp-cli` command on the simulator. While another owner holds it, its tabs are hidden from you and your page and sim commands fail with exit 6. The agent that drives the simulator reserves it; never hold it while you wait for a delegate that drives it (or pass your owner to the delegate in `IWDP_DEVICE_RESERVATION`).
+2. **Open your own tab.** `iwdp-cli sim up --url <your page>` starts the configured Mac or VM if needed (up to 15 minutes), boots the simulator, connects it, and opens your URL in a new tab, which becomes the visible one. Find it with `tab find --url-file`. Tabs that you did not open are earlier agents' work: never select, navigate, close or `lease break` them.
+3. **End your turn.** `tab close` your own tab, then `iwdp-cli sim release`, also after a failure. A forgotten reservation ends 30 minutes after your last command.
 
 <!-- doc-test: skip simulator: needs a Mac over SSH and its configuration -->
 ```bash
 export IWDP_SESSION=qa-login IWDP_PRIVATE=1
-iwdp-cli sim up --url "http://10.0.2.2:8080/" || exit "$?"   # --url: optional; the Mac's address of this host
+iwdp-cli sim reserve || exit "$?"                             # exit 3: another agent's turn; run it again
+iwdp-cli sim up --url "http://10.0.2.2:8080/" || exit "$?"   # the Mac's address of this host
 iwdp-cli tab list
 ```
 
-Safari's start page is not inspectable: on `tabs 0`, run `sim up --url <url>`.
+`sim up` refuses to restart iwdp while a page has an active lease (`--restart-iwdp` overrides, only for your own leases) and refuses an iwdp that iwdp-cli did not start: report either refusal. Safari's start page is not inspectable: on `tabs 0`, run `sim up --url <url>`.
 
 When the page is not enough, act on the simulator's whole screen: `sim screenshot` captures it with the keyboard and Safari's bars; `sim tap <x> <y>` (screen points; `sim ui` lists elements and their centers), `sim swipe` and `sim type` are real touches, so a tapped field opens the keyboard, unlike `click`. For keyboard bugs run `sim keyboard onscreen` first (it restarts the simulator; `sim type` then refuses Shift characters), and `sim keyboard hardware` after. Never `sim type` a secret. Run `sim down` only when the task says so: the user may watch the simulator.
 

@@ -630,7 +630,19 @@ func (m *Manager) urlTarget(u string, req PageRequest) pageTarget {
 
 func (m *Manager) preflight(t pageTarget, resOwner string) error {
 	if !t.physical {
-		return nil // local targets need no reservation
+		// Local targets need no reservation; a simulator that another
+		// owner reserved (agents taking turns, sim reserve) is refused.
+		if t.device.ID != SimulatorDevice || m.o.Reservations == nil {
+			return nil
+		}
+		mine, other, err := m.o.Reservations.Check(SimulatorDevice, resOwner)
+		if err != nil {
+			return &CodedError{Code: CodeReservation, Err: err}
+		}
+		if mine == nil && other != nil {
+			return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: the simulator is reserved by %q until %s, so its pages belong to that owner's run: run 'iwdp-cli sim reserve' (it waits for that owner), or use --reservation <owner> if your run already holds the reservation under another name", ErrReserved, other.Owner, other.Expires.Format(time.RFC3339))}
+		}
+		return nil
 	}
 	if m.o.Reservations == nil {
 		return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: reservations are not configured", ErrNoReservation)}

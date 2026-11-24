@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
@@ -204,6 +205,7 @@ var privateSummaries = map[string]func(data json.RawMessage) (text string, value
 	"status":       statusSummary,
 	"sim up":       simUpSummary,
 	"sim keyboard": simKeyboardSummary,
+	"sim reserve":  simReserveSummary,
 	"sim status":   simStatusSummary,
 }
 
@@ -895,7 +897,7 @@ func tabsSummary(data json.RawMessage) (string, any, bool) {
 	}
 	fmt.Fprintf(&b, "hidden %d", *list.Hidden)
 	if *list.Hidden > 0 {
-		b.WriteString("\npages of physical devices without a reservation of your owner are not listed: run 'iwdp-cli device reserve --owner <owner>'")
+		b.WriteString("\npages of physical devices without a reservation of your owner are not listed: run 'iwdp-cli device reserve --owner <owner>'; the simulator's are not listed while another owner reserves it: run 'iwdp-cli sim reserve' (it waits)")
 	}
 	return b.String(), map[string]any{"tabs": tabs, "hidden": *list.Hidden}, true
 }
@@ -969,6 +971,22 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 	return text, value, true
 }
 
+// simReserveSummary prints that the reservation is held and how long the
+// wait took, without the owner's name or the time.
+func simReserveSummary(data json.RawMessage) (string, any, bool) {
+	var v struct {
+		Reserved *bool  `json:"reserved"`
+		Waited   string `json:"waited"`
+	}
+	if json.Unmarshal(data, &v) != nil || v.Reserved == nil {
+		return "", nil, false
+	}
+	if _, err := time.ParseDuration(v.Waited); err != nil {
+		return "", nil, false
+	}
+	return fmt.Sprintf("reserved %t\nwaited %s", *v.Reserved, v.Waited), map[string]any{"reserved": *v.Reserved, "waited": v.Waited}, true
+}
+
 // simKeyboardSummary prints the keyboard mode and whether it changed.
 func simKeyboardSummary(data json.RawMessage) (string, any, bool) {
 	var v struct {
@@ -991,9 +1009,11 @@ func simStatusSummary(data json.RawMessage) (string, any, bool) {
 		Device       *struct {
 			State string `json:"state"`
 		} `json:"device"`
-		Window  bool `json:"window"`
-		Forward bool `json:"forward"`
-		Listed  bool `json:"listed"`
+		Window        bool   `json:"window"`
+		Forward       bool   `json:"forward"`
+		Listed        bool   `json:"listed"`
+		ReservedBy    string `json:"reservedBy"`
+		ReservedByYou bool   `json:"reservedByYou"`
 	}
 	if json.Unmarshal(data, &st) != nil || st.Ready == nil {
 		return "", nil, false
@@ -1002,9 +1022,10 @@ func simStatusSummary(data json.RawMessage) (string, any, bool) {
 	value := map[string]any{
 		"ready": *st.Ready, "macReachable": st.MacReachable, "loggedIn": st.LoggedIn,
 		"booted": booted, "window": st.Window, "forward": st.Forward, "listed": st.Listed,
+		"reserved": st.ReservedBy != "", "reservedByYou": st.ReservedByYou,
 	}
-	text := fmt.Sprintf("ready %t\nmac answers %t\nlogged in %t\nbooted %t\nwindow %t\nforward %t\niwdp lists %t",
-		*st.Ready, st.MacReachable, st.LoggedIn, booted, st.Window, st.Forward, st.Listed)
+	text := fmt.Sprintf("ready %t\nmac answers %t\nlogged in %t\nbooted %t\nwindow %t\nforward %t\niwdp lists %t\nreserved %t\nreserved by you %t",
+		*st.Ready, st.MacReachable, st.LoggedIn, booted, st.Window, st.Forward, st.Listed, st.ReservedBy != "", st.ReservedByYou)
 	return text, value, true
 }
 
@@ -1021,7 +1042,7 @@ func privateMeaning(code int) string {
 	case ExitNoPage:
 		return "no device or page"
 	case ExitReservation:
-		return "the device reservation is missing"
+		return "the device reservation is missing, or another owner holds it (on the simulator: run 'iwdp-cli sim reserve', which waits)"
 	case ExitNoMatch:
 		return "no tab shows the target"
 	case ExitTimeout:
@@ -1039,6 +1060,14 @@ func privateMeaning(code int) string {
 func privateErrorLine(name string, code int) string {
 	if name == "" {
 		name = "iwdp-cli"
+	}
+	// The simulator's turn-taking: fixed sentences that tell an agent what
+	// to do, since the message that names the owner is hidden.
+	switch {
+	case name == "sim reserve" && code == ExitWaitTimeout:
+		return name + " exit 3: the simulator is still reserved by another agent; run 'iwdp-cli sim reserve' again to keep waiting, and do not use the simulator meanwhile (private mode hides the message)"
+	case strings.HasPrefix(name, "sim ") && code == ExitReservation:
+		return fmt.Sprintf("%s exit %d: the simulator is reserved by another agent; run 'iwdp-cli sim reserve' (it waits), then this command (private mode hides the message)", name, code)
 	}
 	return fmt.Sprintf("%s exit %d: %s (private mode hides the message)", name, code, privateMeaning(code))
 }

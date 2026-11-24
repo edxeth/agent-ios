@@ -95,6 +95,8 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`set viewport`](#set-viewport) | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
 | [`sim down`](#sim-down) | Stop the forward that sim up started and shut the simulator down; with --mac also run the configuration's stop command (for example the shutdown of a VM). |
 | [`sim keyboard`](#sim-keyboard) | Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols, on a US layout. hardware (the Simulator's default) types the text that the simulator's keyboard layout has keys for (AXe refuses the rest) but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp. |
+| [`sim release`](#sim-release) | Release the owner's reservation of the simulator. Releasing none is not an error; another owner's is refused. |
+| [`sim reserve`](#sim-reserve) | Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. While an owner holds it, other owners' page commands on the simulator fail (exit 6), its tabs are hidden from them, and their sim commands that act on it fail. Exit 3 when the wait ends first: the simulator is still another owner's; run the same command again (do not use the simulator meanwhile). The reservation ends with sim release, or --ttl after the owner's last use (page leases and sim commands renew it). |
 | [`sim screenshot`](#sim-screenshot) | Capture the simulator's whole screen as PNG (simctl io screenshot): the status bar, Safari's bars, the on-screen keyboard and other apps, which the page capture of screenshot leaves out. The simulator must be booted (sim up); it starts nothing. |
 | [`sim status`](#sim-status) | Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has "ready". |
 | [`sim swipe`](#sim-swipe) | Swipe on the simulator's screen from \<x1\> \<y1\> to \<x2\> \<y2\> in points (one second; --duration changes it). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone). |
@@ -1402,6 +1404,38 @@ Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard wh
 |---|---|---|
 | `--device` | text | the simulator: its UDID or exact name (default: "device" of the configuration, else the one booted simulator) |
 | `--restart-iwdp` | none | restart even when that ends active page leases |
+
+### `sim release`
+
+```
+iwdp-cli sim release [flags]
+```
+
+Release the owner's reservation of the simulator. Releasing none is not an error; another owner's is refused.
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 30s (`--timeout` overrides it)
+
+| Flag | Value | Description |
+|---|---|---|
+| `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
+
+### `sim reserve`
+
+```
+iwdp-cli sim reserve [flags]
+```
+
+Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. While an owner holds it, other owners' page commands on the simulator fail (exit 6), its tabs are hidden from them, and their sim commands that act on it fail. Exit 3 when the wait ends first: the simulator is still another owner's; run the same command again (do not use the simulator meanwhile). The reservation ends with sim release, or --ttl after the owner's last use (page leases and sim commands renew it).
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 11m0s (`--timeout` overrides it)
+
+| Flag | Value | Description |
+|---|---|---|
+| `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
+| `--ttl` | duration | lifetime, renewed while the owner uses the simulator (default `30m`) |
+| `--wait` | duration | how long to wait for another owner's reservation to end, at most 10m (keep it under your tool's timeout) (default `50s`) |
 
 ### `sim screenshot`
 
