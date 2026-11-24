@@ -479,3 +479,37 @@ func TestSimReserveJSONKeepsStdoutJSON(t *testing.T) {
 		}
 	}
 }
+
+// The end of a simulator turn after a failed sim up or a failed selection
+// (closure review of the skill rewrite, 2026-11-24, GLM F1): the session
+// selected no tab, the simulator shows one tab, an earlier run's, and
+// "tab close" without an id would close it, as the listing's first page.
+// While the session's owner holds the turn it refuses (exit 5) and the tab
+// stays; once the session selected the tab, "tab close" closes it.
+func TestTabCloseOnTheSimulatorClosesOnlyTheSelectedTab(t *testing.T) {
+	res := &core.Reservations{Dir: t.TempDir()}
+	m, f := newTabManagerWith(t, res)
+	f.kind, f.device = transport.KindIWDP, core.SimulatorDevice
+	f.add("Earlier", "http://10.0.2.2:18080/")
+	if _, err := res.Reserve(core.SimulatorDevice, "a", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runIn(t, m, "a", "tab", "close"); ExitCodeOf(err) != ExitNoPage || !errors.Is(err, core.ErrNoPage) {
+		t.Fatalf("tab close without a selection in a's turn: %v (exit %d), want exit 5", err, ExitCodeOf(err))
+	}
+	if n := len(tabsOf(f)); n != 1 {
+		t.Fatalf("the refused tab close closed the earlier run's tab: %d tab(s) left", n)
+	}
+	mustIn(t, m, "a", "tab", "list")
+	mustIn(t, m, "a", "tab", "t1")
+	mustIn(t, m, "a", "tab", "close")
+	if n := len(tabsOf(f)); n != 0 {
+		t.Fatalf("tab close of the selected tab left %d tab(s)", n)
+	}
+}
+
+// tabsOf is the page list of f.
+func tabsOf(f *tabFake) []transport.Page {
+	p, _ := f.Pages(context.Background(), "")
+	return p
+}

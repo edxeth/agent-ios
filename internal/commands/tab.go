@@ -48,7 +48,7 @@ func init() {
 	})
 	Register(&Command{
 		Name:    "tab close",
-		Summary: "Close a tab (default: the current one) with window.close(); works only for tabs that a script opened.",
+		Summary: "Close a tab (default: the current one) with window.close(); works only for tabs that a script opened. In your turn on the simulator, a session that selected no tab must name the tab (exit 5).",
 		Args:    []Arg{{Name: "id", Help: "tab id (tN) or label; default: the current tab", Page: true}},
 		Output:  OutputText,
 		Run:     runTabClose,
@@ -386,6 +386,8 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 		if page, err = tabKey(ctx, m, in, id); err != nil {
 			return Result{}, err
 		}
+	} else if err := refuseUnselectedSimulatorTab(ctx, m, in); err != nil {
+		return Result{}, err
 	}
 	var key string
 	err = m.Do(ctx, tabRequest(in, page), acquireFor(in), "tab close", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
@@ -444,6 +446,31 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 		}
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"closed": key}}, nil
+}
+
+// refuseUnselectedSimulatorTab refuses "tab close" without a tab id in a
+// session that selected no tab, when the page it would close is the
+// simulator's and the caller holds the simulator's turn: that page is the
+// session's default page or the listing's first, which can be an earlier
+// agent's tab (an agent ends its turn with "tab close" also after a failed
+// sim up or selection). Elsewhere, and on a free simulator, the current
+// page stays the default.
+func refuseUnselectedSimulatorTab(ctx context.Context, m *core.Manager, in Input) error {
+	if _, selected := m.CurrentPage(in.Global.Session); selected {
+		return nil
+	}
+	ao := acquireFor(in)
+	lp, _, err := m.ResolvePage(ctx, ao.Session, ao.Reservation, tabRequest(in, ""))
+	if err != nil {
+		return err
+	}
+	if lp.Device.ID != core.SimulatorDevice || lp.Physical {
+		return nil
+	}
+	if mine, err := m.HoldsSimulator(ao); err != nil || !mine {
+		return err
+	}
+	return &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("%w: tab close: this session has selected no tab, and the simulator's tab that it would close may be another agent's: name your tab ('iwdp-cli tab close <id>'); when you opened none, run only 'iwdp-cli sim release'", core.ErrNoPage)}
 }
 
 // tabDevice marks a tab of the simulator, so that an agent with

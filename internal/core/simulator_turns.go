@@ -34,6 +34,13 @@ func (m *Manager) SimulatorAdmits(owner string) error {
 	return err
 }
 
+// HoldsSimulator reports whether the reservation owner of ao (its session
+// when it names none) holds the simulator's reservation; an error when the
+// reservation cannot be read or another owner holds it, as SimulatorAdmits.
+func (m *Manager) HoldsSimulator(ao AcquireOptions) (bool, error) {
+	return m.simulatorTurn(ao.normalized().Reservation)
+}
+
 // simulatorTurn is SimulatorAdmits that also reports whether owner holds
 // the reservation.
 func (m *Manager) simulatorTurn(owner string) (mine bool, err error) {

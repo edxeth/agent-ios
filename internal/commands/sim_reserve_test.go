@@ -117,12 +117,16 @@ func TestSimReserveSaysAtOnceThatItWaits(t *testing.T) {
 
 // sim reserve refuses the default session as owner: every agent that sets
 // no session is "default", and one such agent's forgotten reservation held
-// the simulator for the others (live run, 2026-11-24).
+// the simulator for the others (live run, 2026-11-24). It refuses qa-login,
+// the session of the guides' examples, too: agents that copy an example
+// unchanged would share one turn (closure review of the skill rewrite).
 func TestSimReserveNeedsAnOwnerOfItsOwn(t *testing.T) {
 	res := withSimReservations(t)
 	for _, in := range []Input{
 		{Flags: map[string]any{"ttl": 10 * time.Minute, "wait": time.Duration(0)}, Global: Globals{Session: "default"}},
 		{Flags: map[string]any{"owner": "default", "ttl": 10 * time.Minute, "wait": time.Duration(0)}},
+		{Flags: map[string]any{"ttl": 10 * time.Minute, "wait": time.Duration(0)}, Global: Globals{Session: "qa-login"}},
+		{Flags: map[string]any{"owner": "qa-login", "ttl": 10 * time.Minute, "wait": time.Duration(0)}, Global: Globals{Session: "agent-7"}},
 	} {
 		var u *UsageError
 		if _, err := runSimReserve(context.Background(), nil, in); !errors.As(err, &u) {

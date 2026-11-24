@@ -54,7 +54,7 @@ func init() {
 		Summary: "Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. " +
 			"While an owner holds it, other owners' page commands on the simulator fail (exit 6), its tabs are hidden from them, and their sim commands that act on it fail. " +
 			"Exit 3 when the wait ends first: the simulator is still another owner's; run the same command again (do not use the simulator meanwhile). " +
-			"The reservation ends with sim release, or --ttl (2m) after the owner's last use (sim commands renew it, and an open page lease keeps renewing it). The owner must be your own name: the default session is refused.",
+			"The reservation ends with sim release, or --ttl (2m) after the owner's last use (sim commands renew it, and an open page lease keeps renewing it). The owner must be your own name: the default session and qa-login, the name of the guides' examples, are refused.",
 		Flags: []Flag{
 			owner,
 			{Name: "ttl", Type: FlagDuration, Default: "2m", Help: "lifetime after the owner's last use, at least 30s (a running sim command renews it, and an open page lease keeps renewing it)"},
@@ -123,11 +123,12 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	o := reservationOwner(in)
-	if o == "" || o == "default" {
+	if o == "" || o == "default" || o == "qa-login" {
 		// Every agent that sets no session is "default": two of them would
 		// share one turn, and one that forgets its release holds the
-		// simulator for the others (live run, 2026-11-24).
-		return Result{}, usagef("sim reserve: set IWDP_SESSION (or --owner) to a name of your own; the default session is every agent's")
+		// simulator for the others (live run, 2026-11-24). qa-login is the
+		// session of the guides' examples, which agents copy unchanged.
+		return Result{}, usagef("sim reserve: set IWDP_SESSION (or --owner) to a name of your own; the default session is every agent's, and qa-login is the name of the guides' examples")
 	}
 	ttl := in.Flags["ttl"].(time.Duration)
 	wait := in.Flags["wait"].(time.Duration)
