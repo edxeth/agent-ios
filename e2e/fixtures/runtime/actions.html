@@ -11,6 +11,8 @@
   #hov:hover { color: rgb(255, 0, 0); }
   .block { margin: 6px 8px; }
   #box { width: 200px; height: 50px; overflow: auto; }
+  #wrapbox { width: 200px; line-height: 20px; }
+  #wrapbox span, #wrapbox button { display: inline-block; vertical-align: top; height: 20px; margin: 0; padding: 0; border: 0; }
 </style>
 </head>
 <body>
@@ -32,6 +34,10 @@
 <div class="row"><select id="pick"><option value="a">Apple</option><option value="b">Banana</option><option value="c">Cherry</option></select> <input type="file" id="file"></div>
 <div class="block"><select id="multi" multiple size="3"><option value="x">Xray</option><option value="y">Yankee</option><option value="z">Zulu</option></select></div>
 <div class="block"><div id="box"><div style="height: 400px">box</div></div></div>
+<!-- #wrapped wraps: its first box ends line 1 after #wrapcover, its second
+     starts line 2, so the center of its bounding box lies on #wrapcover or
+     on the empty end of line 2, never on the link. -->
+<div class="block" id="wrapbox"><button id="wrapcover" style="width: 120px">Cover</button><a id="wrapped" href="#wrapped"><span style="width: 60px">Wrap</span><span style="width: 60px">ped</span></a></div>
 <div style="height: 3000px"></div>
 <div class="row"><button id="far">Far</button></div>
 <div style="height: 1000px"></div>
@@ -55,6 +61,9 @@
   seq.addEventListener("click", function () { T.seq.push("click:" + (ready ? "ready" : "early")); });
 
   document.getElementById("covered").addEventListener("click", function () { T.coveredClicks++; });
+  T.wrapped = 0; T.wrapcover = 0;
+  document.getElementById("wrapped").addEventListener("click", function (e) { e.preventDefault(); T.wrapped++; });
+  document.getElementById("wrapcover").addEventListener("click", function () { T.wrapcover++; });
   document.getElementById("cancelbi").addEventListener("beforeinput", function (e) { e.preventDefault(); });
   document.getElementById("kp").addEventListener("keypress", function (e) { e.preventDefault(); });
   document.getElementById("q3").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); } });

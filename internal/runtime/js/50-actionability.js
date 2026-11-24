@@ -20,7 +20,24 @@
     if (t === "input") { return !e.readOnly && !!TXT[(B.getAttr(e, "type") || "").toLowerCase()]; }
     return !!e.isContentEditable;
   }
+  // center is the point that actions aim at, in client coordinates: the
+  // center of e's bounding box, or for an element in several boxes (an
+  // inline element that wraps across lines) the center of its first box
+  // with an area whose center is in the viewport, else of its first box
+  // with an area. The bounding box of a wrapped element spans both lines,
+  // and its center can lie on another element (Playwright's clickable
+  // point likewise takes the first content quad).
   function center(e) {
+    var rs = B.gcr(e), f = null;
+    if (rs.length > 1) {
+      for (var i = 0; i < rs.length; i++) {
+        var q = rs[i], c = { x: q.left + q.width / 2, y: q.top + q.height / 2 };
+        if (q.width * q.height < 1) { continue; }
+        if (c.x >= 0 && c.y >= 0 && c.x < w.innerWidth && c.y < w.innerHeight) { return c; }
+        f = f || c;
+      }
+      if (f) { return f; }
+    }
     var r = B.gbcr(e);
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }

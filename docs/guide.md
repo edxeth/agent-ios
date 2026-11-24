@@ -111,7 +111,7 @@ An agent works in a loop: look, act, wait, check.
    | stable | the element has the same box in two animation frames | click (also `--new-tab`), dblclick, tap, hover, check, uncheck, drag |
    | enabled | not disabled (also not through a disabled fieldset), and neither the element nor an ancestor has `aria-disabled="true"` or `inert` | click (also `--new-tab`), dblclick, tap, check, uncheck, select, fill, type, upload |
    | editable | a text input, a textarea or contenteditable, not read-only | fill, type |
-   | receives events | the element at its center point is the element or a descendant | click (also `--new-tab`), dblclick, tap, hover, check, uncheck, drag |
+   | receives events | the element at its center point (for an element that wraps across lines, the center of its first box) is the element or a descendant | click (also `--new-tab`), dblclick, tap, hover, check, uncheck, drag |
 
    - fill and type check editability, but not stability or receives events. They can therefore change an element that another element covers.
    - hover and drag do not check that the element is enabled. drag checks its source element only, not the drop target.

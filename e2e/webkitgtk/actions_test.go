@@ -349,6 +349,36 @@ func TestActionCoveredElement(t *testing.T) {
 	}
 }
 
+// A link that wraps across lines has a bounding box whose center lies on
+// another element; click and tap act at the center of its first box
+// instead of failing "covered by" until the deadline (seen live: click @eN
+// on a wrapped link in iOS Safari timed out, covered by an input).
+func TestActionWrappedInlineTarget(t *testing.T) {
+	loadActions(t)
+	var pre struct {
+		Rects  int  `json:"rects"`
+		OnLink bool `json:"onLink"`
+	}
+	pageJSON(t, `(function () {
+		var a = document.getElementById("wrapped");
+		a.scrollIntoView({ block: "center" });
+		var r = a.getBoundingClientRect();
+		return { rects: a.getClientRects().length, onLink: a.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)) };
+	})()`, &pre)
+	if pre.Rects != 2 || pre.OnLink {
+		t.Fatalf("fixture: #wrapped has %d client rects, bounding-box center on the link %v; want 2 rects and a center off the link", pre.Rects, pre.OnLink)
+	}
+	ps, _ := actionSession(t, hooks{})
+	for i, cmd := range []string{"click", "tap"} {
+		if code, out, errOut := act(context.Background(), ps, "--timeout", "2s", cmd, "#wrapped"); code != 0 {
+			t.Fatalf("%s on a wrapped link: exit %d, out %q, stderr %q; want it to act on the link", cmd, code, out, errOut)
+		}
+		if n, c := pageInt(t, "T.wrapped"), pageInt(t, "T.wrapcover"); n != i+1 || c != 0 {
+			t.Fatalf("after %s: the link got %d clicks, the cover %d; want %d and 0", cmd, n, c, i+1)
+		}
+	}
+}
+
 // 7.6 item 3 (a) to (c): a canceled or expired click on a covered element
 // never clicks, also when the cover goes away later, and no attempt is
 // sent after the cancel or the deadline.
