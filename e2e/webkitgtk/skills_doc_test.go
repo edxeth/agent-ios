@@ -46,8 +46,9 @@ import (
 // check, which comes before the first page action, reads that URL and
 // finds the target; it never opens or navigates the tab.
 var skipRules = map[string]string{
-	"device": "needs a USB-connected iPhone or iPad and ios_webkit_debug_proxy",
-	"w5b":    "runs agent-browser, which this test does not install; e2e/cdpcompat TestClientScenarios runs the agent-browser --cdp form",
+	"device":    "needs a USB-connected iPhone or iPad and ios_webkit_debug_proxy",
+	"simulator": "needs a Mac over SSH with an iOS Simulator and its configuration (docs/simulator.md)",
+	"w5b":       "runs agent-browser, which this test does not install; e2e/cdpcompat TestClientScenarios runs the agent-browser --cdp form",
 }
 
 const exampleOrigin = "https://example.com"
