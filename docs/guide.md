@@ -48,11 +48,11 @@ Every command runs under one deadline: 30 s by default, `--timeout <duration>` o
 | 0 | ok |
 | 1 | command error |
 | 2 | usage error of a registry command (found before any connection), also a bad global option such as `--timeout bogus` |
-| 3 | a wait ended without its condition (the result names the last observed state) |
+| 3 | a wait ended without its condition (the result names the last observed state); for `sim reserve`: the simulator is still another owner's after `--wait`, so run it again |
 | 4 | page busy, stalled or lost |
 | 5 | no device or page |
-| 6 | device reservation missing; for `tab find`: the listing hides pages |
-| 7 | `tab find`: no tab shows the target |
+| 6 | device reservation missing, or another owner holds it (on the simulator: another agent's turn, also for a sim command whose turn ended while it ran); for `tab find`: the listing hides pages |
+| 7 | `tab find`: no tab shows the target; `sim up --url`: Safari opened no tab of the URL in time |
 | 124 | the command deadline expired |
 | 130 | ended by SIGINT or SIGTERM |
 

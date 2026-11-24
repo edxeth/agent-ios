@@ -247,11 +247,11 @@ iwdp-cli device release --owner "$IWDP_SESSION" || exit "$?"
 | 0 | done | |
 | 1 | the command failed | for `tab find`: several tabs show the target, or a tab could not be read |
 | 2 | usage error, before any connection | `iwdp-cli <command> --help` |
-| 3 | a wait timed out | the expected state did not come; record it |
+| 3 | a wait timed out | record it; `sim reserve`: run it again |
 | 4 | the page is leased by another session, or its connection was lost | wait (`--wait-lease 30s`) or ask; never take over without the device owner's approval |
 | 5 | no device or page | check the device and the open tab (`iwdp-cli skills get iwdp-device`) |
-| 6 | device reservation missing | reserve the device as in "Start a run" |
-| 7 | `tab find`: no tab shows the target | act on no tab; report it |
+| 6 | device reservation missing or another's | reserve it; simulator: `sim reserve` |
+| 7 | no tab shows the target (`tab find`, `sim up`) | act on no tab; report it |
 | 124 | the command deadline passed | one health probe, then safety rule 2 |
 
 In private mode the status line on stderr gives the code and this meaning. When the same command fails the same way again and its page is non-sensitive, `--private=false` prints the message, which names the cause.
