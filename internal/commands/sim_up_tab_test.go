@@ -55,3 +55,34 @@ func TestSimUpPrintsTheNewTabsID(t *testing.T) {
 		t.Fatalf("private summary without an id %q, %t; want tab find", ptext, ok)
 	}
 }
+
+// Final review F6: without the new tab's id, when another tab shows the
+// same URL, sim up does not send the caller to tab find, which would find
+// several tabs, nor to the other tabs: it says so and points to a URL of
+// the caller's own, in its text, its JSON and its private output.
+func TestSimUpPointsToAUniqueURLWhenTabsShareIt(t *testing.T) {
+	r := sim.UpReport{Pages: 2, TabOpened: true, NewPage: "ws://new", SharedURL: true}
+	text := strings.Join(simUpNext(r, "http://10.0.2.2:8791/"), "\n")
+	check := func(where, text string) {
+		t.Helper()
+		if !strings.Contains(text, "several tabs") || !strings.Contains(text, "a port or path of your own") || strings.Contains(text, "--url-file") {
+			t.Errorf("%s: %q; want that tab find would find several tabs and a URL of the caller's own, not the tab find route", where, text)
+		}
+	}
+	check("text", text)
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"sharedURL":true`) {
+		t.Errorf("JSON %s; want sharedURL", data)
+	}
+	ptext, value, ok := simUpSummary(data)
+	if !ok {
+		t.Fatal("no private summary")
+	}
+	check("private", ptext)
+	if v, _ := value.(map[string]any); v["sharedURL"] != true {
+		t.Errorf("private value %v; want sharedURL", value)
+	}
+}

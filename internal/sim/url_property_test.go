@@ -14,9 +14,10 @@ import (
 // the caller writes it, and form as a browser writes it (WHATWG URL),
 // taken from the URL standard's percent-encode sets, not from browserForm.
 // escape is true when text is an escape that the caller wrote ("%41"),
-// which a spelling may write in either hex case; browserEscapes is true
-// when the browser escapes text, so that a spelling may write it either as
-// text or as its escape.
+// which the browser keeps as written, in its hex case (final review F3:
+// new URL("http://h/%2f").href keeps "%2f"); browserEscapes is true when
+// the browser escapes text, so that a spelling may write it either as text
+// or as the browser's escape, in upper-case hex.
 type atom struct {
 	text, form             string
 	escape, browserEscapes bool
@@ -24,24 +25,24 @@ type atom struct {
 
 func lit(s string) atom    { return atom{text: s, form: s} }
 func enc(s, f string) atom { return atom{text: s, form: f, browserEscapes: true} }
-func esc(s string) atom    { return atom{text: s, form: strings.ToUpper(s), escape: true} }
+func esc(s string) atom    { return atom{text: s, form: s, escape: true} }
 
 var (
 	pathAtoms = []atom{
 		lit("a"), lit("b"), lit("x.y"), lit("~"), lit("'"), lit("!$&()*+,;=:@"),
 		enc(" ", "%20"), enc("\"", "%22"), enc("<", "%3C"), enc(">", "%3E"), enc("`", "%60"), enc("{", "%7B"), enc("}", "%7D"),
 		enc("€", "%E2%82%AC"), enc("é", "%C3%A9"), enc("日本", "%E6%97%A5%E6%9C%AC"),
-		esc("%41"), esc("%20"), esc("%2f"), esc("%e2%82%ac"), esc("%7e"),
+		esc("%41"), esc("%20"), esc("%2f"), esc("%2F"), esc("%e2%82%ac"), esc("%E2%82%AC"), esc("%7e"),
 	}
 	queryAtoms = []atom{
 		lit("x"), lit("="), lit("&"), lit("1"), lit("+"), lit("?"), lit("/"),
 		enc(" ", "%20"), enc("\"", "%22"), enc("<", "%3C"), enc("€", "%E2%82%AC"), enc("ü", "%C3%BC"),
-		esc("%20"), esc("%2b"), esc("%41"), esc("%3d"),
+		esc("%20"), esc("%2b"), esc("%2B"), esc("%41"), esc("%3d"), esc("%3c"),
 	}
 	fragmentAtoms = []atom{
 		lit("top"), lit("k"), lit("'"), lit("?"), lit("/"),
 		enc("`", "%60"), enc(" ", "%20"), enc(">", "%3E"), enc("é", "%C3%A9"),
-		esc("%60"), esc("%41"), esc("%c3%a9"),
+		esc("%60"), esc("%41"), esc("%c3%a9"), esc("%C3%A9"), esc("%ab"), esc("%AB"),
 	}
 )
 
@@ -103,9 +104,10 @@ func (p urlParts) key() string {
 // scheme, a host name and IPv6 hex digits in any case, an IPv6 address
 // with or without "::" and leading zeros, the default port written or not
 // (with leading zeros), "." and "x/.." segments, also escaped, before a
-// segment, an empty path as "" or "/", escapes in either hex case, and a
-// character that a browser escapes as itself or as its escape (except a
-// space at the very end, which a browser strips).
+// segment, an empty path as "" or "/", and a character that a browser
+// escapes as itself or as the browser's escape of it, in upper-case hex
+// (except a space at the very end, which a browser strips). An escape of
+// the URL is written as it is: its hex case is part of the URL.
 func (p urlParts) spell(r *rand.Rand) string {
 	var b strings.Builder
 	scheme, def := "http", "80"
@@ -147,9 +149,9 @@ func spellAtoms(r *rand.Rand, as []atom) string {
 	for _, a := range as {
 		switch {
 		case a.escape:
-			b.WriteString(randomCase(r, a.text))
+			b.WriteString(a.text)
 		case a.browserEscapes && r.Intn(2) == 0:
-			b.WriteString(randomCase(r, a.form))
+			b.WriteString(a.form)
 		default:
 			b.WriteString(a.text)
 		}
@@ -246,12 +248,39 @@ func randomParts(r *rand.Rand) urlParts {
 	return p
 }
 
+// recased is p with the escapes of the URL in a random hex case, each
+// still written as it is: a URL that differs from p at most in the hex case
+// of its escapes.
+func (p urlParts) recased(r *rand.Rand) urlParts {
+	re := func(as []atom) []atom {
+		if as == nil {
+			return nil
+		}
+		out := make([]atom, len(as))
+		for i, a := range as {
+			if a.escape {
+				a = esc(randomCase(r, strings.ToLower(a.text)))
+			}
+			out[i] = a
+		}
+		return out
+	}
+	q := p
+	q.segments = make([][]atom, len(p.segments))
+	for i, s := range p.segments {
+		q.segments[i] = re(s)
+	}
+	q.query, q.fragment = re(p.query), re(p.fragment)
+	return q
+}
+
 // Generate makes pairs of URLs that share their parts, differ in one
-// part, or are drawn apart.
+// part, differ at most in the hex case of their escapes, or are drawn
+// apart.
 func (urlPair) Generate(r *rand.Rand, _ int) reflect.Value {
 	a := randomParts(r)
 	b, other := a, randomParts(r)
-	switch r.Intn(3) {
+	switch r.Intn(4) {
 	case 0:
 		switch r.Intn(6) {
 		case 0:
@@ -269,6 +298,8 @@ func (urlPair) Generate(r *rand.Rand, _ int) reflect.Value {
 		}
 	case 1:
 		b = other
+	case 2:
+		b = a.recased(r)
 	}
 	return reflect.ValueOf(urlPair{a, b, r.Int63()})
 }
@@ -283,9 +314,10 @@ type urlPair struct {
 // IPv4 and IPv6 addresses; paths, queries and fragments with characters
 // outside ASCII, characters that a browser escapes, and escapes), spelled
 // in forms that a browser reads alike (case, IPv6 notation, default
-// ports, dot segments, an empty path, escapes), match exactly when their
-// browser forms, built from the parts, are equal; the query and the
-// fragment, also an empty one, count.
+// ports, dot segments, an empty path, a character or the browser's escape
+// of it), match exactly when their browser forms, built from the parts,
+// are equal; the query and the fragment, also an empty one, count, and so
+// does the hex case of an escape that the URL has (final review F3).
 func TestSameURLProperty(t *testing.T) {
 	prop := func(pair urlPair) bool {
 		r := rand.New(rand.NewSource(pair.seed))

@@ -74,6 +74,11 @@ type UpReport struct {
 	// URL that Up opened; "" when there is none, or more than one. It
 	// stays out of the output: the command prints the tab's id (Tab).
 	NewPage string `json:"-"`
+	// SharedURL is true when the new tab is not the only tab that shows
+	// the URL that Up opened (a tab listed before the open, or a second
+	// new one): tab find finds several tabs of that URL, so it cannot name
+	// the new tab when the command has no tab id for it (final review F6).
+	SharedURL bool `json:"sharedURL,omitempty"`
 	// Tab is the tab id (t<N>, as tab list shows it) of NewPage, which the
 	// command sets when the daemon lists it; "" otherwise.
 	Tab string `json:"tab,omitempty"`
@@ -169,6 +174,7 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 			}
 		}
 		r.TabOpened = len(opened) > 0
+		r.SharedURL = r.TabOpened && (earlier || len(opened) > 1)
 		r.NewPage = ""
 		if len(opened) == 1 {
 			r.NewPage = opened[0]

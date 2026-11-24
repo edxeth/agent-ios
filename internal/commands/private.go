@@ -978,6 +978,7 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 		IWDPRestarted  bool   `json:"iwdpRestarted"`
 		Pages          *int   `json:"pages"`
 		TabOpened      bool   `json:"tabOpened"`
+		SharedURL      bool   `json:"sharedURL"`
 		Tab            string `json:"tab"`
 	}
 	if json.Unmarshal(data, &r) != nil || r.MacStarted == nil || r.Pages == nil {
@@ -994,6 +995,9 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 	case r.Tab != "":
 		text += "\nnew tab " + r.Tab
 		value["tab"] = r.Tab
+	case r.TabOpened && r.SharedURL:
+		text += "\nnew tab unknown: " + simSharedURLNext
+		value["sharedURL"] = true
 	case r.TabOpened:
 		text += "\nnew tab unknown: run iwdp-cli tab find --device SIMULATOR --url-file <file of the --url>"
 	}

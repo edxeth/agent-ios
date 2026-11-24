@@ -21,8 +21,10 @@ func sameURL(page, target string) bool {
 }
 
 // browserForm returns raw as a browser writes it (WHATWG URL, the href of
-// new URL(raw)), with every escape in upper-case hex, when that form is
-// certain from the text. ok is false for any other URL. The form:
+// new URL(raw)), when that form is certain from the text: the escapes
+// that it adds are in upper-case hex, and the escapes of raw keep their
+// hex case, as a browser keeps them ("%2f" and "%2F" are different hrefs;
+// final review F3). ok is false for any other URL. The form:
 //
 //   - Leading and trailing C0 controls and spaces are stripped, tabs and
 //     line breaks removed, as a browser does; the rest is valid UTF-8 with
@@ -45,7 +47,7 @@ func sameURL(page, target string) bool {
 //     browser removes them. A backslash before the query is refused.
 //   - Path, query and fragment keep their literal unreserved characters,
 //     sub-delimiters, ":", "@", "/" (and "?" in the query and fragment),
-//     and their well-formed escapes with upper-case hex; characters
+//     and their well-formed escapes as written; characters
 //     outside ASCII, the space, '"', "<" and ">", and in the path "`",
 //     "{" and "}", and in the fragment "`", are escaped as their UTF-8
 //     bytes, as a browser escapes them. Any other character ("^", "|",
@@ -232,8 +234,9 @@ const (
 	fragmentEscaped = " \"<>`"
 )
 
-// escapeAs writes s with its well-formed escapes in upper-case hex, and
-// escaped, and every byte outside ASCII, escaped; ok is false when s has
+// escapeAs writes s with its well-formed escapes as they are (a browser
+// keeps their hex case), and escaped, and every byte outside ASCII,
+// escaped in upper-case hex; ok is false when s has
 // a "%" that starts no escape, or an ASCII character outside kept and
 // escaped.
 func escapeAs(s, escaped, kept string) (string, bool) {
@@ -246,7 +249,7 @@ func escapeAs(s, escaped, kept string) (string, bool) {
 			if i+2 >= len(s) || !isHex(s[i+1]) || !isHex(s[i+2]) {
 				return "", false
 			}
-			b.WriteString("%" + strings.ToUpper(s[i+1:i+3]))
+			b.WriteString(s[i : i+3])
 			i += 2
 		case c >= 0x80 || strings.IndexByte(escaped, c) >= 0:
 			b.WriteByte('%')

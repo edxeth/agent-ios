@@ -363,16 +363,25 @@ func simUpTab(ctx context.Context, env Env, in Input, newPage string) string {
 }
 
 // simUpNext is the end of sim up's text: the new tab of --url and how to
-// select it, or what to run next.
+// select it, or what to run next. Without the new tab's id, tab find
+// finds it only when no other tab shows the URL; otherwise it would find
+// several, and the caller serves its page on a URL of its own instead of
+// touching the other tabs (final review F6).
 func simUpNext(r sim.UpReport, openURL string) []string {
 	switch {
 	case r.Tab != "":
 		return []string{"  new tab:    " + r.Tab + " (shows --url)", "Next: iwdp-cli tab " + r.Tab}
+	case openURL != "" && r.SharedURL:
+		return []string{"  new tab:    its id is not known, and another tab shows the same URL", "Next: " + simSharedURLNext}
 	case openURL != "":
 		return []string{"  new tab:    its id is not known", "Next: iwdp-cli tab find --device SIMULATOR --url-file <file of the --url>, then iwdp-cli tab <id>"}
 	}
 	return []string{simDid(r.Pages > 0, "Next: iwdp-cli tab list", "Safari offers no tab for inspection yet (its start page is not inspectable): run iwdp-cli sim up --url <url>")}
 }
+
+// simSharedURLNext is what sim up tells to do when it has no id for the
+// new tab of --url and another tab shows that URL.
+const simSharedURLNext = "tab find would find several tabs of this URL and cannot tell yours; leave the other tabs alone, they are not yours to touch: serve your page on a URL that no other tab shows (a port or path of your own) and run iwdp-cli sim up --url with it"
 
 func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 	s, err := newSim(env)
