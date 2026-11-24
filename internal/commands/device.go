@@ -41,8 +41,26 @@ func init() {
 				return Result{}, err
 			}
 			dev, owner := in.Flags["device"].(string), reservationOwner(in)
+			live, err := rs.List()
+			if err != nil {
+				return Result{}, err
+			}
+			held, heldSim := false, false
+			for _, r := range live {
+				held = held || (r.Owner == owner && r.Device == dev)
+				heldSim = heldSim || (r.Owner == owner && r.Device == core.SimulatorDevice)
+			}
+			// An agent that ends its simulator turn with device release
+			// would release nothing and keep the others waiting (live run
+			// 13, 2026-11-24): refuse, naming the command that releases it.
+			if !held && heldSim {
+				return Result{}, &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("device release: %q holds no reservation of device %s, but holds the simulator's: release that with 'iwdp-cli sim release'", owner, dev)}
+			}
 			if err := rs.Release(dev, owner); err != nil {
 				return Result{}, err
+			}
+			if !held {
+				return Result{Text: fmt.Sprintf("%q holds no reservation of device %s: nothing to release.", owner, dev)}, nil
 			}
 			return Result{Text: fmt.Sprintf("Reservation of device %s by %q released.", dev, owner)}, nil
 		},

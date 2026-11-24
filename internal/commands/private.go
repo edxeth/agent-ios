@@ -1069,6 +1069,8 @@ func privateErrorLine(name string, code int) string {
 	// The simulator's turn-taking: fixed sentences that tell an agent what
 	// to do, since the message that names the owner is hidden.
 	switch {
+	case name == "device release" && code == ExitReservation:
+		return name + " exit 6: nothing of yours released: another owner holds that device, or you hold the simulator, which 'iwdp-cli sim release' releases (private mode hides the message)"
 	case name == "sim reserve" && code == ExitWaitTimeout:
 		return name + " exit 3: the simulator is still reserved by another agent; run 'iwdp-cli sim reserve' again to keep waiting, and do not use the simulator meanwhile (private mode hides the message)"
 	case name == "sim up" && code == ExitNoMatch:

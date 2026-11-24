@@ -287,3 +287,28 @@ func TestSimulatorLeaseRenewsTheReservation(t *testing.T) {
 		t.Fatalf("the sweep did not renew the simulator reservation of a leasing owner: %+v (was until %s)", mine, r.Expires)
 	}
 }
+
+// device release by an owner that holds only the simulator releases
+// nothing, so it fails and names sim release, keeping the reservation
+// (live run 13: an agent ended its turn so and the others waited).
+func TestDeviceReleaseNamesSimRelease(t *testing.T) {
+	res := &core.Reservations{Dir: t.TempDir()}
+	m, _ := newTabManagerWith(t, res)
+	if _, err := res.Reserve(core.SimulatorDevice, "a", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := Parse([]string{"device", "release", "--owner", "a"}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = inv.Cmd.Run(context.Background(), &resEnv{&mgrEnv{m: m}, res}, inv.Input)
+	if ExitCodeOf(err) != ExitReservation || !strings.Contains(err.Error(), "sim release") {
+		t.Fatalf("device release of a simulator holder: %v", err)
+	}
+	if mine, _, _ := res.Check(core.SimulatorDevice, "a"); mine == nil {
+		t.Fatal("the refused device release ended the simulator reservation")
+	}
+	if l := privateErrorLine("device release", ExitReservation); !strings.Contains(l, "sim release") {
+		t.Errorf("private line: %q", l)
+	}
+}
