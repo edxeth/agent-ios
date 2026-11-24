@@ -170,7 +170,7 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 	}
 	if openURL != "" && !r.TabOpened {
 		if earlier {
-			return r, fmt.Errorf("%w %s after %s, except a tab that was open before this sim up, perhaps an earlier run's: Safari opened no new tab of it. Close that tab, or serve your page on a URL of your own (another port or path), and run sim up again", ErrNoURLTab, openURL, s.PageWait)
+			return r, fmt.Errorf("%w %s after %s, except a tab that was open before this sim up, perhaps an earlier run's, which is not yours to touch: Safari opened no new tab of it. Serve your page on a URL that no other tab shows (a port or path of your own), and run sim up with that URL", ErrNoURLTab, openURL, s.PageWait)
 		}
 		return r, fmt.Errorf("%w %s after %s: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2", ErrNoURLTab, openURL, s.PageWait)
 	}

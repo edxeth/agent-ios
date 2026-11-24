@@ -188,6 +188,27 @@ func TestSimulatorTurnOnAnAttachedPage(t *testing.T) {
 	}
 }
 
+// Review F15: an owner refused on a reserved simulator page gets no page
+// item: the page observer, which the daemon streams to the client, never
+// sees the page's title or key.
+func TestRefusedOwnerObservesNoSimulatorPage(t *testing.T) {
+	res := &core.Reservations{Dir: t.TempDir()}
+	m, f := newTabManagerWith(t, res)
+	f.kind, f.device = transport.KindIWDP, core.SimulatorDevice
+	f.add("Private page", "http://10.0.2.2:8791/")
+	if _, err := res.Reserve(core.SimulatorDevice, "a", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	ctx := core.WithPageObserver(context.Background(), func(key, title string) { seen = append(seen, key, title) })
+	if _, _, err := m.Touch(ctx, core.PageRequest{Page: "Private"}, core.AcquireOptions{Session: "b"}); !errors.Is(err, core.ErrReserved) {
+		t.Fatalf("another owner: %v, want ErrReserved", err)
+	}
+	if len(seen) != 0 {
+		t.Fatalf("the refused owner observed %q", seen)
+	}
+}
+
 // F2: a lease on the simulator's page that its owner took on the free
 // simulator ends in the daemon's sweep once another owner reserves it, so
 // nothing bound to the lease goes on in that owner's turn; the owner's own

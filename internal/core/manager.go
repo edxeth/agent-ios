@@ -1526,13 +1526,15 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 	if err != nil {
 		return nil, 0, time.Time{}, err
 	}
-	if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
-		observe(t.key, t.title)
-	}
 	// The simulator's turns, also on a page that the daemon is attached
-	// to and on a lease that the session holds (simulator_turns.go).
+	// to and on a lease that the session holds (simulator_turns.go). It
+	// runs before the observer, which streams the page's key and title to
+	// the client: a refused owner learns neither.
 	if err := m.admitSimulator(ctx, sreq, t, ao.Reservation); err != nil {
 		return nil, 0, time.Time{}, err
+	}
+	if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
+		observe(t.key, t.title)
 	}
 	if sreq.Page == "" {
 		m.setDefaultPage(ao.Session, sreq, t.key)

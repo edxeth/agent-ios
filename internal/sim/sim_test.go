@@ -993,6 +993,11 @@ func TestUpNeedsANewTabOfTheURL(t *testing.T) {
 	if !errors.Is(err, ErrNoURLTab) || !strings.Contains(err.Error(), "open before") {
 		t.Fatalf("only an earlier tab shows the URL: %v, want ErrNoURLTab naming the earlier tab", err)
 	}
+	// Review F17: the earlier tab is another turn's; the error never
+	// advises closing it, and points to a URL of the caller's own.
+	if strings.Contains(strings.ToLower(err.Error()), "close") || !strings.Contains(err.Error(), "of your own") {
+		t.Fatalf("the error advises closing another turn's tab, or no unique URL: %v", err)
+	}
 	fm.opened = func() { iw.urls = append(iw.urls, u) }
 	if r, err := s.Up(context.Background(), "", u, false); err != nil || !r.TabOpened || r.Pages != 2 {
 		t.Fatalf("a new tab of the URL beside the earlier one: %+v, %v", r, err)
