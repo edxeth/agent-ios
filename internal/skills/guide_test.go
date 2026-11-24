@@ -343,7 +343,8 @@ func runBlock(t *testing.T, block string, failure ...string) blockRun {
 // The cookie block changes nothing when state save fails, and keeps the
 // state file when state load fails. A cleanup step runs after a failed
 // step, and the block still fails: the restore after a failed cookie
-// change, the device release after a failed close (goesOn). The cookie
+// change, the device release after a failed close, the simulator's
+// release after a failed tab close (goesOn). The cookie
 // block reads before it saves, so a failed read changes nothing and
 // leaves no state file. Each block runs in a new plain bash, without
 // -e, as a harness runs it; zsh, which agents also use, runs these
@@ -359,11 +360,11 @@ func TestGuideBlocksStopAtAFailedStep(t *testing.T) {
 		exit              int
 		stateFile         bool // the state file of the cookie block is there after the block
 	}{
-		{"tab find: no tab shows the target", "iwdp", "tab find", "tab find", 7, []string{"tab find"}, 7, false},
-		{"tab find: a tab could not be read", "iwdp", "tab find", "tab find", 4, []string{"tab find"}, 4, false},
-		{"tab: the selection fails", "iwdp", "tab find", "tab t1", 4, []string{"tab find", "tab t1"}, 4, false},
-		{"tab find: found", "iwdp", "tab find", "", 0, []string{"tab find", "tab t1"}, 0, false},
-		{"device reserve fails", "iwdp", "device reserve", "device reserve", 6, []string{"device reserve"}, 6, false},
+		{"tab find: no tab shows the target", "iwdp-device", "tab find", "tab find", 7, []string{"tab find"}, 7, false},
+		{"tab find: a tab could not be read", "iwdp-device", "tab find", "tab find", 4, []string{"tab find"}, 4, false},
+		{"tab: the selection fails", "iwdp-device", "tab find", "tab t1", 4, []string{"tab find", "tab t1"}, 4, false},
+		{"tab find: found", "iwdp-device", "tab find", "", 0, []string{"tab find", "tab t1"}, 0, false},
+		{"device reserve fails", "iwdp-device", "device reserve", "device reserve", 6, []string{"device reserve"}, 6, false},
 		{"fill fails", "iwdp", "fill @e1", "fill @e1", 1, []string{"fill @e1"}, 1, false},
 		{"password fill fails", "iwdp", "fill @e1", "fill @e2", 1, []string{"fill @e1", "fill @e2"}, 1, false},
 		{"sign-in click fails", "iwdp", "fill @e1", "click @e3", 1, []string{"fill @e1", "fill @e2", "click @e3"}, 1, false},
@@ -372,12 +373,14 @@ func TestGuideBlocksStopAtAFailedStep(t *testing.T) {
 		{"link click fails", "iwdp", "click @e6", "click @e6", 1, []string{"click @e6"}, 1, false},
 		{"url wait fails", "iwdp", "click @e6", "wait --url", 3, []string{"click @e6", "wait --url"}, 3, false},
 		{"back fails", "iwdp", "click @e6", "back", 1, []string{"click @e6", "wait --url", "back"}, 1, false},
-		{"cookie read fails", "iwdp", save, "cookies", 4, []string{"cookies"}, 4, false},
-		{"state save fails", "iwdp", save, save, 4, []string{"cookies", "storage local", save}, 4, false},
-		{"cookie change fails", "iwdp", save, "cookies set", 4, []string{"cookies", "storage local", save, "cookies set", load}, 1, false},
-		{"state load fails", "iwdp", save, load, 4, []string{"cookies", "storage local", save, "cookies set", load}, 4, true},
-		{"cookie block succeeds", "iwdp", save, "", 0, []string{"cookies", "storage local", save, "cookies set", load}, 0, false},
-		{"close fails", "iwdp", "device release", "close", 4, []string{"close", "device release"}, 1, false},
+		{"cookie read fails", "iwdp-devtools", save, "cookies", 4, []string{"cookies"}, 4, false},
+		{"state save fails", "iwdp-devtools", save, save, 4, []string{"cookies", "storage local", save}, 4, false},
+		{"cookie change fails", "iwdp-devtools", save, "cookies set", 4, []string{"cookies", "storage local", save, "cookies set", load}, 1, false},
+		{"state load fails", "iwdp-devtools", save, load, 4, []string{"cookies", "storage local", save, "cookies set", load}, 4, true},
+		{"cookie block succeeds", "iwdp-devtools", save, "", 0, []string{"cookies", "storage local", save, "cookies set", load}, 0, false},
+		{"close fails", "iwdp-device", "device release", "close", 4, []string{"close", "device release"}, 1, false},
+		{"sim reserve fails", "iwdp", "sim reserve", "sim reserve", 3, []string{"sim reserve"}, 3, false},
+		{"tab close fails", "iwdp", "sim release", "tab close", 1, []string{"tab close", "sim release"}, 1, false},
 		{"cdp url fails before a CDP client", "iwdp-cdp", "agent-browser", "get cdp-url", 5, []string{"get cdp-url"}, 5, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -399,27 +402,43 @@ func TestGuideBlocksStopAtAFailedStep(t *testing.T) {
 	}
 }
 
-// The core guide finds the tab of the task before any page command:
-// in file order, the only calls before tab find are the reservation and
-// the tab listing, which name no page.
+// A guide selects the tab of the task before any page command. In the
+// core guide, in file order, the only calls before the selection of the
+// tab that sim up printed are the simulator's reservation and sim up. In
+// the device guide, the only calls before tab find are the checks that
+// start nothing, the reservation and the tab listing, which name no page.
 func TestGuideFindsTheTargetBeforeAnyPageCommand(t *testing.T) {
-	var core string
-	for _, s := range guides(t) {
-		if s.Name == "iwdp" {
-			core = s.Content
-		}
-	}
-	for _, b := range bashBlockRE.FindAllStringSubmatch(core, -1) {
-		for _, call := range runFailing(t, b[1], "", 0).calls {
-			if strings.HasPrefix(call, "tab find ") {
-				return
+	for _, c := range []struct {
+		guide, selection string   // the guide and the start of the call that selects the tab
+		before           []string // the calls that may run before it, each by its arguments or their start
+	}{
+		{"iwdp", "tab t", []string{"sim reserve", "sim up"}},
+		{"iwdp-device", "tab find", []string{"status", "session info", "device reserve", "tab list"}},
+	} {
+		t.Run(c.guide, func(t *testing.T) {
+			var content string
+			for _, s := range guides(t) {
+				if s.Name == c.guide {
+					content = s.Content
+				}
 			}
-			if !strings.HasPrefix(call, "device reserve ") && call != "tab list" {
-				t.Fatalf("iwdp-cli %s runs before tab find:\n%s", call, b[1])
+			for _, b := range bashBlockRE.FindAllStringSubmatch(content, -1) {
+				for _, call := range runFailing(t, b[1], "", 0).calls {
+					if strings.HasPrefix(call, c.selection) {
+						return
+					}
+					allowed := false
+					for _, p := range c.before {
+						allowed = allowed || call == p || strings.HasPrefix(call, p+" ")
+					}
+					if !allowed {
+						t.Fatalf("iwdp-cli %s runs before %s:\n%s", call, c.selection, b[1])
+					}
+				}
 			}
-		}
+			t.Fatalf("guide %s runs no %s", c.guide, c.selection)
+		})
 	}
-	t.Fatal("the core guide runs no tab find")
 }
 
 // stopSuffix ends a command that stops its block when it fails: the block
@@ -440,12 +459,16 @@ var goesOn = []struct {
 	reason  string
 }{
 	{
-		"iwdp", "state save", "iwdp-cli cookies set session_hint abc123 --http-only --same-site Lax --expires 0",
+		"iwdp-devtools", "state save", "iwdp-cli cookies set session_hint abc123 --http-only --same-site Lax --expires 0",
 		"state load restores the saved cookies and storage also after a failed change (safety rule 4)",
 	},
 	{
-		"iwdp", "device release", "iwdp-cli close",
+		"iwdp-device", "device release", "iwdp-cli close",
 		"device release frees the shared device also after a failed close (safety rule 6)",
+	},
+	{
+		"iwdp", "sim release", "iwdp-cli tab close",
+		"sim release frees the shared simulator also after a failed tab close, which Safari can refuse (safety rule 6)",
 	},
 }
 

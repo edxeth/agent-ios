@@ -42,9 +42,10 @@ import (
 // The examples use the origin https://example.com; the test serves it
 // from e2e/fixtures/skills. The environment gives EVIDENCE (a temporary
 // folder), QA_PASSWORD (a stand-in) and TARGET_FILE (a file that holds
-// the URL of /login). MiniBrowser starts on /login, so the guide's target
-// check, which comes before the first page action, reads that URL and
-// finds the target; it never opens or navigates the tab.
+// the URL of /login). MiniBrowser starts on /login, and each guide starts
+// there, so the device guide's target check, which comes before its first
+// page action, reads that URL and finds the target; it never opens or
+// navigates the tab.
 var skipRules = map[string]string{
 	"device":    "needs a USB-connected iPhone or iPad and ios_webkit_debug_proxy",
 	"simulator": "needs a Mac over SSH with an iOS Simulator and its configuration (docs/simulator.md)",
@@ -208,6 +209,14 @@ func TestSkillExamplesRunOnWebKitGTK(t *testing.T) {
 	for _, p := range paths {
 		name := filepath.Base(filepath.Dir(p))
 		t.Run(name, func(t *testing.T) {
+			// Each guide starts on /login, the target of the device guide's
+			// target check, as an agent that loads one guide finds the page:
+			// the core guide's navigation example leaves it on /second.
+			for _, args := range [][]string{{"open", origin + "/login"}, {"close"}} {
+				if r := cli(t, append([]string{"--session", "qa-login"}, args...)...); r.code != 0 {
+					t.Fatalf("%s: iwdp-cli %v before the examples: exit %d, stderr %q", name, args, r.code, r.stderr)
+				}
+			}
 			blocks := docBlocks(t, p)
 			runnable := 0
 			for _, b := range blocks {

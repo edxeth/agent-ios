@@ -5,7 +5,7 @@ description: Attach a CDP client to an iOS Safari or WebKitGTK page through iwdp
 
 # iwdp-cli: the CDP endpoint
 
-The safety rules and private mode of `iwdp-cli skills get iwdp` bind every command of this guide. Start every call with the line that the examples start with.
+The safety rules and private mode of `iwdp-cli skills get iwdp` bind every command of this guide.
 
 Prefer the `iwdp-cli` commands of the iwdp guide. Use the CDP endpoint only when the task needs a CDP client: an existing Puppeteer or Playwright script, or a client feature that has no command. The commands have refs that survive reconnects, actionability checks, masking, deadlines and private mode; a CDP client has none of these from iwdp-cli, and its output is not private.
 
@@ -13,7 +13,7 @@ Prefer the `iwdp-cli` commands of the iwdp guide. Use the CDP endpoint only when
 
 ```bash
 export IWDP_SESSION=qa-login IWDP_PRIVATE=1
-CDP="$(iwdp-cli get cdp-url)" || exit "$?"   # for the page your other commands use
+CDP="$(iwdp-cli get cdp-url)" || exit "$?"
 [ -n "$CDP" ] || exit "$?"
 iwdp-cli close                               # revokes the URL
 ```

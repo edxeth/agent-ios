@@ -11,10 +11,10 @@ description: Drive and debug Safari on a real iPhone or iPad or in an iOS Simula
 
 This file is a discovery stub, not the guide. Before you run any other `iwdp-cli` command, load the guide that matches the installed binary:
 
-- Run `iwdp-cli skills get iwdp`. The guide has a few hundred lines: read it by line range, for example `iwdp-cli skills get iwdp | sed -n '1,80p'`, then the next range. Read the safety rules in full; they bind every run.
+- Run `iwdp-cli skills get iwdp`. Read the safety rules in full; they bind every run.
 
-To test on iOS, use the iOS Simulator; a plugged-in device only when the user asks. Agents share it in turns: repeat `iwdp-cli sim reserve` until it succeeds. Exit 3 or a tool timeout means another agent's turn: waiting is normal, never a reason to stop. Serve your page in a background job, then `iwdp-cli sim up --url http://10.0.2.2:<port>/` opens your tab, starting the VM if needed. Pass this on to agents you delegate the check to.
+To test on iOS, use the iOS Simulator; a plugged-in device only when the user asks. Agents share it in turns. First serve your page in a background job on a random uncommon port, and check that it answers. Then repeat `iwdp-cli sim reserve` until it succeeds: exit 3 or a tool timeout means another agent's turn, and waiting is normal, never a reason to stop. `iwdp-cli sim up --url http://10.0.2.2:<port>/` opens your tab, starting the VM if needed: select the tab id it prints. At the end, also after a failure, `tab close` your tab and run `iwdp-cli sim release`. Pass this on to agents you delegate the check to.
 
 `iwdp-cli <command> --help` prints the flags of one command and never connects to a page.
 
-The CLI serves the guide of its own version. This stub does not change between releases, so it only points at the CLI: a copy of the guide here would drift from the installed binary.
+The CLI serves the guide of its own version. This stub does not change between releases, so it only points at the CLI.
