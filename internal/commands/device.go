@@ -20,6 +20,7 @@ func init() {
 	Register(&Command{
 		Name: "device reserve", Summary: "Reserve a physical device for an owner, so that only that owner's sessions attach to its pages.",
 		Flags: []Flag{deviceFlag, ownerFlag, {Name: "ttl", Type: FlagDuration, Default: defaultReservationTTL, Help: "lifetime, renewed while the owner holds leases"}},
+		Check: notSimulator("device reserve", "sim reserve"),
 		Run: func(_ context.Context, env Env, in Input) (Result, error) {
 			rs, err := reservationsOf(env)
 			if err != nil {
@@ -35,6 +36,7 @@ func init() {
 	Register(&Command{
 		Name: "device release", Summary: "Release an owner's device reservation.",
 		Flags: []Flag{deviceFlag, ownerFlag},
+		Check: notSimulator("device release", "sim release"),
 		Run: func(_ context.Context, env Env, in Input) (Result, error) {
 			rs, err := reservationsOf(env)
 			if err != nil {
@@ -86,6 +88,19 @@ func init() {
 			return Result{Text: b.String(), Data: list}, nil
 		},
 	})
+}
+
+// notSimulator refuses --device SIMULATOR (exit 2): the simulator's turns
+// are taken and given back with the sim commands, which refuse the
+// default owner, keep a short TTL and close the session's page leases;
+// device reserve and release would bypass all three.
+func notSimulator(name, instead string) func(Input) error {
+	return func(in Input) error {
+		if d, _ := in.Flags["device"].(string); strings.EqualFold(d, core.SimulatorDevice) {
+			return usagef("%s: the simulator is not a physical device: use 'iwdp-cli %s'", name, instead)
+		}
+		return nil
+	}
 }
 
 func reservationOwner(in Input) string {

@@ -340,7 +340,7 @@ func (s *Server) Issue(ctx context.Context, r IssueRequest) (Endpoint, error) {
 	if !s.Running() {
 		return Endpoint{}, errors.New("the CDP endpoint is not running; run 'iwdp-cli cdp start'")
 	}
-	lp, listing, err := s.o.Manager.ResolvePage(ctx, r.Session, r.Page)
+	lp, listing, err := s.o.Manager.ResolvePage(ctx, r.Session, r.Reservation, r.Page)
 	if err != nil {
 		return Endpoint{}, err
 	}

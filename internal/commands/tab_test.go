@@ -173,7 +173,7 @@ func runInCtx(t *testing.T, parent context.Context, m *core.Manager, session str
 	if inv.Cmd.Mutates {
 		class = core.ClassMutate
 	}
-	err = m.Do(ctx, core.PageRequest{Transport: inv.Input.Global.Transport, Page: inv.Input.Global.Page}, core.AcquireOptions{Session: session},
+	err = m.Do(ctx, core.PageRequest{Transport: inv.Input.Global.Transport, Page: inv.Input.Global.Page}, core.AcquireOptions{Session: session, Reservation: inv.Input.Global.Reservation},
 		inv.Cmd.Name, class, false, func(ctx context.Context, mo *core.ManagedOp) error {
 			env.mo = mo
 			var err error

@@ -215,25 +215,33 @@ func (rs *Reservations) Check(device, owner string) (mine, other *Reservation, e
 	return mine, other, nil
 }
 
-// Renew extends every live reservation of owner by its TTL from now; the
-// daemon calls it while owner's leases are active.
-func (rs *Reservations) Renew(owner string) error {
-	return rs.withLock(func() error {
+// Renew extends each live reservation of owner that covers device by its
+// TTL from now, and reports whether there was one; the daemon calls it
+// while owner holds a lease of a page of device, and a running sim command
+// for the simulator. Only the reservations of that device are renewed: a
+// lease on a phone does not keep the owner's simulator turn alive, nor the
+// reverse (Covers keeps the simulator apart). An expired or released
+// reservation is not renewed, so a renewal never takes a turn again.
+func (rs *Reservations) Renew(owner, device string) (bool, error) {
+	renewed := false
+	err := rs.withLock(func() error {
 		all, err := rs.listLocked()
 		if err != nil {
 			return err
 		}
 		now := rs.now()
 		for _, r := range all {
-			if r.Owner == owner && r.Live(now) {
+			if r.Owner == owner && r.Live(now) && r.Covers(device) {
 				r.Expires = now.Add(r.TTL)
 				if err := rs.writeLocked(r); err != nil {
 					return err
 				}
+				renewed = true
 			}
 		}
 		return nil
 	})
+	return renewed, err
 }
 
 func deviceText(d string) string {

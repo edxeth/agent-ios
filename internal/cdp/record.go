@@ -99,7 +99,10 @@ func (rec *record) targetOf(lp core.ListedPage) target {
 // the selected page, the pages created through the record, and with scope
 // device every debuggable page of a device that the record's reservation
 // owner reserved. A page of an explicit ws:// URL has no listing; it is
-// its own scope.
+// its own scope. The simulator's pages, the selected one included, are
+// left out while another owner reserves the simulator (sim reserve), also
+// for a record issued before that owner's turn; a reservation that cannot
+// be read fails the listing.
 func (rec *record) targets(ctx context.Context) ([]target, error) {
 	m := rec.s.o.Manager
 	if isURLKey(rec.selected.Key) {
@@ -116,11 +119,24 @@ func (rec *record) targets(ctx context.Context) ([]target, error) {
 		return nil, err
 	}
 	reserved := rec.reservedDevices()
+	simulator := true // the record's owner may see the simulator's pages
+	for _, lp := range pages {
+		if lp.Device.ID == core.SimulatorDevice {
+			if err := m.SimulatorAdmits(rec.owner()); err != nil {
+				if !errors.Is(err, core.ErrReserved) {
+					return nil, err
+				}
+				simulator = false
+			}
+			break
+		}
+	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	var first, rest []target
 	for _, lp := range pages {
 		switch {
+		case !simulator && lp.Device.ID == core.SimulatorDevice:
 		case lp.Key == rec.selected.Key:
 			first = append(first, rec.targetOf(lp))
 		case !lp.Page.Debuggable:

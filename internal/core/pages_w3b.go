@@ -87,7 +87,17 @@ func physicalDevice(kind transport.Kind, deviceID string) bool {
 // reservation of that device; the others are left out, without titles or
 // URLs, and hidden counts them.
 func (m *Manager) Tabs(ctx context.Context, req PageRequest, ao AcquireOptions) (tabs []Tab, hidden int, err error) {
+	return m.DeviceTabs(ctx, req, ao, "")
+}
+
+// DeviceTabs is Tabs of the pages of one device (its id: SIMULATOR or a
+// UDID; "" for every device): the pages of other devices are neither
+// listed nor counted as hidden, so that an agent on the simulator is not
+// stopped by a phone that it has not reserved, nor the reverse. A device
+// that the listing does not have is an error (CodeNoPage).
+func (m *Manager) DeviceTabs(ctx context.Context, req PageRequest, ao AcquireOptions, only string) (tabs []Tab, hidden int, err error) {
 	ao = ao.normalized()
+	seen := false // a page of only was listed
 	session := ao.Session
 	var out []Tab
 	reserved := map[string]bool{} // device id -> its pages are listed for ao's reservation owner
@@ -96,6 +106,12 @@ func (m *Manager) Tabs(ctx context.Context, req PageRequest, ao AcquireOptions) 
 		// The key is "<kind>|<device id>|<page id>" (findListed).
 		kind, rest, _ := strings.Cut(key, "|")
 		device, _, _ := strings.Cut(rest, "|")
+		if only != "" {
+			if device != only {
+				return false
+			}
+			seen = true
+		}
 		if physicalDevice(transport.Kind(kind), device) {
 			mine, seen := reserved[device]
 			if !seen && m.o.Reservations != nil && resErr == nil {
@@ -131,6 +147,11 @@ func (m *Manager) Tabs(ctx context.Context, req PageRequest, ao AcquireOptions) 
 	}
 	if resErr != nil {
 		return nil, 0, &CodedError{Code: CodeReservation, Err: fmt.Errorf("tab list: reading the device reservations: %w", resErr)}
+	}
+	if only != "" && !seen {
+		if err := m.listsDevice(ctx, req, only); err != nil {
+			return nil, 0, err
+		}
 	}
 	s := m.tabs()
 	s.mu.Lock()
@@ -301,4 +322,26 @@ func (m *Manager) sessionPage(session string, req PageRequest) PageRequest {
 	}
 	s.mu.Unlock()
 	return req
+}
+
+// listsDevice fails (CodeNoPage) unless the listing of req has the device
+// id.
+func (m *Manager) listsDevice(ctx context.Context, req PageRequest, id string) error {
+	if m.o.Transport == nil {
+		return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no transport is configured", ErrNoPage)}
+	}
+	tr, err := m.o.Transport(ctx, autoKind(req.Transport), req.Addr)
+	if err != nil {
+		return &CodedError{Code: CodeNoPage, Err: m.listingFailed(err)}
+	}
+	devs, err := tr.Devices(ctx)
+	if err != nil {
+		return &CodedError{Code: CodeNoPage, Err: m.listingFailed(&ListingError{Kind: tr.Kind(), Err: fmt.Errorf("listing devices (%s): %w", tr.Kind(), err)})}
+	}
+	for _, d := range devs {
+		if d.ID == id {
+			return nil
+		}
+	}
+	return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: %s lists no device %q", ErrNoPage, tr.Kind(), id)}
 }

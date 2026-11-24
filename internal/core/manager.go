@@ -454,24 +454,6 @@ func (m *Manager) resolve(ctx context.Context, req PageRequest) (pageTarget, err
 		return req.Page == p.ID || req.Page == key ||
 			strings.Contains(strings.ToLower(p.Title), sel) || strings.Contains(strings.ToLower(p.URL), sel)
 	})
-	if err == nil && sel == "" && t.device.ID == SimulatorDevice && m.simulatorReserved() {
-		// While agents take turns on the simulator (it is reserved), its
-		// other tabs are earlier agents' work: without a chosen tab, the
-		// first one would be acted on (live run, 2026-11-24: an agent's
-		// first open navigated another run's tab). With several, the
-		// session must choose its own. Without a reservation the first
-		// debuggable page is the session's, as before.
-		n := 0
-		_, _, _ = m.findListed(ctx, req, func(key string, p transport.Page) bool {
-			if strings.Contains(key, "|"+SimulatorDevice+"|") && p.Debuggable {
-				n++
-			}
-			return false
-		})
-		if n > 1 {
-			return pageTarget{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the simulator shows %d tabs, and this session has chosen none; the others may be other agents' work: find yours with 'iwdp-cli tab find --url-file <file>' and select it with 'iwdp-cli tab <id>', or pass --page <id>", ErrNoPage, n)}
-		}
-	}
 	if err != nil || t.key != "" {
 		return t, err
 	}
@@ -479,16 +461,6 @@ func (m *Manager) resolve(ctx context.Context, req PageRequest) (pageTarget, err
 		return pageTarget{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no debuggable page among %d listed; open a page in Safari on the device", ErrNoPage, listed)}
 	}
 	return pageTarget{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no page matches %q among %d listed", ErrNoPage, req.Page, listed)}
-}
-
-// simulatorReserved reports whether an owner holds a live reservation of
-// the simulator (sim reserve).
-func (m *Manager) simulatorReserved() bool {
-	if m.o.Reservations == nil {
-		return false
-	}
-	_, other, err := m.o.Reservations.Check(SimulatorDevice, "")
-	return err == nil && other != nil
 }
 
 // findListed lists the pages of req's transport and returns the first page
@@ -660,17 +632,10 @@ func (m *Manager) preflight(t pageTarget, resOwner string) error {
 	if !t.physical {
 		// Local targets need no reservation; a simulator that another
 		// owner reserved (agents taking turns, sim reserve) is refused.
-		if t.device.ID != SimulatorDevice || m.o.Reservations == nil {
+		if t.device.ID != SimulatorDevice {
 			return nil
 		}
-		mine, other, err := m.o.Reservations.Check(SimulatorDevice, resOwner)
-		if err != nil {
-			return &CodedError{Code: CodeReservation, Err: err}
-		}
-		if mine == nil && other != nil {
-			return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: the simulator is reserved by %q until %s, so its pages belong to that owner's run: run 'iwdp-cli sim reserve' (it waits for that owner), or use --reservation <owner> if your run already holds the reservation under another name", ErrReserved, other.Owner, other.Expires.Format(time.RFC3339))}
-		}
-		return nil
+		return m.SimulatorAdmits(resOwner)
 	}
 	if m.o.Reservations == nil {
 		return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: reservations are not configured", ErrNoReservation)}
@@ -1564,6 +1529,11 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 	if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
 		observe(t.key, t.title)
 	}
+	// The simulator's turns, also on a page that the daemon is attached
+	// to and on a lease that the session holds (simulator_turns.go).
+	if err := m.admitSimulator(ctx, sreq, t, ao.Reservation); err != nil {
+		return nil, 0, time.Time{}, err
+	}
 	if sreq.Page == "" {
 		m.setDefaultPage(ao.Session, sreq, t.key)
 	}
@@ -2333,11 +2303,14 @@ func (m *Manager) sweeper(ctx context.Context) {
 	}
 }
 
-// Sweep releases leases idle for LeaseTTL (with cleanup), closes pages
-// without a lease after IdleClose, and renews the reservations of owners
-// with active leases.
+// Sweep releases leases idle for LeaseTTL (with cleanup), releases the
+// leases on the simulator's pages of owners other than the one that
+// reserves it, closes pages without a lease after IdleClose, and renews,
+// for each active lease, its owner's reservation of the lease's device.
 func (m *Manager) Sweep(now time.Time) {
-	renew := map[string]bool{}
+	type ownerDevice struct{ owner, device string }
+	renew := map[ownerDevice]bool{}
+	simHolder := m.simulatorHolder()
 	for _, pg := range m.allPages() {
 		// The expiry is claimed under the same lock that acquire renews
 		// the lease and counts operations under (design 2.5).
@@ -2350,11 +2323,23 @@ func (m *Manager) Sweep(now time.Time) {
 			resOwner = l.resOwner
 		}
 		expire := l != nil && running == 0 && pg.holders[l.session] == 0 && !pg.releasing && now.Sub(l.lastUsed) >= m.o.LeaseTTL
-		if expire {
+		// Another owner's turn on the simulator began (sim reserve) while
+		// this lease was open, which a run on the free simulator can
+		// leave: the lease ends, so that nothing bound to it (an event
+		// stream, a CDP attachment) goes on in that owner's turn.
+		fence := l != nil && !expire && !pg.releasing && t.device.ID == SimulatorDevice && simHolder != "" && simHolder != resOwner
+		if expire || fence {
 			pg.releasing = true
 		}
 		pg.mu.Unlock()
 		switch {
+		case fence:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := m.releasePage(ctx, pg, l); err != nil {
+				m.pageLogf(t, "simulator lease release: %v", logsafe.Error(err))
+			}
+			cancel()
+			m.pageLogf(t, "lease of %q ended: another owner reserves the simulator", logsafe.ID(l.session))
 		case expire:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := m.releasePage(ctx, pg, l); err != nil {
@@ -2367,7 +2352,7 @@ func (m *Manager) Sweep(now time.Time) {
 			// device's, and the simulator's (sim reserve), whose TTL would
 			// otherwise end a turn that works on its page alone.
 			if (t.physical || t.device.ID == SimulatorDevice) && pg.conn.State() != ConnLost {
-				renew[resOwner] = true
+				renew[ownerDevice{resOwner, t.device.ID}] = true
 			}
 		case running == 0 && now.Sub(last) >= m.o.IdleClose:
 			if m.closeIdle(pg, now) {
@@ -2376,9 +2361,9 @@ func (m *Manager) Sweep(now time.Time) {
 		}
 	}
 	if m.o.Reservations != nil {
-		for owner := range renew {
-			if err := m.o.Reservations.Renew(owner); err != nil {
-				m.o.Logf("renewing the reservation of %q: %v", logsafe.ID(owner), logsafe.Error(err))
+		for od := range renew {
+			if _, err := m.o.Reservations.Renew(od.owner, od.device); err != nil {
+				m.o.Logf("renewing the reservation of %q: %v", logsafe.ID(od.owner), logsafe.Error(err))
 			}
 		}
 	}

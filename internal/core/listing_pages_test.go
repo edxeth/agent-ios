@@ -146,7 +146,7 @@ func TestPageListFailureOfOneOfTwoDevices(t *testing.T) {
 		}
 		none := r.req
 		none.Page = "nowhere"
-		if _, _, err := r.m.ResolvePage(ctx, agent.Session, none); !errors.Is(err, ErrNoPage) || !strings.Contains(err.Error(), `no page matches "nowhere" among 1 listed`) {
+		if _, _, err := r.m.ResolvePage(ctx, agent.Session, "", none); !errors.Is(err, ErrNoPage) || !strings.Contains(err.Error(), `no page matches "nowhere" among 1 listed`) {
 			t.Errorf("ResolvePage(nowhere) = %v; want no page among the 1 listed", err)
 		}
 	})
@@ -157,12 +157,12 @@ func TestPageListFailureOfOneOfTwoDevices(t *testing.T) {
 		failPages(r.dev.ID)
 		other := r.req
 		other.Page = "Other"
-		if lp, _, err := r.m.ResolvePage(ctx, agent.Session, other); err != nil || lp.Title != "Other" {
+		if lp, _, err := r.m.ResolvePage(ctx, agent.Session, "", other); err != nil || lp.Title != "Other" {
 			t.Errorf("ResolvePage(Other) = %+v, %v; want the other device's page", lp, err)
 		}
 		none := r.req
 		none.Page = "nowhere"
-		_, _, err := r.m.ResolvePage(ctx, agent.Session, none)
+		_, _, err := r.m.ResolvePage(ctx, agent.Session, "", none)
 		wantPageListAdvice(t, "a title that matches no listed page", err)
 		_, _, err = r.m.Tabs(ctx, r.req, agent)
 		wantPageListAdvice(t, "tab list", err)

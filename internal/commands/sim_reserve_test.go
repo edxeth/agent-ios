@@ -142,18 +142,25 @@ func TestSimReserveNeedsAnOwnerOfItsOwn(t *testing.T) {
 // free simulator.
 func TestSimGate(t *testing.T) {
 	res := withSimReservations(t)
-	if err := simGate(simInput("x", 0)); err != nil {
+	gate := func(owner string) error {
+		_, end, err := simGate(context.Background(), simInput(owner, 0))
+		if err == nil {
+			end(&err)
+		}
+		return err
+	}
+	if err := gate("x"); err != nil {
 		t.Fatalf("free simulator: %v", err)
 	}
 	r, err := res.Reserve(core.SimulatorDevice, "a", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := simGate(simInput("b", 0)); ExitCodeOf(err) != ExitReservation {
+	if err := gate("b"); ExitCodeOf(err) != ExitReservation {
 		t.Fatalf("another owner: %v, want exit 6", err)
 	}
 	time.Sleep(20 * time.Millisecond)
-	if err := simGate(simInput("a", 0)); err != nil {
+	if err := gate("a"); err != nil {
 		t.Fatal(err)
 	}
 	mine, _, _ := res.Check(core.SimulatorDevice, "a")

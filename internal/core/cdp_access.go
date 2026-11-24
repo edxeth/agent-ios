@@ -49,9 +49,17 @@ func listedOf(t pageTarget) ListedPage {
 // attached page without reading its listing. A caller that lists or
 // attaches the page later (a CDP endpoint record) must use listing, not
 // req.
-func (m *Manager) ResolvePage(ctx context.Context, session string, req PageRequest) (lp ListedPage, listing PageRequest, err error) {
-	t, err := m.resolve(ctx, m.sessionPage(session, req))
+//
+// A simulator page is resolved under the simulator's turn rules for the
+// reservation owner (simulator_turns.go), as for a command.
+func (m *Manager) ResolvePage(ctx context.Context, session, owner string, req PageRequest) (lp ListedPage, listing PageRequest, err error) {
+	ao := AcquireOptions{Session: session, Reservation: owner}.normalized()
+	sreq := m.sessionPage(ao.Session, req)
+	t, err := m.resolve(ctx, sreq)
 	if err != nil {
+		return ListedPage{}, PageRequest{}, err
+	}
+	if err := m.admitSimulator(ctx, sreq, t, ao.Reservation); err != nil {
 		return ListedPage{}, PageRequest{}, err
 	}
 	return listedOf(t), t.listing, nil
@@ -117,6 +125,19 @@ func (m *Manager) LeaseOf(key string) (session string, epoch uint64, ok bool) {
 // late message of a detached attachment cannot lease the page again. ctx
 // must have the operation deadline.
 func (m *Manager) BeginLeased(ctx context.Context, pg *Page, session string, epoch uint64, name string, class Class) (*ManagedOp, error) {
+	// An attachment admitted before another owner reserved the simulator
+	// sends nothing in that owner's turn (simulator_turns.go).
+	pg.mu.Lock()
+	simulator, resOwner := pg.target.device.ID == SimulatorDevice && !pg.target.physical, ""
+	if pg.lease != nil {
+		resOwner = pg.lease.resOwner
+	}
+	pg.mu.Unlock()
+	if simulator {
+		if err := m.SimulatorAdmits(resOwner); err != nil {
+			return nil, fmt.Errorf("%s was not sent: %w", name, err)
+		}
+	}
 	now := time.Now()
 	pg.mu.Lock()
 	l := pg.lease

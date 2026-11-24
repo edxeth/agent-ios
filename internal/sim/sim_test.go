@@ -157,6 +157,7 @@ type fakeMac struct {
 	quitErr   bool   // quitting the Simulator app fails
 	quits     int    // keyboard switches that quit the app
 	watch     bool   // a watchOS simulator is booted
+	opened    func() // runs when simctl opens a URL (a tab appears)
 }
 
 func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -207,6 +208,9 @@ func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte,
 		f.safari = true
 		return nil, nil
 	case strings.HasPrefix(script, "xcrun simctl openurl"):
+		if f.opened != nil {
+			f.opened()
+		}
 		return nil, nil
 	case strings.HasPrefix(script, "defaults read com.apple.iphonesimulator ConnectHardwareKeyboard"):
 		return []byte(map[bool]string{true: "1\n", false: "0\n"}[f.hwKbd]), nil
@@ -426,7 +430,7 @@ type fakeIWDP struct {
 	pagesErr error
 	events   *[]string
 	foreign  bool     // a start or restart leaves another program's iwdp
-	urls     []string // the simulator's page URLs; nil: one page
+	urls     []string // the simulator's page URLs, page i with id "p<i>"; nil: one page
 }
 
 func (f *fakeIWDP) State(context.Context) (IWDPState, error) { return f.st, nil }
@@ -456,17 +460,22 @@ func (f *fakeIWDP) ActiveLeases(context.Context) (int, error) {
 	return n, nil
 }
 
-func (f *fakeIWDP) SimulatorPages(context.Context) ([]string, error) {
+func (f *fakeIWDP) SimulatorPages(context.Context) ([]Page, error) {
 	if f.pagesErr != nil {
 		return nil, f.pagesErr
 	}
 	if !f.st.Listed {
 		return nil, nil
 	}
-	if f.urls != nil {
-		return f.urls, nil
+	urls := f.urls
+	if urls == nil {
+		urls = []string{"http://example.test/"}
 	}
-	return []string{"http://example.test/"}, nil
+	pages := make([]Page, len(urls))
+	for i, u := range urls {
+		pages[i] = Page{ID: fmt.Sprintf("p%d", i), URL: u}
+	}
+	return pages, nil
 }
 
 func newTestSim(t *testing.T, fm *fakeMac, iw *fakeIWDP, cfg Config) (*Sim, *fakeProcs) {
@@ -937,29 +946,77 @@ func TestReachableAsksTwice(t *testing.T) {
 	}
 }
 
-// With --url, Up returns once Safari lists a tab of that URL (path and
-// query as given; a missing path is "/"), and fails, saying how to check
-// the server, when no tab shows it within PageWait.
+// With --url, Up returns once Safari lists a new tab of that URL, compared
+// as tab find compares it: in the browser's form of scheme, host, port and
+// path (a missing path is "/", a default port and dot segments do not
+// count), with the query and fragment as given. It fails, saying how to
+// check the server, when no new tab shows it within PageWait.
 func TestUpWaitsForTheURLsTab(t *testing.T) {
-	fm := readyMac()
-	iw := &fakeIWDP{urls: []string{"http://10.0.2.2:18080/"}}
-	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
-	_, err := s.Up(context.Background(), "", "http://10.0.2.2:8791/", false)
-	if !errors.Is(err, ErrNoURLTab) || !strings.Contains(err.Error(), "127.0.0.1") {
-		t.Fatalf("a URL that no tab shows: %v", err)
+	cases := []struct {
+		target, listed string
+		want           bool
+	}{
+		{"http://10.0.2.2:8791/", "http://10.0.2.2:18080/", false},
+		{"http://10.0.2.2:8791/index.html?x=1#top", "http://10.0.2.2:8791/index.html?x=1#top", true},
+		{"http://10.0.2.2:8791/index.html?x=1", "http://10.0.2.2:8791/index.html?x=1#top", false},
+		{"http://10.0.2.2:8791/index.html", "http://10.0.2.2:8791/index.html?x=1", false},
+		{"http://10.0.2.2:8791/index.html?x=2", "http://10.0.2.2:8791/index.html?x=1", false},
+		{"http://10.0.2.2:8791/?", "http://10.0.2.2:8791/", false},
+		{"http://10.0.2.2:8791", "http://10.0.2.2:8791/", true},
+		{"http://10.0.2.2:80/a/../b", "http://10.0.2.2/b", true},
+		{"https://Example.TEST:443/./a", "https://example.test/a", true},
 	}
-	iw.urls = append(iw.urls, "http://10.0.2.2:8791/index.html?x=1#top")
-	for _, u := range []string{"http://10.0.2.2:8791/index.html", "http://10.0.2.2:8791/index.html?x=1"} {
-		if r, err := s.Up(context.Background(), "", u, false); err != nil || !r.TabOpened || r.Pages != 2 {
-			t.Fatalf("Up(%s) = %+v, %v", u, r, err)
+	for _, c := range cases {
+		fm := readyMac()
+		iw := &fakeIWDP{urls: []string{"http://10.0.2.2:18080/"}}
+		fm.opened = func() { iw.urls = append(iw.urls, c.listed) }
+		s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+		r, err := s.Up(context.Background(), "", c.target, false)
+		if c.want && (err != nil || !r.TabOpened || r.Pages != 2) {
+			t.Errorf("Up(%s) with the new tab %s = %+v, %v; want its tab", c.target, c.listed, r, err)
+		}
+		if !c.want && (!errors.Is(err, ErrNoURLTab) || !strings.Contains(err.Error(), "127.0.0.1")) {
+			t.Errorf("Up(%s) with the new tab %s = %v; want ErrNoURLTab that says how to check the server", c.target, c.listed, err)
 		}
 	}
-	if _, err := s.Up(context.Background(), "", "http://10.0.2.2:8791/index.html?x=2", false); err == nil {
-		t.Fatal("a tab with another query counted as the URL's")
+}
+
+// A tab that was open before Up, an earlier run's with the same URL, is
+// no proof that Safari opened the URL now (review F7): Up waits for a new
+// tab and fails with ErrNoURLTab, naming the earlier tab, when none comes.
+func TestUpNeedsANewTabOfTheURL(t *testing.T) {
+	const u = "http://10.0.2.2:8791/"
+	fm := readyMac()
+	iw := &fakeIWDP{urls: []string{u}}
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	_, err := s.Up(context.Background(), "", u, false)
+	if !errors.Is(err, ErrNoURLTab) || !strings.Contains(err.Error(), "open before") {
+		t.Fatalf("only an earlier tab shows the URL: %v, want ErrNoURLTab naming the earlier tab", err)
 	}
-	iw.urls = []string{"http://10.0.2.2:8791/"}
-	if r, err := s.Up(context.Background(), "", "http://10.0.2.2:8791", false); err != nil || !r.TabOpened {
-		t.Fatalf("a URL without a path: %+v, %v", r, err)
+	fm.opened = func() { iw.urls = append(iw.urls, u) }
+	if r, err := s.Up(context.Background(), "", u, false); err != nil || !r.TabOpened || r.Pages != 2 {
+		t.Fatalf("a new tab of the URL beside the earlier one: %+v, %v", r, err)
+	}
+}
+
+// A page list that fails is not proof that no tab shows the URL (review
+// F8): Up returns the listing error, not ErrNoURLTab (exit 7), whether the
+// list fails before or after the open.
+func TestUpListingFailureIsNotANoURLTab(t *testing.T) {
+	listingErr := errors.New("listing unavailable")
+	for _, failBefore := range []bool{true, false} {
+		fm := readyMac()
+		iw := &fakeIWDP{}
+		if failBefore {
+			iw.pagesErr = listingErr
+		} else {
+			fm.opened = func() { iw.pagesErr = listingErr }
+		}
+		s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+		_, err := s.Up(context.Background(), "", "http://10.0.2.2:8791/", false)
+		if errors.Is(err, ErrNoURLTab) || !errors.Is(err, listingErr) {
+			t.Errorf("listing fails (before the open: %t): %v, want the listing error", failBefore, err)
+		}
 	}
 }
 

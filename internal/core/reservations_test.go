@@ -37,8 +37,8 @@ func TestReservations(t *testing.T) {
 		t.Fatalf("bob releases alice's reservation: %v", err)
 	}
 	now = now.Add(50 * time.Minute)
-	if err := rs.Renew("alice"); err != nil {
-		t.Fatalf("Renew: %v", err)
+	if ok, err := rs.Renew("alice", "udid-1"); err != nil || !ok {
+		t.Fatalf("Renew: %t, %v", ok, err)
 	}
 	now = now.Add(50 * time.Minute) // 100 min after the start, 50 after the renewal
 	if mine, _, _ := rs.Check("udid-1", "alice"); mine == nil {

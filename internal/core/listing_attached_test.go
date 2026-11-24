@@ -69,11 +69,11 @@ func TestAttachedPageResolvesWithoutTheListing(t *testing.T) {
 	if again, _, err := r.m.Touch(ctx, byKey, agent); err != nil || again != pg {
 		t.Fatalf("Touch of the page key = %v, %v; want the attached page", again, err)
 	}
-	lp, _, err := r.m.ResolvePage(ctx, agent.Session, byKey)
+	lp, _, err := r.m.ResolvePage(ctx, agent.Session, "", byKey)
 	if err != nil || lp.Key != pg.Key || lp.Title != "Fixture" {
 		t.Fatalf("ResolvePage of the page key = %+v, %v; want the attached page", lp, err)
 	}
-	lp, listing, err := r.m.ResolvePage(ctx, agent.Session, r.req)
+	lp, listing, err := r.m.ResolvePage(ctx, agent.Session, "", r.req)
 	if err != nil || lp.Key != pg.Key {
 		t.Fatalf("ResolvePage without a page for the session of the attach = %+v, %v; want its default page, the attached one", lp, err)
 	}
@@ -90,7 +90,7 @@ func TestAttachedPageResolvesWithoutTheListing(t *testing.T) {
 	byTitle.Page = "Fixture"
 	_, _, err = r.m.Touch(ctx, byTitle, agent)
 	wantListingAdvice(t, "a page selected by title", err)
-	_, _, err = r.m.ResolvePage(ctx, "s2", r.req)
+	_, _, err = r.m.ResolvePage(ctx, "s2", "", r.req)
 	wantListingAdvice(t, "ResolvePage without a page for another session", err)
 	_, err = r.m.ListPages(ctx, r.req)
 	wantListingAdvice(t, "ListPages", err)

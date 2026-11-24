@@ -21,6 +21,7 @@ import (
 	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
 	"github.com/nnemirovsky/iwdp-cli/internal/sim"
+	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
 // The simulator commands: sim up, sim status and sim down manage an iOS
@@ -111,10 +112,12 @@ func init() {
 		Summary: "Type <text> into the simulator's focused field as key presses (sim tap the field first). The text is on the command lines of this host and the Mac: never type a secret this way; fill --stdin types into a page without that." + touch,
 		Args:    []Arg{{Name: "text", Help: "the text to type", Required: true}},
 		Flags:   []Flag{device},
-		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
-			if err := simGate(in); err != nil {
+		Run: func(ctx context.Context, env Env, in Input) (_ Result, err error) {
+			ctx, end, err := simGate(ctx, in)
+			if err != nil {
 				return Result{}, err
 			}
+			defer end(&err)
 			s, err := newSim(env)
 			if err != nil {
 				return Result{}, err
@@ -219,9 +222,8 @@ func (h hostIWDP) ActiveLeases(ctx context.Context) (int, error) {
 	return ActiveLeases(ctx, h.env)
 }
 
-// SimulatorPages returns the URLs of the SIMULATOR device's pages in
-// iwdp's listing.
-func (h hostIWDP) SimulatorPages(ctx context.Context) ([]string, error) {
+// SimulatorPages returns the SIMULATOR device's pages in iwdp's listing.
+func (h hostIWDP) SimulatorPages(ctx context.Context) ([]sim.Page, error) {
 	ds, err := proxy.ListDevicesContext(ctx)
 	if err != nil {
 		return nil, err
@@ -243,17 +245,15 @@ func (h hostIWDP) SimulatorPages(ctx context.Context) ([]string, error) {
 			return nil, fmt.Errorf("reading the simulator's pages: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		var pages []struct {
-			URL string `json:"url"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&pages); err != nil {
+		var entries []webkit.PageEntry
+		if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
 			return nil, fmt.Errorf("reading the simulator's pages: %w", err)
 		}
-		urls := make([]string, len(pages))
-		for i, p := range pages {
-			urls[i] = p.URL
+		pages := make([]sim.Page, len(entries))
+		for i, e := range entries {
+			pages[i] = sim.Page{ID: e.WebSocketDebuggerURL, URL: e.URL}
 		}
-		return urls, nil
+		return pages, nil
 	}
 	return nil, errors.New("ios_webkit_debug_proxy does not list the simulator")
 }
@@ -284,10 +284,12 @@ func simDid(done bool, yes, no string) string {
 	return no
 }
 
-func runSimUp(ctx context.Context, env Env, in Input) (Result, error) {
-	if err := simGate(in); err != nil {
+func runSimUp(ctx context.Context, env Env, in Input) (_ Result, err error) {
+	ctx, end, err := simGate(ctx, in)
+	if err != nil {
 		return Result{}, err
 	}
+	defer end(&err)
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
@@ -378,10 +380,12 @@ func simShotPath(in Input) (string, error) {
 	return out, nil
 }
 
-func runSimScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
-	if err := simGate(in); err != nil {
+func runSimScreenshot(ctx context.Context, env Env, in Input) (_ Result, err error) {
+	ctx, end, err := simGate(ctx, in)
+	if err != nil {
 		return Result{}, err
 	}
+	defer end(&err)
 	out, err := simShotPath(in)
 	if err != nil {
 		return Result{}, err
@@ -501,10 +505,12 @@ func simSwipeArgs(in Input) ([]string, error) {
 	return args, nil
 }
 
-func runSimTouch(ctx context.Context, env Env, in Input, args []string, done string) (Result, error) {
-	if err := simGate(in); err != nil {
+func runSimTouch(ctx context.Context, env Env, in Input, args []string, done string) (_ Result, err error) {
+	ctx, end, err := simGate(ctx, in)
+	if err != nil {
 		return Result{}, err
 	}
+	defer end(&err)
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
@@ -515,7 +521,7 @@ func runSimTouch(ctx context.Context, env Env, in Input, args []string, done str
 	return Result{Text: done}, nil
 }
 
-func runSimKeyboard(ctx context.Context, env Env, in Input) (Result, error) {
+func runSimKeyboard(ctx context.Context, env Env, in Input) (_ Result, err error) {
 	mode := arg(in, 0)
 	if mode != "" && mode != "onscreen" && mode != "hardware" {
 		return Result{}, usagef("sim keyboard: the mode is onscreen or hardware, not %q", mode)
@@ -532,9 +538,11 @@ func runSimKeyboard(ctx context.Context, env Env, in Input) (Result, error) {
 		m := simDid(hw, "hardware", "onscreen")
 		return Result{Text: "keyboard: " + m, Data: map[string]any{"mode": m, "changed": false}}, nil
 	}
-	if err := simGate(in); err != nil {
+	ctx, end, err := simGate(ctx, in)
+	if err != nil {
 		return Result{}, err
 	}
+	defer end(&err)
 	s.RestartAnyway, _ = in.Flags["restart-iwdp"].(bool)
 	changed, r, err := s.Keyboard(ctx, flagString(in, "device"), mode == "onscreen")
 	if err != nil {
@@ -547,10 +555,12 @@ func runSimKeyboard(ctx context.Context, env Env, in Input) (Result, error) {
 	return Result{Text: text, Data: map[string]any{"mode": mode, "changed": changed}}, nil
 }
 
-func runSimUI(ctx context.Context, env Env, in Input) (Result, error) {
-	if err := simGate(in); err != nil {
+func runSimUI(ctx context.Context, env Env, in Input) (_ Result, err error) {
+	ctx, end, err := simGate(ctx, in)
+	if err != nil {
 		return Result{}, err
 	}
+	defer end(&err)
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err
@@ -593,10 +603,12 @@ func simReservedText(st sim.Status) string {
 	return fmt.Sprintf("by %q until %s at the latest: another agent's run; run iwdp-cli sim reserve, which waits", st.ReservedBy, st.ReservedUntil.Format(time.RFC3339))
 }
 
-func runSimDown(ctx context.Context, env Env, in Input) (Result, error) {
-	if err := simGate(in); err != nil {
+func runSimDown(ctx context.Context, env Env, in Input) (_ Result, err error) {
+	ctx, end, err := simGate(ctx, in)
+	if err != nil {
 		return Result{}, err
 	}
+	defer end(&err)
 	s, err := newSim(env)
 	if err != nil {
 		return Result{}, err

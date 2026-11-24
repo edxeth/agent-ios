@@ -24,6 +24,7 @@ func init() {
 	Register(&Command{
 		Name:      "tab list",
 		Summary:   "List the pages of the device as tabs t1, t2, ... with labels; * marks this session's current tab.",
+		Flags:     []Flag{tabDeviceFlag},
 		RetrySafe: true, Output: OutputText,
 		Run: runTabList,
 	})
@@ -69,6 +70,9 @@ const (
 	tabReleaseBudget = 5 * time.Second
 )
 
+// tabDeviceFlag limits tab list and tab find to the pages of one device.
+var tabDeviceFlag = Flag{Name: "device", Type: FlagString, Help: "only the pages of this device: SIMULATOR (the iOS Simulator) or a UDID; other devices' pages are neither listed nor counted as hidden"}
+
 func tabRequest(in Input, page string) core.PageRequest {
 	return core.PageRequest{Transport: in.Global.Transport, Page: page}
 }
@@ -83,7 +87,7 @@ func runTabList(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	tabs, hidden, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
+	tabs, hidden, err := m.DeviceTabs(ctx, tabRequest(in, ""), acquireFor(in), flagString(in, "device"))
 	if err != nil {
 		return Result{}, err
 	}
