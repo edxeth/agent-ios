@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
 )
 
 // Agents taking turns on the simulator (iwdp-cli sim reserve): while an
 // owner reserves the simulator, its pages are that owner's run. The rules
-// hold on every way to a simulator page, not only on a first connection:
+// hold on every way to a simulator page, not only on a first connection
+// (device_admission.go, which applies them with the physical devices'):
 //
 //   - every admission (touch: a command, a CDP attachment's Touch, also on
 //     a connection and a lease that the daemon already holds) and every CDP
@@ -51,30 +50,10 @@ func (m *Manager) simulatorTurn(owner string) (mine bool, err error) {
 	return r != nil, nil
 }
 
-// simulatorHolder is the owner of the live reservation of the simulator,
-// "" when it is free, not configured or unreadable (logged).
-func (m *Manager) simulatorHolder() string {
-	if m.o.Reservations == nil {
-		return ""
-	}
-	_, r, err := m.o.Reservations.Check(SimulatorDevice, "")
-	if err != nil {
-		m.o.Logf("reading the simulator's reservation: %v", logsafe.Error(err))
-		return ""
-	}
-	if r == nil {
-		return ""
-	}
-	return r.Owner
-}
-
-// admitSimulator applies the rules above to the admission of t, resolved
-// from sreq (sessionPage's request: Page is "" when the session chose no
-// page), for resOwner. Other targets pass.
+// admitSimulator applies the rules above to the admission of t, a page of
+// the simulator, resolved from sreq (sessionPage's request: Page is "" when
+// the session chose no page), for resOwner (admitTarget).
 func (m *Manager) admitSimulator(ctx context.Context, sreq PageRequest, t pageTarget, resOwner string) error {
-	if t.device.ID != SimulatorDevice || t.physical {
-		return nil
-	}
 	mine, err := m.simulatorTurn(resOwner)
 	if err != nil || !mine || sreq.Page != "" {
 		return err

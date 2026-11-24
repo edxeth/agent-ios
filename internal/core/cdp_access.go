@@ -26,10 +26,13 @@ type ListedPage struct {
 	URL    string
 	Device transport.Device
 	Page   transport.Page
+	// Physical: the device is a physical one, whose pages need its
+	// reservation (physicalDevice, PageAdmits).
+	Physical bool
 }
 
 func listedOf(t pageTarget) ListedPage {
-	return ListedPage{Key: t.key, Title: t.title, URL: t.url, Device: t.device, Page: t.page}
+	return ListedPage{Key: t.key, Title: t.title, URL: t.url, Device: t.device, Page: t.page, Physical: t.physical}
 }
 
 // ResolvePage resolves req as the page of a command of session (design
@@ -50,8 +53,8 @@ func listedOf(t pageTarget) ListedPage {
 // attaches the page later (a CDP endpoint record) must use listing, not
 // req.
 //
-// A simulator page is resolved under the simulator's turn rules for the
-// reservation owner (simulator_turns.go), as for a command.
+// The page is resolved under the reservation rule of its device for the
+// reservation owner (device_admission.go), as for a command.
 func (m *Manager) ResolvePage(ctx context.Context, session, owner string, req PageRequest) (lp ListedPage, listing PageRequest, err error) {
 	ao := AcquireOptions{Session: session, Reservation: owner}.normalized()
 	sreq := m.sessionPage(ao.Session, req)
@@ -59,7 +62,7 @@ func (m *Manager) ResolvePage(ctx context.Context, session, owner string, req Pa
 	if err != nil {
 		return ListedPage{}, PageRequest{}, err
 	}
-	if err := m.admitSimulator(ctx, sreq, t, ao.Reservation); err != nil {
+	if err := m.admitTarget(ctx, sreq, t, ao.Reservation); err != nil {
 		return ListedPage{}, PageRequest{}, err
 	}
 	return listedOf(t), t.listing, nil
@@ -97,7 +100,7 @@ func (m *Manager) ListPages(ctx context.Context, req PageRequest) ([]ListedPage,
 		for _, p := range pages {
 			// The same key as findListed gives the page.
 			key := string(tr.Kind()) + "|" + d.ID + "|" + p.ID
-			out = append(out, ListedPage{Key: key, Title: p.Title, URL: p.URL, Device: d, Page: p})
+			out = append(out, ListedPage{Key: key, Title: p.Title, URL: p.URL, Device: d, Page: p, Physical: physicalDevice(tr.Kind(), d.ID)})
 		}
 	}
 	return out, nil
@@ -125,18 +128,18 @@ func (m *Manager) LeaseOf(key string) (session string, epoch uint64, ok bool) {
 // late message of a detached attachment cannot lease the page again. ctx
 // must have the operation deadline.
 func (m *Manager) BeginLeased(ctx context.Context, pg *Page, session string, epoch uint64, name string, class Class) (*ManagedOp, error) {
-	// An attachment admitted before another owner reserved the simulator
-	// sends nothing in that owner's turn (simulator_turns.go).
+	// An attachment admitted before its owner lost the device's
+	// reservation (another owner's simulator turn, a physical device's
+	// reservation released, expired or moved) sends nothing
+	// (device_admission.go).
 	pg.mu.Lock()
-	simulator, resOwner := pg.target.device.ID == SimulatorDevice && !pg.target.physical, ""
+	device, physical, resOwner := pg.target.device, pg.target.physical, ""
 	if pg.lease != nil {
 		resOwner = pg.lease.resOwner
 	}
 	pg.mu.Unlock()
-	if simulator {
-		if err := m.SimulatorAdmits(resOwner); err != nil {
-			return nil, fmt.Errorf("%s was not sent: %w", name, err)
-		}
+	if err := m.admits(device, physical, resOwner); err != nil {
+		return nil, fmt.Errorf("%s was not sent: %w", name, err)
 	}
 	now := time.Now()
 	pg.mu.Lock()

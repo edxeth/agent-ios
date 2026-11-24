@@ -185,13 +185,16 @@ func TestRevokeCancelsAdmittedHTTPActions(t *testing.T) {
 // repeated issuing, with the same or another owner, runs beside discovery
 // on the same record without a data race (go test -race), and discovery
 // uses the owner of the latest issue. (Review reproductions
-// TestReviewConcurrentIssue and TestReviewIssueWhileListing.)
+// TestReviewConcurrentIssue and TestReviewIssueWhileListing.) The selected
+// page is the free simulator's, which admits every owner: a phone's page
+// admits only the owner of its reservation (device_turns_test.go).
 func TestReissueBesideDiscovery(t *testing.T) {
 	r := newRig(t)
-	ep := r.issue(t, "s1", "One", ScopeDevice)
+	r.addPage(t, r.l.AddDevice(core.SimulatorDevice, "Simulator", ""), "Sim")
+	ep := r.issue(t, "s1", "Sim", ScopeDevice)
 	issueAs := func(owner string) Endpoint {
 		req := r.req
-		req.Page = "One"
+		req.Page = "Sim"
 		e, err := r.srv.Issue(ctxFor(t, 5*time.Second), IssueRequest{Session: "s1", Reservation: owner, Page: req, Scope: ScopeDevice})
 		if err != nil {
 			t.Errorf("Issue as %s: %v", owner, err)
@@ -226,12 +229,12 @@ func TestReissueBesideDiscovery(t *testing.T) {
 	if e := issueAs("o2"); e.WS != ep.WS {
 		t.Fatalf("issuing again with owner o2 gave another record")
 	}
-	if got := titles(); got != "One" {
-		t.Errorf("device scope for owner o2 (no reservation) lists %s, want One", got)
+	if got := titles(); got != "Sim" {
+		t.Errorf("device scope for owner o2 (no reservation) lists %s, want Sim", got)
 	}
 	issueAs("o1")
-	if got := titles(); got != "One,Two" {
-		t.Errorf("device scope for owner o1 (device A reserved) lists %s, want One,Two", got)
+	if got := titles(); got != "Sim,One,Two" {
+		t.Errorf("device scope for owner o1 (device A reserved) lists %s, want Sim,One,Two", got)
 	}
 }
 

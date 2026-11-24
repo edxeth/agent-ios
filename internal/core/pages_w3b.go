@@ -103,38 +103,27 @@ func (m *Manager) DeviceTabs(ctx context.Context, req PageRequest, ao AcquireOpt
 	ao = ao.normalized()
 	session := ao.Session
 	var out []Tab
-	reserved := map[string]bool{} // device id -> its pages are listed for ao's reservation owner
+	admitted := map[string]bool{} // device id -> its pages are listed for ao's reservation owner
 	var resErr error
 	visit := func(key string, p transport.Page) bool {
 		// The key is "<kind>|<device id>|<page id>" (findListed).
 		kind, rest, _ := strings.Cut(key, "|")
 		device, _, _ := strings.Cut(rest, "|")
-		if physicalDevice(transport.Kind(kind), device) {
-			mine, seen := reserved[device]
-			if !seen && m.o.Reservations != nil && resErr == nil {
-				var r *Reservation
-				r, _, resErr = m.o.Reservations.Check(device, ao.Reservation)
-				mine = r != nil
-				reserved[device] = mine
+		// The reservation rule of the device (device_admission.go): an
+		// unreserved physical device's pages, and the simulator's while
+		// another owner reserves it (sim reserve), are hidden.
+		ok, seen := admitted[device]
+		if !seen && resErr == nil {
+			err := m.admits(transport.Device{ID: device}, physicalDevice(transport.Kind(kind), device), ao.Reservation)
+			if err != nil && !refused(err) {
+				resErr = err
 			}
-			if !mine {
-				hidden++
-				return false
-			}
-		} else if device == SimulatorDevice && m.o.Reservations != nil && resErr == nil {
-			// The simulator's pages are another owner's while that owner
-			// reserves it (sim reserve): hidden like an unreserved device's.
-			free, seen := reserved[device]
-			if !seen {
-				var mine, other *Reservation
-				mine, other, resErr = m.o.Reservations.Check(device, ao.Reservation)
-				free = mine != nil || other == nil
-				reserved[device] = free
-			}
-			if !free {
-				hidden++
-				return false
-			}
+			ok = err == nil
+			admitted[device] = ok
+		}
+		if !ok {
+			hidden++
+			return false
 		}
 		out = append(out, Tab{Key: key, Title: p.Title, URL: redactURL(p.URL), Debuggable: p.Debuggable, DeviceID: device})
 		return false

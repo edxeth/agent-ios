@@ -632,28 +632,13 @@ func (m *Manager) urlTarget(u string, req PageRequest) pageTarget {
 // ---- ownership preflight (design 2.5) ----
 
 func (m *Manager) preflight(t pageTarget, resOwner string) error {
-	if !t.physical {
-		// Local targets need no reservation; a simulator that another
-		// owner reserved (agents taking turns, sim reserve) is refused.
-		if t.device.ID != SimulatorDevice {
-			return nil
-		}
-		return m.SimulatorAdmits(resOwner)
+	// The reservation rule of t's device (device_admission.go): local
+	// targets need no reservation, a physical device the owner's, and a
+	// simulator that another owner reserved (sim reserve) is refused.
+	if err := m.admits(t.device, t.physical, resOwner); err != nil {
+		return err
 	}
-	if m.o.Reservations == nil {
-		return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: reservations are not configured", ErrNoReservation)}
-	}
-	mine, other, err := m.o.Reservations.Check(t.device.ID, resOwner)
-	if err != nil {
-		return &CodedError{Code: CodeReservation, Err: err}
-	}
-	if mine == nil {
-		if other != nil {
-			return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: device %s is reserved by %q until %s; wait, or ask that owner", ErrReserved, t.device.Label, other.Owner, other.Expires.Format(time.RFC3339))}
-		}
-		return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w for %q: a physical device needs one before any page connection; run 'iwdp-cli device reserve --owner %s' (or set IWDP_DEVICE_RESERVATION to the owner of an existing reservation)", ErrNoReservation, resOwner, resOwner)}
-	}
-	if t.page.Ownership == transport.OwnershipBusy {
+	if t.physical && t.page.Ownership == transport.OwnershipBusy {
 		return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %w", t.title, ErrPageBusy)}
 	}
 	return nil
@@ -1529,11 +1514,12 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 	if err != nil {
 		return nil, 0, time.Time{}, err
 	}
-	// The simulator's turns, also on a page that the daemon is attached
-	// to and on a lease that the session holds (simulator_turns.go). It
-	// runs before the observer, which streams the page's key and title to
-	// the client: a refused owner learns neither.
-	if err := m.admitSimulator(ctx, sreq, t, ao.Reservation); err != nil {
+	// The reservation rule of the page's device, also on a page that the
+	// daemon is attached to and on a lease that the session holds
+	// (device_admission.go). It runs before the observer, which streams
+	// the page's key and title to the client: a refused owner learns
+	// neither.
+	if err := m.admitTarget(ctx, sreq, t, ao.Reservation); err != nil {
 		return nil, 0, time.Time{}, err
 	}
 	if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
@@ -2309,8 +2295,9 @@ func (m *Manager) sweeper(ctx context.Context) {
 }
 
 // Sweep releases leases idle for LeaseTTL (with cleanup), releases the
-// leases on the simulator's pages of owners other than the one that
-// reserves it, closes pages without a lease after IdleClose, and renews,
+// leases of owners that the page's device no longer admits (another
+// owner's simulator turn, a physical device without the owner's
+// reservation), closes pages without a lease after IdleClose, and renews,
 // for each active lease, its owner's reservation of the lease's device.
 func (m *Manager) Sweep(now time.Time) {
 	type ownerDevice struct{ owner, device string }
@@ -2330,17 +2317,24 @@ func (m *Manager) Sweep(now time.Time) {
 			resOwner = l.resOwner
 		}
 		expire := l != nil && running == 0 && pg.holders[l.session] == 0 && !pg.releasing && now.Sub(l.lastUsed) >= m.o.LeaseTTL
-		// Another owner's turn on the simulator began (sim reserve) while
-		// this lease was open, which a run on the free simulator can
-		// leave: the lease ends, so that nothing bound to it (an event
-		// stream, a CDP attachment) goes on in that owner's turn. The
-		// holder is read here, under pg.mu, where a lease is granted: a
-		// holder read at the start of the sweep can be an owner whose turn
-		// ended since, and would fence the next owner's lease (review F14).
+		// The page's device no longer admits the lease's owner
+		// (device_admission.go): another owner's turn on the simulator
+		// began (sim reserve) while this lease was open, which a run on
+		// the free simulator can leave, or the owner's reservation of a
+		// physical device was released or expired, or moved to another
+		// owner. The lease ends, so that nothing bound to it (an event
+		// stream, a CDP attachment) goes on without the reservation. The
+		// reservation is read here, under pg.mu, where a lease is granted:
+		// one read at the start of the sweep can be of an owner whose turn
+		// ended since, and would fence the next owner's lease (review
+		// F14). A reservation that cannot be read fences nothing (logged).
 		fence := false
-		if l != nil && !expire && !pg.releasing && t.device.ID == SimulatorDevice {
-			holder := m.simulatorHolder()
-			fence = holder != "" && holder != resOwner
+		if l != nil && !expire && !pg.releasing && (t.physical || t.device.ID == SimulatorDevice) {
+			if err := m.admits(t.device, t.physical, resOwner); refused(err) {
+				fence = true
+			} else if err != nil {
+				m.pageLogf(t, "sweep: %v", logsafe.Error(err))
+			}
 		}
 		if expire || fence {
 			pg.releasing = true
@@ -2350,10 +2344,10 @@ func (m *Manager) Sweep(now time.Time) {
 		case fence:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := m.releasePage(ctx, pg, l); err != nil {
-				m.pageLogf(t, "simulator lease release: %v", logsafe.Error(err))
+				m.pageLogf(t, "fenced lease release: %v", logsafe.Error(err))
 			}
 			cancel()
-			m.pageLogf(t, "lease of %q ended: another owner reserves the simulator", logsafe.ID(l.session))
+			m.pageLogf(t, "lease of %q ended: its owner does not hold the device's reservation", logsafe.ID(l.session))
 		case expire:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := m.releasePage(ctx, pg, l); err != nil {
