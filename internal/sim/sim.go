@@ -123,7 +123,12 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 	// was read: a page list that keeps failing is that error instead.
 	wait, cancel := context.WithTimeout(ctx, s.PageWait)
 	defer cancel()
-	var before map[string]bool // the tabs listed before the open
+	// The tabs listed before the open, by id, with the URL each showed: a
+	// tab that showed another URL before is the open's too, since Safari
+	// opens a URL in an empty tab it has (live run, 2026-11-24: right after
+	// a Safari reset, its one about:blank tab took the URL, and sim up
+	// counted it as an earlier turn's).
+	var before map[string]string
 	if openURL != "" {
 		var lastErr error
 		_ = s.until(wait, "Safari's tabs are listed", func() (bool, error) {
@@ -132,9 +137,9 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 			if lastErr != nil {
 				return false, nil
 			}
-			before = map[string]bool{}
+			before = map[string]string{}
 			for _, p := range pages {
-				before[p.ID] = true
+				before[p.ID] = p.URL
 			}
 			return true, nil
 		})
@@ -165,7 +170,7 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 		for _, p := range pages {
 			switch {
 			case !sameURL(p.URL, openURL):
-			case p.ID == "" || before[p.ID]:
+			case p.ID == "" || shownBefore(before, p.ID, openURL):
 				// A tab without an id (not offered for debugging) is
 				// not known to be new.
 				earlier = true
@@ -709,4 +714,11 @@ func (s *Sim) Down(ctx context.Context, device string, mac bool) (DownReport, er
 		r.MacStopped = true
 	}
 	return r, nil
+}
+
+// shownBefore reports whether the tab id was listed before the open
+// showing openURL already: only such a tab can be an earlier turn's.
+func shownBefore(before map[string]string, id, openURL string) bool {
+	u, ok := before[id]
+	return ok && sameURL(u, openURL)
 }

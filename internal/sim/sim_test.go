@@ -1330,3 +1330,19 @@ func TestShellQuoteProperty(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Safari opens a URL in an empty tab it has: a tab listed before the open
+// with another URL that now shows openURL is the open's tab, not an
+// earlier turn's (live run, 2026-11-24: after a Safari reset its one
+// about:blank tab took the URL and sim up failed with exit 7).
+func TestUpTakesAReusedEmptyTab(t *testing.T) {
+	const u = "http://10.0.2.2:8791/"
+	fm := readyMac()
+	iw := &fakeIWDP{urls: []string{"about:blank"}}
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	fm.opened = func() { iw.urls[0] = u }
+	r, err := s.Up(context.Background(), "", u, false)
+	if err != nil || !r.TabOpened || r.NewPage != "p0" || r.SharedURL {
+		t.Fatalf("the reused empty tab: %+v, %v", r, err)
+	}
+}
