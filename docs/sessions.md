@@ -43,7 +43,7 @@ The daemon cannot see every inspector client: another agent's script, an older i
    Without `--device` the reservation covers every device. It fails when another owner holds a live reservation. The reservation is renewed while the owner holds leases. A page command without a matching reservation fails with exit 6.
 2. The reservation owner of a command is `--reservation <owner>` or `IWDP_DEVICE_RESERVATION`, else the session name. An orchestrator can reserve once and give its workers its owner name in `IWDP_DEVICE_RESERVATION` (for example `export IWDP_DEVICE_RESERVATION="$OWNER"`).
 3. Release at the end of the run: `iwdp-cli device release --owner <owner>`. `device list` shows the live reservations.
-4. Local targets (WebKitGTK, simulators) need no reservation.
+4. WebKitGTK needs no reservation. An iOS Simulator over SSH is shared by taking turns with `iwdp-cli sim reserve` and `sim release` instead ([simulator.md](simulator.md)): its own reservation, which hides its tabs from other owners and ends 2 minutes after the owner's last use. A simulator without such a reservation needs none.
 5. Before the first attach to a page, the daemon checks the reservation and then a busy hint: iwdp lists an empty `devtoolsFrontendUrl` for a page that already has a client, but only when iwdp runs with its frontend. With `--no-frontend` (how iwdp-cli starts it) ownership is unknown, and the attach is accepted only inside a reservation.
 6. **Hints and reservations are not locks.** They do not stop a client that ignores reservations (another tool, a raw script, Safari Web Inspector).
 7. Tab discovery (`tab list`) and the CDP endpoint list only pages of devices that the owner reserved.
