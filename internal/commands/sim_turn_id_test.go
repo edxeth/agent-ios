@@ -111,3 +111,69 @@ func TestSimCommandWithLostTurnFailsEvenOnNilResult(t *testing.T) {
 		t.Fatalf("command that lost its turn and returned nil ended with %v (exit %d), want exit 6", result, ExitCodeOf(result))
 	}
 }
+
+// Final review F4: a command that returns before its first renewal still
+// checks its turn at completion. Its owner released the simulator and
+// reserved it again (a new turn), or another owner reserved the free
+// simulator: the command fails with exit 6, and the owner's new turn is
+// not renewed.
+func TestSimCommandChecksItsTurnAtCompletion(t *testing.T) {
+	t.Run("own turn replaced", func(t *testing.T) {
+		res := &core.Reservations{Dir: t.TempDir()}
+		if _, err := res.Reserve(core.SimulatorDevice, "a", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		gateWith(t, res, time.Hour)
+		_, end, err := simGate(context.Background(), simInput("a", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := res.Release(core.SimulatorDevice, "a"); err != nil {
+			t.Fatal(err)
+		}
+		next, err := res.Reserve(core.SimulatorDevice, "a", time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result error
+		end(&result)
+		if ExitCodeOf(result) != ExitReservation || !errors.Is(result, errSimTurnLost) {
+			t.Fatalf("command whose turn was replaced before it returned: %v (exit %d), want exit 6", result, ExitCodeOf(result))
+		}
+		if mine, _, err := res.Check(core.SimulatorDevice, "a"); err != nil || mine == nil || mine.ID != next.ID || !mine.Expires.Equal(next.Expires) {
+			t.Fatalf("a's new turn after the command: %+v, %v; want it unchanged (%+v)", mine, err, next)
+		}
+	})
+	t.Run("free simulator taken", func(t *testing.T) {
+		res := &core.Reservations{Dir: t.TempDir()}
+		gateWith(t, res, time.Hour)
+		_, end, err := simGate(context.Background(), simInput("a", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := res.Reserve(core.SimulatorDevice, "b", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		var result error
+		end(&result)
+		if ExitCodeOf(result) != ExitReservation || !errors.Is(result, errSimTurnLost) {
+			t.Fatalf("command on a free simulator that b reserved before it returned: %v (exit %d), want exit 6", result, ExitCodeOf(result))
+		}
+	})
+	t.Run("turn held", func(t *testing.T) {
+		res := &core.Reservations{Dir: t.TempDir()}
+		if _, err := res.Reserve(core.SimulatorDevice, "a", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		gateWith(t, res, time.Hour)
+		_, end, err := simGate(context.Background(), simInput("a", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result error
+		end(&result)
+		if result != nil {
+			t.Fatalf("command that kept its turn: %v, want success", result)
+		}
+	})
+}

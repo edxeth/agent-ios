@@ -193,7 +193,11 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 // When the reservation ended (released, expired) or another owner reserved
 // the simulator, the context ends and the command stops acting; end then
 // makes its error the exit 6 that says so, also when the command itself
-// returned nil. A reservation that cannot be read ends the command too.
+// returned nil. A command that returned nil before the goroutine saw the
+// end checks its turn once more in end (final review F4): a lost turn
+// there is the same exit 6, and it renews only the command's own turn
+// (its ID), never a later one. A reservation that cannot be read ends the
+// command too.
 // The command holds the turn it started in (the reservation's ID): when
 // its owner releases the simulator and reserves it again, that is a new
 // turn, and the command stops.
@@ -246,6 +250,8 @@ func simGate(ctx context.Context, in Input) (context.Context, func(*error), erro
 		// nil because its context ended.
 		if lost := context.Cause(ctx); lost != nil && errors.Is(lost, errSimTurnLost) {
 			*err = lost
+		} else if *err == nil {
+			*err = simTurnHeld(rs, o, turn)
 		}
 		cancel(nil)
 	}
