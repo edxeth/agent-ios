@@ -64,6 +64,8 @@ Boolean options, global (`--json`, `--content-boundaries`, `--takeover`, `--priv
 
 Durations of the global options `--timeout`, `IWDP_TIMEOUT` and `--wait-lease` are a Go duration or a bare whole number of seconds: `5s` and `5` both mean five seconds, `1m30s` and `90` both mean ninety seconds.
 
+The duration flags of commands (for example `sim reserve --wait` and `--ttl`, `device reserve --ttl`, `network route --delay`, `daemon start --idle`) take a Go duration (`300ms`, `40s`, `1m30s`) or a bare non-negative number of seconds: `--wait 40` is `--wait 40s`, and `--delay 1.5` is one and a half seconds. The exception is the typing delay of `type --delay` and `keyboard --delay`, which other tools give in milliseconds: it needs a unit (`--delay 50ms`), and a bare number there is a usage error (exit 2) rather than a guess. The reference names the form of each flag.
+
 Arguments and flags of registry commands: only the exact flags of the command (its reference entry) and the global flags are flags. Another token that starts with `--` is a usage error (exit 2). Every other token is an argument, also one with a single leading dash that is not a short flag of the command: `eval -1`, `eval '-Math.abs(2)'` and `fill '#amount' -5` work (quote what the shell would change). `--` ends the flags: `eval -- --x` evaluates `--x`.
 
 ## The agentic loop

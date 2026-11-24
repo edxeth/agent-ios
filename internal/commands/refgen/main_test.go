@@ -78,6 +78,7 @@ func TestRenderCommandSection(t *testing.T) {
 		Flags: []commands.Flag{
 			{Name: "mode", Type: commands.FlagEnum, Enum: []string{"wip", "js"}, Default: "wip", Help: "how"},
 			{Name: "delay", Short: "d", Type: commands.FlagDuration, Help: "wait"},
+			{Name: "pause", Type: commands.FlagDuration, NeedsUnit: true, Help: "pause"},
 			{Name: "quiet", Type: commands.FlagBool, Help: "less output"},
 		},
 		Run: func(context.Context, commands.Env, commands.Input) (commands.Result, error) {
@@ -93,7 +94,8 @@ func TestRenderCommandSection(t *testing.T) {
 		"in it.\n\n- Aliases: `nw`\n- Page: leases the session's page\n",
 		"| `<target>` | yes | a ref \\| selector |\n| `<rest>...` | no | more |\n",
 		"| `--mode` | `wip`, `js` | how (default `wip`) |\n",
-		"| `-d`, `--delay` | duration | wait |\n",
+		"| `-d`, `--delay` | duration (40s, 1m30s) or seconds (40) | wait |\n",
+		"| `--pause` | duration with a unit (50ms, 1s) | pause |\n",
 		"| `--quiet` | none | less output |\n",
 		"\n### `zz local`\n\n```\niwdp-cli zz local\n```\n\nLocal thing.\n\n- Page: none; runs in the client process, not in the daemon\n",
 	} {

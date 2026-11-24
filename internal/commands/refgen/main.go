@@ -154,7 +154,10 @@ func flagValue(f commands.Flag) string {
 	case commands.FlagInt:
 		return "integer"
 	case commands.FlagDuration:
-		return "duration"
+		if f.NeedsUnit {
+			return "duration with a unit (50ms, 1s)"
+		}
+		return "duration (40s, 1m30s) or seconds (40)"
 	case commands.FlagPath:
 		return "file path"
 	case commands.FlagEnum:

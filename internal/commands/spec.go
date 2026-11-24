@@ -45,6 +45,10 @@ type Flag struct {
 	Help    string
 	Enum    []string // FlagEnum values
 	Default string   // shown in help; parsed like a given value
+	// NeedsUnit: a FlagDuration whose value must carry a unit; a bare
+	// number is refused instead of read as seconds (parseDuration), for a
+	// flag whose bare numbers other tools read as milliseconds.
+	NeedsUnit bool
 }
 
 // PageNeed says whether a command needs a page.

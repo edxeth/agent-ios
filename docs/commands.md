@@ -375,7 +375,7 @@ Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeou
 | Flag | Value | Description |
 |---|---|---|
 | `--addr` | text | listing or inspector address of the --transport (webkitgtk: the WEBKIT_INSPECTOR_HTTP_SERVER address) |
-| `--idle` | duration | exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m) |
+| `--idle` | duration (40s, 1m30s) or seconds (40) | exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m) |
 | `--cdp-port` | integer | start the CDP endpoint on 127.0.0.1:\<port\> with the daemon, and use the port for later starts (default: the endpoint starts only on 'cdp start' or 'get cdp-url', on port 9230) |
 
 ### `daemon start`
@@ -391,7 +391,7 @@ Start the daemon in the background unless it runs.
 | Flag | Value | Description |
 |---|---|---|
 | `--addr` | text | listing or inspector address of the --transport (webkitgtk: the WEBKIT_INSPECTOR_HTTP_SERVER address) |
-| `--idle` | duration | exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m) |
+| `--idle` | duration (40s, 1m30s) or seconds (40) | exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m) |
 | `--cdp-port` | integer | start the CDP endpoint on 127.0.0.1:\<port\> with the daemon, and use the port for later starts (default: the endpoint starts only on 'cdp start' or 'get cdp-url', on port 9230) |
 
 ### `daemon status`
@@ -472,7 +472,7 @@ Reserve a physical device for an owner, so that only that owner's sessions attac
 |---|---|---|
 | `--device` | text | device UDID; \* reserves every device (default `*`) |
 | `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
-| `--ttl` | duration | lifetime, renewed while the owner holds leases (default `2h`) |
+| `--ttl` | duration (40s, 1m30s) or seconds (40) | lifetime, renewed while the owner holds leases (default `2h`) |
 
 ### `devices`
 
@@ -797,7 +797,7 @@ Type into the focused element (keyboard type \<text\>) or insert text without ke
 
 | Flag | Value | Description |
 |---|---|---|
-| `--delay` | duration | type: pause between characters |
+| `--delay` | duration with a unit (50ms, 1s) | type: pause between characters |
 
 ### `keydown`
 
@@ -967,7 +967,7 @@ Abort, fulfill or delay requests whose URL matches: a glob with \* and \*\* matc
 | `--body` | text | answer with this body |
 | `--status` | integer | answer with this HTTP status (default 200 with --body) |
 | `--content-type` | text | Content-Type of the answer (default text/plain) |
-| `--delay` | duration | hold the request this long first |
+| `--delay` | duration (40s, 1m30s) or seconds (40) | hold the request this long first |
 | `--mode` | `wip`, `js` | wip: WebKit request interception; js: patch fetch and XMLHttpRequest in the page (default `wip`) |
 
 ### `network unroute`
@@ -1434,8 +1434,8 @@ Reserve the simulator for an owner, waiting up to --wait while another owner hol
 | Flag | Value | Description |
 |---|---|---|
 | `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
-| `--ttl` | duration | lifetime after the owner's last use, at least 30s (a running sim command renews it, and an open page lease keeps renewing it) (default `2m`) |
-| `--wait` | duration | how long to wait for another owner's reservation to end, at most 10m (keep it under your tool's timeout) (default `50s`) |
+| `--ttl` | duration (40s, 1m30s) or seconds (40) | lifetime after the owner's last use, at least 30s (a running sim command renews it, and an open page lease keeps renewing it) (default `2m`) |
+| `--wait` | duration (40s, 1m30s) or seconds (40) | how long to wait for another owner's reservation to end, at most 10m (keep it under your tool's timeout) (default `50s`) |
 
 ### `sim screenshot`
 
@@ -1856,7 +1856,7 @@ Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) i
 
 | Flag | Value | Description |
 |---|---|---|
-| `--delay` | duration | pause between characters; each character is then one step |
+| `--delay` | duration with a unit (50ms, 1s) | pause between characters; each character is then one step |
 | `--force` | none | skip the actionability checks (attached, visible, stable, enabled, receives events) |
 
 ### `uncheck`

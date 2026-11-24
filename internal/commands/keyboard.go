@@ -44,7 +44,7 @@ func init() {
 			{Name: "target", Help: "input, textarea or contenteditable: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator; omit it to type into the focused element"},
 			{Name: "text", Help: "the text; a newline is the Enter key", Required: true},
 		},
-		Flags:   []Flag{{Name: "delay", Type: FlagDuration, Help: "pause between characters; each character is then one step"}, forceFlag},
+		Flags:   []Flag{{Name: "delay", Type: FlagDuration, NeedsUnit: true, Help: "pause between characters; each character is then one step"}, forceFlag},
 		Timeout: typeTimeout,
 		Run:     runType,
 	})
@@ -52,7 +52,7 @@ func init() {
 		Name:    "keyboard",
 		Summary: "Type into the focused element (keyboard type <text>) or insert text without key events (keyboard inserttext <text>).",
 		Args:    []Arg{{Name: "mode", Help: "type or inserttext", Required: true}, {Name: "text", Help: "the text", Required: true}},
-		Flags:   []Flag{{Name: "delay", Type: FlagDuration, Help: "type: pause between characters"}},
+		Flags:   []Flag{{Name: "delay", Type: FlagDuration, NeedsUnit: true, Help: "type: pause between characters"}},
 		Timeout: typeTimeout,
 		Run:     runKeyboard,
 	})

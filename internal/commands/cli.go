@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -494,11 +495,7 @@ func parseFlagValue(f Flag, v string) (any, error) {
 		}
 		return b, nil
 	case FlagDuration:
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return nil, fmt.Errorf("flag --%s: %q is not a duration such as 300ms", f.Name, v)
-		}
-		return d, nil
+		return parseDuration(f, v)
 	case FlagEnum:
 		for _, e := range f.Enum {
 			if v == e {
@@ -508,6 +505,44 @@ func parseFlagValue(f Flag, v string) (any, error) {
 		return nil, fmt.Errorf("flag --%s: %q is not one of %s", f.Name, v, strings.Join(f.Enum, ", "))
 	}
 	return v, nil
+}
+
+// bareSeconds matches a bare non-negative number: whole ("40") or with a
+// decimal fraction ("1.5").
+var bareSeconds = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+// parseDuration parses the value of the FlagDuration f: a Go duration
+// ("300ms", "40s", "1m30s"), or a bare non-negative number of seconds
+// ("40" is 40s, "1.5" is 1.5s), which agents write for flags such as
+// sim reserve --wait. A flag with NeedsUnit refuses the bare number.
+func parseDuration(f Flag, v string) (time.Duration, error) {
+	if bareSeconds.MatchString(v) {
+		if f.NeedsUnit {
+			return 0, fmt.Errorf("flag --%s: %q has no unit; write it with one, such as 50ms or 1s (a bare number is not read as seconds here, since other tools read it as milliseconds)", f.Name, v)
+		}
+		d, err := time.ParseDuration(v + "s")
+		if err != nil {
+			return 0, fmt.Errorf("flag --%s: %q seconds is not a valid duration: %w", f.Name, v, err)
+		}
+		return d, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		if f.NeedsUnit {
+			return 0, fmt.Errorf("flag --%s: %q is not a duration such as 50ms or 1s", f.Name, v)
+		}
+		return 0, fmt.Errorf("flag --%s: %q is not a duration such as 300ms or 40s, nor a number of seconds such as 40", f.Name, v)
+	}
+	return d, nil
+}
+
+// durationHelp is the help text that Help appends to the help of the
+// FlagDuration f: the forms its value takes.
+func durationHelp(f Flag) string {
+	if f.NeedsUnit {
+		return "a duration with a unit, such as 50ms or 1s"
+	}
+	return "a duration such as 40s or 1m30s, or a number of seconds such as 40"
 }
 
 // Help returns the help text of c.
@@ -547,6 +582,9 @@ func Help(c *Command) string {
 			h := f.Help
 			if f.Type == FlagEnum {
 				h += " (" + strings.Join(f.Enum, "|") + ")"
+			}
+			if f.Type == FlagDuration {
+				h += " (" + durationHelp(f) + ")"
 			}
 			if f.Default != "" {
 				h += " (default " + f.Default + ")"
