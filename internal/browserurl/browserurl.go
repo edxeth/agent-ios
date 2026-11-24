@@ -1,6 +1,6 @@
 // Package browserurl tells, from the text of two URLs alone, whether a
-// browser can show them as the same document: tab find's prefilter, and
-// sim up's check that Safari lists the tab of its --url. It reads each
+// browser can show them as the same document: tab find's prefilter (sim
+// up's readiness uses exact equality instead, internal/sim/url.go). It reads each
 // part in the form that a browser writes (WHATWG URL) only when that form
 // is certain from the text.
 package browserurl
