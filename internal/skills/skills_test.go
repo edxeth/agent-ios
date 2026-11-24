@@ -167,22 +167,10 @@ func readRepo(t *testing.T, path string) string {
 	return string(data)
 }
 
-// readmeLine returns the line of README.md that starts with prefix, the
-// install hints that the stub repeats.
-func readmeLine(t *testing.T, prefix string) string {
-	t.Helper()
-	for _, line := range strings.Split(readRepo(t, "README.md"), "\n") {
-		if strings.HasPrefix(line, prefix) {
-			return line
-		}
-	}
-	t.Fatalf("README.md has no line that starts with %q", prefix)
-	return ""
-}
-
 // The iwdp stub states each instruction that design 7.9 (skill layout)
-// and the WS6 brief require of it, in this wording; the install hint is
-// README's.
+// and the WS6 brief require of it, in this wording. The owner dropped the
+// install hint from the stub (2026-11-24): this local fork is installed
+// from its checkout.
 func TestIwdpStubStatesTheRequiredInstructions(t *testing.T) {
 	stub := readRepo(t, "skills/iwdp/SKILL.md")
 	for _, c := range []struct {
@@ -193,7 +181,6 @@ func TestIwdpStubStatesTheRequiredInstructions(t *testing.T) {
 		{"load the guide before any other iwdp-cli command", []string{"Before you run any other `iwdp-cli` command, load the guide that matches the installed binary", "Run `iwdp-cli skills get iwdp`."}},
 		{"read the guide by line range", []string{"read it by line range"}},
 		{"--help prints one command's flags and never connects", []string{"`iwdp-cli <command> --help` prints the flags of one command and never connects to a page."}},
-		{"README's install hint", []string{"`" + readmeLine(t, "go install ") + "`", "`" + readmeLine(t, "brew install ") + "`"}},
 		{"what iwdp-cli is", []string{"Safari speaks the WebKit Inspector Protocol", "CDP clients such as agent-browser", "`iwdp-cli get cdp-url`"}},
 		{"why it only points at the CLI", []string{"The CLI serves the guide of its own version.", "so it only points at the CLI"}},
 	} {
