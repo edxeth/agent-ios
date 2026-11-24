@@ -192,8 +192,11 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 // TTL), or, admitted on a free simulator, checks that it is still free.
 // When the reservation ended (released, expired) or another owner reserved
 // the simulator, the context ends and the command stops acting; end then
-// makes its error the exit 6 that says so. A reservation that cannot be
-// read ends the command too.
+// makes its error the exit 6 that says so, also when the command itself
+// returned nil. A reservation that cannot be read ends the command too.
+// The command holds the turn it started in (the reservation's ID): when
+// its owner releases the simulator and reserves it again, that is a new
+// turn, and the command stops.
 func simGate(ctx context.Context, in Input) (context.Context, func(*error), error) {
 	rs, err := SimReservations()
 	if err != nil {
@@ -209,10 +212,11 @@ func simGate(ctx context.Context, in Input) (context.Context, func(*error), erro
 			"%w: the simulator is reserved by %q until %s at the latest: another agent is using it. Run 'iwdp-cli sim reserve' (it waits), then this command",
 			core.ErrReserved, other.Owner, other.Expires.Format(time.RFC3339))}
 	}
-	held := mine != nil
-	if held {
-		if _, err := rs.Renew(o, core.SimulatorDevice); err != nil {
-			return nil, nil, &core.CodedError{Code: ExitReservation, Err: err}
+	var turn *core.Reservation // nil: admitted on a free simulator
+	if mine != nil {
+		turn = mine
+		if err := simTurnHeld(rs, o, turn); err != nil {
+			return nil, nil, err
 		}
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -229,7 +233,7 @@ func simGate(ctx context.Context, in Input) (context.Context, func(*error), erro
 				return
 			case <-t.C:
 			}
-			if err := simTurnHeld(rs, o, held); err != nil {
+			if err := simTurnHeld(rs, o, turn); err != nil {
 				cancel(err)
 				return
 			}
@@ -238,7 +242,9 @@ func simGate(ctx context.Context, in Input) (context.Context, func(*error), erro
 	end := func(err *error) {
 		close(stopped)
 		<-done
-		if lost := context.Cause(ctx); *err != nil && lost != nil && errors.Is(lost, errSimTurnLost) {
+		// A lost turn decides the result: the command may have returned
+		// nil because its context ended.
+		if lost := context.Cause(ctx); lost != nil && errors.Is(lost, errSimTurnLost) {
 			*err = lost
 		}
 		cancel(nil)
@@ -250,17 +256,17 @@ func simGate(ctx context.Context, in Input) (context.Context, func(*error), erro
 // turn on the simulator ended while it ran (simGate).
 var errSimTurnLost = errors.New("the simulator's turn ended while the command ran")
 
-// simTurnHeld renews owner's reservation of the simulator (held) or checks
-// that the simulator is still free (not held); its error says why the
-// command must stop.
-func simTurnHeld(rs *core.Reservations, owner string, held bool) error {
-	if held {
-		ok, err := rs.Renew(owner, core.SimulatorDevice)
+// simTurnHeld renews owner's reservation of the simulator in turn (the one
+// with turn's ID) or, when turn is nil, checks that the simulator is still
+// free; its error says why the command must stop.
+func simTurnHeld(rs *core.Reservations, owner string, turn *core.Reservation) error {
+	if turn != nil {
+		ok, err := rs.RenewTurn(owner, core.SimulatorDevice, turn.ID)
 		switch {
 		case err != nil:
 			return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: renewing the reservation: %w", errSimTurnLost, err)}
 		case !ok:
-			return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: the reservation of %q was released or expired, so the command stopped; run 'iwdp-cli sim reserve' (it waits), then this command", errSimTurnLost, owner)}
+			return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: the reservation of %q that the command started in was released or expired, so the command stopped; run 'iwdp-cli sim reserve' (it waits), then this command", errSimTurnLost, owner)}
 		}
 		return nil
 	}

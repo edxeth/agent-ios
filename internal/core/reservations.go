@@ -1,6 +1,7 @@
 package core
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,11 @@ type Reservation struct {
 	Created time.Time     `json:"created"`
 	Expires time.Time     `json:"expires"`
 	TTL     time.Duration `json:"ttl"`
+	// ID names the turn: a new random value when Reserve creates the
+	// reservation, kept when the owner renews it. A command that runs in
+	// a turn renews only the reservation of its ID (RenewTurn), so it does
+	// not hold its owner's next turn. Files of earlier versions have none.
+	ID string `json:"id,omitempty"`
 }
 
 // Live reports whether r has not expired at now.
@@ -130,6 +136,8 @@ var ErrReserved = errors.New("the device is reserved by another owner")
 
 // Reserve creates or renews owner's reservation of device for ttl. It
 // fails when another owner holds a live reservation that covers device.
+// A renewal (owner's live reservation of device) keeps its ID; a new
+// reservation gets a new one.
 func (rs *Reservations) Reserve(device, owner string, ttl time.Duration) (Reservation, error) {
 	if owner == "" {
 		return Reservation{}, fmt.Errorf("reserve: an owner name is required (--owner)")
@@ -144,12 +152,19 @@ func (rs *Reservations) Reserve(device, owner string, ttl time.Duration) (Reserv
 			return err
 		}
 		now := rs.now()
+		id, renewal := "", false
 		for _, r := range all {
 			if r.Live(now) && r.Covers(device) && r.Owner != owner {
 				return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: device %s is reserved by %q until %s", ErrReserved, deviceText(r.Device), r.Owner, r.Expires.Format(time.RFC3339))}
 			}
+			if r.Live(now) && r.Device == device && r.Owner == owner {
+				id, renewal = r.ID, true
+			}
 		}
-		out = Reservation{Device: device, Owner: owner, Created: now, Expires: now.Add(ttl), TTL: ttl}
+		if !renewal {
+			id = rand.Text()
+		}
+		out = Reservation{Device: device, Owner: owner, Created: now, Expires: now.Add(ttl), TTL: ttl, ID: id}
 		return rs.writeLocked(out)
 	})
 	return out, err
@@ -223,6 +238,16 @@ func (rs *Reservations) Check(device, owner string) (mine, other *Reservation, e
 // reverse (Covers keeps the simulator apart). An expired or released
 // reservation is not renewed, so a renewal never takes a turn again.
 func (rs *Reservations) Renew(owner, device string) (bool, error) {
+	return rs.renew(owner, device, nil)
+}
+
+// RenewTurn is Renew of the reservation with ID id alone: a command that
+// started in that turn holds it, and not a later turn of the same owner.
+func (rs *Reservations) RenewTurn(owner, device, id string) (bool, error) {
+	return rs.renew(owner, device, &id)
+}
+
+func (rs *Reservations) renew(owner, device string, id *string) (bool, error) {
 	renewed := false
 	err := rs.withLock(func() error {
 		all, err := rs.listLocked()
@@ -231,7 +256,7 @@ func (rs *Reservations) Renew(owner, device string) (bool, error) {
 		}
 		now := rs.now()
 		for _, r := range all {
-			if r.Owner == owner && r.Live(now) && r.Covers(device) {
+			if r.Owner == owner && r.Live(now) && r.Covers(device) && (id == nil || r.ID == *id) {
 				r.Expires = now.Add(r.TTL)
 				if err := rs.writeLocked(r); err != nil {
 					return err

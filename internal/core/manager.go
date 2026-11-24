@@ -319,6 +319,9 @@ type Manager struct {
 	// lease grant, connection install (reattach, recover), and release
 	// begin and end.
 	lifecycleHook func(ev lifecycleEvent)
+	// sweepPageHook, when set (tests only), runs in Sweep for each page
+	// before the sweep takes its lock.
+	sweepPageHook func(pg *Page)
 	// installChecked, when set (tests only), runs in a background recovery
 	// under pg.mu after the install check passed and before the swap.
 	installChecked func(pg *Page)
@@ -2312,8 +2315,10 @@ func (m *Manager) sweeper(ctx context.Context) {
 func (m *Manager) Sweep(now time.Time) {
 	type ownerDevice struct{ owner, device string }
 	renew := map[ownerDevice]bool{}
-	simHolder := m.simulatorHolder()
 	for _, pg := range m.allPages() {
+		if m.sweepPageHook != nil {
+			m.sweepPageHook(pg)
+		}
 		// The expiry is claimed under the same lock that acquire renews
 		// the lease and counts operations under (design 2.5).
 		pg.mu.Lock()
@@ -2328,8 +2333,15 @@ func (m *Manager) Sweep(now time.Time) {
 		// Another owner's turn on the simulator began (sim reserve) while
 		// this lease was open, which a run on the free simulator can
 		// leave: the lease ends, so that nothing bound to it (an event
-		// stream, a CDP attachment) goes on in that owner's turn.
-		fence := l != nil && !expire && !pg.releasing && t.device.ID == SimulatorDevice && simHolder != "" && simHolder != resOwner
+		// stream, a CDP attachment) goes on in that owner's turn. The
+		// holder is read here, under pg.mu, where a lease is granted: a
+		// holder read at the start of the sweep can be an owner whose turn
+		// ended since, and would fence the next owner's lease (review F14).
+		fence := false
+		if l != nil && !expire && !pg.releasing && t.device.ID == SimulatorDevice {
+			holder := m.simulatorHolder()
+			fence = holder != "" && holder != resOwner
+		}
 		if expire || fence {
 			pg.releasing = true
 		}
