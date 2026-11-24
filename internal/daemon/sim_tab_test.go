@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -52,5 +53,29 @@ func TestSimulatorTabSelectsTheNewTab(t *testing.T) {
 
 	if id, err := commands.SimulatorTab(ctx, lifecycleHost{o}, in, "ws://127.0.0.1:1/devtools/page/404"); err != nil || id != "" {
 		t.Fatalf("SimulatorTab of a page that is not listed = %q, %v; want none", id, err)
+	}
+}
+
+// Final review F1: under IWDP_NO_DAEMON=1 the core lives for one command,
+// so a tab id that it hands out does not reach the next command, whose own
+// core numbers the tabs of another listing. SimulatorTab gives no id there
+// and starts no core: sim up then prints the tab find route in its text,
+// its JSON and its private output (TestSimUpPrintsTheNewTabsID).
+func TestSimulatorTabGivesNoIDWithoutADaemon(t *testing.T) {
+	noDaemonCore(t)
+	// A canceled context: an in-process core that started anyway would
+	// fail its hello instead of reading this host's iwdp listing.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	in := commands.Input{Global: commands.Globals{Session: "s1"}}
+	id, err := commands.SimulatorTab(ctx, lifecycleHost{Options{Dir: shortDir(t)}}, in, "ws://127.0.0.1:1/devtools/page/1")
+	if id != "" || err != nil {
+		t.Fatalf("SimulatorTab under IWDP_NO_DAEMON=1 = %q, %v; want no id and no error", id, err)
+	}
+	inproc.mu.Lock()
+	started := inproc.l != nil
+	inproc.mu.Unlock()
+	if started {
+		t.Fatal("SimulatorTab started an in-process core for an id that cannot outlive the command")
 	}
 }

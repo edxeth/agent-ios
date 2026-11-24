@@ -51,8 +51,14 @@ func init() {
 // returns the id of the tab whose page key is the iwdp page pageID of the
 // simulator ("" when the listing does not have it). It starts the daemon
 // when none runs, as the tab command that selects the tab would: the
-// daemon keeps the ids for its life.
+// daemon keeps the ids for its life. Under IWDP_NO_DAEMON=1 it gives no
+// id ("") and starts nothing: the in-process core ends with this command,
+// and the next command's core numbers the tabs of another listing, so its
+// "tab <id>" could select another device's page (final review F1).
 func simulatorTab(ctx context.Context, env commands.Env, in commands.Input, pageID string) (string, error) {
+	if NoDaemon() {
+		return "", nil
+	}
 	h, err := hostOf(env)
 	if err != nil {
 		return "", err
