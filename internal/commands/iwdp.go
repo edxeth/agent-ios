@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
+	"github.com/nnemirovsky/iwdp-cli/internal/sim"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 )
 
@@ -68,10 +70,12 @@ func iwdpLogLine(path string, err error) string {
 
 // statusData is the --json form of status.
 type statusData struct {
-	Running  bool   `json:"running"`
-	Devices  *int   `json:"devices,omitempty"`  // listed devices, without iwdp's SIMULATOR entry; nil in a status that fails
-	Log      string `json:"log,omitempty"`      // the iwdp log's path
-	LogError string `json:"logError,omitempty"` // why that path is unknown
+	Running bool `json:"running"`
+	Devices *int `json:"devices,omitempty"` // listed devices, without iwdp's SIMULATOR entry; nil in a status that fails
+	// SimulatorConfigured: no device is listed and a simulator is configured.
+	SimulatorConfigured bool   `json:"simulatorConfigured,omitempty"`
+	Log                 string `json:"log,omitempty"`      // the iwdp log's path
+	LogError            string `json:"logError,omitempty"` // why that path is unknown
 }
 
 // statusDevices is the number of devices that the iwdp at addr lists,
@@ -126,13 +130,35 @@ func runStatus(ctx context.Context, _ Env, _ Input) (Result, error) {
 			}
 		}
 		data.Devices = &n
-		return Result{Text: fmt.Sprintf("ios_webkit_debug_proxy is running\ndevices: %d\n", n) + line, Data: data}, nil
+		text := fmt.Sprintf("ios_webkit_debug_proxy is running\ndevices: %d\n", n)
+		if n == 0 && simConfigured() {
+			// devices counts no simulator: say where the simulator is, or
+			// "devices 0" reads as "no iOS target" (live run, 2026-11-24:
+			// an agent stopped there).
+			data.SimulatorConfigured = true
+			text += simulatorHint + "\n"
+		}
+		return Result{Text: text + line, Data: data}, nil
 	}
 	if errors.Is(err, proxy.ErrNotListening) {
 		return Result{}, &withResult{Result: Result{Text: "ios_webkit_debug_proxy is NOT running\n" + line, Data: data}, Err: errNotRunning()}
 	}
 	// A process owns the listing address but does not answer as iwdp.
 	return Result{}, &withResult{Result: Result{Text: line, Data: data}, Err: err}
+}
+
+// simulatorHint is status's line for a configured simulator.
+const simulatorHint = "simulator: an iOS Simulator is configured (devices counts none): run 'iwdp-cli sim reserve', then 'iwdp-cli sim up --url <your page>'"
+
+// simConfigured reports whether a simulator configuration exists (sim
+// commands); tests replace it.
+var simConfigured = func() bool {
+	path, err := sim.ConfigPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
 }
 
 // errNotRunning is the error of an iwdp listing address that nothing

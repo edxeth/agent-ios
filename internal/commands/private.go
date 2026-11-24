@@ -932,8 +932,9 @@ func sessionSummary(data json.RawMessage) (string, any, bool) {
 // which names the user.
 func statusSummary(data json.RawMessage) (string, any, bool) {
 	var st struct {
-		Running *bool `json:"running"`
-		Devices *int  `json:"devices"`
+		Running             *bool `json:"running"`
+		Devices             *int  `json:"devices"`
+		SimulatorConfigured bool  `json:"simulatorConfigured"`
 	}
 	if json.Unmarshal(data, &st) != nil || st.Running == nil {
 		return "", nil, false
@@ -942,6 +943,10 @@ func statusSummary(data json.RawMessage) (string, any, bool) {
 	if st.Devices != nil {
 		text += fmt.Sprintf("\ndevices %d", *st.Devices)
 		value["devices"] = *st.Devices
+	}
+	if st.SimulatorConfigured {
+		text += "\n" + simulatorHint
+		value["simulatorConfigured"] = true
 	}
 	return text, value, true
 }

@@ -182,3 +182,30 @@ func TestAFailedCommandThatCannotWriteItsResultPrintsOnePrivateLine(t *testing.T
 		t.Fatalf("status: exit %d, stderr %q; want exit 1, the error of the write and the error of the command", code, errOut.String())
 	}
 }
+
+// With no device listed and a simulator configured, status says how to
+// use the simulator, in private mode too: "devices 0" alone read as "no
+// iOS target", and an agent stopped there (live run, 2026-11-24). Without
+// a configuration, or with a device, it prints the count alone.
+func TestStatusPointsAtAConfiguredSimulator(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `[{"deviceId":"SIMULATOR","deviceName":"SIMULATOR","url":"127.0.0.1:9225"}]`)
+	}))
+	t.Cleanup(srv.Close)
+	useStatusListing(t, strings.TrimPrefix(srv.URL, "http://"))
+	saved := simConfigured
+	t.Cleanup(func() { simConfigured = saved })
+	simConfigured = func() bool { return true }
+	code, out, _ := runStatusCLI("--private", "status")
+	if code != ExitOK || out != "iwdp answers: true\ndevices 0\n"+simulatorHint+"\n" {
+		t.Fatalf("--private status with a simulator: exit %d, stdout %q", code, out)
+	}
+	if _, out, _ := runStatusCLI("status"); !strings.Contains(out, "devices: 0\n"+simulatorHint+"\n") {
+		t.Fatalf("status with a simulator: %q", out)
+	}
+	simConfigured = func() bool { return false }
+	if _, out, _ := runStatusCLI("--private", "status"); out != "iwdp answers: true\ndevices 0\n" {
+		t.Fatalf("--private status without a simulator: %q", out)
+	}
+}
