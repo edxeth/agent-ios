@@ -135,7 +135,10 @@ func (f *Forward) is(r forwardRecord) (bool, error) {
 	}
 	start, token, err := f.Procs.Identify(r.PID)
 	if err != nil {
-		if errors.Is(f.Procs.Signal(r.PID, 0), syscall.ESRCH) { // it ended meanwhile
+		// It ended meanwhile, or it is a zombie that its parent has not
+		// reaped yet: signal 0 still reaches a zombie, but its environment
+		// reads as ESRCH (live run, 2026-11-24).
+		if errors.Is(err, syscall.ESRCH) || errors.Is(f.Procs.Signal(r.PID, 0), syscall.ESRCH) {
 			return false, nil
 		}
 		return false, fmt.Errorf("identifying the forward's ssh, pid %d: %w", r.PID, err)

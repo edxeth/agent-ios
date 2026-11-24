@@ -430,10 +430,12 @@ func simTapArgs(in Input) ([]string, error) {
 		}
 		args = append(args, "-x", in.Args[0], "-y", in.Args[1])
 	case len(in.Args) == 0 && (label == "") != (id == ""):
+		// One word with "=", so that a value such as "-x" stays the
+		// value and is not read as an option.
 		if label != "" {
-			args = append(args, "--label", label)
+			args = append(args, "--label="+label)
 		} else {
-			args = append(args, "--id", id)
+			args = append(args, "--id="+id)
 		}
 	default:
 		return nil, usagef("sim tap: give <x> <y>, or one of --label and --id")

@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -461,8 +462,12 @@ func (s *Sim) Keyboard(ctx context.Context, device string, onscreen bool) (bool,
 	if err != nil {
 		return false, UpReport{}, err
 	}
-	for _, o := range ds {
-		if o.UDID != d.UDID && o.State == "Booted" {
+	booted, err := s.Mac.BootedAll(ctx)
+	if err != nil {
+		return false, UpReport{}, err
+	}
+	for _, o := range booted {
+		if o.UDID != d.UDID {
 			return false, UpReport{}, fmt.Errorf("sim keyboard: the simulator %s (%s) also runs, and quitting the Simulator app would shut it down: shut it down first", o.Name, o.UDID)
 		}
 	}
@@ -483,7 +488,7 @@ func (s *Sim) Keyboard(ctx context.Context, device string, onscreen bool) (bool,
 	}
 	r, err := s.Up(ctx, d.UDID, "", false)
 	if err != nil {
-		return true, r, fmt.Errorf("the keyboard is now %s, but bringing the simulator back failed (run iwdp-cli sim up): %w", map[bool]string{true: "onscreen", false: "hardware"}[onscreen], err)
+		return true, r, fmt.Errorf("the keyboard is now %s, but bringing the simulator back failed (run iwdp-cli sim up --device %s): %w", map[bool]string{true: "onscreen", false: "hardware"}[onscreen], d.UDID, err)
 	}
 	return true, r, nil
 }
@@ -531,14 +536,16 @@ type uiFrame struct{ X, Y, Width, Height float64 }
 // object or an array is "" (AXe reports values of several types).
 func scalarText(v json.RawMessage) string {
 	var x any
-	if len(v) == 0 || json.Unmarshal(v, &x) != nil {
+	dec := json.NewDecoder(bytes.NewReader(v))
+	dec.UseNumber() // a number keeps its digits, also beyond float64
+	if len(v) == 0 || dec.Decode(&x) != nil {
 		return ""
 	}
 	switch x := x.(type) {
 	case string:
 		return x
-	case float64:
-		return strconv.FormatFloat(x, 'f', -1, 64)
+	case json.Number:
+		return x.String()
 	case bool:
 		return strconv.FormatBool(x)
 	}

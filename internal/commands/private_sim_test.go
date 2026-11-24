@@ -107,6 +107,10 @@ func TestSimTapNeedsAPointOrAnElement(t *testing.T) {
 	if args, err := simTapArgs(Input{Args: []string{"201", "571"}, Flags: map[string]any{"hold": "1"}}); err != nil || strings.Join(args, " ") != "tap -x 201 -y 571 --hold 1" {
 		t.Errorf("point: %q, %v", args, err)
 	}
+	// A label that looks like an option stays the label's value.
+	if args, err := simTapArgs(Input{Flags: map[string]any{"label": "-x"}}); err != nil || strings.Join(args, "|") != "tap|--label=-x" {
+		t.Errorf("label -x: %q, %v", args, err)
+	}
 	var u *UsageError
 	if _, err := runSimKeyboard(context.Background(), nil, Input{Args: []string{"virtual"}, Flags: map[string]any{}}); !errors.As(err, &u) {
 		t.Errorf("sim keyboard virtual: %v, want a usage error before anything runs", err)

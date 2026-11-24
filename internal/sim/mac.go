@@ -103,6 +103,32 @@ type Device struct {
 // command line on the Mac.
 var udidRE = regexp.MustCompile(`^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$`)
 
+// BootedAll lists the booted simulators of the Mac on every platform
+// (iOS, watchOS, tvOS, visionOS): quitting the Simulator app shuts down
+// those it shows.
+func (m Mac) BootedAll(ctx context.Context) ([]Device, error) {
+	out, err := m.shell(ctx, "xcrun simctl list devices booted -j")
+	if err != nil {
+		return nil, fmt.Errorf("listing the booted simulators on %s: %w", m.cfg.SSH, err)
+	}
+	var l struct {
+		Devices map[string][]Device `json:"devices"`
+	}
+	if err := json.Unmarshal(out, &l); err != nil {
+		return nil, fmt.Errorf("reading the booted simulators: %w", err)
+	}
+	var ds []Device
+	for rt, list := range l.Devices {
+		for _, d := range list {
+			if d.State == "Booted" {
+				d.Runtime = rt
+				ds = append(ds, d)
+			}
+		}
+	}
+	return ds, nil
+}
+
 // Devices lists the available iOS simulators of the Mac.
 func (m Mac) Devices(ctx context.Context) ([]Device, error) {
 	out, err := m.shell(ctx, "xcrun simctl list devices available -j")
@@ -369,11 +395,14 @@ func (m Mac) USKeyboard(ctx context.Context, udid string) (us bool, layout strin
 	switch {
 	case strings.Contains(sim, "hw=U.S."):
 		return true, layout, nil
-	case strings.Contains(sim, "hw=Automatic") || sim == "":
+	case sim == "" || mac == "":
+		// Unreadable: not taken for US.
+		return false, layout, nil
+	case strings.Contains(sim, "hw=Automatic"):
 		// Conservative: a US Mac layout and US English keyboard in the
 		// simulator; an Automatic layout under another language is not
 		// taken for US.
-		return mac == "com.apple.keylayout.US" && (sim == "" || strings.HasPrefix(sim, "en_US")), layout, nil
+		return mac == "com.apple.keylayout.US" && strings.HasPrefix(sim, "en_US"), layout, nil
 	}
 	return false, layout, nil
 }
@@ -401,7 +430,8 @@ func (m Mac) SetHardwareKeyboard(ctx context.Context, udid string, on bool) erro
 	}
 	script := "if pgrep -xq Simulator; then osascript -e 'quit app \"Simulator\"' >/dev/null || { echo 'quitting the Simulator app failed' >&2; exit 3; }; fi; " +
 		"i=0; while pgrep -xq Simulator; do i=$((i+1)); [ $i -gt 20 ] && { echo 'the Simulator app did not quit within 20 s' >&2; exit 4; }; sleep 1; done; " +
-		"if xcrun simctl list devices " + udid + " | grep -q '(Booted)'; then xcrun simctl shutdown " + udid + " || { echo 'shutting down the simulator failed' >&2; exit 5; }; fi; " +
+		"l=$(xcrun simctl list devices " + udid + ") || { echo 'reading the simulator state failed' >&2; exit 6; }; " +
+		"case \"$l\" in *'(Booted)'*) xcrun simctl shutdown " + udid + " || { echo 'shutting down the simulator failed' >&2; exit 5; } ;; esac; " +
 		"defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool " + strconv.FormatBool(on)
 	if _, err := m.shell(ctx, script); err != nil {
 		return fmt.Errorf("setting the Simulator's keyboard: %w", err)

@@ -156,6 +156,7 @@ type fakeMac struct {
 	macKbd    string // the Mac's layout; "" means US
 	quitErr   bool   // quitting the Simulator app fails
 	quits     int    // keyboard switches that quit the app
+	watch     bool   // a watchOS simulator is booted
 }
 
 func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -181,7 +182,11 @@ func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte,
 		return yes(f.loggedIn), nil
 	case strings.HasPrefix(script, "xcrun simctl list"):
 		state := map[bool]string{true: "Booted", false: "Shutdown"}
-		return []byte(`{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"` + udidA + `","name":"iPhone 17 Pro","state":"` + state[f.booted] + `"},{"udid":"` + udidB + `","name":"iPhone 17 Pro Max","state":"` + state[f.other] + `"}]}}`), nil
+		watch := ""
+		if f.watch {
+			watch = `,"com.apple.CoreSimulator.SimRuntime.watchOS-26-0":[{"udid":"66666666-2222-3333-4444-555555555555","name":"Apple Watch","state":"Booted"}]`
+		}
+		return []byte(`{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"` + udidA + `","name":"iPhone 17 Pro","state":"` + state[f.booted] + `"},{"udid":"` + udidB + `","name":"iPhone 17 Pro Max","state":"` + state[f.other] + `"}]` + watch + `}}`), nil
 	case strings.HasPrefix(script, "xcrun simctl bootstatus"):
 		f.booted = true
 		return nil, nil
@@ -218,6 +223,12 @@ func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte,
 		return nil, nil
 	case strings.HasPrefix(script, "k=$(xcrun simctl spawn "+udidA):
 		sim, mac := f.simKbd, f.macKbd
+		if mac == "" {
+			mac = "com.apple.keylayout.US"
+		}
+		if sim == "-" { // the simulator's keyboards are unreadable
+			return []byte("\n" + mac + "\n"), nil
+		}
 		if sim == "" {
 			sim = `    "en_US@sw=QWERTY;hw=Automatic",`
 		}
@@ -274,11 +285,12 @@ type fakeProcs struct {
 	args        [][]string       // the arguments of every Spawn
 	terms       []int
 	identifyErr error
-	probeErr    error // Signal(pid, 0) fails with it (EPERM: another user's process)
-	listenLate  bool  // a spawned ssh does not listen
-	ignoreTERM  bool  // a spawned ssh ignores SIGTERM
-	stolenPID   bool  // a spawned ssh ends at once and its pid goes to another process
-	lateEnv     int   // the first reads of a new process's identity lack its token
+	probeErr    error        // Signal(pid, 0) fails with it (EPERM: another user's process)
+	listenLate  bool         // a spawned ssh does not listen
+	ignoreTERM  bool         // a spawned ssh ignores SIGTERM
+	stolenPID   bool         // a spawned ssh ends at once and its pid goes to another process
+	lateEnv     int          // the first reads of a new process's identity lack its token
+	zombies     map[int]bool // processes that ended but are not reaped: signal 0 reaches them, their environment reads as ESRCH
 	badTERM     []string
 }
 
@@ -310,6 +322,9 @@ func (p *fakeProcs) procsOf() Processes {
 			pr, ok := p.procs[pid]
 			if !ok {
 				return "", "", errors.New("no such process")
+			}
+			if p.zombies[pid] {
+				return "", "", &os.PathError{Op: "open", Path: fmt.Sprintf("/proc/%d/environ", pid), Err: syscall.ESRCH}
 			}
 			if p.lateEnv > 0 {
 				p.lateEnv--
@@ -666,7 +681,7 @@ func TestTypeRefusesShiftWithTheOnscreenKeyboard(t *testing.T) {
 	if _, err := s.Type(context.Background(), "", "hello.world-2/x"); err != nil || len(fm.axe) != 1 || !strings.Contains(fm.axe[0], "'type' '--layout' 'us' --udid "+udidA+" -- 'hello.world-2/x'") {
 		t.Fatalf("unshifted text: %v, %q", err, fm.axe)
 	}
-	for _, kb := range []struct{ sim, mac string }{{`"de_DE@sw=QWERTZ;hw=Automatic",`, ""}, {"", "com.apple.keylayout.German"}} {
+	for _, kb := range []struct{ sim, mac string }{{`"de_DE@sw=QWERTZ;hw=Automatic",`, ""}, {"", "com.apple.keylayout.German"}, {"-", ""}} {
 		fm.simKbd, fm.macKbd = kb.sim, kb.mac
 		if _, err := s.Type(context.Background(), "", "abc"); err == nil || len(fm.axe) != 1 {
 			t.Fatalf("non-US layout %+v: %v, %d axe calls", kb, err, len(fm.axe))
@@ -701,6 +716,7 @@ func TestKeyboard(t *testing.T) {
 	}{
 		{"unknown device", func(*fakeMac, *fakeIWDP) string { return "iPhone 99" }},
 		{"other booted", func(f *fakeMac, _ *fakeIWDP) string { f.other = true; return udidA }},
+		{"watch booted", func(f *fakeMac, _ *fakeIWDP) string { f.watch = true; return udidA }},
 		{"foreign iwdp", func(_ *fakeMac, i *fakeIWDP) string { i.st.Own = false; return "" }},
 		{"active lease", func(_ *fakeMac, i *fakeIWDP) string { i.leases = []int{1}; return "" }},
 	} {
@@ -773,6 +789,11 @@ func TestParseUI(t *testing.T) {
 	if _, err := parseUI([]byte("Error: no simulator")); err == nil {
 		t.Fatal("parseUI accepted text that is not JSON")
 	}
+	// A number keeps all its digits.
+	els, err = parseUI([]byte(`[{"type":"Cell","AXLabel":"id","AXValue":12345678901234567890,"frame":{}}]`))
+	if err != nil || len(els) != 1 || els[0].Value != "12345678901234567890" {
+		t.Fatalf("big number: %+v, %v", els, err)
+	}
 	// AXe reports numeric and boolean values too.
 	els, err = parseUI([]byte(`[{"type":"Slider","AXLabel":"Volume","AXValue":0.5,"frame":{"x":0,"y":0,"width":1,"height":1}},{"type":"Switch","AXLabel":"Wi-Fi","AXValue":true,"frame":{}},{"type":"Cell","AXLabel":"x","AXValue":{"a":1},"frame":{}}]`))
 	if err != nil || len(els) != 3 || els[0].Value != "0.5" || els[1].Value != "true" || els[2].Value != "" {
@@ -837,6 +858,53 @@ func TestParseUIProperty(t *testing.T) {
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 300}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The switch's script, run by a real shell against stub programs: it
+// fails when the simulator's state cannot be read, and then writes no
+// setting; when the state reads booted, it shuts down only that simulator
+// and writes the setting last.
+func TestSetHardwareKeyboardScript(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Fatal(err)
+	}
+	run := func(listOK bool) (string, error) {
+		dir := t.TempDir()
+		log := filepath.Join(dir, "log")
+		stub := func(name, body string) {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\necho \""+name+" $*\" >> "+log+"\n"+body+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stub("pgrep", "exit 1")
+		stub("osascript", "exit 0")
+		stub("defaults", "exit 0")
+		list := "echo \"    iPhone 17 Pro (" + udidA + ") (Booted)\""
+		if !listOK {
+			list = "exit 1"
+		}
+		stub("xcrun", "case \"$1 $2\" in \"simctl list\") "+list+" ;; esac")
+		var got []byte
+		m := NewMac(Config{SSH: "mac"}, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			cmd := exec.Command("sh", "-c", args[len(args)-1])
+			cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin")
+			out, err := cmd.CombinedOutput()
+			got = out
+			return out, err
+		})
+		err := m.SetHardwareKeyboard(context.Background(), udidA, false)
+		b, _ := os.ReadFile(log)
+		return string(b) + string(got), err
+	}
+	out, err := run(false)
+	if err == nil || strings.Contains(out, "defaults write") || !strings.Contains(out, "reading the simulator state failed") {
+		t.Fatalf("a failed state read: %v\n%s", err, out)
+	}
+	out, err = run(true)
+	if err != nil || !strings.Contains(out, "xcrun simctl shutdown "+udidA) || strings.Contains(out, "shutdown all") ||
+		strings.Index(out, "defaults write") < strings.Index(out, "xcrun simctl shutdown") {
+		t.Fatalf("a booted simulator: %v\n%s", err, out)
 	}
 }
 
@@ -998,6 +1066,29 @@ func TestForwardWaitsForTheNewProcesssEnvironment(t *testing.T) {
 	}
 	if ok, _ := serves(f, context.Background(), "/a.socket"); !ok || len(p.terms) != 0 {
 		t.Fatalf("serves %v, signaled %v", ok, p.terms)
+	}
+}
+
+// A forward that ended but is not reaped yet (a zombie: signal 0 reaches
+// it, its environment reads as ESRCH) counts as gone, so a new forward
+// replaces it instead of failing (live run, 2026-11-24).
+func TestForwardTreatsAZombieAsGone(t *testing.T) {
+	ctx := context.Background()
+	p := newFakeProcs()
+	f := newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	if _, err := f.Ensure(ctx, "/a.socket"); err != nil {
+		t.Fatal(err)
+	}
+	pid := recordedPID(t, f)
+	p.mu.Lock()
+	p.zombies = map[int]bool{pid: true}
+	p.procs[pid].listens = false
+	p.mu.Unlock()
+	if started, err := f.Ensure(ctx, "/b.socket"); err != nil || !started || recordedPID(t, f) == pid {
+		t.Fatalf("Ensure over a zombie: %v, %v", started, err)
+	}
+	if len(p.terms) != 0 {
+		t.Fatalf("signaled %v: a zombie needs no signal", p.terms)
 	}
 }
 
