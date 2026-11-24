@@ -218,11 +218,12 @@ func (h hostIWDP) ActiveLeases(ctx context.Context) (int, error) {
 	return ActiveLeases(ctx, h.env)
 }
 
-// SimulatorPages counts the pages of the SIMULATOR device in iwdp's listing.
-func (h hostIWDP) SimulatorPages(ctx context.Context) (int, error) {
+// SimulatorPages returns the URLs of the SIMULATOR device's pages in
+// iwdp's listing.
+func (h hostIWDP) SimulatorPages(ctx context.Context) ([]string, error) {
 	ds, err := proxy.ListDevicesContext(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	for _, d := range ds {
 		if d.DeviceID != "SIMULATOR" {
@@ -230,24 +231,30 @@ func (h hostIWDP) SimulatorPages(ctx context.Context) (int, error) {
 		}
 		port, err := proxy.DevicePort(d)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/json", port), nil)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 		if err != nil {
-			return 0, fmt.Errorf("reading the simulator's pages: %w", err)
+			return nil, fmt.Errorf("reading the simulator's pages: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		var pages []json.RawMessage
-		if err := json.NewDecoder(resp.Body).Decode(&pages); err != nil {
-			return 0, fmt.Errorf("reading the simulator's pages: %w", err)
+		var pages []struct {
+			URL string `json:"url"`
 		}
-		return len(pages), nil
+		if err := json.NewDecoder(resp.Body).Decode(&pages); err != nil {
+			return nil, fmt.Errorf("reading the simulator's pages: %w", err)
+		}
+		urls := make([]string, len(pages))
+		for i, p := range pages {
+			urls[i] = p.URL
+		}
+		return urls, nil
 	}
-	return 0, errors.New("ios_webkit_debug_proxy does not list the simulator")
+	return nil, errors.New("ios_webkit_debug_proxy does not list the simulator")
 }
 
 // usbmuxSocket is usbmuxd's socket on Linux.

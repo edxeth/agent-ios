@@ -124,3 +124,90 @@ func TestPrivateSimReservationLines(t *testing.T) {
 		t.Errorf("sim tap exit 6: %q", l)
 	}
 }
+
+// resEnv is mgrEnv with a reservations store, as the daemon's env has.
+type resEnv struct {
+	*mgrEnv
+	res *core.Reservations
+}
+
+func (e *resEnv) Reservations() *core.Reservations { return e.res }
+
+// sim release ends the turn: it closes the session's page leases, so the
+// next agent's commands never meet them, and releases the reservation; it
+// refuses another owner's reservation and changes nothing then (live run,
+// 2026-11-24: an agent released without close, and its lease stayed on
+// its tab).
+func TestSimReleaseClosesTheSession(t *testing.T) {
+	res := &core.Reservations{Dir: t.TempDir()}
+	m, f := newTabManagerWith(t, res)
+	f.kind, f.device = transport.KindIWDP, core.SimulatorDevice
+	f.add("Shop", "http://10.0.2.2:18080/")
+	if _, err := res.Reserve(core.SimulatorDevice, "a", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	mustIn(t, m, "a", "tab", "list")
+	if _, err := runIn(t, m, "a", "eval", "--page", "t1", "1+1"); err != nil {
+		t.Fatal(err)
+	}
+	release := func(session string) (Result, error) {
+		inv, err := Parse([]string{"sim", "release"}, func(string) string { return "" })
+		if err != nil {
+			t.Fatal(err)
+		}
+		inv.Input.Global.Session = session
+		return inv.Cmd.Run(context.Background(), &resEnv{&mgrEnv{m: m}, res}, inv.Input)
+	}
+	if _, err := release("b"); ExitCodeOf(err) != ExitReservation {
+		t.Fatalf("b released a's reservation: %v", err)
+	}
+	if len(sessionPages(m, "a")) != 1 {
+		t.Fatal("b's refused release touched a's lease")
+	}
+	r, err := release("a")
+	if err != nil || r.Data.(map[string]any)["leases"] != 1 {
+		t.Fatalf("release: %+v, %v", r, err)
+	}
+	if len(sessionPages(m, "a")) != 0 {
+		t.Fatal("a's lease outlived sim release")
+	}
+	if mine, other, _ := res.Check(core.SimulatorDevice, "a"); mine != nil || other != nil {
+		t.Fatal("the reservation outlived sim release")
+	}
+}
+
+// While the simulator is reserved (agents take turns), a session that
+// chose no tab gets no page of a simulator that shows several tabs: the
+// others may be other agents' work (live run, 2026-11-24: an agent's first
+// open navigated another run's tab). With one tab, once the session
+// selected its tab, or without a reservation (one agent), commands run.
+func TestSimulatorNeedsAChosenTab(t *testing.T) {
+	res := &core.Reservations{Dir: t.TempDir()}
+	m, f := newTabManagerWith(t, res)
+	f.kind, f.device = transport.KindIWDP, core.SimulatorDevice
+	f.add("Earlier run", "http://10.0.2.2:18080/")
+	if _, err := res.Reserve(core.SimulatorDevice, "b", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runIn(t, m, "b", "eval", "1+1"); err != nil {
+		t.Fatalf("one tab: %v", err)
+	}
+	f.add("Mine", "http://10.0.2.2:8791/")
+	_, err := runIn(t, m, "c", "--reservation", "b", "eval", "1+1")
+	if ExitCodeOf(err) != ExitNoPage || !strings.Contains(err.Error(), "tab find") {
+		t.Fatalf("two tabs, none chosen: %v (exit %d)", err, ExitCodeOf(err))
+	}
+	if list := mustIn(t, m, "b", "tab", "list"); !strings.Contains(list, "t2") {
+		t.Fatalf("tab list:\n%s", list)
+	}
+	mustIn(t, m, "b", "tab", "t2")
+	if _, err := runIn(t, m, "b", "eval", "1+1"); err != nil {
+		t.Fatalf("after tab t2: %v", err)
+	}
+	if err := res.Release(core.SimulatorDevice, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runIn(t, m, "d", "eval", "1+1"); err != nil {
+		t.Fatalf("no reservation: the first page is the session's, as before: %v", err)
+	}
+}

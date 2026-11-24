@@ -70,7 +70,8 @@ Several agents, each on its own repository, share one simulator in turns: Safari
 - While an owner holds it: other owners' page commands on the simulator fail with exit 6, `tab list` hides its pages from them, and their sim commands except `sim status` fail with exit 6. The owner's page leases and sim commands renew it; it ends with `iwdp-cli sim release`, or `--ttl` after the owner's last use. `sim status` names the owner.
 - Without a reservation the simulator is free for all, as for a single agent.
 - The simulator's reservation stands apart from the physical devices': `device reserve` of every device (`*`) neither covers nor blocks it.
-- `sim up --url` opens a new tab, which becomes the visible one: each agent works in its own tab and leaves the tabs of earlier turns alone. At the end it closes its own tab (`tab close`) and releases the simulator.
+- `sim up --url` opens a new tab, which becomes the visible one: each agent works in its own tab and leaves the tabs of earlier turns alone. At the end it closes its own tab (`tab close`) and runs `sim release`, which also closes its session (its page leases) and releases the simulator. `sim up --url` returns once Safari lists that URL's tab, and fails, saying how to check the server, when no tab shows it within 30 s.
+- While the simulator is reserved, a page command of a session that has chosen no tab (no `tab <id>`, no `--page`) fails with exit 5 when the simulator shows several tabs, instead of acting on the first one, which may be an earlier agent's. Without a reservation the first debuggable page is the session's, as for a single agent.
 - Not isolated: Safari's cookies and storage of one origin are shared by all tabs, so two agents on the same origin (host and port) see each other's state.
 
 ## Ownership and restarts

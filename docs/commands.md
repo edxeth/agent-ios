@@ -95,7 +95,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`set viewport`](#set-viewport) | Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute. |
 | [`sim down`](#sim-down) | Stop the forward that sim up started and shut the simulator down; with --mac also run the configuration's stop command (for example the shutdown of a VM). |
 | [`sim keyboard`](#sim-keyboard) | Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols, on a US layout. hardware (the Simulator's default) types the text that the simulator's keyboard layout has keys for (AXe refuses the rest) but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp. |
-| [`sim release`](#sim-release) | Release the owner's reservation of the simulator. Releasing none is not an error; another owner's is refused. |
+| [`sim release`](#sim-release) | End your turn on the simulator: close this session (release its page leases, as close does) and release the owner's reservation of the simulator. Close your own tab first (tab close). Releasing no reservation is not an error; another owner's is refused. |
 | [`sim reserve`](#sim-reserve) | Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. While an owner holds it, other owners' page commands on the simulator fail (exit 6), its tabs are hidden from them, and their sim commands that act on it fail. Exit 3 when the wait ends first: the simulator is still another owner's; run the same command again (do not use the simulator meanwhile). The reservation ends with sim release, or --ttl after the owner's last use (page leases and sim commands renew it). |
 | [`sim screenshot`](#sim-screenshot) | Capture the simulator's whole screen as PNG (simctl io screenshot): the status bar, Safari's bars, the on-screen keyboard and other apps, which the page capture of screenshot leaves out. The simulator must be booted (sim up); it starts nothing. |
 | [`sim status`](#sim-status) | Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has "ready". |
@@ -1411,9 +1411,9 @@ Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard wh
 iwdp-cli sim release [flags]
 ```
 
-Release the owner's reservation of the simulator. Releasing none is not an error; another owner's is refused.
+End your turn on the simulator: close this session (release its page leases, as close does) and release the owner's reservation of the simulator. Close your own tab first (tab close). Releasing no reservation is not an error; another owner's is refused.
 
-- Page: none; runs in the client process, not in the daemon
+- Page: none
 - Default deadline: 30s (`--timeout` overrides it)
 
 | Flag | Value | Description |

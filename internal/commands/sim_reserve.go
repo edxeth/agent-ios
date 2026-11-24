@@ -12,7 +12,8 @@ import (
 // Taking turns on the simulator. Several agents share one simulator, and
 // Safari answers only for its visible tab, so they use it one at a time:
 // sim reserve takes the simulator's reservation for an owner (waiting
-// while another owner holds it), sim release gives it back. While an owner
+// while another owner holds it), sim release closes the session and gives
+// it back (in the daemon, which holds the page leases). While an owner
 // holds it, other owners' page commands on the simulator are refused, its
 // tabs are hidden from them, and their sim commands that act on the screen
 // or the simulator are refused. Without any reservation the simulator is
@@ -52,19 +53,39 @@ func init() {
 		Run: runSimReserve,
 	})
 	Register(&Command{
-		Name: "sim release", Local: true, Timeout: 30 * time.Second,
-		Summary: "Release the owner's reservation of the simulator. Releasing none is not an error; another owner's is refused.",
-		Flags:   []Flag{owner},
-		Run: func(_ context.Context, _ Env, in Input) (Result, error) {
-			rs, err := SimReservations()
+		Name: "sim release", Timeout: 30 * time.Second,
+		Summary: "End your turn on the simulator: close this session (release its page leases, as close does) and release the owner's reservation of the simulator. " +
+			"Close your own tab first (tab close). Releasing no reservation is not an error; another owner's is refused.",
+		Flags: []Flag{owner},
+		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
+			rs, err := reservationsOf(env)
+			if err != nil {
+				return Result{}, err
+			}
+			m, err := managerOf(env)
 			if err != nil {
 				return Result{}, err
 			}
 			o := reservationOwner(in)
+			mine, other, err := rs.Check(core.SimulatorDevice, o)
+			if err != nil {
+				return Result{}, err
+			}
+			if mine == nil && other != nil {
+				return Result{}, &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: the simulator is reserved by %q, not %q", core.ErrReserved, other.Owner, o)}
+			}
+			revokeCDP(env, in.Global.Session)
+			n, err := m.ReleaseSession(ctx, in.Global.Session)
+			if err != nil {
+				return Result{}, fmt.Errorf("closing session %q: %w", in.Global.Session, err)
+			}
 			if err := rs.Release(core.SimulatorDevice, o); err != nil {
 				return Result{}, err
 			}
-			return Result{Text: fmt.Sprintf("Simulator reservation of %q released.", o), Data: map[string]any{"released": true}}, nil
+			return Result{
+				Text: fmt.Sprintf("Simulator reservation of %q released; session %q closed (%d page lease(s) released).", o, in.Global.Session, n),
+				Data: map[string]any{"released": true, "leases": n},
+			}, nil
 		},
 	})
 }

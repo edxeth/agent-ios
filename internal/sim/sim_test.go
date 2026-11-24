@@ -425,7 +425,8 @@ type fakeIWDP struct {
 	leases   []int // ActiveLeases answers these in turn, then the last one
 	pagesErr error
 	events   *[]string
-	foreign  bool // a start or restart leaves another program's iwdp
+	foreign  bool     // a start or restart leaves another program's iwdp
+	urls     []string // the simulator's page URLs; nil: one page
 }
 
 func (f *fakeIWDP) State(context.Context) (IWDPState, error) { return f.st, nil }
@@ -455,14 +456,17 @@ func (f *fakeIWDP) ActiveLeases(context.Context) (int, error) {
 	return n, nil
 }
 
-func (f *fakeIWDP) SimulatorPages(context.Context) (int, error) {
+func (f *fakeIWDP) SimulatorPages(context.Context) ([]string, error) {
 	if f.pagesErr != nil {
-		return 0, f.pagesErr
+		return nil, f.pagesErr
 	}
-	if f.st.Listed {
-		return 1, nil
+	if !f.st.Listed {
+		return nil, nil
 	}
-	return 0, nil
+	if f.urls != nil {
+		return f.urls, nil
+	}
+	return []string{"http://example.test/"}, nil
 }
 
 func newTestSim(t *testing.T, fm *fakeMac, iw *fakeIWDP, cfg Config) (*Sim, *fakeProcs) {
@@ -930,6 +934,32 @@ func TestReachableAsksTwice(t *testing.T) {
 	})
 	if ok, err := down.Reachable(context.Background()); ok || err != nil || calls != 2 {
 		t.Fatalf("down Mac: %v, %v after %d calls", ok, err, calls)
+	}
+}
+
+// With --url, Up returns once Safari lists a tab of that URL (path and
+// query as given; a missing path is "/"), and fails, saying how to check
+// the server, when no tab shows it within PageWait.
+func TestUpWaitsForTheURLsTab(t *testing.T) {
+	fm := readyMac()
+	iw := &fakeIWDP{urls: []string{"http://10.0.2.2:18080/"}}
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	_, err := s.Up(context.Background(), "", "http://10.0.2.2:8791/", false)
+	if err == nil || !strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("a URL that no tab shows: %v", err)
+	}
+	iw.urls = append(iw.urls, "http://10.0.2.2:8791/index.html?x=1#top")
+	for _, u := range []string{"http://10.0.2.2:8791/index.html", "http://10.0.2.2:8791/index.html?x=1"} {
+		if r, err := s.Up(context.Background(), "", u, false); err != nil || !r.TabOpened || r.Pages != 2 {
+			t.Fatalf("Up(%s) = %+v, %v", u, r, err)
+		}
+	}
+	if _, err := s.Up(context.Background(), "", "http://10.0.2.2:8791/index.html?x=2", false); err == nil {
+		t.Fatal("a tab with another query counted as the URL's")
+	}
+	iw.urls = []string{"http://10.0.2.2:8791/"}
+	if r, err := s.Up(context.Background(), "", "http://10.0.2.2:8791", false); err != nil || !r.TabOpened {
+		t.Fatalf("a URL without a path: %+v, %v", r, err)
 	}
 }
 

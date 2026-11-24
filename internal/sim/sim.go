@@ -2,10 +2,13 @@ package sim
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,8 +35,9 @@ type IWDP interface {
 	// the simulator's too: a restart of iwdp, and a new forward, end their
 	// page connections.
 	ActiveLeases(ctx context.Context) (int, error)
-	// SimulatorPages counts the pages that iwdp lists for the simulator.
-	SimulatorPages(ctx context.Context) (int, error)
+	// SimulatorPages returns the URLs of the pages that iwdp lists for the
+	// simulator.
+	SimulatorPages(ctx context.Context) ([]string, error)
 }
 
 // Sim is the simulator of a Config.
@@ -62,7 +66,8 @@ type UpReport struct {
 	IWDPStarted     bool   `json:"iwdpStarted"`
 	IWDPRestarted   bool   `json:"iwdpRestarted"`
 	InspectorSocket string `json:"inspectorSocket"`
-	Pages           int    `json:"pages"` // Safari tabs that iwdp lists
+	Pages           int    `json:"pages"`     // Safari tabs that iwdp lists
+	TabOpened       bool   `json:"tabOpened"` // a tab shows the URL that Up opened
 }
 
 // ErrNotOwnIWDP is the error of Up when the iwdp on the listing address is
@@ -93,23 +98,49 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 			return r, err
 		}
 	}
-	// No tab after PageWait is no error when iwdp answers: Safari's start
-	// page is not offered for inspection, and the report says so. A page
-	// list that keeps failing is an error.
+	// Without openURL, no tab after PageWait is no error when iwdp
+	// answers: Safari's start page is not offered for inspection, and the
+	// report says so. With openURL, Up returns once a tab shows it, so that
+	// tab find finds it at once (live run, 2026-11-24: an agent's tab find
+	// right after sim up ran before Safari listed the page). A page list
+	// that keeps failing is an error.
 	wait, cancel := context.WithTimeout(ctx, s.PageWait)
 	defer cancel()
 	var lastErr error
-	_ = s.until(wait, "Safari lists a tab", func() (bool, error) {
-		r.Pages, lastErr = s.IWDP.SimulatorPages(wait)
-		return lastErr == nil && r.Pages > 0, nil
+	_ = s.until(wait, "Safari lists the tab", func() (bool, error) {
+		var urls []string
+		urls, lastErr = s.IWDP.SimulatorPages(wait)
+		r.Pages = len(urls)
+		if openURL == "" {
+			return lastErr == nil && r.Pages > 0, nil
+		}
+		r.TabOpened = slices.ContainsFunc(urls, func(u string) bool { return sameURL(u, openURL) })
+		return r.TabOpened, nil
 	})
 	if err := ctx.Err(); err != nil {
 		return r, err
+	}
+	if openURL != "" && !r.TabOpened {
+		return r, fmt.Errorf("safari in the simulator shows no tab of %s after %s: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2", openURL, s.PageWait)
 	}
 	if lastErr != nil {
 		return r, fmt.Errorf("reading the simulator's pages from ios_webkit_debug_proxy: %w", lastErr)
 	}
 	return r, nil
+}
+
+// sameURL reports whether a page URL that Safari lists shows target: the
+// same scheme, host, port and path (an empty path is "/"), and the same
+// query when target has one; the fragment does not count.
+func sameURL(page, target string) bool {
+	p, err1 := url.Parse(page)
+	t, err2 := url.Parse(target)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	path := func(u *url.URL) string { return cmp.Or(u.EscapedPath(), "/") }
+	return strings.EqualFold(p.Scheme, t.Scheme) && strings.EqualFold(p.Host, t.Host) &&
+		path(p) == path(t) && (t.RawQuery == "" || p.RawQuery == t.RawQuery)
 }
 
 func (s *Sim) up(ctx context.Context, device string, noWindow bool) (UpReport, error) {

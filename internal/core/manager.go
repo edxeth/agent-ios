@@ -454,6 +454,24 @@ func (m *Manager) resolve(ctx context.Context, req PageRequest) (pageTarget, err
 		return req.Page == p.ID || req.Page == key ||
 			strings.Contains(strings.ToLower(p.Title), sel) || strings.Contains(strings.ToLower(p.URL), sel)
 	})
+	if err == nil && sel == "" && t.device.ID == SimulatorDevice && m.simulatorReserved() {
+		// While agents take turns on the simulator (it is reserved), its
+		// other tabs are earlier agents' work: without a chosen tab, the
+		// first one would be acted on (live run, 2026-11-24: an agent's
+		// first open navigated another run's tab). With several, the
+		// session must choose its own. Without a reservation the first
+		// debuggable page is the session's, as before.
+		n := 0
+		_, _, _ = m.findListed(ctx, req, func(key string, p transport.Page) bool {
+			if strings.Contains(key, "|"+SimulatorDevice+"|") && p.Debuggable {
+				n++
+			}
+			return false
+		})
+		if n > 1 {
+			return pageTarget{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the simulator shows %d tabs, and this session has chosen none; the others may be other agents' work: find yours with 'iwdp-cli tab find --url-file <file>' and select it with 'iwdp-cli tab <id>', or pass --page <id>", ErrNoPage, n)}
+		}
+	}
 	if err != nil || t.key != "" {
 		return t, err
 	}
@@ -461,6 +479,16 @@ func (m *Manager) resolve(ctx context.Context, req PageRequest) (pageTarget, err
 		return pageTarget{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no debuggable page among %d listed; open a page in Safari on the device", ErrNoPage, listed)}
 	}
 	return pageTarget{}, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no page matches %q among %d listed", ErrNoPage, req.Page, listed)}
+}
+
+// simulatorReserved reports whether an owner holds a live reservation of
+// the simulator (sim reserve).
+func (m *Manager) simulatorReserved() bool {
+	if m.o.Reservations == nil {
+		return false
+	}
+	_, other, err := m.o.Reservations.Check(SimulatorDevice, "")
+	return err == nil && other != nil
 }
 
 // findListed lists the pages of req's transport and returns the first page
