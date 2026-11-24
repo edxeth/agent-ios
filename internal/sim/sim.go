@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -203,7 +204,7 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 	// forward, must restart.
 	restart := st.Running
 	if restart { // without a running iwdp no page connection exists
-		if err := s.leaseCheck(ctx); err != nil {
+		if err := s.leaseCheck(ctx, "sim up", "restarting ios_webkit_debug_proxy to reach the simulator"); err != nil {
 			return err
 		}
 	}
@@ -216,7 +217,7 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 		// Again right before the restart: a session may have taken a
 		// lease since the first check. A lease taken between this check
 		// and the restart still ends (docs/known-limits.md).
-		if err := s.leaseCheck(ctx); err != nil {
+		if err := s.leaseCheck(ctx, "sim up", "restarting ios_webkit_debug_proxy to reach the simulator"); err != nil {
 			return err
 		}
 		if err := s.IWDP.Restart(ctx); err != nil {
@@ -246,7 +247,7 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 
 // leaseCheck refuses a restart of iwdp while it would end active leases,
 // unless RestartAnyway.
-func (s *Sim) leaseCheck(ctx context.Context) error {
+func (s *Sim) leaseCheck(ctx context.Context, cmd, what string) error {
 	if s.RestartAnyway {
 		return nil
 	}
@@ -255,7 +256,7 @@ func (s *Sim) leaseCheck(ctx context.Context) error {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("ios_webkit_debug_proxy must restart to reach the simulator, and that would end the page connections of %d active page lease(s): wait until those sessions end, or run sim up --restart-iwdp", n)
+		return fmt.Errorf("%s would end the page connections of %d active page lease(s), your own session's too: wait until those sessions end, or run %s --restart-iwdp", what, n, cmd)
 	}
 	return nil
 }
@@ -380,15 +381,15 @@ func (s *Sim) Screenshot(ctx context.Context, device string) (Device, []byte, er
 	return d, png, err
 }
 
-// Touch runs one axe input command (tap, swipe, type) with args on the
-// booted simulator: a real touch or key press, which iOS handles as the
-// user's, so a tapped text field opens the on-screen keyboard.
-func (s *Sim) Touch(ctx context.Context, device string, args ...string) (Device, error) {
+// Touch runs one axe input command sub (tap, swipe) with opts on the
+// booted simulator: a real touch, which iOS handles as the user's, so a
+// tapped text field opens the on-screen keyboard.
+func (s *Sim) Touch(ctx context.Context, device, sub string, opts ...string) (Device, error) {
 	d, err := s.Booted(ctx, device)
 	if err != nil {
 		return d, err
 	}
-	_, err = s.Mac.AXe(ctx, d.UDID, args...)
+	_, err = s.Mac.AXe(ctx, d.UDID, sub, opts)
 	return d, err
 }
 
@@ -396,30 +397,51 @@ func (s *Sim) Touch(ctx context.Context, device string, args ...string) (Device,
 // all that sim type can send while the on-screen keyboard is shown.
 const unshifted = "abcdefghijklmnopqrstuvwxyz0123456789 `-=[]\\;',./"
 
-// Type types text into the simulator's focused field. With the on-screen
-// keyboard (no hardware keyboard), key presses lose Shift, so text that
-// needs Shift is refused before anything is typed instead of arriving
-// changed ("A@" as "a2").
+// Type types text into the simulator's focused field as key presses. With
+// the on-screen keyboard (no hardware keyboard) key presses lose Shift, so
+// it then types only unshifted US characters, with US key positions, on a
+// simulator whose keyboard layout is US; anything else is refused before a
+// key is pressed instead of arriving changed ("A@" as "a2"). With the
+// hardware keyboard AXe types what the simulator's layout has keys for,
+// and refuses the rest itself.
 func (s *Sim) Type(ctx context.Context, device, text string) (Device, error) {
+	d, err := s.Booted(ctx, device)
+	if err != nil {
+		return d, err
+	}
 	hw, err := s.Mac.HardwareKeyboard(ctx)
 	if err != nil {
-		return Device{}, err
+		return d, err
 	}
+	var opts []string
 	if !hw {
 		for _, r := range text {
 			if !strings.ContainsRune(unshifted, r) {
-				return Device{}, fmt.Errorf("sim type: %q needs Shift, which key presses lose while the on-screen keyboard is shown: run iwdp-cli sim keyboard hardware, or tap the keys (sim ui lists them)", string(r))
+				return d, fmt.Errorf("sim type: %q needs Shift or another layout, which key presses lose while the on-screen keyboard is shown: run iwdp-cli sim keyboard hardware, or tap the keys (sim ui lists them)", string(r))
 			}
 		}
+		us, layout, err := s.Mac.USKeyboard(ctx, d.UDID)
+		if err != nil {
+			return d, err
+		}
+		if !us {
+			return d, fmt.Errorf("sim type: with the on-screen keyboard it types only on a US keyboard layout, and this one is not (%s): run iwdp-cli sim keyboard hardware, or tap the keys", layout)
+		}
+		opts = []string{"--layout", "us"}
 	}
-	return s.Touch(ctx, device, "type", text)
+	_, err = s.Mac.AXe(ctx, d.UDID, "type", opts, text)
+	return d, err
 }
 
 // Keyboard sets the keyboard mode: onscreen shows iOS's on-screen keyboard
-// for a tapped field, as on an iPhone; hardware types exactly but hides it.
-// A change restarts the Simulator app and the simulator, so it refuses
-// while a page has an active lease (unless RestartAnyway), then runs Up.
-// It reports whether the mode changed.
+// for a tapped field, as on an iPhone; hardware types what the layout has
+// keys for but hides it. A change quits the Simulator app and shuts the
+// simulator down, so every refusal is checked first, before any change:
+// the simulator must exist, no other simulator may be booted (quitting the
+// app would shut it down too), the iwdp must be iwdp-cli's, and no page may
+// have an active lease (unless RestartAnyway). Then it switches the
+// setting and runs Up for that same simulator. It reports whether the mode
+// changed; after a failed Up the mode is changed and sim up finishes it.
 func (s *Sim) Keyboard(ctx context.Context, device string, onscreen bool) (bool, UpReport, error) {
 	hw, err := s.Mac.HardwareKeyboard(ctx)
 	if err != nil {
@@ -428,20 +450,42 @@ func (s *Sim) Keyboard(ctx context.Context, device string, onscreen bool) (bool,
 	if hw != onscreen {
 		return false, UpReport{}, nil
 	}
+	if device == "" {
+		device = s.Cfg.Device
+	}
+	ds, err := s.Mac.Devices(ctx)
+	if err != nil {
+		return false, UpReport{}, err
+	}
+	d, err := Pick(ds, device)
+	if err != nil {
+		return false, UpReport{}, err
+	}
+	for _, o := range ds {
+		if o.UDID != d.UDID && o.State == "Booted" {
+			return false, UpReport{}, fmt.Errorf("sim keyboard: the simulator %s (%s) also runs, and quitting the Simulator app would shut it down: shut it down first", o.Name, o.UDID)
+		}
+	}
 	st, err := s.IWDP.State(ctx)
 	if err != nil {
 		return false, UpReport{}, err
 	}
+	if st.Running && !st.Own {
+		return false, UpReport{}, ErrNotOwnIWDP
+	}
 	if st.Running {
-		if err := s.leaseCheck(ctx); err != nil {
+		if err := s.leaseCheck(ctx, "sim keyboard", "restarting the simulator to change its keyboard"); err != nil {
 			return false, UpReport{}, err
 		}
 	}
-	if err := s.Mac.SetHardwareKeyboard(ctx, !onscreen); err != nil {
+	if err := s.Mac.SetHardwareKeyboard(ctx, d.UDID, !onscreen); err != nil {
 		return false, UpReport{}, err
 	}
-	r, err := s.Up(ctx, device, "", false)
-	return true, r, err
+	r, err := s.Up(ctx, d.UDID, "", false)
+	if err != nil {
+		return true, r, fmt.Errorf("the keyboard is now %s, but bringing the simulator back failed (run iwdp-cli sim up): %w", map[bool]string{true: "onscreen", false: "hardware"}[onscreen], err)
+	}
+	return true, r, nil
 }
 
 // Element is an element of the simulator's screen, from its accessibility
@@ -464,7 +508,7 @@ func (s *Sim) UI(ctx context.Context, device string) ([]Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := s.Mac.AXe(ctx, d.UDID, "describe-ui")
+	out, err := s.Mac.AXe(ctx, d.UDID, "describe-ui", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -473,15 +517,33 @@ func (s *Sim) UI(ctx context.Context, device string) ([]Element, error) {
 
 // uiNode is a node of axe describe-ui's JSON.
 type uiNode struct {
-	Type     string   `json:"type"`
-	Label    *string  `json:"AXLabel"`
-	Value    *string  `json:"AXValue"`
-	ID       *string  `json:"AXUniqueId"`
-	Frame    uiFrame  `json:"frame"`
-	Children []uiNode `json:"children"`
+	Type     string          `json:"type"`
+	Label    json.RawMessage `json:"AXLabel"`
+	Value    json.RawMessage `json:"AXValue"`
+	ID       json.RawMessage `json:"AXUniqueId"`
+	Frame    uiFrame         `json:"frame"`
+	Children []uiNode        `json:"children"`
 }
 
 type uiFrame struct{ X, Y, Width, Height float64 }
+
+// scalarText is a JSON string, number or boolean as text; null, an
+// object or an array is "" (AXe reports values of several types).
+func scalarText(v json.RawMessage) string {
+	var x any
+	if len(v) == 0 || json.Unmarshal(v, &x) != nil {
+		return ""
+	}
+	switch x := x.(type) {
+	case string:
+		return x
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	}
+	return ""
+}
 
 func parseUI(out []byte) ([]Element, error) {
 	var roots []uiNode
@@ -496,15 +558,9 @@ func parseUI(out []byte) ([]Element, error) {
 	var walk func(n uiNode)
 	walk = func(n uiNode) {
 		e := Element{Type: n.Type, X: n.Frame.X, Y: n.Frame.Y, W: n.Frame.Width, H: n.Frame.Height}
-		if n.Label != nil {
-			e.Label = *n.Label
-		}
-		if n.Value != nil {
-			e.Value = *n.Value
-		}
-		if n.ID != nil {
-			e.ID = *n.ID
-		}
+		e.Label = scalarText(n.Label)
+		e.Value = scalarText(n.Value)
+		e.ID = scalarText(n.ID)
 		if e.Label != "" || e.Value != "" || e.ID != "" {
 			els = append(els, e)
 		}

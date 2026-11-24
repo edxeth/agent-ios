@@ -230,11 +230,26 @@ func (f *Forward) Ensure(ctx context.Context, socket string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("starting the ssh forward of %s: %w", f.Addr, err)
 	}
-	start, got, err := f.Procs.Identify(pid)
-	if err != nil || got != token {
-		// Not provably the process just started (it may have ended and
-		// its pid gone to another): no signal.
-		return false, fmt.Errorf("identifying the new ssh forward, pid %d (not signaled): token %q, %v", pid, got, err)
+	// Right after the start the kernel can still show the environment of
+	// the exec in progress, without the token (Linux sets a new program's
+	// environment after its close-on-exec descriptors close, which ends
+	// the start): read it again for up to 2 s.
+	var start, got string
+	for i := 0; ; i++ {
+		start, got, err = f.Procs.Identify(pid)
+		if err == nil && got == token {
+			break
+		}
+		if i >= 100 {
+			// Not provably the process just started (it may have ended
+			// and its pid gone to another): no signal.
+			return false, fmt.Errorf("identifying the new ssh forward, pid %d (not signaled): token %q, %v", pid, got, err)
+		}
+		select {
+		case <-ctx.Done():
+			return false, fmt.Errorf("identifying the new ssh forward, pid %d (not signaled): %w", pid, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 	rec := forwardRecord{PID: pid, Start: start, Token: token, Socket: socket}
 	if err := f.save(rec); err != nil {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"image/png"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -90,7 +91,7 @@ func init() {
 		Flags:   []Flag{{Name: "duration", Type: FlagString, Help: "seconds the swipe takes"}, device},
 		Check: func(in Input) error {
 			if d := flagString(in, "duration"); d != "" {
-				return simNumbers("sim swipe --duration", []string{d})
+				return simSeconds("sim swipe --duration", d)
 			}
 			return nil
 		},
@@ -120,8 +121,8 @@ func init() {
 	})
 	Register(&Command{
 		Name: "sim keyboard", Local: true, Timeout: 15 * time.Minute,
-		Summary: "Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols. " +
-			"hardware (the Simulator's default) types any text but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp.",
+		Summary: "Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols, on a US layout. " +
+			"hardware (the Simulator's default) types the text that the simulator's keyboard layout has keys for (AXe refuses the rest) but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp.",
 		Args:  []Arg{{Name: "mode", Help: "onscreen or hardware; without it, print the mode"}},
 		Flags: []Flag{device, {Name: "restart-iwdp", Type: FlagBool, Help: "restart even when that ends active page leases"}},
 		Run:   runSimKeyboard,
@@ -377,12 +378,24 @@ func runSimScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
 	}, nil
 }
 
-// simNumbers parses the arguments of a touch command as numbers.
+// simNumbers parses the arguments of a touch command as points: finite
+// numbers, 0 or more (AXe's range).
 func simNumbers(cmd string, args []string) error {
 	for _, a := range args {
-		if _, err := strconv.ParseFloat(a, 64); err != nil {
-			return usagef("%s: %q is not a number of points", cmd, a)
+		v, err := strconv.ParseFloat(a, 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return usagef("%s: %q is not a number of points, 0 or more", cmd, a)
 		}
+	}
+	return nil
+}
+
+// simSeconds checks a duration in seconds: above 0 and at most 10 (AXe's
+// range for --hold and a swipe's --duration).
+func simSeconds(cmd, v string) error {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(f) || f <= 0 || f > 10 {
+		return usagef("%s: %q is not a number of seconds above 0 and at most 10", cmd, v)
 	}
 	return nil
 }
@@ -395,9 +408,15 @@ func simTapValues(in Input) error {
 		return usagef("sim tap: give one of --label and --id")
 	}
 	if h := flagString(in, "hold"); h != "" {
-		return simNumbers("sim tap --hold", []string{h})
+		return simSeconds("sim tap --hold", h)
 	}
 	return nil
+}
+
+// mustFloat is a number that simNumbers accepted.
+func mustFloat(s string) float64 {
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
 }
 
 // simTapArgs are the axe arguments of sim tap: a point, or one element.
@@ -420,7 +439,7 @@ func simTapArgs(in Input) ([]string, error) {
 		return nil, usagef("sim tap: give <x> <y>, or one of --label and --id")
 	}
 	if h := flagString(in, "hold"); h != "" {
-		if err := simNumbers("sim tap --hold", []string{h}); err != nil {
+		if err := simSeconds("sim tap --hold", h); err != nil {
 			return nil, err
 		}
 		args = append(args, "--hold", h)
@@ -433,9 +452,12 @@ func simSwipeArgs(in Input) ([]string, error) {
 	if err := simNumbers("sim swipe", in.Args); err != nil {
 		return nil, err
 	}
+	if p, q := in.Args[:2], in.Args[2:]; mustFloat(p[0]) == mustFloat(q[0]) && mustFloat(p[1]) == mustFloat(q[1]) {
+		return nil, usagef("sim swipe: the start and the end are the same point")
+	}
 	args := []string{"swipe", "--start-x", in.Args[0], "--start-y", in.Args[1], "--end-x", in.Args[2], "--end-y", in.Args[3]}
 	if d := flagString(in, "duration"); d != "" {
-		if err := simNumbers("sim swipe --duration", []string{d}); err != nil {
+		if err := simSeconds("sim swipe --duration", d); err != nil {
 			return nil, err
 		}
 		args = append(args, "--duration", d)
@@ -448,7 +470,7 @@ func runSimTouch(ctx context.Context, env Env, in Input, args []string, done str
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := s.Touch(ctx, flagString(in, "device"), args...); err != nil {
+	if _, err := s.Touch(ctx, flagString(in, "device"), args[0], args[1:]...); err != nil {
 		return Result{}, err
 	}
 	return Result{Text: done}, nil

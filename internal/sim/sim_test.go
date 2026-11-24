@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,6 +151,11 @@ type fakeMac struct {
 	hwKbd     bool   // the Simulator's hardware keyboard setting
 	axe       []string
 	ui        []byte // what axe describe-ui prints
+	other     bool   // another simulator (udidB) is booted
+	simKbd    string // the simulator's first keyboard; "" means US, Automatic
+	macKbd    string // the Mac's layout; "" means US
+	quitErr   bool   // quitting the Simulator app fails
+	quits     int    // keyboard switches that quit the app
 }
 
 func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -174,8 +180,8 @@ func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte,
 	case strings.HasPrefix(script, "who"):
 		return yes(f.loggedIn), nil
 	case strings.HasPrefix(script, "xcrun simctl list"):
-		state := map[bool]string{true: "Booted", false: "Shutdown"}[f.booted]
-		return []byte(`{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"` + udidA + `","name":"iPhone 17 Pro","state":"` + state + `"}]}}`), nil
+		state := map[bool]string{true: "Booted", false: "Shutdown"}
+		return []byte(`{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{"udid":"` + udidA + `","name":"iPhone 17 Pro","state":"` + state[f.booted] + `"},{"udid":"` + udidB + `","name":"iPhone 17 Pro Max","state":"` + state[f.other] + `"}]}}`), nil
 	case strings.HasPrefix(script, "xcrun simctl bootstatus"):
 		f.booted = true
 		return nil, nil
@@ -199,10 +205,26 @@ func (f *fakeMac) run(ctx context.Context, name string, args ...string) ([]byte,
 		return nil, nil
 	case strings.HasPrefix(script, "defaults read com.apple.iphonesimulator ConnectHardwareKeyboard"):
 		return []byte(map[bool]string{true: "1\n", false: "0\n"}[f.hwKbd]), nil
-	case strings.HasPrefix(script, "osascript -e 'quit app"):
+	case strings.HasPrefix(script, "if pgrep -xq Simulator; then osascript"):
+		if !strings.Contains(script, "xcrun simctl shutdown "+udidA) || strings.Contains(script, "shutdown all") {
+			return nil, fmt.Errorf("fakeMac: the switch would shut down more than the simulator: %q", script)
+		}
+		if f.quitErr {
+			return nil, errors.New("exit status 3: quitting the Simulator app failed")
+		}
+		f.quits++
 		f.hwKbd = strings.HasSuffix(script, "-bool true")
 		f.booted, f.window, f.safari = false, false, false
 		return nil, nil
+	case strings.HasPrefix(script, "k=$(xcrun simctl spawn "+udidA):
+		sim, mac := f.simKbd, f.macKbd
+		if sim == "" {
+			sim = `    "en_US@sw=QWERTY;hw=Automatic",`
+		}
+		if mac == "" {
+			mac = "com.apple.keylayout.US"
+		}
+		return []byte(sim + "\n" + mac + "\n"), nil
 	case strings.HasPrefix(script, "'/opt/axe dir/axe' "):
 		f.axe = append(f.axe, script)
 		if strings.Contains(script, "describe-ui") {
@@ -256,6 +278,7 @@ type fakeProcs struct {
 	listenLate  bool  // a spawned ssh does not listen
 	ignoreTERM  bool  // a spawned ssh ignores SIGTERM
 	stolenPID   bool  // a spawned ssh ends at once and its pid goes to another process
+	lateEnv     int   // the first reads of a new process's identity lack its token
 	badTERM     []string
 }
 
@@ -287,6 +310,10 @@ func (p *fakeProcs) procsOf() Processes {
 			pr, ok := p.procs[pid]
 			if !ok {
 				return "", "", errors.New("no such process")
+			}
+			if p.lateEnv > 0 {
+				p.lateEnv--
+				return pr.start, "", nil // the exec has not set its environment yet
 			}
 			return pr.start, pr.token, nil
 		},
@@ -615,6 +642,14 @@ func TestTouchRunsAXe(t *testing.T) {
 	if len(fm.axe) != 1 || fm.axe[0] != want {
 		t.Fatalf("axe calls %q, want %q", fm.axe, want)
 	}
+	// Text that looks like an axe option stays text: it comes after "--".
+	fm.hwKbd = true
+	if _, err := s.Type(context.Background(), "", "--stdin"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "'/opt/axe dir/axe' 'type' --udid " + udidA + " -- '--stdin'"; fm.axe[1] != want {
+		t.Fatalf("type --stdin: %q, want %q", fm.axe[1], want)
+	}
 }
 
 // With the on-screen keyboard, sim type refuses text that needs Shift
@@ -628,33 +663,96 @@ func TestTypeRefusesShiftWithTheOnscreenKeyboard(t *testing.T) {
 			t.Fatalf("onscreen %q: %v, %d axe calls", text, err, len(fm.axe))
 		}
 	}
-	if _, err := s.Type(context.Background(), "", "hello.world-2/x"); err != nil || len(fm.axe) != 1 {
-		t.Fatalf("unshifted text: %v", err)
+	if _, err := s.Type(context.Background(), "", "hello.world-2/x"); err != nil || len(fm.axe) != 1 || !strings.Contains(fm.axe[0], "'type' '--layout' 'us' --udid "+udidA+" -- 'hello.world-2/x'") {
+		t.Fatalf("unshifted text: %v, %q", err, fm.axe)
 	}
+	for _, kb := range []struct{ sim, mac string }{{`"de_DE@sw=QWERTZ;hw=Automatic",`, ""}, {"", "com.apple.keylayout.German"}} {
+		fm.simKbd, fm.macKbd = kb.sim, kb.mac
+		if _, err := s.Type(context.Background(), "", "abc"); err == nil || len(fm.axe) != 1 {
+			t.Fatalf("non-US layout %+v: %v, %d axe calls", kb, err, len(fm.axe))
+		}
+	}
+	fm.simKbd, fm.macKbd = "", ""
 	fm.hwKbd = true
-	if _, err := s.Type(context.Background(), "", "A@b!"); err != nil || len(fm.axe) != 2 {
-		t.Fatalf("hardware keyboard: %v", err)
+	if _, err := s.Type(context.Background(), "", "A@b!"); err != nil || len(fm.axe) != 2 || strings.Contains(fm.axe[1], "--layout") {
+		t.Fatalf("hardware keyboard: %v, %q", err, fm.axe)
 	}
 }
 
-// sim keyboard changes nothing when the mode is already set, refuses a
-// restart while a page has an active lease before it quits the Simulator,
-// and otherwise switches the setting and brings the simulator back up.
+// sim keyboard changes nothing when the mode is already set; checks every
+// refusal before it quits the Simulator (an unknown device, another booted
+// simulator, a foreign iwdp, an active lease); brings back the simulator
+// that was booted when none is configured; and reports a failed quit.
 func TestKeyboard(t *testing.T) {
-	fm := readyMac()
-	fm.hwKbd = true
-	iw := &fakeIWDP{st: IWDPState{Running: true, Own: true, Listed: true}, leases: []int{1}}
-	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	newKbd := func() (*fakeMac, *fakeIWDP, *Sim) {
+		fm := readyMac()
+		fm.hwKbd = true
+		iw := &fakeIWDP{st: IWDPState{Running: true, Own: true, Listed: true}}
+		s, _ := newTestSim(t, fm, iw, Config{SSH: "mac"})
+		return fm, iw, s
+	}
+	_, _, s := newKbd()
 	if changed, _, err := s.Keyboard(context.Background(), "", false); err != nil || changed {
 		t.Fatalf("already hardware: %v, %v", changed, err)
 	}
-	if _, _, err := s.Keyboard(context.Background(), "", true); err == nil || fm.count("osascript") != 0 {
-		t.Fatalf("active lease: %v; the Simulator was quit %d times", err, fm.count("osascript"))
+	for _, refuse := range []struct {
+		name string
+		set  func(*fakeMac, *fakeIWDP) string
+	}{
+		{"unknown device", func(*fakeMac, *fakeIWDP) string { return "iPhone 99" }},
+		{"other booted", func(f *fakeMac, _ *fakeIWDP) string { f.other = true; return udidA }},
+		{"foreign iwdp", func(_ *fakeMac, i *fakeIWDP) string { i.st.Own = false; return "" }},
+		{"active lease", func(_ *fakeMac, i *fakeIWDP) string { i.leases = []int{1}; return "" }},
+	} {
+		fm, iw, s := newKbd()
+		dev := refuse.set(fm, iw)
+		if _, _, err := s.Keyboard(context.Background(), dev, true); err == nil || fm.quits != 0 || !fm.booted || !fm.hwKbd {
+			t.Errorf("%s: %v; quits %d, booted %v, hardware %v; want a refusal before any change", refuse.name, err, fm.quits, fm.booted, fm.hwKbd)
+		}
 	}
-	iw.leases = []int{0}
+	fm, _, s := newKbd()
+	fm.quitErr = true
+	if changed, _, err := s.Keyboard(context.Background(), "", true); err == nil || changed || !fm.hwKbd {
+		t.Fatalf("failed quit: %v, %v; the setting must stay", changed, err)
+	}
+	fm, _, s = newKbd()
 	changed, r, err := s.Keyboard(context.Background(), "", true)
-	if err != nil || !changed || fm.hwKbd || !r.Booted || !r.WindowOpened {
-		t.Fatalf("switch: %v, %+v, %v, hardware %v", changed, r, err, fm.hwKbd)
+	if err != nil || !changed || fm.hwKbd || !fm.booted || r.Device.UDID != udidA || !r.Booted || !r.WindowOpened {
+		t.Fatalf("switch with no configured device: %v, %+v, %v, hardware %v, booted %v", changed, r, err, fm.hwKbd, fm.booted)
+	}
+}
+
+// Property: over any preconditions, sim keyboard quits the Simulator only
+// when no refusal holds, never shuts down another simulator, and reports a
+// change only when the setting flipped and the simulator is booted again.
+func TestKeyboardProperty(t *testing.T) {
+	f := func(hw, other, foreign, lease, quitErr, onscreen, unknown bool) bool {
+		fm := readyMac()
+		fm.hwKbd, fm.other, fm.quitErr = hw, other, quitErr
+		iw := &fakeIWDP{st: IWDPState{Running: true, Own: !foreign, Listed: true}}
+		if lease {
+			iw.leases = []int{1}
+		}
+		s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+		dev := ""
+		if unknown {
+			dev = "iPhone 99"
+		}
+		changed, _, err := s.Keyboard(context.Background(), dev, onscreen)
+		needed := hw == onscreen
+		refused := unknown || other || foreign || lease
+		switch {
+		case !needed:
+			return err == nil && !changed && fm.quits == 0
+		case refused:
+			return err != nil && !changed && fm.quits == 0 && fm.hwKbd == hw
+		case quitErr:
+			return err != nil && !changed && fm.hwKbd == hw
+		}
+		return err == nil && changed && fm.hwKbd == !onscreen && fm.booted && fm.other == other
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 300}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -674,6 +772,71 @@ func TestParseUI(t *testing.T) {
 	}
 	if _, err := parseUI([]byte("Error: no simulator")); err == nil {
 		t.Fatal("parseUI accepted text that is not JSON")
+	}
+	// AXe reports numeric and boolean values too.
+	els, err = parseUI([]byte(`[{"type":"Slider","AXLabel":"Volume","AXValue":0.5,"frame":{"x":0,"y":0,"width":1,"height":1}},{"type":"Switch","AXLabel":"Wi-Fi","AXValue":true,"frame":{}},{"type":"Cell","AXLabel":"x","AXValue":{"a":1},"frame":{}}]`))
+	if err != nil || len(els) != 3 || els[0].Value != "0.5" || els[1].Value != "true" || els[2].Value != "" {
+		t.Fatalf("scalar values: %+v, %v", els, err)
+	}
+}
+
+// Property: parseUI lists, in pre-order, exactly the nodes of any tree that
+// have a label, a value or an identifier, with their own fields.
+func TestParseUIProperty(t *testing.T) {
+	type node map[string]any
+	f := func(seed int64) bool {
+		rng := rand.New(rand.NewSource(seed))
+		var want []string
+		var gen func(depth int) node
+		n := 0
+		gen = func(depth int) node {
+			n++
+			nd := node{"type": fmt.Sprint("T", n), "frame": map[string]any{"x": n, "y": 0, "width": 1, "height": 1}}
+			named := false
+			if rng.Intn(2) == 0 {
+				nd["AXLabel"] = fmt.Sprint("L", n)
+				named = true
+			}
+			switch rng.Intn(4) {
+			case 0:
+				nd["AXValue"] = fmt.Sprint("V", n)
+				named = true
+			case 1:
+				nd["AXValue"] = n
+				named = true
+			case 2:
+				nd["AXValue"] = nil
+			}
+			if named {
+				want = append(want, fmt.Sprint("T", n))
+			}
+			var kids []node
+			if depth < 4 {
+				for range rng.Intn(4) {
+					kids = append(kids, gen(depth+1))
+				}
+			}
+			nd["children"] = kids
+			return nd
+		}
+		var roots []node
+		for range 1 + rng.Intn(3) {
+			roots = append(roots, gen(0))
+		}
+		data, _ := json.Marshal(roots)
+		els, err := parseUI(data)
+		if err != nil || len(els) != len(want) {
+			return false
+		}
+		for i, e := range els {
+			if e.Type != want[i] || (e.Label != "" && e.Label != "L"+e.Type[1:]) {
+				return false
+			}
+		}
+		return true
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 300}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -820,6 +983,21 @@ func TestUpRefusesAForeignWinnerAndAnUnreadableSafari(t *testing.T) {
 	s.IWDP = &fakeIWDP{}
 	if _, err := s.Up(context.Background(), "", "", false); err == nil || fm.count("xcrun simctl launch") != 0 {
 		t.Fatalf("unreadable Safari: %v, %d launches", err, fm.count("xcrun simctl launch"))
+	}
+}
+
+// A new ssh whose environment the kernel shows without the token for a
+// moment after its start is still the forward (live run, 2026-11-24: the
+// forward ran, unrecorded, and the next sim up called it another program).
+func TestForwardWaitsForTheNewProcesssEnvironment(t *testing.T) {
+	p := newFakeProcs()
+	p.lateEnv = 3
+	f := newForward(t, NewMac(Config{SSH: "mac"}, nil), p)
+	if started, err := f.Ensure(context.Background(), "/a.socket"); err != nil || !started {
+		t.Fatalf("Ensure: %v, %v", started, err)
+	}
+	if ok, _ := serves(f, context.Background(), "/a.socket"); !ok || len(p.terms) != 0 {
+		t.Fatalf("serves %v, signaled %v", ok, p.terms)
 	}
 }
 

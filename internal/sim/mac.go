@@ -316,25 +316,66 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 // no axe program.
 var ErrNoAXe = errors.New("the simulator configuration names no axe program (\"axe\"): real touches need AXe on the Mac, docs/simulator.md")
 
-// AXe runs the configured axe program on the Mac for the simulator udid,
-// with args (each quoted for the Mac's shell), and returns its output.
-func (m Mac) AXe(ctx context.Context, udid string, args ...string) ([]byte, error) {
+// AXe runs the configured axe subcommand sub on the Mac for the simulator
+// udid, with the options opts and then, after "--", the positional
+// arguments pos, so that text such as "--stdin" stays text. Every word is
+// quoted for the Mac's shell. It returns axe's output.
+func (m Mac) AXe(ctx context.Context, udid, sub string, opts []string, pos ...string) ([]byte, error) {
 	if m.cfg.AXe == "" {
 		return nil, ErrNoAXe
 	}
 	if !udidRE.MatchString(udid) {
 		return nil, fmt.Errorf("running axe: bad UDID %q", udid)
 	}
-	words := []string{shellQuote(m.cfg.AXe)}
-	for _, a := range args {
+	words := []string{shellQuote(m.cfg.AXe), shellQuote(sub)}
+	for _, a := range opts {
 		words = append(words, shellQuote(a))
 	}
 	words = append(words, "--udid", udid)
+	if len(pos) > 0 {
+		words = append(words, "--")
+		for _, a := range pos {
+			words = append(words, shellQuote(a))
+		}
+	}
 	out, err := m.shell(ctx, strings.Join(words, " "))
 	if err != nil {
-		return out, fmt.Errorf("axe %s on the simulator: %w", args[0], err)
+		return out, fmt.Errorf("axe %s on the simulator: %w", sub, err)
 	}
 	return out, nil
+}
+
+// USKeyboard reports whether the simulator's hardware keyboard layout is
+// US: its first keyboard names hw=U.S., or it is US English with
+// hw=Automatic while the Mac's own layout is US (the simulator then follows
+// the Mac). layout describes
+// what was read, for an error.
+func (m Mac) USKeyboard(ctx context.Context, udid string) (us bool, layout string, err error) {
+	if !udidRE.MatchString(udid) {
+		return false, "", fmt.Errorf("reading the keyboard layout: bad UDID %q", udid)
+	}
+	out, err := m.shell(ctx, "k=$(xcrun simctl spawn "+udid+" defaults read -g AppleKeyboards 2>/dev/null | sed -n 2p); "+
+		"h=$(defaults read com.apple.HIToolbox AppleCurrentKeyboardLayoutInputSourceID 2>/dev/null); printf '%s\\n%s\\n' \"$k\" \"$h\"")
+	if err != nil {
+		return false, "", fmt.Errorf("reading the simulator's keyboard layout: %w", err)
+	}
+	lines := strings.SplitN(strings.TrimRight(string(out), "\n"), "\n", 2)
+	for len(lines) < 2 {
+		lines = append(lines, "")
+	}
+	sim := strings.Trim(strings.TrimSpace(lines[0]), "\",")
+	mac := strings.TrimSpace(lines[1])
+	layout = fmt.Sprintf("simulator %q, Mac %q", sim, mac)
+	switch {
+	case strings.Contains(sim, "hw=U.S."):
+		return true, layout, nil
+	case strings.Contains(sim, "hw=Automatic") || sim == "":
+		// Conservative: a US Mac layout and US English keyboard in the
+		// simulator; an Automatic layout under another language is not
+		// taken for US.
+		return mac == "com.apple.keylayout.US" && (sim == "" || strings.HasPrefix(sim, "en_US")), layout, nil
+	}
+	return false, layout, nil
 }
 
 // HardwareKeyboard reports the Simulator app's "Connect Hardware Keyboard"
@@ -348,13 +389,19 @@ func (m Mac) HardwareKeyboard(ctx context.Context) (bool, error) {
 	return strings.TrimSpace(string(out)) != "0", nil
 }
 
-// SetHardwareKeyboard quits the Simulator app, which shuts its simulators
-// down, and sets "Connect Hardware Keyboard", which the app reads when it
-// starts.
-func (m Mac) SetHardwareKeyboard(ctx context.Context, on bool) error {
-	script := "osascript -e 'quit app \"Simulator\"' >/dev/null 2>&1; " +
-		"for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -xq Simulator || break; sleep 1; done; " +
-		"xcrun simctl shutdown all >/dev/null 2>&1; " +
+// SetHardwareKeyboard sets "Connect Hardware Keyboard", which the
+// Simulator app reads when it starts: it quits the app (which shuts down
+// the simulators it shows), waits up to 20 s for it to end, shuts down
+// udid when it still runs, and writes the setting. Each step must succeed;
+// an error names the step, and the setting is written only after the app
+// ended. It shuts down no simulator but udid.
+func (m Mac) SetHardwareKeyboard(ctx context.Context, udid string, on bool) error {
+	if !udidRE.MatchString(udid) {
+		return fmt.Errorf("setting the Simulator's keyboard: bad UDID %q", udid)
+	}
+	script := "if pgrep -xq Simulator; then osascript -e 'quit app \"Simulator\"' >/dev/null || { echo 'quitting the Simulator app failed' >&2; exit 3; }; fi; " +
+		"i=0; while pgrep -xq Simulator; do i=$((i+1)); [ $i -gt 20 ] && { echo 'the Simulator app did not quit within 20 s' >&2; exit 4; }; sleep 1; done; " +
+		"if xcrun simctl list devices " + udid + " | grep -q '(Booted)'; then xcrun simctl shutdown " + udid + " || { echo 'shutting down the simulator failed' >&2; exit 5; }; fi; " +
 		"defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool " + strconv.FormatBool(on)
 	if _, err := m.shell(ctx, script); err != nil {
 		return fmt.Errorf("setting the Simulator's keyboard: %w", err)

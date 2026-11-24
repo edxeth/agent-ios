@@ -62,6 +62,11 @@ func TestSimTouchChecks(t *testing.T) {
 	}{
 		{"sim tap", Input{Flags: map[string]any{"label": "Done", "id": "d"}}},
 		{"sim tap", Input{Flags: map[string]any{"label": "Done", "hold": "long"}}},
+		{"sim tap", Input{Flags: map[string]any{"label": "Done", "hold": "0"}}},
+		{"sim tap", Input{Flags: map[string]any{"label": "Done", "hold": "-1"}}},
+		{"sim tap", Input{Flags: map[string]any{"label": "Done", "hold": "11"}}},
+		{"sim swipe", Input{Args: []string{"1", "2", "3", "4"}, Flags: map[string]any{"duration": "0"}}},
+		{"sim swipe", Input{Args: []string{"1", "2", "3", "4"}, Flags: map[string]any{"duration": "NaN"}}},
 		{"sim swipe", Input{Args: []string{"1", "2", "3", "4"}, Flags: map[string]any{"duration": "1s"}}},
 	} {
 		if err := check(bad.name, bad.in); err == nil {
@@ -86,7 +91,14 @@ func TestSimTouchChecks(t *testing.T) {
 // that is not a number, is a usage error when it runs, before it reaches
 // the Mac; so is a swipe whose points are not numbers.
 func TestSimTapNeedsAPointOrAnElement(t *testing.T) {
-	for _, in := range []Input{{Flags: map[string]any{}}, {Args: []string{"1"}, Flags: map[string]any{}}, {Args: []string{"1", "x"}, Flags: map[string]any{}}, {Args: []string{"1", "2"}, Flags: map[string]any{"label": "Done"}}} {
+	for _, in := range []Input{
+		{Flags: map[string]any{}},
+		{Args: []string{"1"}, Flags: map[string]any{}},
+		{Args: []string{"1", "x"}, Flags: map[string]any{}},
+		{Args: []string{"-1", "2"}, Flags: map[string]any{}},
+		{Args: []string{"1", "Inf"}, Flags: map[string]any{}},
+		{Args: []string{"1", "2"}, Flags: map[string]any{"label": "Done"}},
+	} {
 		var u *UsageError
 		if _, err := simTapArgs(in); !errors.As(err, &u) {
 			t.Errorf("%+v: %v, want a usage error", in, err)
@@ -99,8 +111,10 @@ func TestSimTapNeedsAPointOrAnElement(t *testing.T) {
 	if _, err := runSimKeyboard(context.Background(), nil, Input{Args: []string{"virtual"}, Flags: map[string]any{}}); !errors.As(err, &u) {
 		t.Errorf("sim keyboard virtual: %v, want a usage error before anything runs", err)
 	}
-	if _, err := simSwipeArgs(Input{Args: []string{"1", "2", "3", "x"}, Flags: map[string]any{}}); !errors.As(err, &u) {
-		t.Errorf("swipe to x: %v, want a usage error", err)
+	for _, args := range [][]string{{"1", "2", "3", "x"}, {"1", "2", "-3", "4"}, {"5", "6", "5", "6.0"}} {
+		if _, err := simSwipeArgs(Input{Args: args, Flags: map[string]any{}}); !errors.As(err, &u) {
+			t.Errorf("swipe %q: %v, want a usage error", args, err)
+		}
 	}
 }
 

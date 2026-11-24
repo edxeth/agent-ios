@@ -34,8 +34,13 @@ func ProcessIdentity(pid int) (start, token string, err error) {
 // own when the most specific listening socket that receives it belongs to
 // process group pgid, foreign when one of another process does (the checks
 // of an iwdp start's readiness, classify). Neither means that nobody
-// listens there. pgid 0 names no group, so any listener is foreign.
+// listens there. A pgid of 0 or less names no group, so any listener is
+// foreign. (Process group 0 is the kernel threads' on Linux, whose fds this
+// user cannot read: it must not be scanned.)
 func EndpointOwner(ctx context.Context, pgid int, ep netip.AddrPort) (own, foreign bool, err error) {
+	if pgid <= 0 {
+		pgid = -1 // no process has it
+	}
 	l, err := groupListens(ctx, pgid, ep)
 	if err != nil {
 		return false, false, err
