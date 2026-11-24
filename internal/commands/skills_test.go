@@ -39,27 +39,34 @@ func TestSkillsCommandsAreLocal(t *testing.T) {
 	}
 }
 
+// skills get prints each guide without its front matter (an agent that
+// runs it has chosen the skill already); --json keeps the whole SKILL.md.
 func TestSkillsGetPrintsTheRepositorySkill(t *testing.T) {
-	want := repoSkill(t, "iwdp")
+	file := repoSkill(t, "iwdp")
+	_, want, ok := strings.Cut(file, "\n---\n")
+	want = strings.TrimLeft(want, "\n")
+	if !ok || !strings.HasPrefix(file, "---\nname: iwdp\n") || !strings.HasPrefix(want, "# ") {
+		t.Fatalf("skill-data/iwdp/SKILL.md has no front matter before its guide")
+	}
 	code, out, errOut, _ := runCLI("skills", "get", "iwdp")
-	if code != ExitOK || out != want {
-		t.Fatalf("skills get iwdp: exit %d, stderr %q; stdout differs from skill-data/iwdp/SKILL.md:\n%s", code, errOut, out)
+	if code != ExitOK || out != want || strings.Contains(out, "name: iwdp\n") {
+		t.Fatalf("skills get iwdp: exit %d, stderr %q; stdout is not skill-data/iwdp/SKILL.md without its front matter:\n%s", code, errOut, out)
 	}
 	// Several names print several whole skills in order; no name prints
 	// every skill.
 	code, out, _, _ = runCLI("skills", "get", "iwdp", "iwdp")
-	if code != ExitOK || !strings.HasPrefix(out, want) || !strings.HasSuffix(out, want) || strings.Count(out, "name: iwdp\n") != 2 {
+	if code != ExitOK || !strings.HasPrefix(out, want) || !strings.HasSuffix(out, want) || strings.Count(out, "# iOS Safari with iwdp-cli\n") != 2 {
 		t.Fatalf("skills get iwdp iwdp: exit %d, stdout %q; want the skill twice", code, out)
 	}
 	for _, args := range [][]string{{"skills", "get"}, {"skills", "get", "--all"}} {
 		code, out, _, _ = runCLI(args...)
-		if code != ExitOK || strings.Count(out, "---\nname: ") != 4 || !strings.HasPrefix(out, "---\nname: iwdp\n") {
+		if code != ExitOK || strings.Contains(out, "---\nname: ") || strings.Count(out, "\n# ") < 3 || !strings.HasPrefix(out, want) {
 			t.Fatalf("%v: exit %d, want every skill, got %q", args, code, out)
 		}
 	}
 	code, out, _, _ = runCLI("--json", "skills", "get", "iwdp")
 	var got []skills.Skill
-	if code != ExitOK || json.Unmarshal([]byte(out), &got) != nil || len(got) != 1 || got[0].Name != "iwdp" || got[0].Content != want || got[0].Description == "" {
+	if code != ExitOK || json.Unmarshal([]byte(out), &got) != nil || len(got) != 1 || got[0].Name != "iwdp" || got[0].Content != file || got[0].Description == "" {
 		t.Fatalf("--json skills get iwdp: exit %d, stdout %q", code, out)
 	}
 	code, _, errOut, _ = runCLI("skills", "get", "nope")

@@ -40,7 +40,7 @@ func init() {
 	})
 	Register(&Command{
 		Name: "skills get", Local: true,
-		Summary: "Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill.",
+		Summary: "Print agent skills built into this binary (each guide without its front matter; --json gives the whole SKILL.md); without a name, or with --all, every skill.",
 		Args:    []Arg{{Name: "name", Help: "skill name from 'skills list'; several names print several skills", Variadic: true}},
 		Flags:   []Flag{{Name: "all", Type: FlagBool, Help: "print every skill"}},
 		Run: func(_ context.Context, _ Env, in Input) (Result, error) {
@@ -108,7 +108,7 @@ func skillsListText(list []skills.Skill) string {
 func skillsGetText(list []skills.Skill) string {
 	texts := make([]string, len(list))
 	for i, s := range list {
-		texts[i] = strings.TrimRight(s.Content, "\n")
+		texts[i] = strings.TrimRight(skillBody(s.Content), "\n")
 	}
 	return strings.Join(texts, "\n\n")
 }
@@ -123,4 +123,19 @@ func shorten(s string, n int) string {
 		cut = cut[:i]
 	}
 	return strings.TrimRight(cut, " ,;:.") + "..."
+}
+
+// skillBody is a SKILL.md without its front matter: the name and the
+// description are for 'skills list' and for an agent choosing a skill; an
+// agent that runs 'skills get' has chosen it already, so the text output
+// prints the guide alone.
+func skillBody(content string) string {
+	rest, ok := strings.CutPrefix(content, "---\n")
+	if !ok {
+		return content
+	}
+	if i := strings.Index(rest, "\n---\n"); i >= 0 {
+		return strings.TrimLeft(rest[i+len("\n---\n"):], "\n")
+	}
+	return content
 }

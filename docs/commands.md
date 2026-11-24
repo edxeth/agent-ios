@@ -104,7 +104,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`sim type`](#sim-type) | Type \<text\> into the simulator's focused field as key presses (sim tap the field first). The text is on the command lines of this host and the Mac: never type a secret this way; fill --stdin types into a page without that. A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone). |
 | [`sim ui`](#sim-ui) | List the elements of the simulator's screen that have a label, value or identifier, with their frames in points (its accessibility tree, through AXe): the targets of sim tap. It shows page and app text. |
 | [`sim up`](#sim-up) | Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m. |
-| [`skills get`](#skills-get) | Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill. |
+| [`skills get`](#skills-get) | Print agent skills built into this binary (each guide without its front matter; --json gives the whole SKILL.md); without a name, or with --all, every skill. |
 | [`skills list`](#skills-list) | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
 | [`skills path`](#skills-path) | Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all. |
 | [`snapshot`](#snapshot) | Print the page's accessibility tree with @eN refs for later commands. |
@@ -1576,7 +1576,7 @@ Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-
 iwdp-cli skills get [<name>...] [flags]
 ```
 
-Print agent skills built into this binary (the whole SKILL.md); without a name, or with --all, every skill.
+Print agent skills built into this binary (each guide without its front matter; --json gives the whole SKILL.md); without a name, or with --all, every skill.
 
 - Page: none; runs in the client process, not in the daemon
 
