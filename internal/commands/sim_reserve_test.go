@@ -258,3 +258,28 @@ func TestSimulatorNeedsAChosenTab(t *testing.T) {
 		t.Fatalf("no reservation: the first page is the session's, as before: %v", err)
 	}
 }
+
+// A page lease on the simulator keeps its owner's simulator reservation
+// alive: the daemon's sweep renews it, as for a physical device, so a
+// turn that works on its page alone does not lose the simulator after the
+// TTL.
+func TestSimulatorLeaseRenewsTheReservation(t *testing.T) {
+	now := time.Now()
+	res := &core.Reservations{Dir: t.TempDir(), Now: func() time.Time { return now }}
+	m, f := newTabManagerWith(t, res)
+	f.kind, f.device = transport.KindIWDP, core.SimulatorDevice
+	f.add("Mine", "http://10.0.2.2:8791/")
+	r, err := res.Reserve(core.SimulatorDevice, "a", 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runIn(t, m, "a", "eval", "1+1"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(4 * time.Minute)
+	m.Sweep(time.Now())
+	mine, _, _ := res.Check(core.SimulatorDevice, "a")
+	if mine == nil || !mine.Expires.After(r.Expires) {
+		t.Fatalf("the sweep did not renew the simulator reservation of a leasing owner: %+v (was until %s)", mine, r.Expires)
+	}
+}

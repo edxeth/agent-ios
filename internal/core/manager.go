@@ -2363,7 +2363,10 @@ func (m *Manager) Sweep(now time.Time) {
 			cancel()
 			m.pageLogf(t, "lease of %q expired after %s idle", logsafe.ID(l.session), m.o.LeaseTTL)
 		case l != nil:
-			if t.physical && pg.conn.State() != ConnLost {
+			// A lease keeps its owner's reservation alive: a physical
+			// device's, and the simulator's (sim reserve), whose TTL would
+			// otherwise end a turn that works on its page alone.
+			if (t.physical || t.device.ID == SimulatorDevice) && pg.conn.State() != ConnLost {
 				renew[resOwner] = true
 			}
 		case running == 0 && now.Sub(last) >= m.o.IdleClose:
