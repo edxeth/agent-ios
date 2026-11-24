@@ -26,6 +26,7 @@ type Tab struct {
 	Title      string `json:"title"`
 	URL        string `json:"url"`
 	Device     string `json:"device"`
+	DeviceID   string `json:"deviceId"` // the device's id: a UDID, or SIMULATOR
 	Debuggable bool   `json:"debuggable"`
 	Current    bool   `json:"current"`            // the session's current page
 	LeasedBy   string `json:"leasedBy,omitempty"` // session that holds its lease
@@ -135,7 +136,7 @@ func (m *Manager) DeviceTabs(ctx context.Context, req PageRequest, ao AcquireOpt
 				return false
 			}
 		}
-		out = append(out, Tab{Key: key, Title: p.Title, URL: redactURL(p.URL), Debuggable: p.Debuggable})
+		out = append(out, Tab{Key: key, Title: p.Title, URL: redactURL(p.URL), Debuggable: p.Debuggable, DeviceID: device})
 		return false
 	}
 	if only == "" {

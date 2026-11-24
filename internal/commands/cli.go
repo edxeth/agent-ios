@@ -796,7 +796,7 @@ func RunCLIOutcome(ctx context.Context, args []string, stdout io.Writer, start f
 	}
 	if inv.Cmd.ClientStep != nil {
 		if err := inv.Cmd.ClientStep(ctx, &inv.Input, os.Stdin); err != nil {
-			return fail(err, fmt.Sprintf("Error: %s: %v", inv.Cmd.Name, err))
+			return fail(err, errorLine(inv.Cmd.Name, err))
 		}
 	}
 	env, err := newEnv(ctx, inv)
@@ -819,7 +819,7 @@ func RunCLIOutcome(ctx context.Context, args []string, stdout io.Writer, start f
 	// mode the error of the write comes first in the message.
 	o := Outcome{Command: inv.Cmd.Name, Code: ExitOK, Private: private, Status: status}
 	if err != nil {
-		o = fail(err, fmt.Sprintf("Error: %s: %v", inv.Cmd.Name, err))
+		o = fail(err, errorLine(inv.Cmd.Name, err))
 	}
 	if werr != nil {
 		o = o.WriteFailed("result", werr)
@@ -961,4 +961,15 @@ func writeResult(w io.Writer, res Result, g Globals) error {
 	}
 	_, err := io.WriteString(w, out)
 	return err
+}
+
+// errorLine is the error line of a failed command: "Error: <name>: <err>",
+// without repeating the name when the error already starts with it (live
+// run 18: "Error: tab find: tab find: ...").
+func errorLine(name string, err error) string {
+	msg := err.Error()
+	if strings.HasPrefix(msg, name+": ") {
+		return "Error: " + msg
+	}
+	return fmt.Sprintf("Error: %s: %s", name, msg)
 }

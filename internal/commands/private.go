@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
 	"github.com/nnemirovsky/iwdp-cli/internal/sim"
@@ -869,13 +870,15 @@ func actionCounts(data json.RawMessage) (warnings, dialogs int, ok bool) {
 
 // tabsSummary prints, for a tab listing, one line per tab (the current
 // mark, the id, whether it is debuggable) and the number of hidden pages:
-// no title, URL, label, key, device or lease holder.
+// no title, URL, label, key, device identity or lease holder; a simulator
+// tab is marked as such.
 func tabsSummary(data json.RawMessage) (string, any, bool) {
 	var list struct {
 		Tabs []struct {
 			ID         string `json:"id"`
 			Debuggable bool   `json:"debuggable"`
 			Current    bool   `json:"current"`
+			DeviceID   string `json:"deviceId"`
 		} `json:"tabs"`
 		Hidden *int `json:"hidden"`
 	}
@@ -892,12 +895,23 @@ func tabsSummary(data json.RawMessage) (string, any, bool) {
 		if !t.Debuggable {
 			state = "not-debuggable"
 		}
-		fmt.Fprintf(&b, "%s %s %s\n", mark, t.ID, state)
-		tabs = append(tabs, map[string]any{"id": t.ID, "current": t.Current, "debuggable": t.Debuggable})
+		// A simulator tab is marked, without any device identity, so
+		// that an agent tells it from a phone's (tabDevice).
+		sim := t.DeviceID == core.SimulatorDevice
+		kind := ""
+		if sim {
+			kind = " simulator"
+		}
+		fmt.Fprintf(&b, "%s %s %s%s\n", mark, t.ID, state, kind)
+		tab := map[string]any{"id": t.ID, "current": t.Current, "debuggable": t.Debuggable}
+		if sim {
+			tab["simulator"] = true
+		}
+		tabs = append(tabs, tab)
 	}
 	fmt.Fprintf(&b, "hidden %d", *list.Hidden)
 	if *list.Hidden > 0 {
-		b.WriteString("\npages of physical devices without a reservation of your owner are not listed: run 'iwdp-cli device reserve --owner <owner>'; the simulator's are not listed while another owner reserves it: run 'iwdp-cli sim reserve' (it waits)")
+		b.WriteString("\nnot listed: pages of physical devices without a reservation of your owner (run 'iwdp-cli device reserve --owner <owner>'), and the simulator's while another owner reserves it (run 'iwdp-cli sim reserve', it waits)")
 	}
 	return b.String(), map[string]any{"tabs": tabs, "hidden": *list.Hidden}, true
 }

@@ -108,6 +108,7 @@ func runTabList(ctx context.Context, env Env, in Input) (Result, error) {
 		if !t.Debuggable {
 			b.WriteString("  (not debuggable)")
 		}
+		b.WriteString(tabDevice(t.DeviceID))
 		b.WriteString("\n")
 	}
 	if len(tabs) == 0 {
@@ -120,7 +121,7 @@ func runTabList(ctx context.Context, env Env, in Input) (Result, error) {
 		if owner == "" {
 			owner = in.Global.Session
 		}
-		fmt.Fprintf(&b, "%d page(s) of physical devices without a reservation of owner %q are not listed; run 'iwdp-cli device reserve --owner %s' or pass --reservation <owner>. The simulator's pages are not listed either while another owner reserves the simulator (iwdp-cli sim reserve waits for it)", hidden, owner, owner)
+		fmt.Fprintf(&b, "%d page(s) are not listed: those of physical devices without a reservation of owner %q (run 'iwdp-cli device reserve --owner %s' or pass --reservation <owner>), and the simulator's while another owner reserves it (iwdp-cli sim reserve waits for it)", hidden, owner, owner)
 	}
 	return Result{Text: strings.TrimRight(b.String(), "\n"), Data: map[string]any{"tabs": tabs, "hidden": hidden}}, nil
 }
@@ -443,4 +444,15 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 		}
 	}
 	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"closed": key}}, nil
+}
+
+// tabDevice marks a tab of the simulator, so that an agent with
+// reservations of several devices tells the simulator's tabs from a
+// phone's (live run 18: an agent on a physical iPhone counted the
+// simulator's tabs as the phone's). Other tabs stay unmarked.
+func tabDevice(device string) string {
+	if device == core.SimulatorDevice {
+		return "  (simulator)"
+	}
+	return ""
 }

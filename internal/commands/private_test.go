@@ -22,6 +22,7 @@ import (
 	"github.com/nnemirovsky/iwdp-cli/internal/core"
 	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
 	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/iwdp-cli/internal/transport"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
 	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
 )
@@ -1266,5 +1267,22 @@ func TestPrivateProjectByKind(t *testing.T) {
 	got, ok := project(raw(`{"a":"MARK","b":null,"c":[{"d":1,"e":"MARK"},"MARK"],"s1":{"x":"MARK"},"s2":["MARK"],"s3":"v","l":{"x":"MARK"},"o":["MARK"],"free":{"y":[1]},"zero":"MARK","nolist":["MARK"],"nilmember":{"x":"MARK"},"new":"MARK"}`), s)
 	if want := `{"b":null,"c":[{"d":1}],"free":{"y":[1]},"nilmember":{},"nolist":[],"s3":"v"}`; !ok || string(got) != want {
 		t.Errorf("project = %s, %v; want %s", got, ok, want)
+	}
+}
+
+// A tab listing names the kind of device of each tab, also in private
+// mode, without its UDID: in live run 18 an agent with a reservation of
+// every device counted the simulator's tabs as its iPhone's.
+func TestTabListNamesTheSimulator(t *testing.T) {
+	m, f := newTabManager(t)
+	f.kind, f.device = transport.KindIWDP, core.SimulatorDevice
+	f.add("Sim "+privateMarker, "http://10.0.2.2:8791/")
+	stub := &remoteStub{mgrEnv: mgrEnv{m: m}, t: t, session: "a"}
+	if code, out, _ := runPrivate(t, stub, "--private", "tab", "list"); code != 0 || out != "  t1 debuggable simulator\nhidden 0\n" {
+		t.Fatalf("private tab list of a simulator tab: exit %d %q", code, out)
+	}
+	r, err := runIn(t, m, "a", "tab", "list")
+	if err != nil || !strings.HasSuffix(r.Text, "  (simulator)") {
+		t.Fatalf("tab list of a simulator tab: %q, %v", r.Text, err)
 	}
 }
