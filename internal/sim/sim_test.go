@@ -945,7 +945,7 @@ func TestUpWaitsForTheURLsTab(t *testing.T) {
 	iw := &fakeIWDP{urls: []string{"http://10.0.2.2:18080/"}}
 	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
 	_, err := s.Up(context.Background(), "", "http://10.0.2.2:8791/", false)
-	if err == nil || !strings.Contains(err.Error(), "127.0.0.1") {
+	if !errors.Is(err, ErrNoURLTab) || !strings.Contains(err.Error(), "127.0.0.1") {
 		t.Fatalf("a URL that no tab shows: %v", err)
 	}
 	iw.urls = append(iw.urls, "http://10.0.2.2:8791/index.html?x=1#top")

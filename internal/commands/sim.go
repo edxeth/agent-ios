@@ -36,7 +36,8 @@ func init() {
 		Summary: "Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: " +
 			"start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, " +
 			"forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. " +
-			"Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Default deadline 15m.",
+			"Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. " +
+			"Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m.",
 		Flags: []Flag{
 			device,
 			{Name: "no-window", Type: FlagBool, Help: "do not open the Simulator window"},
@@ -296,6 +297,11 @@ func runSimUp(ctx context.Context, env Env, in Input) (Result, error) {
 	noWindow, _ := in.Flags["no-window"].(bool)
 	openURL, _ := in.Flags["url"].(string)
 	r, err := s.Up(ctx, dev, openURL, noWindow)
+	if errors.Is(err, sim.ErrNoURLTab) {
+		// Its own exit code, so that private mode, which hides the
+		// message, can still say what to check (privateErrorLine).
+		return Result{}, &core.CodedError{Code: ExitNoMatch, Err: err}
+	}
 	if err != nil {
 		return Result{}, err
 	}

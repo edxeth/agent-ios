@@ -73,6 +73,10 @@ type UpReport struct {
 // ErrNotOwnIWDP is the error of Up when the iwdp on the listing address is
 // not the one that iwdp-cli started: sim cannot tell where that iwdp looks
 // for a simulator, nor restart it.
+// ErrNoURLTab is Up's error when Safari shows no tab of its URL within
+// PageWait, mostly a server that does not answer the simulator.
+var ErrNoURLTab = errors.New("safari in the simulator shows no tab of the --url")
+
 var ErrNotOwnIWDP = errors.New("the ios_webkit_debug_proxy on its listing address was not started by iwdp-cli, so sim up cannot tell where it looks for a simulator or restart it: ask whoever started it to stop it, then run sim up again")
 
 // Up makes the simulator ready for iwdp-cli, doing only the steps still
@@ -121,7 +125,7 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 		return r, err
 	}
 	if openURL != "" && !r.TabOpened {
-		return r, fmt.Errorf("safari in the simulator shows no tab of %s after %s: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2", openURL, s.PageWait)
+		return r, fmt.Errorf("%w %s after %s: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2", ErrNoURLTab, openURL, s.PageWait)
 	}
 	if lastErr != nil {
 		return r, fmt.Errorf("reading the simulator's pages from ios_webkit_debug_proxy: %w", lastErr)

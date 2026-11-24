@@ -167,6 +167,10 @@ func TestPrivateSimReservationLines(t *testing.T) {
 	if l := privateErrorLine("sim reserve", ExitWaitTimeout); !strings.Contains(l, "run 'iwdp-cli sim reserve' again") {
 		t.Errorf("sim reserve exit 3: %q", l)
 	}
+	// sim up's page that never shows: private mode still says what to check.
+	if l := privateErrorLine("sim up", ExitNoMatch); !strings.Contains(l, "10.0.2.2") {
+		t.Errorf("sim up exit 7 in private mode: %q", l)
+	}
 	if l := privateErrorLine("sim tap", ExitReservation); !strings.Contains(l, "reserved by another agent") {
 		t.Errorf("sim tap exit 6: %q", l)
 	}

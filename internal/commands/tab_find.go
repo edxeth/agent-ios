@@ -15,7 +15,8 @@ import (
 )
 
 // ExitNoMatch is the exit code of "tab find" when it read every tab that
-// can show the target and none shows it. No other failure has it: a
+// can show the target and none shows it, and of "sim up" when Safari
+// shows no tab of its --url in time. No other failure of tab find has it: a
 // listing that hides pages ends the command with exit 6, a tab that could
 // not be read with exit 1 or the exit code of that read (4: another
 // session holds the tab), so a caller that acts on "the target is not

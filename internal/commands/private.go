@@ -1071,6 +1071,8 @@ func privateErrorLine(name string, code int) string {
 	switch {
 	case name == "sim reserve" && code == ExitWaitTimeout:
 		return name + " exit 3: the simulator is still reserved by another agent; run 'iwdp-cli sim reserve' again to keep waiting, and do not use the simulator meanwhile (private mode hides the message)"
+	case name == "sim up" && code == ExitNoMatch:
+		return name + " exit 7: Safari shows no tab of your --url: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2 (private mode hides the message)"
 	case strings.HasPrefix(name, "sim ") && code == ExitReservation:
 		return fmt.Sprintf("%s exit %d: the simulator is reserved by another agent; run 'iwdp-cli sim reserve' (it waits), then this command (private mode hides the message)", name, code)
 	}
