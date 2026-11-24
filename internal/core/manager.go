@@ -2289,7 +2289,10 @@ func (m *Manager) sweeper(ctx context.Context) {
 			if ctx.Err() != nil {
 				return // select picks at random when both are ready
 			}
-			m.Sweep(time.Now())
+			// The sweeper does not wait for the sweep's lease cleanups:
+			// the next tick fences other pages while one cleanup stalls
+			// (final review F2). Close waits for them (goBackground).
+			m.sweep(time.Now())
 		}
 	}
 }
@@ -2299,9 +2302,27 @@ func (m *Manager) sweeper(ctx context.Context) {
 // owner's simulator turn, a physical device without the owner's
 // reservation), closes pages without a lease after IdleClose, and renews,
 // for each active lease, its owner's reservation of the lease's device.
-func (m *Manager) Sweep(now time.Time) {
+// It returns when the cleanups of the leases that it ended have ended.
+func (m *Manager) Sweep(now time.Time) { m.sweep(now).Wait() }
+
+// sweep is Sweep without the wait: it returns the cleanups of the leases
+// that it ended. It first decides, page by page, which leases end and
+// marks them releasing, which stops their admission at once (acquire waits,
+// BeginLeased and a lease's operations refuse), and only then starts their
+// releases, one goroutine per page, each with its own 5 s bound, which
+// cancel the lease's operations first and end the lease after the
+// page-side cleanup. So a stalled cleanup of one page delays neither the
+// fencing nor the lease end of another (final review F2).
+func (m *Manager) sweep(now time.Time) *sync.WaitGroup {
 	type ownerDevice struct{ owner, device string }
 	renew := map[ownerDevice]bool{}
+	type ending struct {
+		pg    *Page
+		l     *lease
+		t     pageTarget
+		fence bool
+	}
+	var ends []ending
 	for _, pg := range m.allPages() {
 		if m.sweepPageHook != nil {
 			m.sweepPageHook(pg)
@@ -2341,20 +2362,8 @@ func (m *Manager) Sweep(now time.Time) {
 		}
 		pg.mu.Unlock()
 		switch {
-		case fence:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := m.releasePage(ctx, pg, l); err != nil {
-				m.pageLogf(t, "fenced lease release: %v", logsafe.Error(err))
-			}
-			cancel()
-			m.pageLogf(t, "lease of %q ended: its owner does not hold the device's reservation", logsafe.ID(l.session))
-		case expire:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := m.releasePage(ctx, pg, l); err != nil {
-				m.pageLogf(t, "idle lease release: %v", logsafe.Error(err))
-			}
-			cancel()
-			m.pageLogf(t, "lease of %q expired after %s idle", logsafe.ID(l.session), m.o.LeaseTTL)
+		case expire || fence:
+			ends = append(ends, ending{pg: pg, l: l, t: t, fence: fence})
 		case l != nil:
 			// A lease keeps its owner's reservation alive: a physical
 			// device's, and the simulator's (sim reserve), whose TTL would
@@ -2368,6 +2377,31 @@ func (m *Manager) Sweep(now time.Time) {
 			}
 		}
 	}
+	var wg sync.WaitGroup
+	for _, e := range ends {
+		wg.Add(1)
+		end := func(context.Context) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if e.fence {
+				if err := m.releasePage(ctx, e.pg, e.l); err != nil {
+					m.pageLogf(e.t, "fenced lease release: %v", logsafe.Error(err))
+				}
+				m.pageLogf(e.t, "lease of %q ended: its owner does not hold the device's reservation", logsafe.ID(e.l.session))
+				return
+			}
+			if err := m.releasePage(ctx, e.pg, e.l); err != nil {
+				m.pageLogf(e.t, "idle lease release: %v", logsafe.Error(err))
+			}
+			m.pageLogf(e.t, "lease of %q expired after %s idle", logsafe.ID(e.l.session), m.o.LeaseTTL)
+		}
+		// After Close began no goroutine starts: the release runs here,
+		// since Close waits for the release of a page marked releasing.
+		if !m.goBackground(end) {
+			end(context.Background())
+		}
+	}
 	if m.o.Reservations != nil {
 		for od := range renew {
 			if _, err := m.o.Reservations.Renew(od.owner, od.device); err != nil {
@@ -2375,6 +2409,7 @@ func (m *Manager) Sweep(now time.Time) {
 			}
 		}
 	}
+	return &wg
 }
 
 // closeIdle closes pg, a page without a lease that was idle for IdleClose
