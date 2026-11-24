@@ -98,7 +98,7 @@ type simReservation struct {
 	Waited   string    `json:"waited"`
 }
 
-func runSimReserve(ctx context.Context, _ Env, in Input) (Result, error) {
+func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 	rs, err := SimReservations()
 	if err != nil {
 		return Result{}, err
@@ -108,6 +108,7 @@ func runSimReserve(ctx context.Context, _ Env, in Input) (Result, error) {
 	wait := in.Flags["wait"].(time.Duration)
 	start := time.Now()
 	deadline := start.Add(wait)
+	said := false
 	for {
 		r, err := rs.Reserve(core.SimulatorDevice, o, ttl)
 		if err == nil {
@@ -119,6 +120,14 @@ func runSimReserve(ctx context.Context, _ Env, in Input) (Result, error) {
 		}
 		if !errors.Is(err, core.ErrReserved) {
 			return Result{}, err
+		}
+		if !said && env != nil {
+			// At once, on stdout: an agent whose tool call ends before the
+			// wait still reads why (live run, 2026-11-24: a 10 s tool
+			// timeout cut the command, and the agent stopped). The line
+			// names no owner, so it is safe in private mode.
+			env.Emit(fmt.Sprintf("waiting: the simulator is in another agent's turn; this waits up to %s. If it is cut off (a tool timeout), run 'iwdp-cli sim reserve' again: waiting is normal", wait))
+			said = true
 		}
 		if !time.Now().Before(deadline) {
 			_, other, _ := rs.Check(core.SimulatorDevice, o)

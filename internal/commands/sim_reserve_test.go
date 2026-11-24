@@ -90,6 +90,31 @@ func TestSimReserveWaitsForTheOtherOwner(t *testing.T) {
 	}
 }
 
+// lineEnv records the lines a command emits.
+type lineEnv struct {
+	Env
+	lines []string
+}
+
+func (e *lineEnv) Emit(line string) { e.lines = append(e.lines, line) }
+
+// While it waits, sim reserve says at once, once, that this is another
+// agent's turn and to run it again if it is cut off, naming no owner: an
+// agent whose tool timed out before the wait ended stopped instead (live
+// run, 2026-11-24). A free simulator prints no such line.
+func TestSimReserveSaysAtOnceThatItWaits(t *testing.T) {
+	res := withSimReservations(t)
+	env := &lineEnv{}
+	if _, err := runSimReserve(context.Background(), env, simInput("a", 0)); err != nil || len(env.lines) != 0 {
+		t.Fatalf("free simulator: %v, lines %q", err, env.lines)
+	}
+	_, _ = runSimReserve(context.Background(), env, simInput("b", 100*time.Millisecond))
+	if len(env.lines) != 1 || !strings.Contains(env.lines[0], "run 'iwdp-cli sim reserve' again") || strings.Contains(env.lines[0], `"a"`) {
+		t.Fatalf("waiting lines: %q", env.lines)
+	}
+	_ = res
+}
+
 // simGate refuses another owner's sim command while the simulator is
 // reserved, renews the owner's own reservation, and admits everyone on a
 // free simulator.
