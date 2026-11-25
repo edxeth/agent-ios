@@ -47,7 +47,7 @@ func init() {
 		return
 	}
 	userRuntimeDir = os.Getenv("XDG_RUNTIME_DIR")
-	dir, err := os.MkdirTemp("", "agent-ios-test")
+	dir, err := testutil.ShortTempDir() // the daemon's socket path fits under it
 	if err != nil {
 		panic(err)
 	}

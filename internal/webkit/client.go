@@ -185,6 +185,23 @@ func (c *Client) retireOn(err error) {
 	}
 }
 
+// WaitForTarget waits until the page's target is announced
+// (Target.targetCreated), for a connection that must be Target-routed,
+// such as every connection to iwdp: NewClient waits for the announcement
+// only TargetWaitTimeout and then sends in direct mode, while iwdp on a
+// loaded machine can announce the target later. It returns ctx's error
+// when ctx ends first, and the connection's error when it closes first.
+func (c *Client) WaitForTarget(ctx context.Context) error {
+	select {
+	case <-c.targetReady:
+		return nil
+	case <-c.done:
+		return fmt.Errorf("waiting for the page's target: %w", c.Err())
+	case <-ctx.Done():
+		return ctxErr(ctx)
+	}
+}
+
 // IsTargetRouted returns true if this connection uses iwdp Target-based routing.
 func (c *Client) IsTargetRouted() bool {
 	c.mu.Lock()

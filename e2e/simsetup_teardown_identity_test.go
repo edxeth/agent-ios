@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -24,25 +25,45 @@ import (
 // Linux /proc/<pid>/environ, macOS KERN_PROCARGS2) and runs
 // ios_webkit_debug_proxy. These tests run on any host with fakes: a fake
 // uname chooses the system, a fake ps answers the start time for one pid,
-// and the recorded "iwdp" is a private Python probe of the test, never a
-// real iwdp. With a fake "Darwin" on a Linux kernel the helper builds the
+// and the recorded "iwdp" is a private probe of the test (this test
+// binary, runOwnerProbe), never a real iwdp. With a fake "Darwin" on a Linux kernel the helper builds the
 // KERN_PROCARGS2 buffer from the probe's real /proc files.
 
-// ownerProbe is a process that stands in for a recorded iwdp. On SIGTERM
-// it creates the file sys.argv[1] and exits when sys.argv[2] is "exit";
-// it keeps running when it is "ignore". Its later arguments are markers
-// that no output may show.
-const ownerProbe = `import signal, sys, time
-marker, mode = sys.argv[1], sys.argv[2]
-def on_term(signum, frame):
-    open(marker, "w").close()
-    if mode == "exit":
-        sys.exit(0)
-signal.signal(signal.SIGTERM, on_term)
-print("ready", flush=True)
-while True:
-    time.sleep(60)
-`
+// ownerProbeArg, as the first argument of this test binary, makes it an
+// owner probe (runOwnerProbe) instead of running the tests.
+const ownerProbeArg = "-agent-ios-owner-probe"
+
+// isOwnerProbe reports whether this process is an owner probe.
+func isOwnerProbe() bool { return len(os.Args) > 1 && os.Args[1] == ownerProbeArg }
+
+// runOwnerProbe is the process that stands in for a recorded iwdp: this
+// test binary, which startOwnerProbe runs with the argv[0] the test
+// chooses. The kernel keeps that argv[0] on Linux and on macOS, as it does
+// for the real iwdp. A python3 probe does not keep it on macOS: a
+// framework build's python3 (Homebrew's, python.org's, Xcode's) is a
+// launcher that runs Python.app's interpreter with its path as argv[0]
+// (CPython's Mac/Tools/pythonw.c). On SIGTERM it creates the file args[0]
+// and exits when args[1] is "exit"; it keeps running when it is "ignore".
+// Its later arguments are markers that no output may show.
+func runOwnerProbe(args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "owner probe: want the signal file and the mode")
+		return 2
+	}
+	signalFile, mode := args[0], args[1]
+	terms := make(chan os.Signal, 1)
+	signal.Notify(terms, syscall.SIGTERM)
+	fmt.Println("ready")
+	for range terms {
+		if f, err := os.Create(signalFile); err == nil {
+			_ = f.Close()
+		}
+		if mode == "exit" {
+			return 0
+		}
+	}
+	return 0
+}
 
 // swapRecordOnce, the body of a shell function, replaces the record
 // $FAKE_SWAP_RECORD with the file $FAKE_SWAP_TO once (when both are set):
@@ -161,7 +182,7 @@ type probeSpec struct {
 	exitOnTerm bool
 }
 
-// probeProcess is one running ownerProbe.
+// probeProcess is one running owner probe (runOwnerProbe).
 type probeProcess struct {
 	pid    int
 	marker string        // the argument that marks its command line
@@ -230,14 +251,14 @@ func (p *probeProcess) kill(t *testing.T) {
 	<-p.exited
 }
 
-// startOwnerProbe starts ownerProbe as spec says, with the environment
-// PATH and spec.env. The process is reaped as soon as it exits, so an exit
-// is visible as a missing pid.
+// startOwnerProbe starts an owner probe (runOwnerProbe) as spec says, with
+// the environment PATH and spec.env. The process is reaped as soon as it
+// exits, so an exit is visible as a missing pid.
 func startOwnerProbe(t *testing.T, spec probeSpec) *probeProcess {
 	t.Helper()
-	python, err := exec.LookPath("python3")
+	self, err := os.Executable()
 	if err != nil {
-		t.Fatalf("the teardown tests need python3: %v", err)
+		t.Fatalf("the path of this test binary, which runs the owner probe: %v", err)
 	}
 	mode := "ignore"
 	if spec.exitOnTerm {
@@ -248,10 +269,10 @@ func startOwnerProbe(t *testing.T, spec probeSpec) *probeProcess {
 		argv0 = "python3"
 	}
 	p := &probeProcess{marker: "FOREIGN_CMDLINE_" + randomHex(t, 8), signal: filepath.Join(t.TempDir(), "got-term"), exited: make(chan struct{})}
-	p.argv = append([]string{argv0, "-c", ownerProbe, p.signal, mode, p.marker}, spec.args...)
+	p.argv = append([]string{argv0, ownerProbeArg, p.signal, mode, p.marker}, spec.args...)
 	// A small environment of its own: a failing check may print it.
 	p.env = append([]string{"PATH=" + os.Getenv("PATH")}, spec.env...)
-	cmd := &exec.Cmd{Path: python, Args: p.argv, Env: p.env, SysProcAttr: probeProcAttr()}
+	cmd := &exec.Cmd{Path: self, Args: p.argv, Env: p.env, SysProcAttr: probeProcAttr()}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

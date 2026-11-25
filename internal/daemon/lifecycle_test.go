@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 	// Every default path (SocketDir, LogPath) points into a private
 	// directory, so no test reaches the user's daemon (task item 4).
 	userRuntimeDir = os.Getenv("XDG_RUNTIME_DIR")
-	dir, err := os.MkdirTemp("", "iwdpd-run")
+	dir, err := testutil.ShortTempDir() // the daemon's socket path fits under it
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -111,16 +111,12 @@ func TestDaemonTestsUseAPrivateRuntimeDir(t *testing.T) {
 	}
 }
 
-// shortDir is a fresh directory with a short path: a Unix socket path must
-// stay under 108 bytes, and t.TempDir paths carry the test name.
+// shortDir is a fresh directory with a short path (testutil.ShortTestDir):
+// a Unix socket path must stay under 104 bytes on macOS and 108 on Linux,
+// and t.TempDir paths carry the test name.
 func shortDir(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("", "iwdpd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(d) })
-	return d
+	return testutil.ShortTestDir(t)
 }
 
 // spawnOptions are client options that auto-start this test binary as the

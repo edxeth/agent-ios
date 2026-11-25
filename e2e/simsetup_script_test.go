@@ -484,22 +484,57 @@ func TestSimTeardownAndSetupAreSerialized(t *testing.T) {
 }
 
 // TestSimSetupFailsClearlyOnAStaleLock: a lock that stays taken (a crashed
-// setup or teardown) makes setup fail with advice after its wait, without
-// any simctl call.
+// setup or teardown, or another run that holds it) makes setup and
+// teardown fail with advice after their wait, without any simctl call,
+// and leaves the holder's lock in place. This holds also where mkdir(1)
+// reports success for a directory that already exists: uutils coreutils'
+// mkdir (Ubuntu 26.04's mkdir, up to at least 0.5.0) does so, without -p,
+// when another process creates the directory between its existence check
+// and its mkdir(2), so two setups that started together both took the lock
+// (CI run 45669625167, "two setups at once").
 func TestSimSetupFailsClearlyOnAStaleLock(t *testing.T) {
-	env, sim := simScriptEnv(t, "Shutdown", "AGENT_IOS_SIM_LOCK_WAIT_SECONDS=1")
-	dir := filepath.Join(sim.stateDir, "iwdp-sim-"+strconv.Itoa(os.Getuid()))
-	if err := os.MkdirAll(filepath.Join(dir, "lock"), 0o700); err != nil {
+	realMkdir, err := exec.LookPath("mkdir")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	_, stderr, code := runSimScript(t, env, "--boot-simulator")
-	if code == 0 || !strings.Contains(stderr, "stayed taken") || !strings.Contains(stderr, "rmdir") {
-		t.Fatalf("setup with a stale lock: exit %d, stderr %q; want a failure that names the lock and rmdir", code, stderr)
-	}
-	if calls := sim.calls(t); calls != "" {
-		t.Fatalf("setup ran commands without the lock:\n%s", calls)
+	for _, tc := range []struct {
+		name  string
+		mkdir string // a mkdir first on PATH; "" for the system's
+	}{
+		{"the system's mkdir", ""},
+		{"a mkdir that succeeds on an existing directory", "#!/bin/sh\n" +
+			"# uutils mkdir after it lost the race: an existing directory is success.\n" +
+			"for last in \"$@\"; do :; done\n" +
+			"'" + realMkdir + "' \"$@\" 2>/dev/null || [ -d \"$last\" ]\n"},
+	} {
+		for _, arg := range []string{"--boot-simulator", "--teardown"} {
+			t.Run(tc.name+" "+arg, func(t *testing.T) {
+				env, sim := simScriptEnv(t, "Shutdown", "AGENT_IOS_SIM_LOCK_WAIT_SECONDS=1")
+				if tc.mkdir != "" {
+					bin := filepath.Join(filepath.Dir(sim.stateDir), "bin")
+					if err := os.WriteFile(filepath.Join(bin, "mkdir"), []byte(tc.mkdir), 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				dir := filepath.Join(sim.stateDir, "iwdp-sim-"+strconv.Itoa(os.Getuid()))
+				lock := filepath.Join(dir, "lock")
+				if err := os.MkdirAll(lock, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				_, stderr, code := runSimScript(t, env, arg)
+				if code == 0 || !strings.Contains(stderr, "stayed taken") || !strings.Contains(stderr, "rmdir") {
+					t.Fatalf("%s with a taken lock: exit %d, stderr %q; want a failure that names the lock and rmdir", arg, code, stderr)
+				}
+				if calls := sim.calls(t); calls != "" {
+					t.Fatalf("%s ran commands without the lock:\n%s", arg, calls)
+				}
+				if fi, err := os.Stat(lock); err != nil || !fi.IsDir() {
+					t.Fatalf("%s removed the lock that another process holds: %v", arg, err)
+				}
+			})
+		}
 	}
 }

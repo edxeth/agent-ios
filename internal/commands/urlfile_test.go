@@ -14,6 +14,7 @@ import (
 	"testing/quick"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
@@ -105,12 +106,7 @@ func TestURLFileRefusesEveryFileThatIsNotRegular(t *testing.T) {
 	fifo := mkfifo(t, filepath.Join(dir, "fifo"))
 	// A short directory: the path of a Unix socket is limited to about
 	// 100 bytes, and t.TempDir can be longer on macOS.
-	sockDir, err := os.MkdirTemp("", "iwdp-url")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	sock := filepath.Join(sockDir, "s")
+	sock := filepath.Join(testutil.ShortTestDir(t), "s")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

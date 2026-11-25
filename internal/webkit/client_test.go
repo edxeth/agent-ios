@@ -616,3 +616,37 @@ func TestClient_SendWithExpiredContextSendsNothing(t *testing.T) {
 		t.Errorf("server received %v, want only Live.method", got)
 	}
 }
+
+// The simulator tests' shared iwdp connection (e2e getSimClient): iwdp can
+// announce the page's target later than NewClient waits for it (on GitHub's
+// macOS runner a command went out in direct mode and got "'Runtime' domain
+// was not found"). WaitForTarget returns only after the announcement, or
+// with the context's error when the context ends first.
+func TestClient_WaitForTargetWaitsForALateAnnouncement(t *testing.T) {
+	mock := testutil.NewMockServer()
+	defer mock.Close()
+	client, err := webkit.NewClient(context.Background(), mock.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+	if client.IsTargetRouted() {
+		t.Fatal("the client is Target-routed before any announcement")
+	}
+	// The context's end is the behavior under test here.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	err = client.WaitForTarget(ctx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitForTarget without an announcement = %v; want the context's deadline", err)
+	}
+	if err := mock.SendEvent("Target.targetCreated", map[string]any{"targetInfo": map[string]string{"targetId": "page-1", "type": "page"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.WaitForTarget(t.Context()); err != nil {
+		t.Fatalf("WaitForTarget after the announcement: %v", err)
+	}
+	if !client.IsTargetRouted() {
+		t.Fatal("WaitForTarget returned, but the client is not Target-routed")
+	}
+}

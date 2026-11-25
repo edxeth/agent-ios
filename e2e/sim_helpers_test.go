@@ -27,8 +27,6 @@ func getSimClient(t *testing.T) *webkit.Client {
 	}
 
 	simOnce.Do(func() {
-		// CI runners are slower — give iwdp more time to send Target.targetCreated.
-		webkit.TargetWaitTimeout = 2 * time.Second
 		sim = &simTarget{listingURL: "http://" + proxy.ListingAddr(), wsURL: wsURL, pageURL: os.Getenv("AGENT_IOS_SIM_PAGE_URL"), runToken: os.Getenv("AGENT_IOS_SIM_RUN_TOKEN")}
 	})
 	// Checked on every call (simTarget.get): a test that navigates the

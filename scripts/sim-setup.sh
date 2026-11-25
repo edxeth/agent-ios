@@ -39,7 +39,7 @@ LEASEFILE="$STATE_DIR/lease"
 SIMFILE="$STATE_DIR/device"
 # Every ownership step (take the lease and boot; check the token, shut
 # down and release the lease) runs while this script holds LOCKDIR, a
-# directory that mkdir creates atomically (macOS has no flock command).
+# directory that mkdir(2) creates atomically (macOS has no flock command).
 LOCKDIR="$STATE_DIR/lock"
 LOCK_WAIT_SECONDS="${AGENT_IOS_SIM_LOCK_WAIT_SECONDS:-30}"
 HAVE_LOCK=""
@@ -120,9 +120,15 @@ new_token() {
 
 # lock takes LOCKDIR, retrying every 0.1 s for LOCK_WAIT_SECONDS; it
 # fails with advice when the lock stays taken. unlock releases it.
+#
+# The lock is taken with mkdir(2) through Python, which fails when the
+# directory exists, and never with mkdir(1): uutils coreutils' mkdir
+# (Ubuntu 26.04's mkdir) checks for the directory first and reports
+# success when another process creates it between its check and its
+# mkdir(2), so two setups that start together would both hold the lock.
 lock() {
   local tries=$((LOCK_WAIT_SECONDS * 10)) i=0
-  until mkdir "$LOCKDIR" 2> /dev/null; do
+  until python3 -c 'import os, sys; os.mkdir(sys.argv[1], 0o700)' "$LOCKDIR" 2> /dev/null; do
     if [ "$i" -eq 0 ]; then
       echo "Waiting for $LOCKDIR: another setup or teardown of this user runs..." >&2
     fi

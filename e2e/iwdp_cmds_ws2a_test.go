@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // runBinIn runs bin with args with a private state and runtime directory
@@ -26,12 +28,13 @@ func runBinIn(t *testing.T, bin string, args ...string) (string, string, int) {
 }
 
 // runBinEnv is runBinIn with the environment additions env (the state
-// directory among them) and a private runtime directory.
+// directory among them) and a private runtime directory, short enough for
+// the daemon's socket path (testutil.ShortTestDir).
 func runBinEnv(t *testing.T, env []string, bin string, args ...string) (string, string, int) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command(bin, args...)
-	cmd.Env = append(append(os.Environ(), "XDG_RUNTIME_DIR="+t.TempDir()), env...)
+	cmd.Env = append(append(os.Environ(), "XDG_RUNTIME_DIR="+testutil.ShortTestDir(t)), env...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	var ee *exec.ExitError
@@ -206,7 +209,7 @@ func TestStatusHonorsTheDeadline(t *testing.T) {
 // stops nothing: the lock is never free.
 func TestRestartIWDPHonorsTheDeadline(t *testing.T) {
 	addr := deadCLIListing().Addr()
-	dir := t.TempDir()
+	dir := testutil.ShortTestDir(t)
 	name := fmt.Sprintf("agent-ios-start-%d-%s.lock", os.Getuid(), strings.ReplaceAll(addr, ":", "_")) // proxy.runtimeName
 	lock, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

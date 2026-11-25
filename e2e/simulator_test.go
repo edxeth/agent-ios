@@ -319,8 +319,11 @@ func TestSim_GetDocument(t *testing.T) {
 	t.Logf("document root: nodeId=%d, nodeName=%s, children=%d", root.NodeID, root.NodeName, len(root.Children))
 }
 
-// TestSim_QuerySelector finds example.com's h1. DOM.getOuterHTML, sent
-// directly, shows that the node id is that heading.
+// TestSim_QuerySelector finds the page's body element. DOM.getOuterHTML,
+// sent directly, shows that the node id is that element. The body is in
+// every HTML document (the HTML parser makes one); example.com's own
+// content is not this test's to rely on: its h1 is gone (CI run
+// 45669625167, "no element matches selector "h1"").
 func TestSim_QuerySelector(t *testing.T) {
 	client := getSimClient(t)
 	ctx, cancel := simCtx()
@@ -331,12 +334,12 @@ func TestSim_QuerySelector(t *testing.T) {
 		t.Fatalf("GetDocument: %v", err)
 	}
 
-	nodeID, err := tools.QuerySelector(ctx, client, root.NodeID, "h1")
+	nodeID, err := tools.QuerySelector(ctx, client, root.NodeID, "body")
 	if err != nil {
-		t.Fatalf("no h1 found: %v", err)
+		t.Fatalf("no body found: %v", err)
 	}
 	if nodeID == 0 {
-		t.Error("expected non-zero nodeId for h1")
+		t.Error("expected non-zero nodeId for body")
 	}
 
 	raw, err := client.Send(ctx, "DOM.getOuterHTML", map[string]int{"nodeId": nodeID})
@@ -349,10 +352,10 @@ func TestSim_QuerySelector(t *testing.T) {
 	if err := json.Unmarshal(raw, &reply); err != nil {
 		t.Fatalf("decoding DOM.getOuterHTML %s: %v", raw, err)
 	}
-	if !strings.Contains(reply.OuterHTML, "Example Domain") {
-		t.Errorf("h1 outer HTML = %q, expected to contain 'Example Domain'", reply.OuterHTML)
+	if !strings.HasPrefix(reply.OuterHTML, "<body") || !strings.HasSuffix(reply.OuterHTML, "</body>") {
+		t.Errorf("body outer HTML = %q; want the body element", reply.OuterHTML)
 	}
-	t.Logf("h1 outerHTML: %s", reply.OuterHTML)
+	t.Logf("body outerHTML: %.200s", reply.OuterHTML)
 }
 
 // =============================================================================

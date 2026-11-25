@@ -55,6 +55,15 @@ func (s *simTarget) get(ctx context.Context) (*webkit.Client, error) {
 		s.client, s.err = webkit.NewClient(context.Background(), s.wsURL)
 		if s.err != nil {
 			s.err = fmt.Errorf("connecting to %s: %w", s.wsURL, s.err)
+			return
+		}
+		// iwdp routes every page through its target; on a loaded runner
+		// it announces the target after NewClient's wait, and a command
+		// sent before that goes out in direct mode ("'Runtime' domain
+		// was not found", CI run 45669625167).
+		if s.err = s.client.WaitForTarget(ctx); s.err != nil {
+			_ = s.client.Close()
+			s.err = fmt.Errorf("waiting for iwdp to announce the target of %s: %w", s.wsURL, s.err)
 		}
 	})
 	if s.err != nil {
@@ -155,6 +164,7 @@ func getJSONList(ctx context.Context, url string, v any) error {
 // (review round 3, F9: a mismatch fails the call).
 func TestSimTargetChecksEveryCall(t *testing.T) {
 	page := testutil.NewMockServer()
+	page.EnableTargetRouting("page-1") // as iwdp: simTarget waits for the page's target
 	t.Cleanup(page.Close)
 	var href atomic.Value
 	href.Store(simTestPageURL)
@@ -210,6 +220,7 @@ func TestSimTargetChecksEveryCall(t *testing.T) {
 // test page it runs (review round 3).
 func TestSimTargetChecksBeforeEachMutation(t *testing.T) {
 	page := testutil.NewMockServer()
+	page.EnableTargetRouting("page-1") // as iwdp: simTarget waits for the page's target
 	t.Cleanup(page.Close)
 	var href atomic.Value
 	href.Store(simTestPageURL)

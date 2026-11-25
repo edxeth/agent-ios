@@ -237,13 +237,18 @@ func endpoint(t *testing.T, addr string) netip.AddrPort {
 }
 
 // The ownership checks tell the started group's listener from another
-// process's listener, and report nobody on a free port.
+// process's listener, and report nobody on a free port. The other group is
+// a started one too, never this test's own process group: that group can
+// hold processes whose fds this user cannot read (on GitHub's Linux runner
+// a process of another user, from which the runner's step inherits its
+// group), and the /proc check then fails closed, as it must for a group it
+// cannot read whole.
 func TestGroupListensTellsOwnFromForeign(t *testing.T) {
 	addr := freeAddr(t)
 	child := startServer(t, addr)
 	foreign := freeAddr(t)
 	serveListing(t, foreign) // a listener of this test process
-	self := syscall.Getpgrp()
+	other := startServer(t, freeAddr(t))
 	ctx := context.Background()
 	for name, f := range inspectors() {
 		if got, err := f(ctx, child, endpoint(t, addr)); err != nil || got != listenerOwn {
@@ -252,8 +257,8 @@ func TestGroupListensTellsOwnFromForeign(t *testing.T) {
 		if got, err := f(ctx, child, endpoint(t, foreign)); err != nil || got != listenerForeign {
 			t.Errorf("%s(child group, another process's endpoint) = %v, %v; want listenerForeign", name, got, err)
 		}
-		if got, err := f(ctx, self, endpoint(t, addr)); err != nil || got != listenerForeign {
-			t.Errorf("%s(this group, the child's endpoint) = %v, %v; want listenerForeign", name, got, err)
+		if got, err := f(ctx, other, endpoint(t, addr)); err != nil || got != listenerForeign {
+			t.Errorf("%s(another started group, the child's endpoint) = %v, %v; want listenerForeign", name, got, err)
 		}
 		if got, err := f(ctx, child, endpoint(t, freeAddr(t))); err != nil || got != listenerNone {
 			t.Errorf("%s on a port where nobody listens = %v, %v; want listenerNone", name, got, err)
@@ -331,11 +336,12 @@ func testOwnIPv6WildcardFixtures(t *testing.T) {
 	v4 := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), fixturePort)
 	v6 := netip.AddrPortFrom(netip.IPv6Loopback(), fixturePort)
 	for name, f := range inspectors() {
-		pgid := syscall.Getpgrp()
+		var pgid int
 		switch name {
 		case "proc":
-			procIPv6WildcardFixture(t)
+			pgid = procIPv6WildcardFixture(t)
 		case "lsof":
+			pgid = syscall.Getpgrp() // the fixture's lsof reads no process
 			lsofIPv6WildcardFixture(t, pgid)
 		default:
 			t.Fatalf("no IPv6 wildcard fixture for the %s inspector", name)
@@ -351,28 +357,24 @@ func testOwnIPv6WildcardFixtures(t *testing.T) {
 
 // procIPv6WildcardFixture points socketTables, for this test, at an empty
 // tcp table and a tcp6 table whose only row is a listener on
-// [::]:fixturePort. The row's inode is that of a socket of this test
-// process, so groupSocketLinks finds it in this process group's fds.
-func procIPv6WildcardFixture(t *testing.T) {
+// [::]:fixturePort, and returns the process group that owns it. The row's
+// inode is that of the IPv4 listener of a serve fake in a process group of
+// its own, so groupSocketLinks finds it in that group's fds. It is not a
+// socket of this test process: this test's process group can hold
+// processes whose fds this user cannot read (TestGroupListensTellsOwnFromForeign).
+func procIPv6WildcardFixture(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	addr := freeAddr(t)
+	pgid := startServerOn(t, "tcp4", addr)
+	found, err := procListenSockets(uint16(portOf(t, addr)))
+	if err != nil || len(found) != 1 {
+		t.Fatalf("the serve fake's listener on %s in the socket tables = %v, %v; want one", addr, found, err)
 	}
-	t.Cleanup(func() { _ = l.Close() })
-	rc, err := l.(*net.TCPListener).SyscallConn()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var link string
-	var linkErr error
-	if err := rc.Control(func(fd uintptr) { link, linkErr = os.Readlink(fmt.Sprintf("/proc/self/fd/%d", fd)) }); err != nil {
-		t.Fatal(err)
-	}
+	link := found[0].link
 	inode, ok := strings.CutPrefix(link, "socket:[")
 	inode, closed := strings.CutSuffix(inode, "]")
-	if linkErr != nil || !ok || !closed {
-		t.Fatalf("the socket link of this test's listener = %q, %v", link, linkErr)
+	if !ok || !closed {
+		t.Fatalf("the socket link of the serve fake's listener = %q", link)
 	}
 	const header = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
 	// The IPv6 wildcard as the kernel prints it: 32 hex digits, all zero;
@@ -389,6 +391,7 @@ func procIPv6WildcardFixture(t *testing.T) {
 	old := socketTables
 	t.Cleanup(func() { socketTables = old })
 	socketTables.tcp, socketTables.tcp6 = tcp, tcp6
+	return pgid
 }
 
 // lsofIPv6WildcardFixture puts first on PATH, for this test, an lsof that

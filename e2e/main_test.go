@@ -13,6 +13,9 @@ func trackTempDir(dir string) {
 }
 
 func TestMain(m *testing.M) {
+	if isOwnerProbe() {
+		os.Exit(runOwnerProbe(os.Args[2:]))
+	}
 	code := m.Run()
 	for _, dir := range tempDirs {
 		_ = os.RemoveAll(dir)

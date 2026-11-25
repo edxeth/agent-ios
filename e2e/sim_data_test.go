@@ -167,6 +167,7 @@ func newFakeSimPage(t *testing.T) *fakeSimPage {
 	t.Helper()
 	f := &fakeSimPage{jar: map[string]string{"test_cookie": "existing-user-value"}}
 	page := testutil.NewMockServer()
+	page.EnableTargetRouting("page-1") // as iwdp: simTarget waits for the page's target
 	t.Cleanup(page.Close)
 	page.Handle("Runtime.evaluate", func(_ string, params json.RawMessage) (interface{}, error) {
 		var p struct {

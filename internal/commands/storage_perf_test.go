@@ -511,7 +511,7 @@ func TestTraceCommands(t *testing.T) {
 		Path   string `json:"path"`
 		Events int    `json:"events"`
 	}
-	if code != 0 || json.Unmarshal([]byte(out), &res) != nil || filepath.Dir(res.Path) != os.TempDir() || !strings.HasPrefix(filepath.Base(res.Path), "agent-ios-trace-") {
+	if code != 0 || json.Unmarshal([]byte(out), &res) != nil || filepath.Dir(res.Path) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(res.Path), "agent-ios-trace-") {
 		t.Fatalf("trace stop without a path: exit %d, %q", code, out)
 	}
 	t.Cleanup(func() { _ = os.Remove(res.Path) })

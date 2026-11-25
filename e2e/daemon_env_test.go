@@ -21,8 +21,11 @@ var e2eRuntimeDir, userRuntimeDir string
 const e2eDaemonIdle = "10s"
 
 func init() {
+	if isOwnerProbe() {
+		return // an owner probe runs no test and needs no directories
+	}
 	userRuntimeDir = os.Getenv("XDG_RUNTIME_DIR")
-	dir, err := os.MkdirTemp("", "iwdp-e2e-run-*")
+	dir, err := testutil.ShortTempDir() // the daemon's socket path fits under it
 	if err != nil {
 		panic(err)
 	}
