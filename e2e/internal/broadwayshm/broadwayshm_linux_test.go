@@ -159,9 +159,11 @@ func TestEndWaitsAndRereads(t *testing.T) {
 		f, _ := os.OpenFile(log, os.O_WRONLY|os.O_APPEND, 0)
 		_, _ = f.WriteString("+1 2 not-a-name\n")
 		_ = f.Close()
+		// The time before the kill: End may see the killed process as
+		// ended (a zombie) before Wait returns.
+		ended <- time.Now()
 		_ = writer.Process.Kill()
 		_ = writer.Wait()
-		ended <- time.Now()
 	}()
 	err := EndIn(dir)
 	returned := time.Now()
