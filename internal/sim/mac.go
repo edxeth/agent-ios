@@ -3,15 +3,23 @@ package sim
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"net/netip"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -42,22 +50,292 @@ func ExecRunner(ctx context.Context, name string, args ...string) ([]byte, error
 }
 
 // Mac runs commands on the Mac of a Config over ssh.
+//
+// Only read-only, repeatable steps (read) share one ssh connection; every
+// other step (shell), and the forward, has a connection of its own. When a
+// read-only step cannot attach to the shared connection (stopped, full, or
+// gone), ssh logs in anew by itself: that step then runs twice at most,
+// which changes nothing, where an action that ran twice would.
 type Mac struct {
 	cfg Config
 	run Runner
+	// share is the connection that the read-only steps share (Shared),
+	// found by the first of them; nil shares none. m's copies share it.
+	share *shared
+	// probeWait bounds Reachable's step over the shared connection.
+	probeWait time.Duration
 }
 
-// NewMac returns the Mac of cfg; run runs ssh on this host.
+// NewMac returns the Mac of cfg; run runs ssh on this host. It shares no
+// connection (Shared).
 func NewMac(cfg Config, run Runner) Mac { return Mac{cfg: cfg, run: run} }
 
+// The shared connection (OpenSSH's ControlMaster). A step over an open
+// connection costs about 15 ms where a login costs about 177 ms (measured
+// against the macOS VM, 2026-11-25).
+const (
+	// controlPersist keeps the connection open after its last step.
+	controlPersist = "5m"
+	// The connection ends at the keepalive check after aliveCountMax
+	// unanswered ones: within 9 s of a Mac that stopped answering (a
+	// killed or frozen VM), also while no step runs (OpenSSH 10.6p2
+	// against a frozen sshd: 8.7 s).
+	aliveInterval = "3"
+	aliveCountMax = "2"
+	// sharedProbeWait bounds Reachable's step over the connection, which
+	// answers in milliseconds while the Mac does. The master holds the
+	// step's output pipes, so ExecRunner returns WaitDelay later (OpenSSH
+	// 10.6p2 against a frozen sshd: 5.1 s in all).
+	sharedProbeWait = 3 * time.Second
+	// controlWait bounds ssh -O, which only talks to the local master.
+	controlWait = 2 * time.Second
+	// routeWait bounds ssh -G, which can run Match exec commands of the
+	// ssh configuration (whose children can keep ssh's pipes open).
+	routeWait = time.Second
+	// sunPathMax is the size of a unix socket path on macOS (Linux: 108),
+	// with its NUL; ssh binds the master's socket first at its path plus
+	// 17 bytes (".XXXXXXXXXXXXXXXX").
+	sunPathMax = 104
+)
+
+// safeDir is the form of a directory that a control socket may be in:
+// absolute, of characters that neither ssh's option parser (spaces,
+// quotes) nor its expansions of ControlPath (%, a leading ~, ${}) read.
+var safeDir = regexp.MustCompile(`^/[A-Za-z0-9._/+-]*$`)
+
+// controlName names the socket of a destination: a hash of the
+// configuration file, the destination and its route, ssh's resolved
+// configuration of it (ssh -G), so that another alias, file, host, port or
+// user, or an edit of any, does not reach a master of another. Its 40 hex
+// digits are literal to ssh.
+func controlName(cfg Config, route string) string {
+	h := sha256.Sum256([]byte(cfg.SSHConfig + "\x00" + cfg.SSH + "\x00" + route))
+	return hex.EncodeToString(h[:20])
+}
+
+// controlFits reports whether ssh can bind a control socket at path.
+func controlFits(path string) bool { return len(path)+17 < sunPathMax }
+
+// shared is the connection that a Mac and its copies share: the
+// directory of its socket, and the socket, which the first read-only step
+// finds (Mac.control).
+type shared struct {
+	dir string
+	// mu guards found: nil until a step starts the lookup, closed when
+	// control is known.
+	mu      sync.Mutex
+	found   chan struct{}
+	control string // "" shares none; written before found is closed
+}
+
+// Shared returns m whose read-only steps share one ssh connection through
+// a control socket in dir, a private directory (ControlDir). It runs
+// nothing: the first read-only step reads the route (control), so that
+// building the simulator's setup, and the steps before the first query
+// (a check of the URL, the forward's stop), run as without sharing.
+func (m Mac) Shared(dir string) Mac {
+	m.share = &shared{dir: dir}
+	m.probeWait = sharedProbeWait
+	return m
+}
+
+// control returns the socket of the shared connection, or "" for none.
+// The first call reads the route, ssh -G on a connection of its own,
+// bounded by routeWait and by ctx; the answer holds for m and its copies,
+// that is for the command. Nothing is shared when ssh -G fails or does not
+// answer in time, names a ProxyCommand or ProxyJump (the route then
+// depends on what ssh -G does not show, such as the proxy's target or the
+// jump host's own configuration), or gives a hostname that is not an IP
+// address (shareableRoute), or when the directory is not safe for ssh or
+// too long for a socket (controlAt); the caller gets no error from it.
+// Another caller waits for the first's answer until its own ctx ends, and
+// then shares nothing.
+func (m Mac) control(ctx context.Context) string {
+	s := m.share
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	if found := s.found; found != nil {
+		s.mu.Unlock()
+		select {
+		case <-found:
+			return s.control
+		case <-ctx.Done():
+			return ""
+		}
+	}
+	s.found = make(chan struct{})
+	s.mu.Unlock()
+	s.control = m.lookup(ctx, s.dir)
+	close(s.found)
+	return s.control
+}
+
+// knownControl is the socket of the shared connection when a step has
+// found it already, else "": it runs nothing.
+func (m Mac) knownControl() string {
+	s := m.share
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	found := s.found
+	s.mu.Unlock()
+	if found == nil {
+		return ""
+	}
+	select {
+	case <-found:
+		return s.control
+	default:
+		return ""
+	}
+}
+
+// lookup reads the route of m's destination (ssh -G) and returns the
+// socket in dir for it, or "" (control). It returns when its bound ends,
+// also while ssh, killed, still waits for a child that holds its pipes.
+func (m Mac) lookup(ctx context.Context, dir string) string {
+	ctx, cancel := context.WithTimeout(ctx, routeWait)
+	defer cancel()
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := m.run(ctx, "ssh", m.sshArgs([]string{"-G"}, "")...)
+		done <- result{out, err}
+	}()
+	var r result
+	select {
+	case r = <-done:
+	case <-ctx.Done():
+	}
+	if ctx.Err() != nil || r.err != nil || !shareableRoute(string(r.out)) {
+		return ""
+	}
+	return controlAt(m.cfg, dir, string(r.out))
+}
+
+// literalHost reports whether ssh -G's hostname is an IP address: a
+// master keeps the address it connected to, while a login on a connection
+// of its own resolves a name again, so after a DNS change the shared
+// queries and the actions could reach different Macs.
+func literalHost(route string) bool {
+	for _, l := range strings.Split(route, "\n") {
+		if k, v, _ := strings.Cut(strings.TrimSpace(l), " "); strings.EqualFold(k, "hostname") {
+			_, err := netip.ParseAddr(strings.TrimSpace(v))
+			return err == nil
+		}
+	}
+	return false
+}
+
+// shareableRoute reports whether ssh -G's output is a route that may be
+// shared: no proxy, and an IP address as hostname.
+func shareableRoute(route string) bool { return !viaProxy(route) && literalHost(route) }
+
+// viaProxy reports whether ssh -G's output names a proxy.
+func viaProxy(route string) bool {
+	for _, l := range strings.Split(route, "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(l), " ")
+		if (strings.EqualFold(k, "proxycommand") || strings.EqualFold(k, "proxyjump")) && !strings.EqualFold(strings.TrimSpace(v), "none") {
+			return true
+		}
+	}
+	return false
+}
+
+// controlAt is the socket in dir of cfg's destination with route, or ""
+// when dir is not safe for ssh or the socket's path would pass the unix
+// limit.
+func controlAt(cfg Config, dir, route string) string {
+	dir = filepath.Clean(dir)
+	if !safeDir.MatchString(dir) {
+		return ""
+	}
+	p := filepath.Join(dir, controlName(cfg, route))
+	if !controlFits(p) {
+		return ""
+	}
+	return p
+}
+
+// controlFallback is the directory of the control sockets when the state
+// directory is too long for them (macOS's $TMPDIR).
+var controlFallback = func() string { return fmt.Sprintf("/tmp/iwdp-ssh-%d", os.Getuid()) }
+
+// ControlDir returns the private directory of the shared ssh connection:
+// "ssh" in base, the private state directory, or controlFallback when a
+// socket there would pass the unix limit. It creates the directory with
+// mode 0700 (whatever the umask) and refuses one that is a symlink,
+// another user's, not of mode exactly 0700, or not writable.
+func ControlDir(base string) (string, error) {
+	dir := filepath.Join(base, "ssh")
+	if !controlFits(filepath.Join(dir, controlName(Config{}, ""))) {
+		dir = controlFallback()
+	}
+	err := os.Mkdir(dir, 0o700)
+	if err == nil {
+		err = os.Chmod(dir, 0o700) // the umask may have taken bits
+	} else if errors.Is(err, fs.ErrExist) {
+		err = nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("creating the ssh control directory: %w", err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("checking the ssh control directory: %w", err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() ||
+		fi.Mode()&(fs.ModePerm|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky) != 0o700 ||
+		syscall.Access(dir, 0o3) != nil { // W_OK|X_OK: a read-only file system
+		return "", fmt.Errorf("the ssh control directory %s is not a usable private directory of this user (mode %v)", dir, fi.Mode())
+	}
+	return dir, nil
+}
+
+// ownConnection are the options of an ssh call that neither opens nor
+// uses a shared connection, whatever the ssh configuration says.
+var ownConnection = []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}
+
+// sharing are the options of a read-only step over the shared connection
+// of socket control: ssh attaches to its master, or logs in anew and
+// becomes the master.
+func sharing(control string) []string {
+	return []string{
+		"-o", "ControlMaster=auto", "-o", "ControlPath=" + control, "-o", "ControlPersist=" + controlPersist,
+		"-o", "ServerAliveInterval=" + aliveInterval, "-o", "ServerAliveCountMax=" + aliveCountMax,
+	}
+}
+
 // sshArgs are the arguments of an ssh call to the Mac that runs script, or
-// of one with extra options before the destination (a forward).
+// of one with extra options before the destination (a forward), on a
+// connection of its own: a call shares only through readArgs.
 func (m Mac) sshArgs(opts []string, script string) []string {
+	return m.args(ownConnection, opts, script)
+}
+
+// readArgs are the arguments of a read-only step: over the shared
+// connection of socket control, or on one of its own when control is "".
+func (m Mac) readArgs(control string, opts []string, script string) []string {
+	if control == "" {
+		return m.sshArgs(opts, script)
+	}
+	return m.args(sharing(control), opts, script)
+}
+
+func (m Mac) args(conn, opts []string, script string) []string {
 	var a []string
 	if m.cfg.SSHConfig != "" {
 		a = append(a, "-F", m.cfg.SSHConfig)
 	}
 	a = append(a, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
+	a = append(a, conn...)
 	a = append(a, opts...)
 	a = append(a, m.cfg.SSH)
 	if script != "" {
@@ -66,19 +344,100 @@ func (m Mac) sshArgs(opts []string, script string) []string {
 	return a
 }
 
-// shell runs script in the login shell of the Mac's user.
+// shell runs script, a step that may act, in the login shell of the Mac's
+// user, on a connection of its own.
 func (m Mac) shell(ctx context.Context, script string) ([]byte, error) {
 	return m.run(ctx, "ssh", m.sshArgs(nil, script)...)
 }
 
+// readGrace is how long a shared step may run past the end of its ctx: a
+// master started or used by the step keeps its output pipes open, which
+// ExecRunner would wait up to WaitDelay (2 s) for. The killed ssh client
+// is gone by then; its runner returns in the background.
+const readGrace = 200 * time.Millisecond
+
+// read runs script, a query that only reads and may run twice without
+// harm, over the shared connection when m has one. Once ctx has ended, its
+// result is ctx's error, whatever ssh answered: an answer that came at the
+// deadline is no answer (an empty one would read as a default).
+func (m Mac) read(ctx context.Context, script string) ([]byte, error) {
+	type result struct {
+		out []byte
+		err error
+	}
+	control := m.control(ctx)
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("ssh: %w", ctx.Err())
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := m.run(ctx, "ssh", m.readArgs(control, nil, script)...)
+		done <- result{out, err}
+	}()
+	var r result
+	select {
+	case r = <-done:
+	case <-ctx.Done():
+		select {
+		case r = <-done:
+		case <-time.After(readGrace):
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("ssh: %w", ctx.Err())
+	}
+	return r.out, r.err
+}
+
+// controlCmd sends op (check, stop) to the master of the shared
+// connection of socket control, bounded by controlWait.
+func (m Mac) controlCmd(ctx context.Context, control, op string) error {
+	ctx, cancel := context.WithTimeout(ctx, controlWait)
+	defer cancel()
+	_, err := m.run(ctx, "ssh", m.readArgs(control, []string{"-O", op}, "")...)
+	return err
+}
+
+// CloseShared makes the shared connection take no new steps (ssh -O stop:
+// its master removes its socket and ends once the steps that run over it
+// end), for a Mac that goes away (sim down --mac). Later read-only steps
+// open a new one. It uses only a route that a step of m found already
+// (sim down's Reachable looks it up), and runs nothing to find one.
+func (m Mac) CloseShared(ctx context.Context) {
+	if c := m.knownControl(); c != "" {
+		_ = m.controlCmd(ctx, c, "stop") // no master: nothing to stop
+	}
+}
+
 // Reachable reports whether ssh logs in to the Mac. The end of ctx is an
 // error, not an unreachable Mac.
+//
+// A shared connection's master can answer while the Mac is gone (a killed
+// or frozen VM), and a step over it then waits for the keepalives. So a
+// master that answers (ssh -O check) gets one "true", bounded by
+// probeWait; when that fails, it takes no new steps (ssh -O stop) and the
+// answer comes from fresh logins on connections of their own, as without a
+// shared connection. Only a master that ran a step now counts.
 //
 // A busy Mac (another agent's simulator starting) can be slow to accept a
 // login, and a "no" here makes sim up run the start command and sim status
 // say the Mac is down, so it asks twice before it answers no (live run,
 // 2026-11-24: one 5 s attempt failed while another agent's sim up ran).
 func (m Mac) Reachable(ctx context.Context) (bool, error) {
+	if c := m.control(ctx); c != "" && m.controlCmd(ctx, c, "check") == nil {
+		pctx, cancel := context.WithTimeout(ctx, m.probeWait)
+		_, err := m.read(pctx, "true")
+		cancel()
+		if err == nil {
+			return true, nil
+		}
+		if ctx.Err() == nil {
+			_ = m.controlCmd(ctx, c, "stop")
+		}
+	}
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("checking ssh to %s: %w", m.cfg.SSH, ctx.Err())
+	}
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		if _, err = m.shell(ctx, "true"); err == nil {
@@ -94,7 +453,7 @@ func (m Mac) Reachable(ctx context.Context) (bool, error) {
 // LoggedIn reports whether a user is logged in to the Mac's desktop (the
 // console), which the simulator needs.
 func (m Mac) LoggedIn(ctx context.Context) (bool, error) {
-	out, err := m.shell(ctx, "who | grep -q ' console ' && echo yes || echo no")
+	out, err := m.read(ctx, "who | grep -q ' console ' && echo yes || echo no")
 	if err != nil {
 		return false, fmt.Errorf("checking the desktop login on %s: %w", m.cfg.SSH, err)
 	}
@@ -117,7 +476,7 @@ var udidRE = regexp.MustCompile(`^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4
 // (iOS, watchOS, tvOS, visionOS): quitting the Simulator app shuts down
 // those it shows.
 func (m Mac) BootedAll(ctx context.Context) ([]Device, error) {
-	out, err := m.shell(ctx, "xcrun simctl list devices booted -j")
+	out, err := m.read(ctx, "xcrun simctl list devices booted -j")
 	if err != nil {
 		return nil, fmt.Errorf("listing the booted simulators on %s: %w", m.cfg.SSH, err)
 	}
@@ -141,7 +500,7 @@ func (m Mac) BootedAll(ctx context.Context) ([]Device, error) {
 
 // Devices lists the available iOS simulators of the Mac.
 func (m Mac) Devices(ctx context.Context) ([]Device, error) {
-	out, err := m.shell(ctx, "xcrun simctl list devices available -j")
+	out, err := m.read(ctx, "xcrun simctl list devices available -j")
 	if err != nil {
 		return nil, fmt.Errorf("listing the simulators on %s: %w", m.cfg.SSH, err)
 	}
@@ -286,7 +645,7 @@ func (m Mac) OpenWindow(ctx context.Context, udid string) error {
 
 // WindowOpen reports whether the Simulator app runs.
 func (m Mac) WindowOpen(ctx context.Context) (bool, error) {
-	out, err := m.shell(ctx, "pgrep -xq Simulator && echo yes || echo no")
+	out, err := m.read(ctx, "pgrep -xq Simulator && echo yes || echo no")
 	if err != nil {
 		return false, fmt.Errorf("checking the Simulator app: %w", err)
 	}
@@ -302,7 +661,7 @@ func (m Mac) SafariRunning(ctx context.Context, udid string) (bool, error) {
 	// The list first, so that a failed simctl fails the call instead of
 	// reading as "not running" (which would launch, and bring forward, a
 	// running Safari).
-	out, err := m.shell(ctx, "l=$(xcrun simctl spawn "+udid+" launchctl list) || exit 1; "+
+	out, err := m.read(ctx, "l=$(xcrun simctl spawn "+udid+" launchctl list) || exit 1; "+
 		"case \"$l\" in *'UIKitApplication:com.apple.mobilesafari['*) echo yes ;; *) echo no ;; esac")
 	if err != nil {
 		return false, fmt.Errorf("checking Safari in the simulator: %w", err)
@@ -390,7 +749,7 @@ func (m Mac) USKeyboard(ctx context.Context, udid string) (us bool, layout strin
 	if !udidRE.MatchString(udid) {
 		return false, "", fmt.Errorf("reading the keyboard layout: bad UDID %q", udid)
 	}
-	out, err := m.shell(ctx, "k=$(xcrun simctl spawn "+udid+" defaults read -g AppleKeyboards 2>/dev/null | sed -n 2p); "+
+	out, err := m.read(ctx, "k=$(xcrun simctl spawn "+udid+" defaults read -g AppleKeyboards 2>/dev/null | sed -n 2p); "+
 		"h=$(defaults read com.apple.HIToolbox AppleCurrentKeyboardLayoutInputSourceID 2>/dev/null); printf '%s\\n%s\\n' \"$k\" \"$h\"")
 	if err != nil {
 		return false, "", fmt.Errorf("reading the simulator's keyboard layout: %w", err)
@@ -421,7 +780,7 @@ func (m Mac) USKeyboard(ctx context.Context, udid string) (us bool, layout strin
 // setting, which is on unless set off. While it is on, iOS hides the
 // on-screen keyboard; while it is off, typed key presses lose Shift.
 func (m Mac) HardwareKeyboard(ctx context.Context) (bool, error) {
-	out, err := m.shell(ctx, "defaults read com.apple.iphonesimulator ConnectHardwareKeyboard 2>/dev/null || echo 1")
+	out, err := m.read(ctx, "defaults read com.apple.iphonesimulator ConnectHardwareKeyboard 2>/dev/null || echo 1")
 	if err != nil {
 		return false, fmt.Errorf("reading the Simulator's keyboard setting: %w", err)
 	}
@@ -482,7 +841,7 @@ func (m Mac) InspectorSocket(ctx context.Context, udid string) (string, error) {
 	}
 	script := "p=$(pgrep -f 'launchd_sim .*/Devices/" + udid + "/' | head -1); " +
 		"[ -n \"$p\" ] && lsof -a -U -p \"$p\" -Fn 2>/dev/null | sed -n 's/^n//p' | grep -m1 '/com.apple.webinspectord_sim.socket$'"
-	out, err := m.shell(ctx, script)
+	out, err := m.read(ctx, script)
 	sock := strings.TrimSpace(string(out))
 	if err != nil || sock == "" {
 		if err == nil {

@@ -227,7 +227,14 @@ func (f *Forward) Ensure(ctx context.Context, socket string) (bool, error) {
 	} else if foreign {
 		return false, fmt.Errorf("another program listens on %s, where the simulator's Web Inspector must be forwarded (ss -ltnp or lsof -i names it): stop it, then run sim up again", f.Addr)
 	}
-	args := f.Mac.sshArgs([]string{"-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-L", f.Addr + ":" + socket}, "")
+	// A connection of its own (sshArgs), never a shared one: a -L asked of
+	// a shared master lives in the master and outlives this process, so
+	// the stop below, which ends this process, would not end the forward
+	// (OpenSSH 10.6p2: the master kept the port after its client was
+	// killed).
+	// ForkAfterAuthentication=no: a user's "yes" would leave the listener
+	// in a child that the recorded process does not hold.
+	args := f.Mac.sshArgs([]string{"-N", "-o", "ForkAfterAuthentication=no", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-L", f.Addr + ":" + socket}, "")
 	token := f.Procs.NewToken()
 	pid, err := f.Procs.Spawn(token, "ssh", args...)
 	if err != nil {

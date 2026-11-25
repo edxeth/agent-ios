@@ -708,6 +708,9 @@ func (s *Sim) Down(ctx context.Context, device string, mac bool) (DownReport, er
 		}
 	}
 	if mac {
+		// The shared connection takes no new commands; the ones that run
+		// over it end with the Mac, or finish when the stop fails.
+		s.Mac.CloseShared(ctx)
 		if _, err := s.Run(ctx, s.Cfg.Stop[0], s.Cfg.Stop[1:]...); err != nil {
 			return r, fmt.Errorf("stopping the Mac with %q: %w", strings.Join(s.Cfg.Stop, " "), err)
 		}

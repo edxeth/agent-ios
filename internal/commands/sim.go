@@ -164,7 +164,15 @@ var newSim = func(env Env) (*sim.Sim, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The read-only steps share one ssh connection, named by the route
+	// that ssh resolves for the destination, which the first of them
+	// reads (sim.Mac.Shared runs nothing). Without a private directory for
+	// its socket, or a plain route, each step has a connection of its own
+	// (sim.NewMac), whatever the ssh configuration says.
 	mac := sim.NewMac(cfg, sim.ExecRunner)
+	if cdir, err := sim.ControlDir(dir); err == nil {
+		mac = mac.Shared(cdir)
+	}
 	procs := sim.Processes{
 		Spawn:    sim.SpawnDetached(proxy.StartTokenEnv),
 		Identify: proxy.ProcessIdentity,

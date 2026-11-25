@@ -5,13 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math/rand"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"testing/quick"
@@ -1344,5 +1350,868 @@ func TestUpTakesAReusedEmptyTab(t *testing.T) {
 	r, err := s.Up(context.Background(), "", u, false)
 	if err != nil || !r.TabOpened || r.NewPage != "p0" || r.SharedURL {
 		t.Fatalf("the reused empty tab: %+v, %v", r, err)
+	}
+}
+
+// optValues returns the values of the "-o key=value" options of args for
+// key, in their order.
+func optValues(args []string, key string) []string {
+	var v []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-o" {
+			if k, val, ok := strings.Cut(args[i+1], "="); ok && strings.EqualFold(k, key) {
+				v = append(v, val)
+			}
+		}
+	}
+	return v
+}
+
+// The forward keeps an ssh connection of its own, never a shared one: a -L
+// asked of a shared master lives in the master and survives the forward's
+// process, so sim down could not end it; and it does not fork.
+func TestForwardHasItsOwnConnection(t *testing.T) {
+	p := newFakeProcs()
+	f := newForward(t, sharedMac(t, Config{SSH: "mac", SSHConfig: "/x/config"}, nil), p)
+	if _, err := f.Ensure(context.Background(), "/a.socket"); err != nil {
+		t.Fatal(err)
+	}
+	args := p.args[0]
+	if cm, cp := optValues(args, "ControlMaster"), optValues(args, "ControlPath"); !slices.Equal(cm, []string{"no"}) || !slices.Equal(cp, []string{"none"}) {
+		t.Fatalf("forward ControlMaster %q, ControlPath %q; want [no] and [none]: %q", cm, cp, args)
+	}
+	if v := optValues(args, "ControlPersist"); len(v) != 0 {
+		t.Fatalf("forward carries ControlPersist %q: %q", v, args)
+	}
+	// A user's ForkAfterAuthentication would detach the listener from the
+	// process that sim down ends.
+	if v := optValues(args, "ForkAfterAuthentication"); !slices.Equal(v, []string{"no"}) {
+		t.Fatalf("forward ForkAfterAuthentication %q, want [no]: %q", v, args)
+	}
+	if dest := slices.Index(args, "mac"); dest < 0 || dest < slices.Index(args, "ControlPath=none") {
+		t.Fatalf("the forward's options do not come before its destination: %q", args)
+	}
+}
+
+// shortDir is a private temporary directory short enough for control
+// sockets, also where t.TempDir is not (macOS's $TMPDIR).
+func shortDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("/tmp", "iwdp-t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d
+}
+
+// sharedMac is the Mac of cfg whose read-only steps share a connection in
+// a short private directory; its route (ssh -G) is plain and already read,
+// so run answers only the other calls.
+func sharedMac(t *testing.T, cfg Config, run Runner) Mac {
+	t.Helper()
+	m := NewMac(cfg, func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if slices.Contains(args, "-G") {
+			return []byte("host mac\nhostname 10.0.2.2\nport 22\n"), nil
+		}
+		return run(ctx, name, args...)
+	}).Shared(shortDir(t))
+	if c := m.control(context.Background()); c == "" {
+		t.Fatalf("Shared: no control socket for a plain route")
+	}
+	m.run = run
+	return m
+}
+
+// recordingRunner records every argv and answers it with answer.
+type recordingRunner struct {
+	mu     sync.Mutex
+	calls  [][]string
+	answer func(ctx context.Context, args []string) ([]byte, error)
+}
+
+func (r *recordingRunner) run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, append([]string{name}, args...))
+	r.mu.Unlock()
+	return r.answer(ctx, args)
+}
+
+// sshRole tells what an ssh call is: a control command ("-O stop"), a step
+// over the shared connection ("shared"), or one on a connection of its own
+// ("own"). Anything else is "other".
+func sshRole(args []string) string {
+	if i := slices.Index(args, "-O"); i >= 0 {
+		return "-O " + args[i+1]
+	}
+	cm, cp := optValues(args, "ControlMaster"), optValues(args, "ControlPath")
+	switch {
+	case slices.Equal(cm, []string{"no"}) && slices.Equal(cp, []string{"none"}):
+		return "own " + args[len(args)-1]
+	case slices.Equal(cm, []string{"auto"}) && len(cp) == 1 && cp[0] != "none":
+		return "shared " + args[len(args)-1]
+	}
+	return "other " + strings.Join(args, " ")
+}
+
+// Without a usable control directory, no sharing means no sharing: every
+// call has a connection of its own, also when the user's ssh configuration
+// asks for ControlMaster, and Reachable asks with fresh logins only.
+func TestNoSharingMeansNoSharing(t *testing.T) {
+	long := "/tmp/" + strings.Repeat("d", 80)
+	for _, dir := range []string{"", "/tmp/iwdp space", "/tmp/iwdp%h", "/tmp/iwdp$HOME", "relative/dir", long} {
+		rr := &recordingRunner{answer: func(_ context.Context, args []string) ([]byte, error) {
+			if slices.Contains(args, "-G") {
+				return []byte("host mac\nhostname 10.0.2.2\n"), nil
+			}
+			return []byte(devicesJSON), nil
+		}}
+		m := NewMac(Config{SSH: "mac"}, rr.run)
+		if dir != "" {
+			m = m.Shared(dir)
+		}
+		rr.calls = nil
+		if _, err := m.Devices(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := m.Reachable(context.Background()); !ok || err != nil {
+			t.Fatalf("Reachable = %v, %v", ok, err)
+		}
+		for _, c := range rr.calls {
+			if r := sshRole(c[1:]); !strings.HasPrefix(r, "own ") || len(optValues(c, "ControlMaster")) != 1 {
+				t.Fatalf("dir %q: call %q is %s, want a connection of its own", dir, c, r)
+			}
+		}
+	}
+}
+
+// routeRunner answers ssh -G with g (when g is "", a failure whose output
+// is a plain route: a failed ssh -G is no route, whatever it printed), and
+// every other call, which it records, with devicesJSON.
+func routeRunner(g string) *recordingRunner {
+	return &recordingRunner{answer: func(_ context.Context, args []string) ([]byte, error) {
+		if slices.Contains(args, "-G") {
+			if g == "" {
+				return []byte("host mac\nhostname 10.0.2.2\n"), errors.New("ssh: exit status 255: bad configuration")
+			}
+			return []byte(g), nil
+		}
+		return []byte(devicesJSON), nil
+	}}
+}
+
+// sharesFor runs a read-only step (the device list) of a Mac that may
+// share, whose ssh -G answers g, and reports whether it shared; the step
+// itself must succeed: an unsuitable route is no error, only no sharing.
+func sharesFor(t *testing.T, g string) bool {
+	t.Helper()
+	rr := routeRunner(g)
+	m := NewMac(Config{SSH: "mac"}, rr.run).Shared(shortDir(t))
+	if _, err := m.Devices(context.Background()); err != nil {
+		t.Errorf("ssh -G %q: the device list failed: %v", g, err)
+	}
+	shared := false
+	for _, c := range rr.calls {
+		switch r := sshRole(c[1:]); {
+		case slices.Contains(c, "-G") && !strings.HasPrefix(r, "own "):
+			t.Errorf("ssh -G %q: the route was read as %s, want a connection of its own", g, r)
+		case strings.HasPrefix(r, "shared "):
+			shared = true
+		case !strings.HasPrefix(r, "own "):
+			t.Errorf("ssh -G %q: call %q is %s", g, c, r)
+		}
+	}
+	return shared
+}
+
+// A route through a proxy (ProxyCommand or ProxyJump in ssh -G), whose
+// target ssh -G does not show, shares nothing, and neither does a route
+// that ssh -G cannot tell: a shared connection could reach another Mac.
+// The step still runs, on a connection of its own, without an error.
+func TestRouteWithAProxySharesNothing(t *testing.T) {
+	for _, g := range []string{
+		"host mac\nhostname 10.0.2.2\nproxycommand nc %h %p\n",
+		"host mac\nhostname 10.0.2.2\nProxyJump hop\n",
+		"", // ssh -G fails
+	} {
+		if sharesFor(t, g) {
+			t.Errorf("ssh -G %q: the step shared; want no sharing", g)
+		}
+	}
+	if !sharesFor(t, "host mac\nhostname 10.0.2.2\nproxycommand none\n") {
+		t.Fatalf("a plain route did not share")
+	}
+}
+
+// slowRoute is a Mac whose ssh -G answers a plain route only after 3 s,
+// also when its context ends (a Match exec child that keeps ssh's pipes),
+// and whose other calls answer devicesJSON at once; lookups counts the
+// ssh -G calls.
+func slowRoute(t *testing.T) (m Mac, lookups *atomic.Int32) {
+	lookups = new(atomic.Int32)
+	m = NewMac(Config{SSH: "mac"}, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if slices.Contains(args, "-G") {
+			lookups.Add(1)
+			time.Sleep(3 * time.Second)
+			return []byte("host mac\nhostname 10.0.2.2\n"), nil
+		}
+		return []byte(devicesJSON), nil
+	}).Shared(shortDir(t))
+	return m, lookups
+}
+
+// Reading the route (ssh -G, which can run Match exec commands of the ssh
+// configuration) ends at the caller's deadline and within its own bound of
+// 1 s, also while ssh does not return; a route not read in time shares
+// nothing for the rest of the command, is read once however many steps ask
+// at the same time, and is no error of the step.
+func TestRouteEndsAtTheCallersDeadline(t *testing.T) {
+	m, lookups := slowRoute(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := m.Devices(ctx)
+	if took := time.Since(start); took > 100*time.Millisecond+readGrace+100*time.Millisecond || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a step with a 100 ms deadline took %s: %v", took, err)
+	}
+	// The command's next steps: no sharing, no new lookup, no error.
+	if _, err := m.Devices(context.Background()); err != nil || m.knownControl() != "" || lookups.Load() != 1 {
+		t.Fatalf("after a lookup cut off: %v, control %q, %d lookups; want no error, no sharing, 1 lookup", err, m.knownControl(), lookups.Load())
+	}
+
+	m, lookups = slowRoute(t)
+	start = time.Now()
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Go(func() { _, errs[i] = m.Devices(context.Background()) })
+	}
+	wg.Wait()
+	if took := time.Since(start); took > time.Second+300*time.Millisecond {
+		t.Errorf("4 steps without a deadline waited %s for the route; want its bound of 1 s", took)
+	}
+	if n := lookups.Load(); n != 1 {
+		t.Errorf("4 steps at once read the route %d times; want once", n)
+	}
+	for _, err := range errs {
+		if err != nil {
+			t.Errorf("a step after a lookup past its bound: %v; want no error", err)
+		}
+	}
+	if c := m.knownControl(); c != "" {
+		t.Errorf("a lookup past its bound shares through %q; want no sharing", c)
+	}
+}
+
+// sim down --mac's ssh -O stop (CloseShared) uses only a route that a step
+// found already: it runs nothing, ssh -G included, to find one.
+func TestCloseSharedRunsNothingToFindARoute(t *testing.T) {
+	rr := routeRunner("host mac\nhostname 10.0.2.2\n")
+	m := NewMac(Config{SSH: "mac"}, rr.run).Shared(shortDir(t))
+	m.CloseShared(context.Background())
+	if len(rr.calls) != 0 {
+		t.Fatalf("CloseShared before any step ran %q; want nothing", rr.calls)
+	}
+	if _, err := m.Devices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rr.calls = nil
+	m.CloseShared(context.Background())
+	if len(rr.calls) != 1 || sshRole(rr.calls[0][1:]) != "-O stop" {
+		t.Fatalf("CloseShared after a shared step ran %q; want one ssh -O stop", rr.calls)
+	}
+}
+
+// Only read-only, repeatable steps share the connection; every step that
+// acts on the Mac or the simulator has a connection of its own, so that a
+// full, stopped or vanishing shared connection, after which ssh logs in
+// anew by itself, never runs an action twice or fails it.
+func TestOnlyReadOnlyStepsShare(t *testing.T) {
+	png := append([]byte("\x89PNG\r\n\x1a\n"), "x"...)
+	rr := &recordingRunner{answer: func(_ context.Context, args []string) ([]byte, error) {
+		s := args[len(args)-1]
+		switch {
+		case slices.Contains(args, "-O"):
+			return nil, nil // a master answers
+		case strings.HasPrefix(s, "xcrun simctl list"):
+			return []byte(devicesJSON), nil
+		case strings.HasPrefix(s, "d=$(mktemp -d)"):
+			return png, nil
+		case strings.HasPrefix(s, "p=$(pgrep -f 'launchd_sim"):
+			return []byte("/s/com.apple.webinspectord_sim.socket\n"), nil
+		case strings.HasPrefix(s, "k=$("):
+			return []byte("hw=U.S.\ncom.apple.keylayout.US\n"), nil
+		}
+		return []byte("yes\n"), nil
+	}}
+	cfg := Config{SSH: "mac", AXe: "/opt/axe"}
+	m := sharedMac(t, cfg, rr.run)
+	ctx := context.Background()
+	steps := []struct {
+		method string // the Mac method that the step calls
+		name   string
+		shared bool
+		run    func() error
+	}{
+		{"Reachable", "reachability probe", true, func() error { _, err := m.Reachable(ctx); return err }},
+		{"LoggedIn", "desktop login", true, func() error { _, err := m.LoggedIn(ctx); return err }},
+		{"BootedAll", "booted list", true, func() error { _, err := m.BootedAll(ctx); return err }},
+		{"Devices", "device list", true, func() error { _, err := m.Devices(ctx); return err }},
+		{"WindowOpen", "window open", true, func() error { _, err := m.WindowOpen(ctx); return err }},
+		{"SafariRunning", "Safari running", true, func() error { _, err := m.SafariRunning(ctx, udidA); return err }},
+		{"USKeyboard", "keyboard layout", true, func() error { _, _, err := m.USKeyboard(ctx, udidA); return err }},
+		{"HardwareKeyboard", "keyboard setting", true, func() error { _, err := m.HardwareKeyboard(ctx); return err }},
+		{"InspectorSocket", "inspector socket", true, func() error { _, err := m.InspectorSocket(ctx, udidA); return err }},
+		// The screenshot leaves a file on the Mac when it is cut off, and
+		// describe-ui can restart simulator services and write a
+		// preference: neither may run twice.
+		{"Screenshot", "screenshot", false, func() error { _, err := m.Screenshot(ctx, udidA); return err }},
+		{"AXe", "axe describe-ui", false, func() error { _, err := m.AXe(ctx, udidA, "describe-ui", nil); return err }},
+		{"AXe", "axe tap", false, func() error { _, err := m.AXe(ctx, udidA, "tap", []string{"-x", "1", "-y", "2"}); return err }},
+		{"AXe", "axe type", false, func() error { _, err := m.AXe(ctx, udidA, "type", nil, "hi"); return err }},
+		{"AXe", "axe swipe", false, func() error {
+			_, err := m.AXe(ctx, udidA, "swipe", []string{"--start-x", "1", "--start-y", "2", "--end-x", "3", "--end-y", "4"})
+			return err
+		}},
+		{"AXe", "axe touch", false, func() error { _, err := m.AXe(ctx, udidA, "touch", nil); return err }},
+		{"AXe", "axe key", false, func() error { _, err := m.AXe(ctx, udidA, "key", nil, "40"); return err }},
+		{"OpenURL", "open URL", false, func() error { return m.OpenURL(ctx, udidA, "http://10.0.2.2/") }},
+		{"Boot", "boot", false, func() error { return m.Boot(ctx, udidA) }},
+		{"Shutdown", "shutdown", false, func() error { return m.Shutdown(ctx, udidA) }},
+		{"OpenWindow", "open window", false, func() error { return m.OpenWindow(ctx, udidA) }},
+		{"LaunchSafari", "launch Safari", false, func() error { return m.LaunchSafari(ctx, udidA) }},
+		{"SetHardwareKeyboard", "keyboard change", false, func() error { return m.SetHardwareKeyboard(ctx, udidA, true) }},
+	}
+	// Guard: every exported method of the Mac type, with a value or a
+	// pointer receiver (the method set of *Mac), is in the table, or here
+	// with the reason it is not a step. It cannot see unexported methods
+	// of Mac, nor helpers outside the Mac type (functions, or methods of
+	// other types such as Forward) that run ssh: those are checked only by
+	// their own tests and by reading the call sites.
+	notSteps := map[string]string{
+		"Shared":      "runs nothing; the first read-only step reads ssh -G on a connection of its own (TestRouteWithAProxySharesNothing)",
+		"CloseShared": "sends ssh -O stop to the master (TestDownMacStopsSharingFirst)",
+	}
+	listed := map[string]bool{}
+	for _, st := range steps {
+		listed[st.method] = true
+	}
+	mt := reflect.TypeOf(&Mac{})
+	for i := 0; i < mt.NumMethod(); i++ {
+		if name := mt.Method(i).Name; !listed[name] && notSteps[name] == "" {
+			t.Errorf("Mac.%s is not classified as a shared or an own-connection step", name)
+		}
+	}
+	for _, st := range steps {
+		rr.calls = nil
+		if err := st.run(); err != nil {
+			t.Fatalf("%s: %v", st.name, err)
+		}
+		n := 0
+		for _, c := range rr.calls {
+			r := sshRole(c[1:])
+			if strings.HasPrefix(r, "-O ") {
+				continue
+			}
+			n++
+			if want := map[bool]string{true: "shared ", false: "own "}[st.shared]; !strings.HasPrefix(r, want) {
+				t.Errorf("%s: %q is %s, want %s", st.name, c, r, want)
+			}
+			if st.shared {
+				checkSharedOpts(t, st.name, c[1:], filepath.Dir(m.knownControl()))
+			}
+		}
+		if n == 0 {
+			t.Errorf("%s ran no ssh", st.name)
+		}
+	}
+	// The forward and the Mac's start and stop commands: the forward is
+	// TestForwardHasItsOwnConnection; start and stop run on this host
+	// (Sim.Run), not over ssh.
+}
+
+// checkSharedOpts checks the options of a step over the shared
+// connection: its socket in the private directory, kept for minutes after
+// the last step, with keepalives that end it within about 10 s of a dead
+// Mac, all before the destination.
+func checkSharedOpts(t *testing.T, name string, args []string, dir string) {
+	t.Helper()
+	if cp := optValues(args, "ControlPath"); len(cp) != 1 || filepath.Dir(cp[0]) != dir {
+		t.Errorf("%s: ControlPath %q, want one path in %s", name, cp, dir)
+	}
+	persist := optValues(args, "ControlPersist")
+	if d, err := time.ParseDuration(strings.Join(persist, "")); len(persist) != 1 || err != nil || d < time.Minute || d > 10*time.Minute {
+		t.Errorf("%s: ControlPersist %q, want a few minutes", name, persist)
+	}
+	iv, cm := optValues(args, "ServerAliveInterval"), optValues(args, "ServerAliveCountMax")
+	if len(iv) != 1 || len(cm) != 1 {
+		t.Errorf("%s: keepalives %q, %q: want one of each", name, iv, cm)
+		return
+	}
+	i, err1 := strconv.Atoi(iv[0])
+	c, err2 := strconv.Atoi(cm[0])
+	// ssh ends the connection at the check after CountMax unanswered ones.
+	if err1 != nil || err2 != nil || i <= 0 || i*(c+1) > 10 {
+		t.Errorf("%s: ServerAliveInterval %q, CountMax %q: want a dead Mac noticed within about 10 s", name, iv, cm)
+	}
+	if dest := slices.Index(args, "mac"); dest < slices.Index(args, "ControlMaster=auto") {
+		t.Errorf("%s: sharing options after the destination: %q", name, args)
+	}
+}
+
+// The control directory is private and usable: owned by this user, not a
+// symlink, mode exactly 0700 (also under a umask that would make it
+// less), short enough for the socket; anything else is refused, and a
+// base too long for a socket uses the short fallback.
+func TestControlDirIsPrivateAndShort(t *testing.T) {
+	old := controlFallback
+	defer func() { controlFallback = old }()
+	controlFallback = func() string { t.Fatal("the fallback was used for a short base"); return "" }
+	base := shortDir(t)
+	mask := syscall.Umask(0o277)
+	dir, err := ControlDir(base)
+	syscall.Umask(mask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() || fi.Mode()&(fs.ModePerm|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky) != 0o700 || filepath.Dir(dir) != base {
+		t.Fatalf("ControlDir %s: %v, %v; want a directory in %s with mode 0700", dir, fi.Mode(), err, base)
+	}
+	for _, mode := range []os.FileMode{0o500, 0o000, 0o711, 0o700 | os.ModeSticky} {
+		b := shortDir(t)
+		if err := os.Mkdir(filepath.Join(b, "ssh"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(b, "ssh"), mode); err != nil {
+			t.Fatal(err)
+		}
+		if dir, err := ControlDir(b); err == nil {
+			t.Errorf("ControlDir accepted %s with mode %v", dir, mode)
+		}
+		_ = os.Chmod(filepath.Join(b, "ssh"), 0o700)
+	}
+	b := shortDir(t)
+	if err := os.Symlink(shortDir(t), filepath.Join(b, "ssh")); err != nil {
+		t.Fatal(err)
+	}
+	if dir, err := ControlDir(b); err == nil {
+		t.Errorf("ControlDir accepted the symlink %s", dir)
+	}
+
+	long := filepath.Join(t.TempDir(), strings.Repeat("d", 60))
+	if err := os.Mkdir(long, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	short := filepath.Join(shortDir(t), "s")
+	controlFallback = func() string { return short }
+	if dir, err := ControlDir(long); err != nil || dir != short {
+		t.Fatalf("ControlDir of a long base = %q, %v; want the short fallback %s", dir, err, short)
+	}
+}
+
+// Reachable stays truthful with a shared connection: a master that listens
+// but whose Mac is gone (the VM killed or frozen) is no answer. The probe
+// gives up on it within its own bound, stops that master (other commands'
+// sessions end on their own) so that later commands open a new one, and
+// asks with logins that open a new master, which decide.
+
+// safeDirRE is the oracle of the directories that a control socket may be
+// in: absolute, of characters that neither ssh's option parser nor its
+// %, ~ and ${} expansions read.
+var safeDirRE = regexp.MustCompile(`^/[A-Za-z0-9._/+-]*$`)
+
+// Property: for any directory and plain route, the control socket's path
+// is either none (no sharing) or a path inside that directory, of safe
+// characters only, under the unix socket limit with the 17 bytes ssh adds;
+// a short safe directory always shares; and two destinations (another
+// alias, configuration file or resolved route) never share a socket.
+func TestControlPathProperty(t *testing.T) {
+	f := func(dirBytes []byte, short bool, r1, r2 string, alias2 bool) bool {
+		dir := "/" + string(dirBytes)
+		if short {
+			dir = "/tmp/" + strings.Map(func(r rune) rune {
+				if r < 128 && safeDirRE.MatchString("/"+string(r)) && r != '/' {
+					return r
+				}
+				return 'x'
+			}, string(dirBytes))
+			if len(dir) > 20 {
+				dir = dir[:20]
+			}
+		}
+		cfg := Config{SSH: "mac", SSHConfig: "/x/config"}
+		p := controlAt(cfg, dir, r1)
+		if p == "" {
+			if safeDirRE.MatchString(dir) && filepath.Clean(dir) == dir && len(dir) <= 20 {
+				t.Logf("a short safe directory %q does not share", dir)
+				return false
+			}
+			return true
+		}
+		if !safeDirRE.MatchString(p) || filepath.Dir(p) != filepath.Clean(dir) || len(p)+17 >= 104 {
+			t.Logf("dir %q: control path %q", dir, p)
+			return false
+		}
+		cfg2 := cfg
+		if alias2 {
+			cfg2.SSH = "mac2"
+		} else {
+			cfg2.SSHConfig = "/y/config"
+		}
+		other := []string{controlAt(cfg2, dir, r1)}
+		if r1 != r2 {
+			other = append(other, controlAt(cfg, dir, r2))
+		}
+		if slices.Contains(other, p) || controlAt(cfg, dir, r1) != p {
+			t.Logf("dir %q: destinations share %q (%q)", dir, p, other)
+			return false
+		}
+		return true
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 500}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Reachable stays truthful with a shared connection: a master that answers
+// but whose Mac is gone (the VM killed or frozen) is no answer. The probe
+// gives up on it within its own bound, stops that master (other steps'
+// sessions end on their own; later read-only steps open a new one) and
+// asks with fresh logins on connections of their own, which decide.
+func TestReachableWithAStaleMaster(t *testing.T) {
+	var roles []string
+	var mu sync.Mutex
+	macUp := false
+	rr := &recordingRunner{answer: func(ctx context.Context, args []string) ([]byte, error) {
+		role := sshRole(args)
+		mu.Lock()
+		roles = append(roles, role)
+		mu.Unlock()
+		switch role {
+		case "-O check", "-O stop":
+			return nil, nil
+		case "shared true":
+			// Its connection is dead: no answer until the master's
+			// keepalives end it (9 s; shortened here).
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+				return nil, errors.New("ssh: exit status 255: Timeout, server not responding")
+			}
+		case "own true":
+			if macUp {
+				return nil, nil
+			}
+			return nil, errors.New("ssh: connect to host: Connection refused")
+		}
+		return nil, fmt.Errorf("unexpected call %q", role)
+	}}
+	m := sharedMac(t, Config{SSH: "mac"}, rr.run)
+	m.probeWait = 100 * time.Millisecond
+	start := time.Now()
+	ok, err := m.Reachable(context.Background())
+	if ok || err != nil {
+		t.Fatalf("Reachable = %v, %v with a stale master and a gone Mac; want false", ok, err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("Reachable took %s with a stale master", took)
+	}
+	want := []string{"-O check", "shared true", "-O stop", "own true", "own true"}
+	if !slices.Equal(roles, want) {
+		t.Fatalf("calls %q, want %q", roles, want)
+	}
+	roles, macUp = nil, true
+	if ok, err := m.Reachable(context.Background()); !ok || err != nil {
+		t.Fatalf("Reachable = %v, %v with a stale master and a Mac that answers a fresh login", ok, err)
+	}
+	if want := []string{"-O check", "shared true", "-O stop", "own true"}; !slices.Equal(roles, want) {
+		t.Fatalf("calls %q, want %q", roles, want)
+	}
+}
+
+// With a master that answers, the probe is one step over it; without one,
+// it is a fresh login on a connection of its own, as before.
+func TestReachableUsesALiveMaster(t *testing.T) {
+	var roles []string
+	master := true
+	rr := &recordingRunner{answer: func(_ context.Context, args []string) ([]byte, error) {
+		role := sshRole(args)
+		roles = append(roles, role)
+		if role == "-O check" && !master {
+			return nil, errors.New("Control socket connect: No such file or directory")
+		}
+		return nil, nil
+	}}
+	m := sharedMac(t, Config{SSH: "mac"}, rr.run)
+	if ok, err := m.Reachable(context.Background()); !ok || err != nil || !slices.Equal(roles, []string{"-O check", "shared true"}) {
+		t.Fatalf("live master: %v, %v, calls %q", ok, err, roles)
+	}
+	roles, master = nil, false
+	if ok, err := m.Reachable(context.Background()); !ok || err != nil || !slices.Equal(roles, []string{"-O check", "own true"}) {
+		t.Fatalf("no master: %v, %v, calls %q", ok, err, roles)
+	}
+}
+
+// sim down --mac stops the shared connection from taking new steps before
+// it runs the stop command, and ends no step that runs over it (no ssh -O
+// exit): those end with the Mac, or finish when the stop fails.
+func TestDownMacStopsSharingFirst(t *testing.T) {
+	var calls []string
+	rr := &recordingRunner{answer: func(_ context.Context, args []string) ([]byte, error) {
+		role := sshRole(args)
+		calls = append(calls, role)
+		if strings.HasSuffix(role, "simctl list devices available -j") {
+			return []byte(devicesJSON), nil
+		}
+		return nil, nil
+	}}
+	cfg := Config{SSH: "mac", Device: udidB, Stop: []string{"vmctl", "stop", "mac"}}
+	mac := sharedMac(t, cfg, rr.run)
+	s := &Sim{
+		Cfg: cfg, Mac: mac, Forward: newForward(t, mac, newFakeProcs()), IWDP: &fakeIWDP{}, Poll: time.Millisecond,
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+	}
+	if _, err := s.Down(context.Background(), "", true); err != nil {
+		t.Fatal(err)
+	}
+	stop, vm := slices.Index(calls, "-O stop"), slices.Index(calls, "vmctl stop mac")
+	if stop < 0 || vm < 0 || stop > vm || slices.Contains(calls, "-O exit") {
+		t.Fatalf("calls %q: want -O stop before the stop command, and no -O exit", calls)
+	}
+}
+
+// Property: over any sequence of a Mac that goes down and up, masters that
+// end, probes, read-only and acting steps and sim down --mac, a model of
+// OpenSSH (ControlMaster=auto attaches to a master that answers and
+// otherwise logs in anew and becomes the master; a master whose Mac is
+// gone hangs its sessions; -O stop takes the master's name) shows that
+// Reachable tells whether the Mac answers and leaves no stale master to
+// the next step, that an acting step never runs over a master and runs
+// once when the Mac answers, and that a read-only step ends at its deadline.
+func TestSharedLifecycleProperty(t *testing.T) {
+	f := func(ops []byte) bool {
+		var (
+			mu     sync.Mutex
+			master bool // a master answers on the socket
+			stale  bool // its connection is dead
+			up     = true
+			acted  int // how often the last acting step ran on the Mac
+		)
+		run := func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			role := sshRole(args)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case role == "-O check":
+				if master {
+					return nil, nil
+				}
+				return nil, errors.New("Control socket connect: No such file or directory")
+			case role == "-O stop":
+				if !master {
+					return nil, errors.New("no master")
+				}
+				master, stale = false, false
+				return nil, nil
+			case strings.HasPrefix(role, "shared "):
+				if master && stale {
+					mu.Unlock()
+					<-ctx.Done()
+					mu.Lock()
+					return nil, ctx.Err()
+				}
+				if !up {
+					return nil, errors.New("ssh: exit status 255: Connection refused")
+				}
+				master = true // attached, or logged in anew as the master
+				return nil, nil
+			case strings.HasPrefix(role, "own "):
+				if !up {
+					return nil, errors.New("ssh: exit status 255: Connection refused")
+				}
+				if role == "own act" {
+					acted++
+				}
+				return nil, nil
+			}
+			t.Errorf("unexpected call %q", args)
+			return nil, errors.New("unexpected")
+		}
+		mac := sharedMac(t, Config{SSH: "mac"}, run)
+		mac.probeWait = 20 * time.Millisecond
+		for _, op := range ops {
+			mu.Lock()
+			switch op % 7 {
+			case 0:
+				up = false
+				stale = master
+			case 1:
+				up = true
+			case 2:
+				master, stale = false, false // the master ended (ControlPersist, a crash)
+			}
+			mu.Unlock()
+			switch op % 7 {
+			case 3:
+				ok, err := mac.Reachable(context.Background())
+				mu.Lock()
+				bad := err != nil || ok != up || (master && stale)
+				mu.Unlock()
+				if bad {
+					t.Logf("Reachable = %v, %v with the Mac up %v, stale master %v", ok, err, up, stale)
+					return false
+				}
+			case 4:
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+				start := time.Now()
+				_, _ = mac.read(ctx, "look")
+				cancel()
+				if time.Since(start) > time.Second {
+					t.Logf("a read-only step outlived its deadline")
+					return false
+				}
+			case 5:
+				mu.Lock()
+				acted = 0
+				wantUp := up
+				mu.Unlock()
+				_, err := mac.shell(context.Background(), "act")
+				mu.Lock()
+				n := acted
+				mu.Unlock()
+				if n > 1 || (wantUp && (n != 1 || err != nil)) {
+					t.Logf("an acting step ran %d times (Mac up %v): %v", n, wantUp, err)
+					return false
+				}
+			case 6:
+				mac.CloseShared(context.Background())
+			}
+		}
+		return true
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 200}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A master keeps the address it connected to while a fresh login resolves
+// the name again, so the shared queries and the own-connection actions
+// could reach different Macs after a DNS change: only a destination that
+// ssh -G resolves to an IP literal shares.
+func TestSharingNeedsALiteralAddress(t *testing.T) {
+	for _, tc := range []struct {
+		host  string
+		share bool
+	}{{"127.0.0.1", true}, {"::1", true}, {"10.0.2.2", true}, {"localhost", false}, {"mac.example.test", false}, {"", false}} {
+		g := "host mac\nuser devkit\nport 22\n"
+		if tc.host != "" {
+			g += "hostname " + tc.host + "\n"
+		}
+		if got := sharesFor(t, g); got != tc.share {
+			t.Errorf("hostname %q: sharing %v, want %v", tc.host, got, tc.share)
+		}
+	}
+}
+
+// A shared step whose deadline ends returns within readGrace of it, also
+// when ssh keeps running past it (a master holds the step's output pipes,
+// which ExecRunner waits up to 2 s for).
+func TestCancelledSharedStepReturnsWithinGrace(t *testing.T) {
+	if readGrace > 250*time.Millisecond {
+		t.Fatalf("readGrace %s, want 250 ms at most", readGrace)
+	}
+	m := sharedMac(t, Config{SSH: "mac"}, func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		<-ctx.Done()
+		time.Sleep(2 * time.Second) // the wait on the master's pipes
+		return nil, ctx.Err()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := m.Devices(ctx)
+	if took := time.Since(start); took > 100*time.Millisecond+readGrace+100*time.Millisecond || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a shared step with a 100 ms deadline returned after %s: %v", took, err)
+	}
+}
+
+// F6: a shared query whose deadline has ended returns the deadline's
+// error, also when ssh ends with success in the same moment (a
+// ProxyCommand's stderr that closes late, or empty output that would read
+// as a default).
+func TestSharedQueryAfterItsDeadlineIsAnError(t *testing.T) {
+	m := sharedMac(t, Config{SSH: "mac"}, func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		<-ctx.Done()
+		return []byte("1\n"), nil // success, just after the deadline
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if hw, err := m.HardwareKeyboard(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("HardwareKeyboard after its deadline = %v, %v; want the deadline's error", hw, err)
+	}
+}
+
+// Property: the route parser shares exactly when ssh -G's output names an
+// IP literal as hostname and no ProxyCommand or ProxyJump (other than
+// "none"), whatever the order of the lines, other lines, the case of keys
+// and the spaces between key and value; output without a hostname or a
+// proxy line is covered too.
+func TestRouteParserProperty(t *testing.T) {
+	f := func(v4 [4]byte, v6 [16]byte, kind, proxy uint8, seed int64, extra uint8, upper, wide bool) bool {
+		var host string
+		literal := true
+		switch kind % 4 {
+		case 0:
+			host = netip.AddrFrom4(v4).String()
+		case 1:
+			host = netip.AddrFrom16(v6).String()
+		case 2:
+			host, literal = fmt.Sprintf("mac%d.example.test", v4[0]), false
+		default:
+			literal = false // no hostname line
+		}
+		line := func(k, v string) string {
+			if upper {
+				k = strings.ToUpper(k[:1]) + k[1:]
+			}
+			sep := " "
+			if wide {
+				sep = "   "
+			}
+			return k + sep + v
+		}
+		lines := []string{line("host", "mac"), line("user", "devkit"), line("port", "22")}
+		if host != "" {
+			lines = append(lines, line("hostname", host))
+		}
+		hasProxy := false
+		switch proxy % 5 {
+		case 1:
+			lines, hasProxy = append(lines, line("proxycommand", "nc %h %p")), true
+		case 2:
+			lines, hasProxy = append(lines, line("proxyjump", "hop")), true
+		case 3:
+			lines = append(lines, line("proxycommand", "none"))
+		case 4:
+			lines = append(lines, line("proxyjump", "NONE"))
+		}
+		for i := 0; i < int(extra%5); i++ {
+			lines = append(lines, line(fmt.Sprintf("option%d", i), "yes"))
+		}
+		r := rand.New(rand.NewSource(seed))
+		r.Shuffle(len(lines), func(i, j int) { lines[i], lines[j] = lines[j], lines[i] })
+		out := strings.Join(lines, "\n") + "\n"
+		if got, want := shareableRoute(out), literal && !hasProxy; got != want {
+			t.Logf("ssh -G output %q: share %v, want %v", out, got, want)
+			return false
+		}
+		return true
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Fatal(err)
 	}
 }
