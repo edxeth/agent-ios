@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // gateWith points simGate at res and sets its hold interval for the test.

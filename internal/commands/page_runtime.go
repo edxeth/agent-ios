@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/refs"
-	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/refs"
+	"github.com/edxeth/agent-ios/internal/runtime"
 )
 
 // pageRuntime is what the W3a commands (snapshot, get, is, find, hit-test,

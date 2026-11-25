@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Finding 1 of core-events review round 2 (docs/notes/w1b.md, "core-events

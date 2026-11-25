@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/commands"
-	_ "github.com/nnemirovsky/agent-ios/internal/daemon" // registers the daemon commands, which a guide names
-	"github.com/nnemirovsky/agent-ios/internal/skills"
+	"github.com/edxeth/agent-ios/internal/commands"
+	_ "github.com/edxeth/agent-ios/internal/daemon" // registers the daemon commands, which a guide names
+	"github.com/edxeth/agent-ios/internal/skills"
 )
 
 // The guides skill-data/*/SKILL.md are what "agent-ios skills get" prints.

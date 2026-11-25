@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // privateDaemon returns the environment of CLI runs that share one daemon

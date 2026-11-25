@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
 )
 
 func httpDo(t *testing.T, method, url string, mod func(*http.Request)) (int, string) {

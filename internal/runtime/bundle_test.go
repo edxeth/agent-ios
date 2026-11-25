@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/nnemirovsky/agent-ios/internal/runtime/bundlegen"
+	"github.com/edxeth/agent-ios/internal/runtime/bundlegen"
 )
 
 // The installed bundle is bundle.js, generated from the readable sources

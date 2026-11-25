@@ -8,7 +8,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // ClockFn is the runtime function that returns the page clock and the

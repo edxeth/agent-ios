@@ -9,7 +9,7 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // idleStep is one step of a generated idle-close lifecycle

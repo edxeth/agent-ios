@@ -7,8 +7,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/tools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/tools"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // "vitals" (design 4.2): Web Vitals read in the page. Navigation timing

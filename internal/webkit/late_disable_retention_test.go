@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // core-events r6: lateDisable keeps a written Network.disable only while

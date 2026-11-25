@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // dispatchLog records, per event number, the handlers that saw the event,

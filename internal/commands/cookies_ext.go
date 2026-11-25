@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
-	"github.com/nnemirovsky/agent-ios/internal/tools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/tools"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // cookies clear and cookies set (design docs/design/agentic-parity.md,

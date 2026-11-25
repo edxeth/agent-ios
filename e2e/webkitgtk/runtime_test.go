@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	iwdpruntime "github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/core"
+	iwdpruntime "github.com/edxeth/agent-ios/internal/runtime"
 )
 
 // 7.5 test 2: each fixture's snapshot equals its hand-written expected text.

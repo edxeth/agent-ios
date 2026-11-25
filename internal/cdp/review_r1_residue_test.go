@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Repair round 1, F8: contract tests for the lifecycle, failure and

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
-	"github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // lockedBuffer is a daemon log that the test reads while the daemon writes.

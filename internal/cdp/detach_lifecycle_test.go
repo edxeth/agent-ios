@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 5.2 with the core release lifecycle (W5a rebase onto

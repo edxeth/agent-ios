@@ -3,7 +3,7 @@ package commands
 import (
 	"errors"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // errNeedsDaemon: a session, lease or device command ran outside the daemon.

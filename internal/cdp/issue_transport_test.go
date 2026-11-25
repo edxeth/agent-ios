@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport/iwdp"
+	"github.com/edxeth/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 5.2 (review of the session-page fix, F1 and F2): an endpoint

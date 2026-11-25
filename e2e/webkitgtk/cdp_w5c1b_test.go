@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
 )
 
 // w5c1bCookie is the part of a CDP Network.Cookie that the tests check.

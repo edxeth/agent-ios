@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/runtime"
-	"github.com/nnemirovsky/agent-ios/internal/upload"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/upload"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 5.2 "Node ids": DOM.describeNode gives the node's runtime handle

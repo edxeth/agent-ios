@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // W3b rebase repair round 2, finding F3 (docs/notes/w3b.md; design 2.4):

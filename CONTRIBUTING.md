@@ -6,7 +6,7 @@ Thanks for your interest in contributing!
 
 ```bash
 # Clone and build
-git clone https://github.com/nnemirovsky/agent-ios.git
+git clone https://github.com/edxeth/agent-ios.git
 cd agent-ios
 make build
 

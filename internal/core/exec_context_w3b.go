@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Execution contexts of operations (design docs/design/agentic-parity.md,

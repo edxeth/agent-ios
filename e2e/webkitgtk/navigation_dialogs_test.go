@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/daemon"
+	"github.com/edxeth/agent-ios/internal/daemon"
 )
 
 // confirmOut clicks #confirm and returns the click output and what the

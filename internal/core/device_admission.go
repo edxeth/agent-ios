@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // The reservation rule of a page's device holds on every way to the page,

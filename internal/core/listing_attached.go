@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // Page resolution without the listing (docs/known-limits.md, "iwdp does

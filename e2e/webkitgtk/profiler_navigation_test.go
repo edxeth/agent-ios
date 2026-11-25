@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // The backend premise of the pending ScriptProfiler stop (W4 rebase review,

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // bfcacheUA is the user-agent override of TestBackAndForwardAcrossSites.

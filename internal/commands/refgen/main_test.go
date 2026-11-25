@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/commands"
 )
 
 // referencePath is the checked-in reference, relative to this package.

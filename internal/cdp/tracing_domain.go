@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Tracing (design 5.3, tier 2): Tracing.start and Tracing.end with the

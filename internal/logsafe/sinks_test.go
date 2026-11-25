@@ -32,7 +32,7 @@ var sinkPackages = []string{
 var logFuncs = map[string]bool{"Logf": true, "logf": true, "pageLogf": true}
 
 const (
-	module      = "github.com/nnemirovsky/agent-ios/"
+	module      = "github.com/edxeth/agent-ios/"
 	logsafePath = module + "internal/logsafe"
 )
 

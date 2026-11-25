@@ -27,10 +27,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/e2e/internal/broadwayshm"
-	"github.com/nnemirovsky/agent-ios/internal/daemon"
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/e2e/internal/broadwayshm"
+	"github.com/edxeth/agent-ios/internal/daemon"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // Latency target of design 8.5: p50 of 50 warm CLI evals at or below

@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
-	"github.com/nnemirovsky/agent-ios/internal/runtime"
-	"github.com/nnemirovsky/agent-ios/internal/sim"
-	"github.com/nnemirovsky/agent-ios/internal/skills"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/sim"
+	"github.com/edxeth/agent-ios/internal/skills"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Private output (--private, AGENT_IOS_PRIVATE=1) is for a transcript that

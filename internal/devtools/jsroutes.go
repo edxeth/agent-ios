@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // jsRoutePatch is the JavaScript fallback of "network route --mode js"

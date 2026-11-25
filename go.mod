@@ -1,4 +1,4 @@
-module github.com/nnemirovsky/agent-ios
+module github.com/edxeth/agent-ios
 
 go 1.26.0
 

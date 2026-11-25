@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
-	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/transport/iwdp"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // TestMain makes the test binary act as "<exe> daemon run", so the

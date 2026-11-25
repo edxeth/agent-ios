@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // bundle is the installed bundle: js/*.js joined in name order and

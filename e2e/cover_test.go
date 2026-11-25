@@ -9,7 +9,7 @@ import (
 
 // coverModule instruments every package of the module in a built binary,
 // as the quality gate's -coverpkg=./... does in the test binaries.
-const coverModule = "github.com/nnemirovsky/agent-ios/..."
+const coverModule = "github.com/edxeth/agent-ios/..."
 
 var (
 	coverEnvOnce sync.Once

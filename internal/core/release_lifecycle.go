@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // The release and attach lifecycle (design 2.4, 2.5 and 2.10; core-events

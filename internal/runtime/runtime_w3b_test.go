@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // W3b (design 3.5, one task per event): the attempt loop's caller sends

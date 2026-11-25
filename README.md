@@ -1,8 +1,8 @@
-# iOS WebKit Debug Proxy CLI
+# agent-ios
 
-[![CI](https://github.com/nnemirovsky/agent-ios/actions/workflows/test.yml/badge.svg)](https://github.com/nnemirovsky/agent-ios/actions/workflows/test.yml)
-[![Lint](https://github.com/nnemirovsky/agent-ios/actions/workflows/lint.yml/badge.svg)](https://github.com/nnemirovsky/agent-ios/actions/workflows/lint.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nnemirovsky/agent-ios)](https://goreportcard.com/report/github.com/nnemirovsky/agent-ios)
+[![CI](https://github.com/edxeth/agent-ios/actions/workflows/test.yml/badge.svg)](https://github.com/edxeth/agent-ios/actions/workflows/test.yml)
+[![Lint](https://github.com/edxeth/agent-ios/actions/workflows/lint.yml/badge.svg)](https://github.com/edxeth/agent-ios/actions/workflows/lint.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/edxeth/agent-ios)](https://goreportcard.com/report/github.com/edxeth/agent-ios)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Debug iOS Safari from your AI agent or your shell.** `agent-ios` drives Safari on a real iPhone or iPad. Chrome tooling speaks the Chrome DevTools Protocol (CDP), which WebKit does not; this project bridges that gap.
@@ -37,17 +37,17 @@ For Linux and other platforms, see the [ios-webkit-debug-proxy installation guid
 ### Go Install
 
 ```bash
-go install github.com/nnemirovsky/agent-ios/cmd/agent-ios@latest
+go install github.com/edxeth/agent-ios/cmd/agent-ios@latest
 ```
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/nnemirovsky/agent-ios/releases).
+Download from [GitHub Releases](https://github.com/edxeth/agent-ios/releases).
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/nnemirovsky/agent-ios.git
+git clone https://github.com/edxeth/agent-ios.git
 cd agent-ios
 make build
 ```

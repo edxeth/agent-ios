@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/proxy"
 )
 
 // The serve fake iwdp of these tests is that of the internal/proxy tests

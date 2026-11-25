@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/logcause"
+	"github.com/edxeth/agent-ios/internal/transport"
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/agent-ios/internal/logcause"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // wsConn is a transport.MessageConn over one WebSocket connection.

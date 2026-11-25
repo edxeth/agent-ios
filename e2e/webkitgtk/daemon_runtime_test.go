@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
 )
 
 // runtimeBrowser starts broadwayd and MiniBrowser (with the DPI shim of

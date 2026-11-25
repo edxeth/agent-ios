@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // ErrNoDaemonState: the page session has no scheduler or desired state, so

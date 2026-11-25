@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Finding 1 of the core-events review (docs/notes/w1b.md, "core-events r1:

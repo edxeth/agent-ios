@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	reg "github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Regression tests for the W1b closure review of tree dce71d4d (P1): under

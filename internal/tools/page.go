@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // ScreenshotOptions selects what CaptureScreenshot captures. The zero value

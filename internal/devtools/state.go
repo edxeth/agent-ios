@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/tools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/tools"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // "state save <path>" and "state load <path>" (design 4.2): the cookies

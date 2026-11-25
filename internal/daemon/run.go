@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp"
-	"github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/transport/direct"
-	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/cdp"
+	"github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport/direct"
+	"github.com/edxeth/agent-ios/internal/transport/iwdp"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
 )
 
 // Lifecycle defaults (design 2.3).

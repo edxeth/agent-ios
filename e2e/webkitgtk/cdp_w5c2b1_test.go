@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
 )
 
 // largeText is a text of at least n bytes of mixed runes: ASCII, the

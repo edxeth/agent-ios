@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // Device check 3, P2-C: a daemon log line about a page names it by its

@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // noDaemonEnv selects the in-process core (design 2.1).

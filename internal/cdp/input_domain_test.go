@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // Design 5.3 Input: each CDP mouse event is one attempt-loop step of the

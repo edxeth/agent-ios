@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/devtools"
 )
 
 // trace start and trace stop (design docs/design/agentic-parity.md,

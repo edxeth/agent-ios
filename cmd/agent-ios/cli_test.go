@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // TestCmdDevicesWithMockIWDP tests the devices listing against a mock HTTP

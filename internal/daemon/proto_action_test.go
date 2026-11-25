@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // The reply of an action whose attempts the deadline ended carries that

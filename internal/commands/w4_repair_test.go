@@ -16,10 +16,10 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
-	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/devtools/devtoolstest"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Regression tests of the W4 command review findings (repair round 1):

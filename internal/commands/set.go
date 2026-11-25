@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/devtools"
 )
 
 // set media, useragent, headers, credentials, geo, offline, viewport and

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // observed is one request that RunOptions.CDPObserve saw.

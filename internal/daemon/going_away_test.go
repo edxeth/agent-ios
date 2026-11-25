@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/commands"
 )
 
 // closeMode is how a fake daemon that goes away ends a connection that it

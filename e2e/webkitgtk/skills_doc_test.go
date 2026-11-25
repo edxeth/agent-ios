@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
 )
 
 // Design 7.9 acceptance 2: the command examples of the skills run against

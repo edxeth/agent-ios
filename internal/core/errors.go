@@ -3,7 +3,7 @@ package core
 import (
 	"errors"
 
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/logsafe"
 )
 
 // Exit codes that core errors choose (design 2.10); they equal the

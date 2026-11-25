@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/browserurl"
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/browserurl"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // ExitNoMatch is the exit code of "tab find" when it read every tab that

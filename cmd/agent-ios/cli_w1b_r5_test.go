@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/daemon"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/daemon"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // cookieMock is a page that answers Page.getCookies with no cookies.

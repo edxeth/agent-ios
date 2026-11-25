@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Page events per CDP attachment (design docs/design/agentic-parity.md,

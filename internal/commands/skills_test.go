@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/skills"
+	"github.com/edxeth/agent-ios/internal/skills"
 )
 
 // repoSkill reads the guide skill-data/<name>/SKILL.md from the repository

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/e2e/internal/broadwayshm"
+	"github.com/edxeth/agent-ios/e2e/internal/broadwayshm"
 )
 
 // lifetimeReady is the line that the child prints when its MiniBrowser

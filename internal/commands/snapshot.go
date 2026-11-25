@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 
-	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/runtime"
 )
 
 // snapshot: the accessibility snapshot with @eN refs (design

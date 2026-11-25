@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/proxy"
 )
 
 // The daemon runs RunOptions.RecoverIWDP (proxy.Recover in the binaries)

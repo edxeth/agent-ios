@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
 )
 
 // W4 DevTools suite (design docs/design/agentic-parity.md, section 7.7,

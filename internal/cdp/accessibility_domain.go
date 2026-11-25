@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/runtime"
 )
 
 // The Accessibility domain (design docs/design/agentic-parity.md 5.3,

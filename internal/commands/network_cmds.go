@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/devtools"
 )
 
 // network requests, network request, network route and network unroute:

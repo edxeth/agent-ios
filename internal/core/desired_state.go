@@ -11,7 +11,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Sender sends one protocol command. webkit.Caller and webkit.TargetCaller

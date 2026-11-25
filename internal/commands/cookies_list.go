@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/tools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/tools"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // cookies lists the page's cookies (agent-browser "cookies"; the legacy W0

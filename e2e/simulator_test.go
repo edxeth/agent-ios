@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
-	"github.com/nnemirovsky/agent-ios/internal/tools"
-	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/tools"
+	"github.com/edxeth/agent-ios/internal/transport/iwdp"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // The iOS Simulator suite: the shared WebKit Inspector Protocol helpers

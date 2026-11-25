@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // guardBin holds the package-wide fakes of the iwdp and device commands

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp"
+	"github.com/edxeth/agent-ios/internal/cdp"
 )
 
 // Design 5.2 "Dialogs" and 3.7: CDPDialogs is the logical session's own

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
+	reg "github.com/edxeth/agent-ios/internal/commands"
 )
 
 // helpWords are the help requests of criterion 3a'.

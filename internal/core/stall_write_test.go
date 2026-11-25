@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/webkit"
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // core-events r6: a declared stall interrupts a socket write in progress,

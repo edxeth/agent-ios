@@ -11,9 +11,9 @@ import (
 	"testing/quick"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/agent-ios/internal/tools"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/tools"
+	"github.com/edxeth/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // webkitThrown is the Runtime.evaluate response WebKit sends when the

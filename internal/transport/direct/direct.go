@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // Limits and budgets of the direct transport (design section 6).

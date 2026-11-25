@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/logsafe"
 )
 
 // The Browser domain (design 5.3).

@@ -22,7 +22,7 @@ import (
 	ios "github.com/danielpaulus/go-ios/ios"
 	"howett.net/plist"
 
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 const (

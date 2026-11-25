@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp"
-	"github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/cdp"
+	"github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // DefaultCommandTimeout is the deadline of a request that names none

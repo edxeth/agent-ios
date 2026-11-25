@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Domain ownership of owned state (design 2.4: domains are reference

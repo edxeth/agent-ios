@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/daemon"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	reg "github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/daemon"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // wantFullDeadline fails unless res is the exit 124 of command name with

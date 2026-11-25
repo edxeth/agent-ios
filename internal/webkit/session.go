@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/logcause"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/logcause"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // Errors of a Session (design docs/design/agentic-parity.md, sections 2.6 and 2.7).

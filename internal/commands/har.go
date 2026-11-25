@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/devtools"
 )
 
 // network har start and stop: a HAR 1.2 file of the requests that the

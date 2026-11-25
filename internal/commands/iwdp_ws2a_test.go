@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/proxy"
 )
 
 // Device check 3, P3-D: "agent-ios status" names the log of an iwdp that

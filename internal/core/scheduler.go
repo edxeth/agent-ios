@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/runtime"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Class is the admission class of an operation (design 2.5 and 2.10).

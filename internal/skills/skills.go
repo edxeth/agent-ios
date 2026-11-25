@@ -1,7 +1,7 @@
 // Package skills serves the agent skills that are embedded in the binary
 // (design docs/design/agentic-parity.md, sections 4.2 "skills get|list|path"
 // and 7.9). The source files are the guides skill-data/<name>/SKILL.md in
-// the repository (package github.com/nnemirovsky/agent-ios/skill-data); the
+// the repository (package github.com/edxeth/agent-ios/skill-data); the
 // discovery stubs in skills/ are not embedded.
 package skills
 
@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	files "github.com/nnemirovsky/agent-ios/skill-data"
+	files "github.com/edxeth/agent-ios/skill-data"
 )
 
 // FileName is the file of a skill inside its directory.

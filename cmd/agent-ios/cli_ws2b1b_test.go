@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	reg "github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // WS2b-1b-b item 1: agent-ios before the registry (f731071,

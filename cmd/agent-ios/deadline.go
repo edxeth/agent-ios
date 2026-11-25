@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // exitTimeout is the exit code for a command that hit its deadline. It

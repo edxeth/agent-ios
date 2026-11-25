@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/sim"
+	"github.com/edxeth/agent-ios/internal/sim"
 )
 
 // fakeSSHHost points the simulator configuration at a fake ssh that logs

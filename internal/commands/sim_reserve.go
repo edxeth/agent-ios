@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // Taking turns on the simulator. Several agents share one simulator, and

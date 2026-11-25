@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // The ScriptProfiler lifecycle of a page (W4 rebase review findings F2 and

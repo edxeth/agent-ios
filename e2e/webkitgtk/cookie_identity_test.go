@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/devtools"
 )
 
 // cookieHeader is the sorted name=value pairs of a request's Cookie header.

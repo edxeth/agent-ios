@@ -15,10 +15,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/commands"
 	// The daemon lifecycle commands register in internal/daemon, because
 	// that package imports internal/commands.
-	_ "github.com/nnemirovsky/agent-ios/internal/daemon"
+	_ "github.com/edxeth/agent-ios/internal/daemon"
 )
 
 func main() {

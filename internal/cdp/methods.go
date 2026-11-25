@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // Level is the kind of CDP session a method exists on.

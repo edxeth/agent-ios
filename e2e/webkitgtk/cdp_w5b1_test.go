@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
 )
 
 // w5b1Wait bounds each wait for a CDP event of the W5b-1 test.

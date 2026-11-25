@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
+	reg "github.com/edxeth/agent-ios/internal/commands"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // L01 (w1c backlog): the element screenshot, which reads the document

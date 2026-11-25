@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // storagePage makes the fake page answer the bridge's clear function with

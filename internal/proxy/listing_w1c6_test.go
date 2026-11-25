@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // The link-time seam listingAddr (W1c T01) defaults to iwdp's listing

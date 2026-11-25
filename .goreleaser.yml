@@ -28,5 +28,5 @@ changelog:
 
 release:
   github:
-    owner: nnemirovsky
+    owner: edxeth
     name: agent-ios

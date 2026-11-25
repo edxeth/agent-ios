@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // shared simulator connection — WebKit only allows one debugger connection per page.

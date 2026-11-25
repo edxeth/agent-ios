@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/daemon"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	"github.com/edxeth/agent-ios/internal/daemon"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // e2eRuntimeDir is the private XDG_RUNTIME_DIR and XDG_STATE_HOME of the

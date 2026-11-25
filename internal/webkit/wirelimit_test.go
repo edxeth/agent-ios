@@ -12,7 +12,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // pipeConn is an in-memory routed MessageConn: it announces page-1 and

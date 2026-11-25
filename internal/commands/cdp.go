@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp"
+	"github.com/edxeth/agent-ios/internal/cdp"
 )
 
 // cdp start|stop|status|log: the CDP endpoint of the daemon (design

@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 func TestClient_Send(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // defaultReservationTTL is the lifetime of a device reservation; the daemon

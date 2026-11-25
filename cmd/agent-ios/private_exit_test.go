@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
+	reg "github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Tests of the end of a private run on every exit path of the process

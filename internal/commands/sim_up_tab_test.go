@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/sim"
+	"github.com/edxeth/agent-ios/internal/sim"
 )
 
 // Review F18: sim up --url prints the tab id of the new tab that it saw,

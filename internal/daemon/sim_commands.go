@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // The daemon's part of the sim commands (internal/commands/sim.go): the

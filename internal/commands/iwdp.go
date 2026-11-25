@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
-	"github.com/nnemirovsky/agent-ios/internal/sim"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/sim"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // The ios_webkit_debug_proxy commands: status, devices and restart-iwdp.

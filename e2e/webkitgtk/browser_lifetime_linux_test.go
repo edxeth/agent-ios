@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/e2e/internal/broadwayshm"
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/e2e/internal/broadwayshm"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
 )
 
 // lifetimeReady is the line that the child prints when its MiniBrowser

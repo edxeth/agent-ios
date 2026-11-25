@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
+	reg "github.com/edxeth/agent-ios/internal/commands"
 )
 
 // synopsisWidth aligns command summaries in the overview.

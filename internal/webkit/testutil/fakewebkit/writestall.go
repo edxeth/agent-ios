@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/transport"
 	"github.com/gorilla/websocket"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // WriteStall makes the client's write of one command stall until the

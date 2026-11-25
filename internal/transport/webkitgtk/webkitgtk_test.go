@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // listing is the target list of WebKitGTK 2.54 MiniBrowser, captured on this

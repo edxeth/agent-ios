@@ -28,14 +28,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/e2e/internal/broadwayshm"
-	"github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/refs"
-	iwdpruntime "github.com/nnemirovsky/agent-ios/internal/runtime"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/e2e/internal/broadwayshm"
+	"github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/refs"
+	iwdpruntime "github.com/edxeth/agent-ios/internal/runtime"
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/transport/webkitgtk"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 const miniBrowser = "/usr/lib/webkit2gtk-4.1/MiniBrowser"

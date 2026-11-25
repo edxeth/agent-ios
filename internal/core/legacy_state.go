@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Network settings and owned page state that legacy calls set (design 2.4

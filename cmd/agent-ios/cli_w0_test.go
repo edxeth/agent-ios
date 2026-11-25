@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	reg "github.com/nnemirovsky/agent-ios/internal/commands"
-	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	reg "github.com/edxeth/agent-ios/internal/commands"
+	"github.com/edxeth/agent-ios/internal/webkit/testutil"
 )
 
 // runMainEnv makes the test binary run main() instead of the tests, so CLI

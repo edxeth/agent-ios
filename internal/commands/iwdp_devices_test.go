@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/proxy"
 )
 
 // Device check of 2026-11-12: devices printed "No devices connected."

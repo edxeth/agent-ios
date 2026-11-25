@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/core"
 )
 
 // FlagType is the value type of a flag.

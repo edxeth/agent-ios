@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/sim"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/sim"
+	"github.com/edxeth/agent-ios/internal/transport"
 )
 
 // Regression tests of the simulator's turns (review of 2026-11-24,

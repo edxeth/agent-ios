@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // standingCaller is an emitCaller with an active target that the test

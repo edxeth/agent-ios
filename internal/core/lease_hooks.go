@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/edxeth/agent-ios/internal/logsafe"
 )
 
 // LeaseHook runs when a session's lease on a page starts: a new grant or a

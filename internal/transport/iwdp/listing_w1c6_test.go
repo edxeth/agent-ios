@@ -3,8 +3,8 @@ package iwdp_test
 import (
 	"testing"
 
-	"github.com/nnemirovsky/agent-ios/internal/proxy"
-	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/edxeth/agent-ios/internal/proxy"
+	"github.com/edxeth/agent-ios/internal/transport/iwdp"
 )
 
 // W1c T01: the transport's default device list is proxy.ListingAddr, the

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/edxeth/agent-ios/internal/devtools"
 )
 
 // emulate network: network throttling (design

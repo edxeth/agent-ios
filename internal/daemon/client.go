@@ -18,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/cdp"
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/logcause"
+	"github.com/edxeth/agent-ios/internal/cdp"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/logcause"
 )
 
 // Auto-start timing (design 2.3): poll the socket every 20 ms for up to 3 s.

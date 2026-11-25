@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/logcause"
+	"github.com/edxeth/agent-ios/internal/logcause"
 )
 
 const (

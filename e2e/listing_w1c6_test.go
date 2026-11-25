@@ -12,12 +12,12 @@ import (
 
 // proxyListingVar is the link-time seam of internal/proxy: the iwdp
 // listing address of a binary, which its daemon's iwdp transport uses too.
-const proxyListingVar = "github.com/nnemirovsky/agent-ios/internal/proxy.listingAddr"
+const proxyListingVar = "github.com/edxeth/agent-ios/internal/proxy.listingAddr"
 
 // proxyUSBMuxdVar is the link-time seam of internal/proxy for usbmuxd's
 // socket, and noUSBMuxd a path where no socket is.
 const (
-	proxyUSBMuxdVar = "github.com/nnemirovsky/agent-ios/internal/proxy.usbmuxdSubscriptionSocket"
+	proxyUSBMuxdVar = "github.com/edxeth/agent-ios/internal/proxy.usbmuxdSubscriptionSocket"
 	noUSBMuxd       = "/nonexistent/iwdp-e2e-usbmuxd"
 )
 

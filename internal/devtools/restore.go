@@ -11,9 +11,9 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/agent-ios/internal/logcause"
-	"github.com/nnemirovsky/agent-ios/internal/transport"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/logcause"
+	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // The storage part of "state load" (W4 repair rounds 3 and 4, storage

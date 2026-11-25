@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/agent-ios/internal/skills"
+	"github.com/edxeth/agent-ios/internal/skills"
 )
 
 // listDescriptionRunes is where "skills list" cuts a description, as

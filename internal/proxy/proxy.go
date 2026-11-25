@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/agent-ios/internal/logcause"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/logcause"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 const (

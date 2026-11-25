@@ -5,8 +5,8 @@ import (
 	_ "embed" // the page shims
 	"fmt"
 
-	"github.com/nnemirovsky/agent-ios/internal/core"
-	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Page compatibility shims (docs/cdp.md, "Page compatibility shims"): CDP

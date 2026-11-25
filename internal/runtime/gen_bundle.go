@@ -8,7 +8,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/nnemirovsky/agent-ios/internal/runtime/bundlegen"
+	"github.com/edxeth/agent-ios/internal/runtime/bundlegen"
 )
 
 func main() {
