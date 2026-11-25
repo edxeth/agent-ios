@@ -13,18 +13,11 @@ builds:
 
 archives:
   - id: agent-ios
-    builds:
+    ids:
       - agent-ios
-    format: binary
+    formats:
+      - binary
     name_template: "agent-ios_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-
-changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^ci:"
 
 release:
   github:
