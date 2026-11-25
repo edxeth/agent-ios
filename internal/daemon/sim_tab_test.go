@@ -79,3 +79,50 @@ func TestSimulatorTabGivesNoIDWithoutADaemon(t *testing.T) {
 		t.Fatal("SimulatorTab started an in-process core for an id that cannot outlive the command")
 	}
 }
+
+// sim up --url that fails closes the tab that its open made through
+// CloseSimulatorTab, which runs tab close <id> in the daemon for the
+// caller's session: the tab whose id SimulatorTab gave leaves the listing
+// and the earlier tab stays. A tab that window.close() does not close is an
+// error, as tab close's.
+func TestCloseSimulatorTabClosesThatTab(t *testing.T) {
+	earlier, fresh := newFake(t, fakewebkit.Options{}), newFake(t, fakewebkit.Options{})
+	l := fakewebkit.NewListing(false)
+	t.Cleanup(l.Close)
+	dev := l.AddDevice("SIMULATOR", "Simulator", "16.7")
+	dev.AddPage("Earlier", "http://10.0.2.2:8791/", earlier.URL)
+	page := dev.AddPage("Can't Open Page", "data:text/html,", fresh.URL)
+	closes := func(s *fakewebkit.Server, onClose func()) {
+		s.Handle("Runtime.evaluate", func(c fakewebkit.Call) (any, *fakewebkit.Error) {
+			var p struct{ Expression string }
+			_ = json.Unmarshal(c.Params, &p)
+			if p.Expression == "window.close()" && onClose != nil {
+				onClose()
+			}
+			return map[string]any{"result": map[string]any{"type": "number", "value": 1}}, nil
+		})
+	}
+	closes(fresh, func() { dev.RemovePage(page) })
+	closes(earlier, nil) // Safari closes only a tab that a script or an open made
+	o := startInProcess(t, RunOptions{Transport: "iwdp", Addr: l.Addr()})
+	in := commands.Input{Global: commands.Globals{Session: "s1"}}
+	ctx := ctxFor(t, 10*time.Second)
+
+	id, err := commands.SimulatorTab(ctx, lifecycleHost{o}, in, fresh.URL)
+	if err != nil || id == "" {
+		t.Fatalf("SimulatorTab = %q, %v", id, err)
+	}
+	if err := commands.CloseSimulatorTab(ctx, lifecycleHost{o}, in, id); err != nil {
+		t.Fatalf("CloseSimulatorTab(%s): %v", id, err)
+	}
+	if id, _ := commands.SimulatorTab(ctx, lifecycleHost{o}, in, fresh.URL); id != "" {
+		t.Fatalf("the closed tab is still listed as %s", id)
+	}
+	kept, err := commands.SimulatorTab(ctx, lifecycleHost{o}, in, earlier.URL)
+	if err != nil || kept == "" {
+		t.Fatalf("the earlier tab: %q, %v; want it still listed", kept, err)
+	}
+	if err := commands.CloseSimulatorTab(ctx, lifecycleHost{o}, in, kept); err == nil || !strings.Contains(err.Error(), "still open") {
+		t.Fatalf("CloseSimulatorTab of a tab that stays open = %v; want tab close's error", err)
+	}
+}

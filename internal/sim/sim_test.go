@@ -437,6 +437,7 @@ type fakeIWDP struct {
 	events   *[]string
 	foreign  bool     // a start or restart leaves another program's iwdp
 	urls     []string // the simulator's page URLs, page i with id "p<i>"; nil: one page
+	pages    []Page   // the simulator's pages, when not nil (instead of urls)
 }
 
 func (f *fakeIWDP) State(context.Context) (IWDPState, error) { return f.st, nil }
@@ -473,6 +474,9 @@ func (f *fakeIWDP) SimulatorPages(context.Context) ([]Page, error) {
 	if !f.st.Listed {
 		return nil, nil
 	}
+	if f.pages != nil {
+		return append([]Page(nil), f.pages...), nil
+	}
 	urls := f.urls
 	if urls == nil {
 		urls = []string{"http://example.test/"}
@@ -488,7 +492,7 @@ func newTestSim(t *testing.T, fm *fakeMac, iw *fakeIWDP, cfg Config) (*Sim, *fak
 	t.Helper()
 	mac := NewMac(cfg, fm.run)
 	p := newFakeProcs()
-	return &Sim{Cfg: cfg, Mac: mac, Run: fm.run, Forward: newForward(t, mac, p), IWDP: iw, Poll: time.Millisecond, PageWait: 50 * time.Millisecond}, p
+	return &Sim{Cfg: cfg, Mac: mac, Run: fm.run, Forward: newForward(t, mac, p), IWDP: iw, Poll: time.Millisecond, PageWait: 50 * time.Millisecond, CleanupWait: 200 * time.Millisecond}, p
 }
 
 func readyMac() *fakeMac {
@@ -2213,5 +2217,204 @@ func TestRouteParserProperty(t *testing.T) {
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 1000}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// fakeTabs stands in for the daemon's tabs: tab ids by page id, and a close
+// that removes the page from iw's listing unless inert.
+type fakeTabs struct {
+	iw       *fakeIWDP
+	ids      map[string]string // page id -> tab id
+	inert    bool              // a close succeeds but the tab stays listed
+	closeErr error             // a close fails
+	closed   []string          // the tab ids that Close was called with
+}
+
+func (f *fakeTabs) ID(_ context.Context, pageID string) (string, error) { return f.ids[pageID], nil }
+
+func (f *fakeTabs) Close(_ context.Context, id string) error {
+	f.closed = append(f.closed, id)
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	if f.inert {
+		return nil
+	}
+	f.iw.pages = slices.DeleteFunc(slices.Clone(f.iw.pages), func(p Page) bool { return f.ids[p.ID] == id })
+	return nil
+}
+
+// failedPage is the tab that Safari shows for a URL that it cannot load.
+var failedPage = Page{ID: "ws://new", URL: "data:text/html,<html><head><title>Can't Open Page</title></head>" + strings.Repeat("x", 200), Title: "Can't Open Page"}
+
+// earlierPages are the tabs listed before the open: a page and an empty tab.
+var earlierPages = []Page{{ID: "ws://earlier", URL: "http://10.0.2.2:18080/", Title: "Earlier"}, {ID: "ws://blank", URL: "about:blank"}}
+
+// upFailing runs Up for a URL whose page never shows: iwdp lists pages
+// before the open, and after it.
+func upFailing(t *testing.T, pages, after []Page, tabs func(*fakeIWDP) *fakeTabs) (*fakeIWDP, *fakeTabs, error) {
+	t.Helper()
+	fm := readyMac()
+	iw := &fakeIWDP{pages: pages}
+	ft := tabs(iw)
+	fm.opened = func() { iw.pages = after }
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	s.Tabs = ft
+	_, err := s.Up(context.Background(), "", "http://localhost:47613/", false)
+	return iw, ft, err
+}
+
+// sim up --url that gives up with exit 7 closes the new tab that its own
+// open made (one not listed before the open), as tab close does, and
+// leaves every tab listed before as it was (live run, 2026-11-25: a failed
+// sim up --url left Safari's "Can't Open Page" tab, which no session owned).
+func TestUpFailureClosesTheTabItsOpenMade(t *testing.T) {
+	iw, ft, err := upFailing(t, earlierPages, append(slices.Clone(earlierPages), failedPage), func(iw *fakeIWDP) *fakeTabs {
+		return &fakeTabs{iw: iw, ids: map[string]string{"ws://earlier": "t1", "ws://blank": "t2", "ws://new": "t3"}}
+	})
+	if !errors.Is(err, ErrNoURLTab) || !strings.Contains(err.Error(), "curl http://127.0.0.1:<port>/") {
+		t.Fatalf("Up = %v; want ErrNoURLTab that says how to check the server", err)
+	}
+	if !slices.Equal(ft.closed, []string{"t3"}) || !slices.Equal(iw.pages, earlierPages) {
+		t.Fatalf("closed %q, left %+v; want only the new tab t3 closed and the earlier tabs listed", ft.closed, iw.pages)
+	}
+	if !strings.Contains(err.Error(), "closed the tab that its open made: tab t3") || strings.Contains(err.Error(), strings.Repeat("x", 150)) {
+		t.Fatalf("Up = %v; want it to name the closed tab t3, with its URL cut", err)
+	}
+}
+
+// No new tab after the open: sim up closes nothing and says that it left
+// no tab.
+func TestUpFailureWithoutANewTabClosesNothing(t *testing.T) {
+	_, ft, err := upFailing(t, earlierPages, earlierPages, func(iw *fakeIWDP) *fakeTabs {
+		return &fakeTabs{iw: iw, ids: map[string]string{"ws://earlier": "t1", "ws://blank": "t2"}}
+	})
+	if !errors.Is(err, ErrNoURLTab) || len(ft.closed) != 0 || !strings.Contains(err.Error(), "left no tab open") {
+		t.Fatalf("Up = %v, closed %q; want ErrNoURLTab, nothing closed, and that no tab was left", err, ft.closed)
+	}
+}
+
+// Safari opened the failed URL in an empty tab that was listed before the
+// open: that tab is not the open's to close, so sim up leaves it and names
+// it (tab id, title and URL) as the tab that now shows the failed address.
+func TestUpFailureNamesAReusedEmptyTab(t *testing.T) {
+	reused := failedPage
+	reused.ID = "ws://blank"
+	iw, ft, err := upFailing(t, earlierPages, []Page{earlierPages[0], reused}, func(iw *fakeIWDP) *fakeTabs {
+		return &fakeTabs{iw: iw, ids: map[string]string{"ws://earlier": "t1", "ws://blank": "t2"}}
+	})
+	if !errors.Is(err, ErrNoURLTab) || len(ft.closed) != 0 || len(iw.pages) != 2 {
+		t.Fatalf("Up = %v, closed %q, pages %+v; want ErrNoURLTab and nothing closed", err, ft.closed, iw.pages)
+	}
+	for _, want := range []string{"tab t2", "\"Can't Open Page\"", "data:text/html,", "open before", "failed address", "left no tab open"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Up = %v; want %q in it", err, want)
+		}
+	}
+}
+
+// A close that does not take effect, that fails, or that has no tab id:
+// still ErrNoURLTab (exit 7), and the error names the tab left open with
+// the command that closes it.
+func TestUpFailureNamesTheTabItCouldNotClose(t *testing.T) {
+	after := append(slices.Clone(earlierPages), failedPage)
+	ids := map[string]string{"ws://earlier": "t1", "ws://blank": "t2", "ws://new": "t3"}
+	cases := map[string]struct {
+		tabs func(*fakeIWDP) *fakeTabs
+		want string
+	}{
+		"inert": {func(iw *fakeIWDP) *fakeTabs { return &fakeTabs{iw: iw, ids: ids, inert: true} }, "run agent-ios tab close t3"},
+		"fails": {func(iw *fakeIWDP) *fakeTabs {
+			return &fakeTabs{iw: iw, ids: ids, closeErr: errors.New("tab close: still open")}
+		}, "run agent-ios tab close t3"},
+		"no id": {func(iw *fakeIWDP) *fakeTabs { return &fakeTabs{iw: iw, ids: map[string]string{}} }, "agent-ios tab list --device SIMULATOR"},
+	}
+	for name, c := range cases {
+		iw, _, err := upFailing(t, earlierPages, after, c.tabs)
+		if !errors.Is(err, ErrNoURLTab) || !strings.Contains(err.Error(), "could not close") || !strings.Contains(err.Error(), c.want) ||
+			!strings.Contains(err.Error(), "\"Can't Open Page\"") || !strings.Contains(err.Error(), "curl http://127.0.0.1") {
+			t.Errorf("%s: Up = %v; want ErrNoURLTab naming the tab left open and %q", name, err, c.want)
+		}
+		if !slices.Equal(iw.pages, after) {
+			t.Errorf("%s: pages %+v; want them unchanged", name, iw.pages)
+		}
+	}
+}
+
+// When a new tab shows the URL, sim up closes nothing.
+func TestUpSuccessClosesNothing(t *testing.T) {
+	const u = "http://10.0.2.2:8791/"
+	fm := readyMac()
+	iw := &fakeIWDP{pages: earlierPages}
+	ft := &fakeTabs{iw: iw, ids: map[string]string{"ws://mine": "t3"}}
+	fm.opened = func() { iw.pages = append(slices.Clone(earlierPages), Page{ID: "ws://mine", URL: u}) }
+	s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+	s.Tabs = ft
+	r, err := s.Up(context.Background(), "", u, false)
+	if err != nil || r.NewPage != "ws://mine" || len(ft.closed) != 0 {
+		t.Fatalf("Up = %+v, %v, closed %q; want the new tab and nothing closed", r, err, ft.closed)
+	}
+}
+
+// expiringCtx is a context whose deadline passes when expire is called.
+type expiringCtx struct {
+	context.Context
+	done    chan struct{}
+	expired atomic.Bool
+}
+
+func (c *expiringCtx) expire() {
+	c.expired.Store(true)
+	close(c.done)
+}
+
+func (c *expiringCtx) Deadline() (time.Time, bool) {
+	if c.expired.Load() {
+		return time.Now(), true
+	}
+	return time.Now().Add(time.Hour), true
+}
+func (c *expiringCtx) Done() <-chan struct{} { return c.done }
+func (c *expiringCtx) Err() error {
+	if c.expired.Load() {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// When the caller's deadline ends Up after its open, Up still closes the
+// new tab, in CleanupWait of its own, and returns the deadline error. A
+// cancel for another reason (a signal, the turn lost) closes nothing and
+// says how to close the tab.
+func TestUpDeadlineAfterTheOpenClosesTheNewTab(t *testing.T) {
+	for _, deadline := range []bool{true, false} {
+		fm := readyMac()
+		iw := &fakeIWDP{pages: earlierPages}
+		ft := &fakeTabs{iw: iw, ids: map[string]string{"ws://new": "t3"}}
+		var ctx context.Context
+		var end func()
+		if deadline {
+			ec := &expiringCtx{Context: context.Background(), done: make(chan struct{})}
+			ctx, end = ec, ec.expire
+		} else {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(context.Background())
+			end = cancel
+			t.Cleanup(cancel)
+		}
+		fm.opened = func() {
+			iw.pages = append(slices.Clone(earlierPages), failedPage)
+			end()
+		}
+		s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+		s.Tabs = ft
+		s.PageWait = time.Hour
+		_, err := s.Up(ctx, "", "http://localhost:47613/", false)
+		if deadline && (!errors.Is(err, context.DeadlineExceeded) || !slices.Equal(ft.closed, []string{"t3"}) || !strings.Contains(err.Error(), "closed the tab")) {
+			t.Errorf("deadline: Up = %v, closed %q; want the deadline error and t3 closed", err, ft.closed)
+		}
+		if !deadline && (!errors.Is(err, context.Canceled) || len(ft.closed) != 0 || !strings.Contains(err.Error(), "agent-ios tab close <id>")) {
+			t.Errorf("canceled: Up = %v, closed %q; want the cancel, nothing closed, and how to close the tab", err, ft.closed)
+		}
 	}
 }

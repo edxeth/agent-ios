@@ -38,7 +38,7 @@ func init() {
 			"start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, " +
 			"forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that agent-ios started when it does not use that forward. " +
 			"Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that agent-ios did not start. " +
-			"Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m.",
+			"Exit 7 when Safari shows no tab of --url in time (check your server); it then closes the new tab that its open made, or names it for tab close. Default deadline 15m.",
 		Flags: []Flag{
 			device,
 			{Name: "no-window", Type: FlagBool, Help: "do not open the Simulator window"},
@@ -183,7 +183,7 @@ var newSim = func(env Env) (*sim.Sim, error) {
 		NewToken: proxy.NewStartToken,
 	}
 	return &sim.Sim{
-		Cfg: cfg, Mac: mac, Run: sim.ExecRunner, Poll: 3 * time.Second, PageWait: 30 * time.Second,
+		Cfg: cfg, Mac: mac, Run: sim.ExecRunner, Poll: 3 * time.Second, PageWait: 30 * time.Second, CleanupWait: simUpCleanupWait,
 		Forward: &sim.Forward{Mac: mac, Dir: dir, Addr: sim.InspectorAddr, Procs: procs, Wait: 15 * time.Second},
 		IWDP:    hostIWDP{env: env},
 	}, nil
@@ -198,6 +198,36 @@ var ActiveLeases func(ctx context.Context, env Env) (int, error)
 // iwdp's listing is pageID (sim.Page.ID); "" when the daemon does not list
 // it. The daemon package sets it: the daemon hands out the tab ids.
 var SimulatorTab func(ctx context.Context, env Env, in Input, pageID string) (string, error)
+
+// CloseSimulatorTab closes the simulator's tab id (t<N>) as tab close
+// does, for in's session and reservation owner. The daemon package sets it.
+var CloseSimulatorTab func(ctx context.Context, env Env, in Input, id string) error
+
+// simUpCleanupWait bounds sim up's close of the tab that its open made
+// after a failure (sim.Sim.CleanupWait): tab close's own waits (1 s for
+// window.close(), 3 s until the tab is gone) and a daemon call or two,
+// also when the command's deadline has passed.
+const simUpCleanupWait = 10 * time.Second
+
+// simTabs is sim.Tabs for in's session and owner, through the daemon.
+type simTabs struct {
+	env Env
+	in  Input
+}
+
+func (t simTabs) ID(ctx context.Context, pageID string) (string, error) {
+	if SimulatorTab == nil {
+		return "", nil
+	}
+	return SimulatorTab(ctx, t.env, t.in, pageID)
+}
+
+func (t simTabs) Close(ctx context.Context, id string) error {
+	if CloseSimulatorTab == nil {
+		return errors.New("closing a tab needs the daemon, which this build lacks")
+	}
+	return CloseSimulatorTab(ctx, t.env, t.in, id)
+}
 
 // SimStateDir is the private directory of the forward's record; the daemon
 // package sets it to its socket directory.
@@ -278,7 +308,7 @@ func simulatorPagesAt(ctx context.Context, listURL string) ([]sim.Page, error) {
 	}
 	pages := make([]sim.Page, len(entries))
 	for i, e := range entries {
-		pages[i] = sim.Page{ID: e.WebSocketDebuggerURL, URL: e.URL}
+		pages[i] = sim.Page{ID: e.WebSocketDebuggerURL, URL: e.URL, Title: e.Title}
 	}
 	return pages, nil
 }
@@ -320,6 +350,7 @@ func runSimUp(ctx context.Context, env Env, in Input) (_ Result, err error) {
 		return Result{}, err
 	}
 	s.RestartAnyway, _ = in.Flags["restart-iwdp"].(bool)
+	s.Tabs = simTabs{env: env, in: in}
 	dev, _ := in.Flags["device"].(string)
 	noWindow, _ := in.Flags["no-window"].(bool)
 	openURL, _ := in.Flags["url"].(string)

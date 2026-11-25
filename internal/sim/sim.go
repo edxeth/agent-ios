@@ -39,7 +39,19 @@ type IWDP interface {
 // Page is a page that iwdp lists for the simulator: ID identifies its tab
 // for the tab's life (iwdp's webSocketDebuggerUrl), URL is its address.
 type Page struct {
-	ID, URL string
+	ID, URL, Title string
+}
+
+// Tabs are the simulator's tabs as the daemon lists them, for the session
+// of sim up: Up closes through them a tab that its own open made when it
+// fails.
+type Tabs interface {
+	// ID returns the tab id (t<N>, as tab list shows it) of the page whose
+	// id in iwdp's listing is pageID; "" when the daemon does not list it.
+	ID(ctx context.Context, pageID string) (string, error)
+	// Close closes the tab with that tab id as tab close does
+	// (window.close(), then a check that the tab is no longer listed).
+	Close(ctx context.Context, id string) error
 }
 
 // Sim is the simulator of a Config.
@@ -55,6 +67,12 @@ type Sim struct {
 	PageWait time.Duration
 	// RestartAnyway lets a restart of iwdp end active page leases.
 	RestartAnyway bool
+	// Tabs closes a tab that Up's open made when Up fails after the open;
+	// nil closes none, and the error names the tab.
+	Tabs Tabs
+	// CleanupWait bounds that close and its check, from the failure on:
+	// also after the caller's deadline has passed.
+	CleanupWait time.Duration
 }
 
 // UpReport is what Up did. Each bool is true when Up did that step itself.
@@ -150,8 +168,16 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 			return r, fmt.Errorf("reading the simulator's pages from ios_webkit_debug_proxy before opening the URL: %w", lastErr)
 		}
 		if err := s.Mac.OpenURL(ctx, r.Device.UDID, openURL); err != nil {
+			// The open may have run on the Mac before it failed here.
+			return r, s.closeOwnTabs(ctx, before, err)
+		}
+	}
+	// After the open, a failure closes the tab that the open made.
+	fail := func(err error) (UpReport, error) {
+		if openURL == "" {
 			return r, err
 		}
+		return r, s.closeOwnTabs(ctx, before, err)
 	}
 	var lastErr error
 	earlier := false // a tab listed before the open shows openURL
@@ -187,18 +213,149 @@ func (s *Sim) Up(ctx context.Context, device, openURL string, noWindow bool) (Up
 		return r.TabOpened, nil
 	})
 	if err := ctx.Err(); err != nil {
-		return r, err
+		return fail(err)
 	}
 	if lastErr != nil {
-		return r, fmt.Errorf("reading the simulator's pages from ios_webkit_debug_proxy: %w", lastErr)
+		return fail(fmt.Errorf("reading the simulator's pages from ios_webkit_debug_proxy: %w", lastErr))
 	}
 	if openURL != "" && !r.TabOpened {
 		if earlier {
-			return r, fmt.Errorf("%w %s after %s, except a tab that was open before this sim up, perhaps an earlier run's, which is not yours to touch: Safari opened no new tab of it. Serve your page on a URL that no other tab shows (a port or path of your own), and run sim up with that URL", ErrNoURLTab, openURL, s.PageWait)
+			return fail(fmt.Errorf("%w %s after %s, except a tab that was open before this sim up, perhaps an earlier run's, which is not yours to touch: Safari opened no new tab of it. Serve your page on a URL that no other tab shows (a port or path of your own), and run sim up with that URL", ErrNoURLTab, openURL, s.PageWait))
 		}
-		return r, fmt.Errorf("%w %s after %s: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2", ErrNoURLTab, openURL, s.PageWait)
+		return fail(fmt.Errorf("%w %s after %s: check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2", ErrNoURLTab, openURL, s.PageWait))
 	}
 	return r, nil
+}
+
+// closeOwnTabs runs when Up fails with err after its open call: it closes
+// each tab that the open made, which is one that iwdp did not list before
+// the open (before) and lists now, through Tabs as tab close does, and
+// checks in iwdp's listing that it is gone. It never closes a tab listed
+// before, also not an empty tab that Safari reused for the URL (the tab
+// that Up takes as the open's on success), and names that one instead. It
+// returns err with what it did: the tabs closed, each tab it could not
+// close, with the command that closes it, or that no tab was left. Its
+// steps get CleanupWait, detached from ctx when less of ctx's deadline is
+// left (also when it has passed); a ctx canceled for another reason (the
+// turn lost, a signal) closes nothing.
+func (s *Sim) closeOwnTabs(ctx context.Context, before map[string]string, err error) error {
+	if c := ctx.Err(); c != nil && !errors.Is(c, context.DeadlineExceeded) {
+		return fmt.Errorf("%w. sim up was stopped before it could close a tab that its open may have made: look in agent-ios tab list --device SIMULATOR for a tab that was not there before, and close it (agent-ios tab close <id>)", err)
+	}
+	base := ctx
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < s.CleanupWait {
+		base = context.WithoutCancel(ctx)
+	}
+	cctx, cancel := context.WithTimeout(base, s.CleanupWait)
+	defer cancel()
+	pages, lerr := s.pagesWithin(cctx)
+	if lerr != nil {
+		return fmt.Errorf("%w. sim up could not read Safari's tabs to close a tab that its open may have made (%v): look in agent-ios tab list --device SIMULATOR for a tab that was not there before, and close it (agent-ios tab close <id>)", err, lerr)
+	}
+	var closed, left, reused []string
+	for _, p := range pages {
+		u, listed := before[p.ID]
+		switch {
+		case p.ID == "": // not offered for inspection: not known to be new
+		case listed && emptyURL(u) && !emptyURL(p.URL):
+			reused = append(reused, tabText(p, s.tabID(cctx, p.ID)))
+		case listed:
+		default:
+			id := s.tabID(cctx, p.ID)
+			if cerr := s.closeTab(cctx, id, p.ID); cerr != nil {
+				what := tabText(p, id)
+				if id == "" {
+					left = append(left, what+": find its id in agent-ios tab list --device SIMULATOR, then run agent-ios tab close <id>")
+				} else {
+					left = append(left, what+": run agent-ios tab close "+id)
+				}
+				continue
+			}
+			closed = append(closed, tabText(p, id))
+		}
+	}
+	var says []string
+	if len(closed) > 0 {
+		says = append(says, "sim up closed the tab that its open made: "+strings.Join(closed, "; "))
+	}
+	if len(left) > 0 {
+		says = append(says, "sim up could not close the tab that its open made, close it yourself: "+strings.Join(left, "; "))
+	}
+	if len(closed) == 0 && len(left) == 0 {
+		says = append(says, "sim up left no tab open: Safari listed no new tab after the open")
+	}
+	if len(reused) > 0 {
+		says = append(says, "Safari showed the URL in an empty tab that was open before this sim up, which now shows the failed address: "+strings.Join(reused, "; ")+"; sim up did not open that tab and leaves it as it is")
+	}
+	return fmt.Errorf("%w. %s", err, strings.Join(says, ". "))
+}
+
+// pagesWithin reads the simulator's pages, again every Poll while the read
+// fails, until ctx ends.
+func (s *Sim) pagesWithin(ctx context.Context) ([]Page, error) {
+	var pages []Page
+	var err error
+	_ = s.until(ctx, "Safari's tabs are listed", func() (bool, error) {
+		pages, err = s.IWDP.SimulatorPages(ctx)
+		return err == nil, nil
+	})
+	return pages, err
+}
+
+// tabID is the tab id of the page pageID through Tabs; "" when there are
+// no Tabs or they do not give one.
+func (s *Sim) tabID(ctx context.Context, pageID string) string {
+	if s.Tabs == nil {
+		return ""
+	}
+	id, err := s.Tabs.ID(ctx, pageID)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// closeTab closes the tab id (the page pageID) through Tabs and waits until
+// iwdp no longer lists the page; an error when it cannot, or the tab stays
+// listed until ctx ends.
+func (s *Sim) closeTab(ctx context.Context, id, pageID string) error {
+	if id == "" {
+		return errors.New("no tab id")
+	}
+	if err := s.Tabs.Close(ctx, id); err != nil {
+		return err
+	}
+	return s.until(ctx, "the closed tab is no longer listed", func() (bool, error) {
+		pages, err := s.IWDP.SimulatorPages(ctx)
+		if err != nil {
+			return false, nil
+		}
+		for _, p := range pages {
+			if p.ID == pageID {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+}
+
+// tabText names a tab: its tab id, title and URL; a long URL (Safari's
+// error page is a data: URL) is cut.
+func tabText(p Page, id string) string {
+	if id == "" {
+		id = "(no tab id)"
+	}
+	u := p.URL
+	if r := []rune(u); len(r) > 100 {
+		u = string(r[:100]) + "..."
+	}
+	return fmt.Sprintf("tab %s (title %q, URL %s)", id, p.Title, u)
+}
+
+// emptyURL reports whether a tab's URL is that of an empty tab, which
+// Safari reuses for a URL that it opens.
+func emptyURL(u string) bool {
+	return u == "" || u == "about:blank"
 }
 
 func (s *Sim) up(ctx context.Context, device string, noWindow bool) (UpReport, error) {

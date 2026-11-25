@@ -44,6 +44,32 @@ func init() {
 		return activeLeases(st), nil
 	}
 	commands.SimulatorTab = simulatorTab
+	commands.CloseSimulatorTab = closeSimulatorTab
+}
+
+// closeSimulatorTab is commands.CloseSimulatorTab: it runs tab close <id>
+// in the daemon for in's session and reservation owner, as the CLI's tab
+// close sends it, so that sim up closes the tab that its failed --url
+// opened the way tab close does. The tab id is SimulatorTab's, which gives
+// none without a daemon, so it never starts an in-process core.
+func closeSimulatorTab(ctx context.Context, env commands.Env, in commands.Input, id string) error {
+	h, err := hostOf(env)
+	if err != nil {
+		return err
+	}
+	c, err := Connect(ctx, h.ClientOptions())
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	cwd, _ := os.Getwd()
+	g := in.Global
+	_, err = c.Run(ctx, RunRequest{
+		Argv: []string{"tab", "close", id}, Cwd: cwd,
+		PageReq: PageReq{Transport: g.Transport},
+		Owner:   Owner{Session: g.Session, Reservation: g.Reservation},
+	}, nil)
+	return err
 }
 
 // simulatorTab is commands.SimulatorTab: it runs tab list --device
