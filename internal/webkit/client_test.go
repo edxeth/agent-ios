@@ -430,7 +430,7 @@ func TestDialTimeoutDefault(t *testing.T) {
 	}
 }
 
-// TestClient_TargetRoutedCSSGuard pins the rule from CLAUDE.md: CSS.enable,
+// TestClient_TargetRoutedCSSGuard pins the rule from docs/webkit-protocol.md: CSS.enable,
 // CSS.getAllStyleSheets and CSS.getStyleSheetText hang through iwdp Target
 // routing and break the connection, so the client never sends them there.
 func TestClient_TargetRoutedCSSGuard(t *testing.T) {

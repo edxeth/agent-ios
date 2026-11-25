@@ -66,7 +66,7 @@ const thisFunction = "function() { return this; }"
 
 // runtimeEvaluate runs the expression in the main world of the context's
 // frame (an alias runs in its frame's main world, worlds.go). WIP
-// evaluate has no awaitPromise (CLAUDE.md), so with awaitPromise it
+// evaluate has no awaitPromise (docs/webkit-protocol.md), so with awaitPromise it
 // evaluates by reference: a Promise result is awaited with
 // Runtime.awaitPromise in a Later, and the session's next messages do not
 // wait for it; any other object is read by value when returnByValue asks

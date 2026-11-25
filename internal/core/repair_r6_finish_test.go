@@ -281,7 +281,7 @@ func TestPageOverridesBelongToPage(t *testing.T) {
 
 // The same rule for CSS: a forced pseudo state belongs to CSS, so the
 // owner's own CSS.disable resets it. It does not acquire CSS (CSS.enable
-// hangs through iwdp Target routing, CLAUDE.md), so the disable reaches the
+// hangs through iwdp Target routing, docs/webkit-protocol.md), so the disable reaches the
 // page as before.
 func TestForcedPseudoStateBelongsToCSS(t *testing.T) {
 	p, c, ps := ownersPage(t)

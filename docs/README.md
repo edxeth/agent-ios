@@ -17,4 +17,5 @@ User documentation:
 Other material:
 
 - [design/agentic-parity.md](design/agentic-parity.md) is the design of the daemon, the agent runtime, the command registry, the CDP endpoint and the direct transport. It explains why; the user pages above say what the product does now.
+- [webkit-protocol.md](webkit-protocol.md) explains how agent-ios talks to Safari through ios-webkit-debug-proxy: the ports, Target routing, and the protocol methods that hang or differ from CDP.
 - [notes/](notes/) holds the workstream notes (W1a to W5, P2, W1c). They are history: they record how each part was built, reviewed and repaired. When a note and a user page disagree, the user page is correct.

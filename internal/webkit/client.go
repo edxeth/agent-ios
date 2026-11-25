@@ -71,7 +71,7 @@ var DialTimeout = 5 * time.Second
 var ErrHangsThroughTarget = errors.New("method hangs through ios-webkit-debug-proxy Target routing and would stall the connection, so it was not sent")
 
 // hangsThroughTarget lists the methods that get no response through iwdp
-// Target routing (see CLAUDE.md, "Known Limitations").
+// Target routing (see docs/webkit-protocol.md, "Known limitations").
 var hangsThroughTarget = map[string]bool{
 	"CSS.enable":            true,
 	"CSS.getAllStyleSheets": true,

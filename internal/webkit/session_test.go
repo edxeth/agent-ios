@@ -561,7 +561,7 @@ func TestResumeTargetRefusesATargetThatIsNotPaused(t *testing.T) {
 		return ctx.Err()
 	}})
 	// Bounded by the test's own deadline, not a fixed timeout: the suites
-	// run under -race on loaded hosts (CLAUDE.md).
+	// run under -race on loaded hosts (AGENTS.md, Tests).
 	ctx := t.Context()
 	if d, ok := t.Deadline(); ok {
 		var cancel context.CancelFunc

@@ -137,7 +137,7 @@ Every command runs under a deadline: 30 s by default, set with `--timeout <durat
 
 `ios-webkit-debug-proxy` exposes:
 - **Port 9221** — lists all connected devices
-- **Port 9222+** — each device gets an incremented port listing its Safari tabs
+- **Port 9222+** — each device gets an incremented port listing its Safari tabs (9224+ when agent-ios starts iwdp)
 - Each tab provides a **WebSocket URL** for the WebKit Inspector Protocol
 
 `agent-ios` starts a per-user daemon (`agent-ios daemon run`) that connects to those WebSocket endpoints, keeps the page connections, and serves the CLI and the optional CDP endpoint over a private Unix socket. `--transport direct` reaches the device through usbmuxd without iwdp (opt-in), and `--transport webkitgtk` drives a local WebKitGTK MiniBrowser for tests. See [docs/guide.md](docs/guide.md).
@@ -148,24 +148,11 @@ Every command runs under a deadline: 30 s by default, set with `--timeout <durat
 
 ## Development
 
-```bash
-make build              # Build agent-ios
-make test               # Run unit + smoke tests
-make test-e2e           # Simulator tests (macOS: boots iOS Simulator, tests the shared helpers against Safari)
-make test-coverage      # Tests with coverage report
-make lint               # golangci-lint
-make fmt                # gofumpt formatting
-make docs               # regenerate docs/commands.md from the command registry
-```
+[CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the checks to run before a pull request, the test suites, the commit conventions and the package layout.
 
-### Testing
-
-Unit tests use a mock WebSocket server (`internal/webkit/testutil/`) that simulates the WebKit Inspector Protocol. The e2e tests in `e2e/` run the CLI binary against fake listings and pages. The WebKitGTK suite (`e2e/webkitgtk`, build tag `webkitgtk`) runs the commands against a real WebKit browser, and `make test-cdpcompat` runs the pinned CDP clients against the CDP endpoint (e2e/cdpcompat/README.md).
+### Simulator tests
 
 ```bash
-# Unit + smoke tests (no device needed)
-make test
-
 # Simulator tests (macOS) — boots iOS Simulator + iwdp, tests the shared
 # WebKit Inspector Protocol helpers and the proxy listing against real Safari
 make test-e2e
@@ -178,28 +165,6 @@ To debug one simulator test by hand, run `make sim-setup`. Only when it succeeds
 > **Note:** the simulator tests require macOS with Xcode and `ios-webkit-debug-proxy` installed. GitHub Actions `macos-latest` runners have Xcode and iOS Simulator runtimes pre-installed.
 >
 > Setup opens a test page of its own (`AGENT_IOS_SIM_PAGE_URL`, unique by a random query) in the Simulator, and the tests run only against that page. Teardown (at the end of `make test-e2e`, in CI, or `make sim-teardown` after a crashed run) shuts down the Simulator only when setup's own boot started it; a Simulator that was already running stays booted. Teardown stops the iwdp that setup started only through `scripts/iwdp-owner-check.sh --terminate`, which verifies that process (the recorded pid, start time and start token, and the program ios_webkit_debug_proxy) and sends SIGTERM only to it. It removes the record only with `scripts/iwdp-owner-check.sh --forget`, which reads it again and removes it only when the process that this read names is gone and the file did not change after that read; a changed record that `--forget` keeps under a private name is not checked by the next teardown (the warning names it; see docs/device-runbook.md). Otherwise no signal is sent, or teardown reports an iwdp that still runs after SIGTERM; it gives the check's reason and keeps the record for the next teardown, and the next setup refuses meanwhile. Never stop that iwdp with a command of your own; if it stays running, report it. Stop any other iwdp by hand only if you started it yourself and nobody else uses it; otherwise send no signal and ask whoever started it, or the user. The stop is `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand) in docs/device-runbook.md describes.
-
-### Project Structure
-
-```
-agent-ios/
-├── cmd/
-│   └── agent-ios/          # CLI and daemon binary
-├── internal/
-│   ├── webkit/            # WebKit Inspector Protocol client
-│   │   ├── client.go      # WebSocket connection + message routing
-│   │   ├── types.go       # Protocol type definitions
-│   │   ├── domains.go     # Domain enable/disable helpers
-│   │   └── testutil/      # Mock WebSocket server
-│   ├── commands/          # Command registry (one file per command)
-│   ├── daemon/            # Per-user daemon that owns the page connections
-│   ├── core/              # Sessions, leases, scheduler, desired state
-│   ├── cdp/               # Opt-in CDP endpoint
-│   ├── tools/             # Shared helpers: evaluation, screenshots, DOM lookup, cookies
-│   └── proxy/             # iwdp process detection + management
-├── skill-data/            # Agent skill guides, embedded (agent-ios skills get agent-ios)
-└── skills/                # Agent skill discovery stubs (skills/agent-ios/SKILL.md)
-```
 
 ## License
 

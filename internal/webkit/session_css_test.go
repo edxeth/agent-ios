@@ -10,7 +10,7 @@ import (
 	"github.com/edxeth/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
-// The CSS methods that hang through iwdp (CLAUDE.md, Known Limitations)
+// The CSS methods that hang through iwdp (docs/webkit-protocol.md, Known limitations)
 // are refused without a write unless the connection's limits say the
 // endpoint answers them (transport.Limits.CSSDomain, set by WebKitGTK);
 // then they are sent like any other method.

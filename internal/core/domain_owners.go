@@ -78,7 +78,7 @@ func ruleDomain(method string) string {
 
 // acquiresImplicitly reports whether state of dom acquires dom for its
 // owner (implicit ownership). CSS does not: CSS.enable hangs through iwdp
-// Target routing (CLAUDE.md, Known Limitations) and CSS.forcePseudoState
+// Target routing (docs/webkit-protocol.md, Known limitations) and CSS.forcePseudoState
 // works without it, so a forced pseudo state only belongs to CSS for the
 // owner's own CSS.disable.
 func acquiresImplicitly(dom string) bool { return dom != "" && dom != "CSS" }

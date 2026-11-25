@@ -105,8 +105,8 @@ func TestEvalJSONData(t *testing.T) {
 }
 
 // WS2a brief, section 1 (user-stated): eval awaits a returned Promise
-// without a flag (WebKit's Runtime.evaluate has no awaitPromise, CLAUDE.md
-// Known Limitations: evaluate by reference, then Runtime.awaitPromise). The
+// without a flag (WebKit's Runtime.evaluate has no awaitPromise,
+// docs/webkit-protocol.md, Known limitations: evaluate by reference, then Runtime.awaitPromise). The
 // legacy --await is still accepted and changes nothing.
 func TestEvalAwaitsAPromise(t *testing.T) {
 	p := evalPage(t, map[string]any{

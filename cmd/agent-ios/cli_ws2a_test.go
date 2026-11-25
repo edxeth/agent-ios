@@ -269,7 +269,7 @@ func TestEvalStringKeepsThePrintlnLine(t *testing.T) {
 	}
 }
 
-// The deadline contract (CLAUDE.md, Deadlines) for a second registry page
+// The deadline contract (docs/guide.md, Deadlines and exit codes) for a second registry page
 // command: a deadline error exits 124 and names the command, the page, the
 // elapsed time, the last wait and the likely causes. The page is the
 // --page value, else the session's page that the daemon reports.
@@ -315,7 +315,7 @@ func TestDaemonKeepsTheFullDeadline(t *testing.T) {
 }
 
 // wantFullDeadlineMessage checks the CLI's deadline message of command
-// (CLAUDE.md, Deadlines): exit 124, the command, the page line page, the
+// (docs/guide.md, Deadlines and exit codes): exit 124, the command, the page line page, the
 // elapsed time, the last wait and the likely causes.
 func wantFullDeadlineMessage(t *testing.T, what string, code int, stderr, command, page string) {
 	t.Helper()

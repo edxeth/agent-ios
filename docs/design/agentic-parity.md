@@ -24,7 +24,7 @@ Words used in this document:
 - **WIP**: WebKit Inspector Protocol, the protocol that Safari, iwdp and WebKitGTK speak.
 - **CDP**: Chrome DevTools Protocol.
 - **Page connection**: one inspector connection to one Safari tab. Safari allows one per tab; a new one takes the tab from the old one.
-- **Target routing**: WIP wraps every page command in `Target.sendMessageToTarget` and every reply in `Target.dispatchMessageFromTarget` (CLAUDE.md).
+- **Target routing**: WIP wraps every page command in `Target.sendMessageToTarget` and every reply in `Target.dispatchMessageFromTarget` (docs/webkit-protocol.md).
 - **Runtime**: the JavaScript that agent-ios injects into the page (section 3). Not the WIP `Runtime` domain; that one is written `Runtime.*`.
 - **Ref**: an element handle such as `@e7` that a snapshot prints and later commands accept.
 - **Lease**: exclusive right of one named session to drive one page (section 2.5).
@@ -696,7 +696,7 @@ Tier 1 is required for the four named clients (agent-browser method list taken f
 - The bridge never forwards a CDP method that it does not translate. Unknown or unsupported methods get `{"code": -32601, "message": "'<Domain.method>' wasn't found"}`, the same text Chrome uses for a missing method, so clients that probe for optional features continue.
 - Methods with no effect on iOS but that clients call on every attach (listed in the table as "no effect") return success, so that attach does not fail.
 - Each unknown method is logged once per CDP session; `agent-ios cdp log` prints the counts. The compatibility tests fail on an unknown method that is not on an expected-missing list per client; each entry on such a list names the optional client feature it belongs to and is reviewed, so a required client operation cannot fail while the tests stay green.
-- Passthrough to WIP exists only behind `AGENT_IOS_CDP_PASSTHROUGH=<Domain.method,...>` and only for methods in the iOS command list of the device's version (MAP section 0). `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` are always refused (CLAUDE.md known limitation).
+- Passthrough to WIP exists only behind `AGENT_IOS_CDP_PASSTHROUGH=<Domain.method,...>` and only for methods in the iOS command list of the device's version (MAP section 0). `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` are always refused (docs/webkit-protocol.md, Known limitations).
 - The command lists per iOS version (16.4, 17.0, 18.0, 26.0, 26.2, 26.4, 27.0, 27.3) are generated into `internal/wip/methods_gen.go` from SRC/webkit-legacy-ios (method names are facts; the file header names the source). The bridge and the runtime layer use them to choose, for example, `Storage.getCookies` on 27.3 and later.
 
 ### 5.5 Client notes
@@ -803,7 +803,7 @@ Merge order. Every workstream works on its own branch from `feat/agentic-parity`
 | `internal/tools/*.go` | W1 (mechanical `*webkit.Client` to `webkit.Caller`) | W4 adds new code in `internal/devtools` instead of editing `tools/network.go` |
 | `internal/webkit/testutil/mock.go` | W0 then W1 | new fakes go in `fakewebkit` |
 | `e2e/proofs/**` | W1a | W5 deletes it (7.1) |
-| `README.md`, `CLAUDE.md`, `skills/**`, `skill-data/**` | W6 | other workstreams write their notes in `docs/notes/<ws>.md`; W6 merges them |
+| `README.md`, `AGENTS.md`, `skills/**`, `skill-data/**` | W6 | other workstreams write their notes in `docs/notes/<ws>.md`; W6 merges them |
 | `e2e/*.go` (existing) | W1 (e2e/mcp_test.go asserts the tool list) | new e2e suites are new directories |
 
 Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. Section 7.10 maps every review finding to its tests.
@@ -913,7 +913,7 @@ Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. S
 
 ### 7.9 W6: docs, skills, agent prompts (drafts for approval)
 
-- Owns: `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `skills/**` and `skill-data/**` of this repository, `docs/**` except `docs/design/`, embedded skills (`internal/skills/`, `skills get`).
+- Owns: `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, `skills/**` and `skill-data/**` of this repository, `docs/**` except `docs/design/`, embedded skills (`internal/skills/`, `skills get`).
 - Skill layout (agent-browser's): `skills/<name>/SKILL.md` is a short discovery stub with the name and description of its guide and no bash block; it is the only file of its directory, because Pi finds nested SKILL.md files too. The guide is `skill-data/<name>/SKILL.md`, which the binary embeds and `agent-ios skills get <name>` prints, so an agent always reads the guide of the installed binary. Agents install the stub by a symlink of `skills/<name>` into an Agent Skills directory (README, Agent Skill).
 - Agent prompts and active skills outside the repository (browser-checker prompt, safari-agent skill) are produced as **draft copies plus diffs staged for the user's approval**; W6 never edits the active agent configuration (decisions.md).
 - Content: the agentic loop; session, reservation and lease rules; synthetic-input statement; impossible features; CDP how-to with tokens; device runbook; migration notes. Draft safety rules from AGG: no infrastructure writes and stop on a guard refusal (P0 [047]; P1 [015], [063], [108], [262]); build, origin and auth preflight and one final verdict contract (P0 [026], [108], [161], [292]); one bounded diagnostic budget then BLOCKED (P1 [097], [116], [165], [170]); default masking of password and token fields, 0600 permissions and deletion rules for HAR and state files, no dumps of account or security pages (P1 [191], [202], [304], [108], [212], [197]; agent-browser-skill [044]); cookie owner preservation and restore, with server-session revocation assigned to the auth helper (P1 [176], [177], [301]); bounded shell calls and known evidence directories, no filesystem-wide searches (P0 [305], [317]; P1 [179], [180], [268], [310], [312], [314], [330], [334]). Shell-level timeouts stay for external helpers that do not go through the daemon.

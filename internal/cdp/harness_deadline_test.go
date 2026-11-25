@@ -32,7 +32,7 @@ func slowTraceEnd(t *testing.T) (*cdptest.Client, string) {
 }
 
 // The waits of the harness last until the test's deadline, not a fixed
-// time (CLAUDE.md, Key Patterns): under -race on a host with a load of 30
+// time (AGENTS.md, Tests): under -race on a host with a load of 30
 // to 50, Tracing.end of a trace at the record limit took up to 11 s and
 // its tracingComplete up to 10 s more, and the fixed 10 s of call and
 // waitSessionEvent failed TestCDPTraceRecordLimitReportsDataLoss and

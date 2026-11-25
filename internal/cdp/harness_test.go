@@ -153,7 +153,7 @@ const noTestDeadline = 10 * time.Minute
 // page, the endpoint or the manager): it ends at the test's own deadline
 // (go test -timeout), or after noTestDeadline when the test has none.
 // The fakes answer every call, so the bound only turns a hang into a
-// failure. A fixed short bound does not fit (CLAUDE.md, Key Patterns):
+// failure. A fixed short bound does not fit (AGENTS.md, Tests):
 // under -race on a host with a load of 30 to 50, Tracing.end of a trace
 // at the record limit took up to 11 s, past the 10 s that call waited.
 func testCtx(t *testing.T) context.Context {

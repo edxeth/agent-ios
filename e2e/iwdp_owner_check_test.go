@@ -605,7 +605,7 @@ func TestOwnerCheckRefusesWhenThePidfdFallbackFails(t *testing.T) {
 // start token by hand (review WS3 round 3 F7). Every other document that
 // tells how to stop an iwdp by hand states the same conditions and steps
 // and names that section: by a Markdown link, or by its path and name
-// where no link renders (CLAUDE.md's code block, and the embedded skill
+// where no link renders (AGENTS.md's code block, and the embedded skill
 // that 'agent-ios skills get' serves outside the repository).
 func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 	read := func(path string) string {
@@ -681,7 +681,7 @@ func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 		}
 	}
 	// The earlier procedure's steps, in any document.
-	for _, path := range []string{"docs/device-runbook.md", "README.md", "CLAUDE.md", "docs/guide.md", "docs/migration.md", "docs/known-limits.md", "docs/cdp.md", "skill-data/agent-ios/SKILL.md"} {
+	for _, path := range []string{"docs/device-runbook.md", "README.md", "AGENTS.md", "docs/guide.md", "docs/migration.md", "docs/known-limits.md", "docs/cdp.md", "skill-data/agent-ios/SKILL.md"} {
 		text := read(path)
 		for _, bad := range []string{"ss -Hltnp", "-sTCP:LISTEN", "grep -Fx", "kill <pid>"} {
 			if strings.Contains(text, bad) {
@@ -707,7 +707,7 @@ func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 	}
 	for path, ref := range map[string][]string{
 		"README.md":            {"[Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand)"},
-		"CLAUDE.md":            {"(docs/device-runbook.md, Stopping an iwdp by hand)", "](docs/device-runbook.md#stopping-an-iwdp-by-hand)"},
+		"AGENTS.md":            {"(docs/device-runbook.md, Stopping an iwdp by hand)", "](docs/device-runbook.md#stopping-an-iwdp-by-hand)"},
 		"docs/guide.md":        {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
 		"docs/migration.md":    {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
 		"docs/cdp.md":          {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
@@ -735,11 +735,11 @@ func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 			t.Errorf("%s does not say %q", c.path, c.want)
 		}
 	}
-	// The make sim-teardown line of CLAUDE.md's code block names the
+	// The make sim-teardown line of AGENTS.md's code block names the
 	// helper's --terminate and the section by path and name.
-	for _, line := range strings.Split(read("CLAUDE.md"), "\n") {
+	for _, line := range strings.Split(read("AGENTS.md"), "\n") {
 		if strings.HasPrefix(line, "make sim-teardown ") && (!strings.Contains(line, "scripts/iwdp-owner-check.sh --terminate") || !strings.Contains(line, "(docs/device-runbook.md, Stopping an iwdp by hand)")) {
-			t.Errorf("CLAUDE.md's make sim-teardown line does not name scripts/iwdp-owner-check.sh --terminate and docs/device-runbook.md, Stopping an iwdp by hand: %s", line)
+			t.Errorf("AGENTS.md's make sim-teardown line does not name scripts/iwdp-owner-check.sh --terminate and docs/device-runbook.md, Stopping an iwdp by hand: %s", line)
 		}
 	}
 }
