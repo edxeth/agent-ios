@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // evalPage is a fake page whose Runtime.evaluate answers each expression
@@ -45,7 +45,7 @@ func evalCmd(t *testing.T, p *devtoolstest.Page, argv ...string) (Result, error)
 
 // WS2a brief, section 1, output contract (user-stated): a string, number
 // or boolean result prints raw on one line, other values print as JSON.
-// The expected texts are those of the legacy eval (cmd/iwdp-cli cmdEval at
+// The expected texts are those of the legacy eval (cmd/agent-ios cmdEval at
 // f731071): a string as is, any other value as json.MarshalIndent with two
 // spaces, a value-less result as its description, else "(<type>)".
 func TestEvalPrintsTheLegacyOutput(t *testing.T) {
@@ -273,20 +273,20 @@ func TestParseNamesThePageFlagForATrailingURL(t *testing.T) {
 	}
 }
 
-// WS2a round 2 decision: IWDP_WS_URL no longer selects the page of eval
+// WS2a round 2 decision: AGENT_IOS_WS_URL no longer selects the page of eval
 // and cookies: without --page they exit 2 before any connection (newEnv
 // is not called); an explicit --page wins over the variable.
 func TestIWDPWSURLNeedsThePageFlag(t *testing.T) {
-	t.Setenv("IWDP_WS_URL", "ws://127.0.0.1:9/devtools/page/1")
+	t.Setenv("AGENT_IOS_WS_URL", "ws://127.0.0.1:9/devtools/page/1")
 	for _, argv := range [][]string{{"eval", "1"}, {"cookies"}, {"--json", "cookies", "--show-values"}} {
 		code, stdout, stderr, envCalls := runCLI(argv...)
-		if code != ExitUsage || envCalls != 0 || stdout != "" || !strings.Contains(stderr, "IWDP_WS_URL") || !strings.Contains(stderr, "--page") {
-			t.Errorf("%q with IWDP_WS_URL: exit %d, env calls %d, stdout %q, stderr %q; want exit 2 naming --page before any connection", argv, code, envCalls, stdout, stderr)
+		if code != ExitUsage || envCalls != 0 || stdout != "" || !strings.Contains(stderr, "AGENT_IOS_WS_URL") || !strings.Contains(stderr, "--page") {
+			t.Errorf("%q with AGENT_IOS_WS_URL: exit %d, env calls %d, stdout %q, stderr %q; want exit 2 naming --page before any connection", argv, code, envCalls, stdout, stderr)
 		}
 	}
 	for _, argv := range [][]string{{"eval", "1", "--page", "t1"}, {"--page", "t1", "cookies"}} {
-		if _, _, stderr, envCalls := runCLI(argv...); envCalls != 1 || strings.Contains(stderr, "IWDP_WS_URL") {
-			t.Errorf("%q with IWDP_WS_URL: env calls %d, stderr %q; want the run with --page", argv, envCalls, stderr)
+		if _, _, stderr, envCalls := runCLI(argv...); envCalls != 1 || strings.Contains(stderr, "AGENT_IOS_WS_URL") {
+			t.Errorf("%q with AGENT_IOS_WS_URL: env calls %d, stderr %q; want the run with --page", argv, envCalls, stderr)
 		}
 	}
 }

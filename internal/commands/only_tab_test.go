@@ -51,12 +51,12 @@ func TestOnlyTabWithPageIsAUsageErrorBeforeAnyConnection(t *testing.T) {
 	}
 }
 
-// --only-tab names the page of a page command, so IWDP_WS_URL does not
+// --only-tab names the page of a page command, so AGENT_IOS_WS_URL does not
 // refuse it (refusePageURLEnv), as it does not refuse --page.
 func TestOnlyTabNamesThePageDespiteIWDPWSURL(t *testing.T) {
-	t.Setenv("IWDP_WS_URL", "ws://127.0.0.1:9/devtools/page/1")
-	if _, _, stderr, envCalls := runCLI("--only-tab", "eval", "1"); envCalls != 1 || strings.Contains(stderr, "IWDP_WS_URL") {
-		t.Errorf("--only-tab eval 1 with IWDP_WS_URL: env calls %d, stderr %q; want the run", envCalls, stderr)
+	t.Setenv("AGENT_IOS_WS_URL", "ws://127.0.0.1:9/devtools/page/1")
+	if _, _, stderr, envCalls := runCLI("--only-tab", "eval", "1"); envCalls != 1 || strings.Contains(stderr, "AGENT_IOS_WS_URL") {
+		t.Errorf("--only-tab eval 1 with AGENT_IOS_WS_URL: env calls %d, stderr %q; want the run", envCalls, stderr)
 	}
 }
 

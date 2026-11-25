@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Design docs/design/agentic-parity.md 5.2: the selectedPage of an

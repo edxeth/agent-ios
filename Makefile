@@ -3,15 +3,15 @@
 
 # Build
 build:
-	go build -o bin/iwdp-cli ./cmd/iwdp-cli
+	go build -o bin/agent-ios ./cmd/agent-ios
 
 # Run
 run-cli:
-	go run ./cmd/iwdp-cli $(ARGS)
+	go run ./cmd/agent-ios $(ARGS)
 
-# Install iwdp-cli
+# Install agent-ios
 install:
-	go install ./cmd/iwdp-cli
+	go install ./cmd/agent-ios
 
 # Test
 test:
@@ -26,7 +26,7 @@ test-coverage:
 coverage-all:
 	./scripts/coverage-all.sh coverage.out
 
-# CDP compatibility suite (design 8.4, gate IWDP_CDP_COMPAT=1): the pinned
+# CDP compatibility suite (design 8.4, gate AGENT_IOS_CDP_COMPAT=1): the pinned
 # CDP clients against the CDP endpoint; see e2e/cdpcompat/README.md. Needs
 # Node.js 24+ and npm; the lockfile pins every client, agent-browser
 # included. npm ci runs when the lockfile changed, without install scripts
@@ -34,7 +34,7 @@ coverage-all:
 # links); the package ships its binaries, which get their execute bit here.
 CDPCOMPAT := e2e/cdpcompat
 test-cdpcompat: $(CDPCOMPAT)/node_modules/.package-lock.json
-	IWDP_CDP_COMPAT=1 go test -tags=cdpcompat ./$(CDPCOMPAT)/ -v -count=1 -timeout=900s
+	AGENT_IOS_CDP_COMPAT=1 go test -tags=cdpcompat ./$(CDPCOMPAT)/ -v -count=1 -timeout=900s
 
 $(CDPCOMPAT)/node_modules/.package-lock.json: $(CDPCOMPAT)/package.json $(CDPCOMPAT)/package-lock.json
 	@command -v node >/dev/null && command -v npm >/dev/null || \
@@ -56,14 +56,14 @@ $(CDPCOMPAT)/node_modules/.package-lock.json: $(CDPCOMPAT)/package.json $(CDPCOM
 # To debug one test by hand: run make sim-setup; only when it succeeds,
 # export the variables that it prints and run go test with
 # -tags=simulator and -run for that test; then tear down with the setup
-# script's --teardown-run mode and the printed IWDP_SIM_RUN_TOKEN.
+# script's --teardown-run mode and the printed AGENT_IOS_SIM_RUN_TOKEN.
 # make sim-teardown is the manual recovery after a crashed run only.
 sim-setup:
-	@unset IWDP_SIM_WS_URL IWDP_SIM_PAGE_URL IWDP_SIM_RUN_TOKEN; \
+	@unset AGENT_IOS_SIM_WS_URL AGENT_IOS_SIM_PAGE_URL AGENT_IOS_SIM_RUN_TOKEN; \
 		out=$$(./scripts/sim-setup.sh) || { rc=$$?; echo "sim-setup.sh failed (exit $$rc); see its messages above" >&2; exit $$rc; }; \
 		eval "$$out"; \
-		if [ -z "$$IWDP_SIM_WS_URL" ] || [ -z "$$IWDP_SIM_PAGE_URL" ]; then \
-			echo "sim-setup.sh set no IWDP_SIM_WS_URL or IWDP_SIM_PAGE_URL" >&2; ./scripts/sim-setup.sh --teardown-run "$$IWDP_SIM_RUN_TOKEN"; exit 1; \
+		if [ -z "$$AGENT_IOS_SIM_WS_URL" ] || [ -z "$$AGENT_IOS_SIM_PAGE_URL" ]; then \
+			echo "sim-setup.sh set no AGENT_IOS_SIM_WS_URL or AGENT_IOS_SIM_PAGE_URL" >&2; ./scripts/sim-setup.sh --teardown-run "$$AGENT_IOS_SIM_RUN_TOKEN"; exit 1; \
 		fi; \
 		echo "$$out"
 
@@ -74,16 +74,16 @@ sim-teardown:
 
 test-e2e:
 	@echo "==> Setting up iOS Simulator..."
-	@unset IWDP_SIM_WS_URL IWDP_SIM_PAGE_URL IWDP_SIM_RUN_TOKEN; \
+	@unset AGENT_IOS_SIM_WS_URL AGENT_IOS_SIM_PAGE_URL AGENT_IOS_SIM_RUN_TOKEN; \
 		out=$$(./scripts/sim-setup.sh) || { rc=$$?; echo "sim-setup.sh failed (exit $$rc); see its messages above" >&2; exit $$rc; }; \
 		eval "$$out"; \
-		if [ -z "$$IWDP_SIM_WS_URL" ] || [ -z "$$IWDP_SIM_PAGE_URL" ]; then \
-			echo "sim-setup.sh set no IWDP_SIM_WS_URL or IWDP_SIM_PAGE_URL" >&2; ./scripts/sim-setup.sh --teardown-run "$$IWDP_SIM_RUN_TOKEN"; exit 1; \
+		if [ -z "$$AGENT_IOS_SIM_WS_URL" ] || [ -z "$$AGENT_IOS_SIM_PAGE_URL" ]; then \
+			echo "sim-setup.sh set no AGENT_IOS_SIM_WS_URL or AGENT_IOS_SIM_PAGE_URL" >&2; ./scripts/sim-setup.sh --teardown-run "$$AGENT_IOS_SIM_RUN_TOKEN"; exit 1; \
 		fi; \
 		echo "==> Running e2e tests..."; \
 		go test -tags=simulator ./e2e/ -v -count=1 -timeout=300s; rc=$$?; \
 		echo "==> Tearing down..."; \
-		./scripts/sim-setup.sh --teardown-run "$$IWDP_SIM_RUN_TOKEN"; \
+		./scripts/sim-setup.sh --teardown-run "$$AGENT_IOS_SIM_RUN_TOKEN"; \
 		exit $$rc
 
 # Command reference (docs/commands.md) from the command registry

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/skills"
+	"github.com/nnemirovsky/agent-ios/internal/skills"
 )
 
 // repoSkill reads the guide skill-data/<name>/SKILL.md from the repository
@@ -42,21 +42,21 @@ func TestSkillsCommandsAreLocal(t *testing.T) {
 // skills get prints each guide without its front matter (an agent that
 // runs it has chosen the skill already); --json keeps the whole SKILL.md.
 func TestSkillsGetPrintsTheRepositorySkill(t *testing.T) {
-	file := repoSkill(t, "iwdp")
+	file := repoSkill(t, "agent-ios")
 	_, want, ok := strings.Cut(file, "\n---\n")
 	want = strings.TrimLeft(want, "\n")
-	if !ok || !strings.HasPrefix(file, "---\nname: iwdp\n") || !strings.HasPrefix(want, "# ") {
-		t.Fatalf("skill-data/iwdp/SKILL.md has no front matter before its guide")
+	if !ok || !strings.HasPrefix(file, "---\nname: agent-ios\n") || !strings.HasPrefix(want, "# ") {
+		t.Fatalf("skill-data/agent-ios/SKILL.md has no front matter before its guide")
 	}
-	code, out, errOut, _ := runCLI("skills", "get", "iwdp")
-	if code != ExitOK || out != want || strings.Contains(out, "name: iwdp\n") {
-		t.Fatalf("skills get iwdp: exit %d, stderr %q; stdout is not skill-data/iwdp/SKILL.md without its front matter:\n%s", code, errOut, out)
+	code, out, errOut, _ := runCLI("skills", "get", "agent-ios")
+	if code != ExitOK || out != want || strings.Contains(out, "name: agent-ios\n") {
+		t.Fatalf("skills get agent-ios: exit %d, stderr %q; stdout is not skill-data/agent-ios/SKILL.md without its front matter:\n%s", code, errOut, out)
 	}
 	// Several names print several whole skills in order; no name prints
 	// every skill.
-	code, out, _, _ = runCLI("skills", "get", "iwdp", "iwdp")
-	if code != ExitOK || !strings.HasPrefix(out, want) || !strings.HasSuffix(out, want) || strings.Count(out, "# iOS Safari with iwdp-cli\n") != 2 {
-		t.Fatalf("skills get iwdp iwdp: exit %d, stdout %q; want the skill twice", code, out)
+	code, out, _, _ = runCLI("skills", "get", "agent-ios", "agent-ios")
+	if code != ExitOK || !strings.HasPrefix(out, want) || !strings.HasSuffix(out, want) || strings.Count(out, "# iOS Safari with agent-ios\n") != 2 {
+		t.Fatalf("skills get agent-ios agent-ios: exit %d, stdout %q; want the skill twice", code, out)
 	}
 	for _, args := range [][]string{{"skills", "get"}, {"skills", "get", "--all"}} {
 		code, out, _, _ = runCLI(args...)
@@ -64,10 +64,10 @@ func TestSkillsGetPrintsTheRepositorySkill(t *testing.T) {
 			t.Fatalf("%v: exit %d, want every skill, got %q", args, code, out)
 		}
 	}
-	code, out, _, _ = runCLI("--json", "skills", "get", "iwdp")
+	code, out, _, _ = runCLI("--json", "skills", "get", "agent-ios")
 	var got []skills.Skill
-	if code != ExitOK || json.Unmarshal([]byte(out), &got) != nil || len(got) != 1 || got[0].Name != "iwdp" || got[0].Content != file || got[0].Description == "" {
-		t.Fatalf("--json skills get iwdp: exit %d, stdout %q", code, out)
+	if code != ExitOK || json.Unmarshal([]byte(out), &got) != nil || len(got) != 1 || got[0].Name != "agent-ios" || got[0].Content != file || got[0].Description == "" {
+		t.Fatalf("--json skills get agent-ios: exit %d, stdout %q", code, out)
 	}
 	code, _, errOut, _ = runCLI("skills", "get", "nope")
 	if code != ExitError || !strings.Contains(errOut, `unknown skill "nope"`) {
@@ -79,11 +79,11 @@ func TestSkillsListShowsNamesAndShortDescriptions(t *testing.T) {
 	code, out, _, _ := runCLI("skills", "list")
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	// The core guide first, then the guides that it names.
-	if code != ExitOK || len(lines) != 4 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "iwdp ") {
+	if code != ExitOK || len(lines) != 4 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "agent-ios ") {
 		t.Fatalf("skills list: exit %d, stdout %q; want one line per skill, the core guide first", code, out)
 	}
 	for _, l := range lines {
-		if n := len([]rune(l)); n > 2+len("iwdp-devtools")+2+listDescriptionRunes+3 {
+		if n := len([]rune(l)); n > 2+len("agent-ios-devtools")+2+listDescriptionRunes+3 {
 			t.Errorf("line of %d runes is longer than the cut description allows: %q", n, l)
 		}
 	}
@@ -116,12 +116,12 @@ func TestSkillsPathInstallsIntoTheUserCache(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
 	t.Setenv("HOME", t.TempDir()) // os.UserCacheDir reads XDG_CACHE_HOME first
-	code, out, errOut, _ := runCLI("skills", "path", "iwdp")
+	code, out, errOut, _ := runCLI("skills", "path", "agent-ios")
 	dir := strings.TrimSpace(out)
-	if code != ExitOK || !strings.HasPrefix(dir, filepath.Join(cache, "iwdp", "skills")+string(filepath.Separator)) || filepath.Base(dir) != "iwdp" {
-		t.Fatalf("skills path iwdp: exit %d, stdout %q, stderr %q; want <cache>/iwdp/skills/<version>/iwdp", code, out, errOut)
+	if code != ExitOK || !strings.HasPrefix(dir, filepath.Join(cache, "agent-ios", "skills")+string(filepath.Separator)) || filepath.Base(dir) != "agent-ios" {
+		t.Fatalf("skills path agent-ios: exit %d, stdout %q, stderr %q; want <cache>/agent-ios/skills/<version>/agent-ios", code, out, errOut)
 	}
-	if got, err := os.ReadFile(filepath.Join(dir, skills.FileName)); err != nil || string(got) != repoSkill(t, "iwdp") {
+	if got, err := os.ReadFile(filepath.Join(dir, skills.FileName)); err != nil || string(got) != repoSkill(t, "agent-ios") {
 		t.Fatalf("%s/SKILL.md: %v; want the repository skill", dir, err)
 	}
 	code, out, _, _ = runCLI("skills", "path")
@@ -137,7 +137,7 @@ func TestSkillsPathInstallsIntoTheUserCache(t *testing.T) {
 // A failure to read the embedded skills ends "skills list" and "skills
 // get" with exit 1 and the cause on stderr, never an empty list.
 func TestSkillsListAndGetReportAReadFailure(t *testing.T) {
-	cause := errors.New("reading the embedded skill iwdp/SKILL.md: broken")
+	cause := errors.New("reading the embedded skill agent-ios/SKILL.md: broken")
 	oldList, oldAll := skillsList, skillsAll
 	skillsList = func() ([]skills.Skill, error) { return nil, cause }
 	skillsAll = func() ([]skills.Skill, error) { return nil, cause }
@@ -168,7 +168,7 @@ func TestSkillsPathReportsCacheFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv("XDG_CACHE_HOME", cache)
-		code, out, errOut, _ := runCLI("skills", "path", "iwdp")
+		code, out, errOut, _ := runCLI("skills", "path", "agent-ios")
 		if code != ExitError || out != "" || !strings.Contains(errOut, "installing skill") || !strings.Contains(errOut, cache) {
 			t.Fatalf("skills path with a file as cache: exit %d, stdout %q, stderr %q; want exit 1 naming the install and the path", code, out, errOut)
 		}

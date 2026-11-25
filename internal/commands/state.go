@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
 )
 
 // state save and state load (design docs/design/agentic-parity.md,

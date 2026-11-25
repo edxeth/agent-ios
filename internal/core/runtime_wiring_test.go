@@ -8,8 +8,8 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 3.1 (owner epoch): lease epochs of a page only grow within one

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 3.1 install path 2: the runtime part of the bootstrap script

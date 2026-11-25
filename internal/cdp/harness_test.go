@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // logBuf collects log lines (the daemon log of the endpoint).

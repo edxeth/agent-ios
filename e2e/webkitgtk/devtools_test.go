@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
 )
 
 // W4 DevTools suite (design docs/design/agentic-parity.md, section 7.7,
 // tests 1, 3, 4, 6, 7 and 8). Every test drives its own MiniBrowser
-// through the daemon with the iwdp-cli binary, so the DevTools state lives
+// through the daemon with the agent-ios binary, so the DevTools state lives
 // where it lives in production, and checks the final state on the wire:
 // the local HTTP servers record every request they get.
 //
@@ -205,17 +205,17 @@ func devtoolsBrowser(t *testing.T, url string) *cutProxy {
 	return p
 }
 
-// mustCLI runs iwdp-cli and fails the test unless it exits 0.
+// mustCLI runs agent-ios and fails the test unless it exits 0.
 func mustCLI(t *testing.T, args ...string) string {
 	t.Helper()
 	r := cli(t, args...)
 	if r.code != 0 {
-		t.Fatalf("iwdp-cli %s: exit %d, stdout %q, stderr %q", strings.Join(args, " "), r.code, r.stdout, r.stderr)
+		t.Fatalf("agent-ios %s: exit %d, stdout %q, stderr %q", strings.Join(args, " "), r.code, r.stdout, r.stderr)
 	}
 	return r.stdout
 }
 
-// cliStdin runs iwdp-cli with stdin.
+// cliStdin runs agent-ios with stdin.
 func cliStdin(t *testing.T, stdin string, args ...string) result {
 	t.Helper()
 	cmd := exec.Command(cliBin, args...)
@@ -226,7 +226,7 @@ func cliStdin(t *testing.T, stdin string, args ...string) result {
 	if ee, ok := err.(*exec.ExitError); ok {
 		r.code = ee.ExitCode()
 	} else if err != nil {
-		t.Fatalf("running iwdp-cli %v: %v", args, err)
+		t.Fatalf("running agent-ios %v: %v", args, err)
 	}
 	return r
 }

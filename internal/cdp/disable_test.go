@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
 )
 
 // Page.disable and Runtime.disable (design 5.3; W5b-1 review round 1,

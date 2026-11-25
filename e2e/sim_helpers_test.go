@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // shared simulator connection — WebKit only allows one debugger connection per page.
@@ -21,18 +21,18 @@ var (
 
 func getSimClient(t *testing.T) *webkit.Client {
 	t.Helper()
-	wsURL := os.Getenv("IWDP_SIM_WS_URL")
+	wsURL := os.Getenv("AGENT_IOS_SIM_WS_URL")
 	if wsURL == "" {
-		t.Skip("IWDP_SIM_WS_URL not set — run scripts/sim-setup.sh first")
+		t.Skip("AGENT_IOS_SIM_WS_URL not set — run scripts/sim-setup.sh first")
 	}
 
 	simOnce.Do(func() {
 		// CI runners are slower — give iwdp more time to send Target.targetCreated.
 		webkit.TargetWaitTimeout = 2 * time.Second
-		sim = &simTarget{listingURL: "http://" + proxy.ListingAddr(), wsURL: wsURL, pageURL: os.Getenv("IWDP_SIM_PAGE_URL"), runToken: os.Getenv("IWDP_SIM_RUN_TOKEN")}
+		sim = &simTarget{listingURL: "http://" + proxy.ListingAddr(), wsURL: wsURL, pageURL: os.Getenv("AGENT_IOS_SIM_PAGE_URL"), runToken: os.Getenv("AGENT_IOS_SIM_RUN_TOKEN")}
 	})
 	// Checked on every call (simTarget.get): a test that navigates the
-	// page must restore IWDP_SIM_PAGE_URL before it ends.
+	// page must restore AGENT_IOS_SIM_PAGE_URL before it ends.
 	ctx, cancel := simCtx()
 	defer cancel()
 	client, err := sim.get(ctx)

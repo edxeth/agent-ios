@@ -12,7 +12,7 @@ import (
 
 var (
 	cliBinariesMu sync.Mutex
-	cliBinaries   = map[string]string{} // listing address -> iwdp-cli binary
+	cliBinaries   = map[string]string{} // listing address -> agent-ios binary
 )
 
 func buildCLI(t *testing.T) string {
@@ -20,7 +20,7 @@ func buildCLI(t *testing.T) string {
 	return buildCLIFor(t, deadCLIListing().Addr())
 }
 
-// buildCLIFor builds iwdp-cli once per iwdp listing address addr, a
+// buildCLIFor builds agent-ios once per iwdp listing address addr, a
 // private loopback address of these tests (listingLDFlags).
 func buildCLIFor(t *testing.T, addr string) string {
 	t.Helper()
@@ -31,15 +31,15 @@ func buildCLIFor(t *testing.T, addr string) string {
 	}
 	dir, err := os.MkdirTemp("", "iwdp-e2e-cli-*")
 	if err != nil {
-		t.Fatalf("building iwdp-cli: %v", err)
+		t.Fatalf("building agent-ios: %v", err)
 	}
 	trackTempDir(dir)
-	bin := filepath.Join(dir, "iwdp-cli")
+	bin := filepath.Join(dir, "agent-ios")
 	args := append([]string{"build", "-ldflags", listingLDFlags(addr)}, coverBuildFlags(t)...)
-	cmd := exec.Command("go", append(args, "-o", bin, "../cmd/iwdp-cli")...)
+	cmd := exec.Command("go", append(args, "-o", bin, "../cmd/agent-ios")...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("building iwdp-cli for the listing %s: %v", addr, err)
+		t.Fatalf("building agent-ios for the listing %s: %v", addr, err)
 	}
 	cliBinaries[addr] = bin
 	return bin
@@ -50,12 +50,12 @@ func TestCLI_Help(t *testing.T) {
 
 	out, err := exec.Command(bin, "help").CombinedOutput()
 	if err != nil {
-		t.Fatalf("iwdp-cli help: %v\n%s", err, out)
+		t.Fatalf("agent-ios help: %v\n%s", err, out)
 	}
 
 	output := string(out)
 	expected := []string{
-		"iwdp-cli",
+		"agent-ios",
 		"Usage:",
 		"devices",
 		"eval",
@@ -77,7 +77,7 @@ func TestCLI_HelpFlag(t *testing.T) {
 
 	out, err := exec.Command(bin, "--help").CombinedOutput()
 	if err != nil {
-		t.Fatalf("iwdp-cli --help: %v\n%s", err, out)
+		t.Fatalf("agent-ios --help: %v\n%s", err, out)
 	}
 	if !strings.Contains(string(out), "Usage:") {
 		t.Error("--help output missing Usage:")
@@ -89,7 +89,7 @@ func TestCLI_HFlagShort(t *testing.T) {
 
 	out, err := exec.Command(bin, "-h").CombinedOutput()
 	if err != nil {
-		t.Fatalf("iwdp-cli -h: %v\n%s", err, out)
+		t.Fatalf("agent-ios -h: %v\n%s", err, out)
 	}
 	if !strings.Contains(string(out), "Usage:") {
 		t.Error("-h output missing Usage:")
@@ -136,7 +136,7 @@ func TestCLI_EvalNoArgs(t *testing.T) {
 	if !errors.As(err, &ee) || ee.ExitCode() != 2 {
 		t.Fatalf("eval without expression: %v, want exit 2; output %s", err, out)
 	}
-	if !strings.Contains(string(out), "missing argument <expression>") || !strings.Contains(string(out), "iwdp-cli eval --help") {
+	if !strings.Contains(string(out), "missing argument <expression>") || !strings.Contains(string(out), "agent-ios eval --help") {
 		t.Errorf("eval with no args should name the missing expression and the help, got: %s", out)
 	}
 }
@@ -184,7 +184,7 @@ func TestCLI_HelpNewCommands(t *testing.T) {
 
 	out, err := exec.Command(bin, "help").CombinedOutput()
 	if err != nil {
-		t.Fatalf("iwdp-cli help: %v\n%s", err, out)
+		t.Fatalf("agent-ios help: %v\n%s", err, out)
 	}
 	output := string(out)
 

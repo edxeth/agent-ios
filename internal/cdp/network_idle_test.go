@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
 )
 
 // quietCheck is how long a test waits to show that networkIdle does not

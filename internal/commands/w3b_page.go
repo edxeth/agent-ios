@@ -11,10 +11,10 @@ import (
 	"time"
 	"weak"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/refs"
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/refs"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // w3bPage is what the W3b commands (actions, waits, navigation, dialogs,

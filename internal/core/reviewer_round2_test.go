@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Exercise the real probe state transition, not a copied wrapper formula.

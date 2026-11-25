@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
 )
 
 // emulate network: network throttling (design

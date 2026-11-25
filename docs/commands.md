@@ -2,10 +2,10 @@
 
 <!-- Generated from the command registry by "make docs" (go run ./internal/commands/refgen docs/commands.md). Do not edit by hand. -->
 
-This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.
+This page lists every registry command of `agent-ios`: the commands that run in the agent-ios daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.
 
-- `iwdp-cli` runs only these commands. [The migration notes](migration.md) map each removed command of earlier versions (for example `pages`, `set-breakpoint`, `get-matched-styles`) to its registry command, or say that it was removed.
-- `iwdp-cli <command> --help` prints the same usage and never connects to a page.
+- `agent-ios` runs only these commands. [The migration notes](migration.md) map each removed command of earlier versions (for example `pages`, `set-breakpoint`, `get-matched-styles`) to its registry command, or say that it was removed.
+- `agent-ios <command> --help` prints the same usage and never connects to a page.
 
 Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `--json`, `--transport`, `--max-output`, `--content-boundaries`, `--reservation`, `--wait-lease`, `--takeover`, `--private`.
 
@@ -28,7 +28,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`cookies`](#cookies) | List the page's cookies (those Page.getCookies lists, httpOnly included): name, domain, path, sameSite, expiry or session, httpOnly, secure. Values are hidden unless --show-values. |
 | [`cookies clear`](#cookies-clear) | Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back. |
 | [`cookies set`](#cookies-set) | Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result. |
-| [`daemon logs`](#daemon-logs) | Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log). |
+| [`daemon logs`](#daemon-logs) | Print the end of the daemon log ($XDG_STATE_HOME/agent-ios/daemon.log). |
 | [`daemon run`](#daemon-run) | Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeout (clients start it on demand). |
 | [`daemon start`](#daemon-start) | Start the daemon in the background unless it runs. |
 | [`daemon status`](#daemon-status) | Show the daemon, its pages, leases and device reservations. |
@@ -37,7 +37,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`device list`](#device-list) | List the live device reservations. |
 | [`device release`](#device-release) | Release an owner's device reservation. |
 | [`device reserve`](#device-reserve) | Reserve a physical device for an owner, so that only that owner's sessions attach to its pages. |
-| [`devices`](#devices) | List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that iwdp-cli started when it lost its devices, as page commands do. Exits 5 when it lists no device although usbmuxd reports one. |
+| [`devices`](#devices) | List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that agent-ios started when it lost its devices, as page commands do. Exits 5 when it lists no device although usbmuxd reports one. |
 | [`dialog`](#dialog) | Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept\|dismiss). |
 | [`diff screenshot`](#diff-screenshot) | Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ. |
 | [`diff snapshot`](#diff-snapshot) | Show what changed between the last two snapshots of this session (a unified line diff). |
@@ -76,12 +76,12 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`read`](#read) | Print the visible text of the current page, or of an http(s) URL fetched on this computer; --outline prints only the headings. |
 | [`reload`](#reload) | Reload the page (Page.reload after withdrawing unused dialog answers), then wait for the load state. |
 | [`removeinitscript`](#removeinitscript) | Remove an init script of this session by the id that addinitscript printed. |
-| [`restart-iwdp`](#restart-iwdp) | Restart the ios_webkit_debug_proxy that iwdp-cli started. Stops only an iwdp that iwdp-cli started and recorded, then starts a new one. Any other iwdp (for example one that the user or another program started) is never stopped: the command fails and names the owner pid and the manual restart command. When no iwdp runs, it starts one. |
+| [`restart-iwdp`](#restart-iwdp) | Restart the ios_webkit_debug_proxy that agent-ios started. Stops only an iwdp that agent-ios started and recorded, then starts a new one. Any other iwdp (for example one that the user or another program started) is never stopped: the command fails and names the owner pid and the manual restart command. When no iwdp runs, it starts one. |
 | [`screenshot`](#screenshot) | Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture. |
 | [`scroll`](#scroll) | Scroll the window or an element up, down, left or right (default 300 px). |
 | [`scrollintoview`](#scrollintoview) | Scroll an element into the center of the viewport. |
 | [`select`](#select) | Select options of a \<select\> by value, then by visible label; dispatches input and change. |
-| [`session`](#session) | Print the current session name (--session or IWDP_SESSION; default "default"). |
+| [`session`](#session) | Print the current session name (--session or AGENT_IOS_SESSION; default "default"). |
 | [`session info`](#session-info) | Show this session's leased pages: page, lease state (active or lost), epoch and last use. |
 | [`session list`](#session-list) | List the sessions that hold page leases in the daemon. |
 | [`session release`](#session-release) | Release this session's page leases and run their cleanup (same as close). |
@@ -103,14 +103,14 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`sim tap`](#sim-tap) | Tap the simulator's screen at \<x\> \<y\>, or the element with --label or --id (sim ui lists them). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone). |
 | [`sim type`](#sim-type) | Type \<text\> into the simulator's focused field as key presses (sim tap the field first). The text is on the command lines of this host and the Mac: never type a secret this way; fill --stdin types into a page without that. A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone). |
 | [`sim ui`](#sim-ui) | List the elements of the simulator's screen that have a label, value or identifier, with their frames in points (its accessibility tree, through AXe): the targets of sim tap. It shows page and app text. |
-| [`sim up`](#sim-up) | Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m. |
+| [`sim up`](#sim-up) | Make the iOS Simulator of the Mac in the simulator configuration ready for agent-ios, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that agent-ios started when it does not use that forward. Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that agent-ios did not start. Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m. |
 | [`skills get`](#skills-get) | Print agent skills built into this binary (each guide without its front matter; --json gives the whole SKILL.md); without a name, or with --all, every skill. |
 | [`skills list`](#skills-list) | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
 | [`skills path`](#skills-path) | Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all. |
 | [`snapshot`](#snapshot) | Print the page's accessibility tree with @eN refs for later commands. |
 | [`state load`](#state-load) | Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's. |
 | [`state save`](#state-save) | Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials). |
-| [`status`](#status) | Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that iwdp-cli starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read. |
+| [`status`](#status) | Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that agent-ios starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read. |
 | [`storage`](#storage) | Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session). |
 | [`swipe`](#swipe) | Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down). |
 | [`tab`](#tab) | Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs. |
@@ -132,7 +132,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 ### `addinitscript`
 
 ```
-iwdp-cli addinitscript [<script>] [flags]
+agent-ios addinitscript [<script>] [flags]
 ```
 
 Run a script in every new document of the page, before page scripts when the page is paused on start (partial otherwise). Prints the script id.
@@ -150,7 +150,7 @@ Run a script in every new document of the page, before page scripts when the pag
 ### `back`
 
 ```
-iwdp-cli back [flags]
+agent-ios back [flags]
 ```
 
 Go back in the page's history (history.back), then wait for the load state.
@@ -164,7 +164,7 @@ Go back in the page's history (history.back), then wait for the load state.
 ### `blur`
 
 ```
-iwdp-cli blur
+agent-ios blur
 ```
 
 Blur the focused element.
@@ -175,7 +175,7 @@ Blur the focused element.
 ### `cdp log`
 
 ```
-iwdp-cli cdp log
+agent-ios cdp log
 ```
 
 Show how often CDP clients sent methods that the endpoint does not translate (answered "wasn't found", never forwarded).
@@ -185,7 +185,7 @@ Show how often CDP clients sent methods that the endpoint does not translate (an
 ### `cdp start`
 
 ```
-iwdp-cli cdp start [flags]
+agent-ios cdp start [flags]
 ```
 
 Start the CDP endpoint on 127.0.0.1 (a running endpoint is kept); then run 'get cdp-url' for a client URL.
@@ -200,7 +200,7 @@ Start the CDP endpoint on 127.0.0.1 (a running endpoint is kept); then run 'get 
 ### `cdp status`
 
 ```
-iwdp-cli cdp status
+agent-ios cdp status
 ```
 
 Show the CDP endpoint: address, allowed origins and, per endpoint record, its session, page, scope, connections and attachments.
@@ -210,7 +210,7 @@ Show the CDP endpoint: address, allowed origins and, per endpoint record, its se
 ### `cdp stop`
 
 ```
-iwdp-cli cdp stop
+agent-ios cdp stop
 ```
 
 Stop the CDP endpoint: close its client connections (each releases its state) and revoke every CDP URL.
@@ -220,7 +220,7 @@ Stop the CDP endpoint: close its client connections (each releases its state) an
 ### `check`
 
 ```
-iwdp-cli check <target> [flags]
+agent-ios check <target> [flags]
 ```
 
 Check a checkbox or radio (a hidden input through its label) and read the state back.
@@ -240,7 +240,7 @@ Check a checkbox or radio (a hidden input through its label) and read the state 
 ### `click`
 
 ```
-iwdp-cli click <target> [flags]
+agent-ios click <target> [flags]
 ```
 
 Click an element with synthetic pointer and mouse events after the actionability checks.
@@ -262,7 +262,7 @@ Click an element with synthetic pointer and mouse events after the actionability
 ### `close`
 
 ```
-iwdp-cli close
+agent-ios close
 ```
 
 End this session (--session): release its page leases and run their cleanup. The Safari tab stays open; other sessions are not touched.
@@ -272,7 +272,7 @@ End this session (--session): release its page leases and run their cleanup. The
 ### `console`
 
 ```
-iwdp-cli console [flags]
+agent-ios console [flags]
 ```
 
 Print the console messages captured since the lease (and up to 100 that WebKit replays). For new messages only, run it again as console --since "$last_id", with the id of the last message that it printed.
@@ -288,7 +288,7 @@ Print the console messages captured since the lease (and up to 100 that WebKit r
 ### `console clear`
 
 ```
-iwdp-cli console clear
+agent-ios console clear
 ```
 
 Empty the console buffer and WebKit's stored messages.
@@ -298,7 +298,7 @@ Empty the console buffer and WebKit's stored messages.
 ### `cookies`
 
 ```
-iwdp-cli cookies [flags]
+agent-ios cookies [flags]
 ```
 
 List the page's cookies (those Page.getCookies lists, httpOnly included): name, domain, path, sameSite, expiry or session, httpOnly, secure. Values are hidden unless --show-values.
@@ -312,7 +312,7 @@ List the page's cookies (those Page.getCookies lists, httpOnly included): name, 
 ### `cookies clear`
 
 ```
-iwdp-cli cookies clear [flags]
+agent-ios cookies clear [flags]
 ```
 
 Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back.
@@ -326,7 +326,7 @@ Delete the page's cookies (those Page.getCookies lists: the cookies of the page'
 ### `cookies set`
 
 ```
-iwdp-cli cookies set [<name>] [<value>] [flags]
+agent-ios cookies set [<name>] [<value>] [flags]
 ```
 
 Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result.
@@ -351,10 +351,10 @@ Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a
 ### `daemon logs`
 
 ```
-iwdp-cli daemon logs [flags]
+agent-ios daemon logs [flags]
 ```
 
-Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log).
+Print the end of the daemon log ($XDG_STATE_HOME/agent-ios/daemon.log).
 
 - Page: none; runs in the client process, not in the daemon
 
@@ -365,7 +365,7 @@ Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log).
 ### `daemon run`
 
 ```
-iwdp-cli daemon run [flags]
+agent-ios daemon run [flags]
 ```
 
 Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeout (clients start it on demand).
@@ -375,13 +375,13 @@ Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeou
 | Flag | Value | Description |
 |---|---|---|
 | `--addr` | text | listing or inspector address of the --transport (webkitgtk: the WEBKIT_INSPECTOR_HTTP_SERVER address) |
-| `--idle` | duration (40s, 1m30s) or seconds (40) | exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m) |
+| `--idle` | duration (40s, 1m30s) or seconds (40) | exit after this long without requests and leases (default AGENT_IOS_DAEMON_IDLE, else 15m) |
 | `--cdp-port` | integer | start the CDP endpoint on 127.0.0.1:\<port\> with the daemon, and use the port for later starts (default: the endpoint starts only on 'cdp start' or 'get cdp-url', on port 9230) |
 
 ### `daemon start`
 
 ```
-iwdp-cli daemon start [flags]
+agent-ios daemon start [flags]
 ```
 
 Start the daemon in the background unless it runs.
@@ -391,13 +391,13 @@ Start the daemon in the background unless it runs.
 | Flag | Value | Description |
 |---|---|---|
 | `--addr` | text | listing or inspector address of the --transport (webkitgtk: the WEBKIT_INSPECTOR_HTTP_SERVER address) |
-| `--idle` | duration (40s, 1m30s) or seconds (40) | exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m) |
+| `--idle` | duration (40s, 1m30s) or seconds (40) | exit after this long without requests and leases (default AGENT_IOS_DAEMON_IDLE, else 15m) |
 | `--cdp-port` | integer | start the CDP endpoint on 127.0.0.1:\<port\> with the daemon, and use the port for later starts (default: the endpoint starts only on 'cdp start' or 'get cdp-url', on port 9230) |
 
 ### `daemon status`
 
 ```
-iwdp-cli daemon status
+agent-ios daemon status
 ```
 
 Show the daemon, its pages, leases and device reservations.
@@ -407,7 +407,7 @@ Show the daemon, its pages, leases and device reservations.
 ### `daemon stop`
 
 ```
-iwdp-cli daemon stop
+agent-ios daemon stop
 ```
 
 Stop the daemon after the cleanup of every page (5 s at most).
@@ -417,7 +417,7 @@ Stop the daemon after the cleanup of every page (5 s at most).
 ### `dblclick`
 
 ```
-iwdp-cli dblclick <target> [flags]
+agent-ios dblclick <target> [flags]
 ```
 
 Double-click an element: two click sequences (detail 1 and 2), then dblclick.
@@ -436,7 +436,7 @@ Double-click an element: two click sequences (detail 1 and 2), then dblclick.
 ### `device list`
 
 ```
-iwdp-cli device list
+agent-ios device list
 ```
 
 List the live device reservations.
@@ -446,7 +446,7 @@ List the live device reservations.
 ### `device release`
 
 ```
-iwdp-cli device release [flags]
+agent-ios device release [flags]
 ```
 
 Release an owner's device reservation.
@@ -456,12 +456,12 @@ Release an owner's device reservation.
 | Flag | Value | Description |
 |---|---|---|
 | `--device` | text | device UDID; \* reserves every device (default `*`) |
-| `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
+| `--owner` | text | reservation owner; default --reservation (AGENT_IOS_DEVICE_RESERVATION), else the session |
 
 ### `device reserve`
 
 ```
-iwdp-cli device reserve [flags]
+agent-ios device reserve [flags]
 ```
 
 Reserve a physical device for an owner, so that only that owner's sessions attach to its pages.
@@ -471,23 +471,23 @@ Reserve a physical device for an owner, so that only that owner's sessions attac
 | Flag | Value | Description |
 |---|---|---|
 | `--device` | text | device UDID; \* reserves every device (default `*`) |
-| `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
+| `--owner` | text | reservation owner; default --reservation (AGENT_IOS_DEVICE_RESERVATION), else the session |
 | `--ttl` | duration (40s, 1m30s) or seconds (40) | lifetime, renewed while the owner holds leases (default `2h`) |
 
 ### `devices`
 
 ```
-iwdp-cli devices
+agent-ios devices
 ```
 
-List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that iwdp-cli started when it lost its devices, as page commands do. Exits 5 when it lists no device although usbmuxd reports one.
+List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that agent-ios started when it lost its devices, as page commands do. Exits 5 when it lists no device although usbmuxd reports one.
 
 - Page: none
 
 ### `dialog`
 
 ```
-iwdp-cli dialog <action> [<value>]
+agent-ios dialog <action> [<value>]
 ```
 
 Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept|dismiss).
@@ -502,7 +502,7 @@ Arm answers for alert, confirm and prompt, or show the dialog log (status, accep
 ### `diff screenshot`
 
 ```
-iwdp-cli diff screenshot [flags]
+agent-ios diff screenshot [flags]
 ```
 
 Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ.
@@ -517,7 +517,7 @@ Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on
 ### `diff snapshot`
 
 ```
-iwdp-cli diff snapshot
+agent-ios diff snapshot
 ```
 
 Show what changed between the last two snapshots of this session (a unified line diff).
@@ -527,7 +527,7 @@ Show what changed between the last two snapshots of this session (a unified line
 ### `drag`
 
 ```
-iwdp-cli drag <target> <destination> [flags]
+agent-ios drag <target> <destination> [flags]
 ```
 
 Drag from one element to another in 10 pointer steps with synthetic drag events (best effort).
@@ -547,7 +547,7 @@ Drag from one element to another in 10 pointer steps with synthetic drag events 
 ### `emulate network`
 
 ```
-iwdp-cli emulate network [<preset>] [flags]
+agent-ios emulate network [<preset>] [flags]
 ```
 
 Throttle the page's network to a preset (4g, fast-3g, slow-3g) or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have.
@@ -565,7 +565,7 @@ Throttle the page's network to a preset (4g, fast-3g, slow-3g) or a byte rate; '
 ### `errors`
 
 ```
-iwdp-cli errors [flags]
+agent-ios errors [flags]
 ```
 
 Print uncaught errors and unhandled promise rejections with their stacks (the first run installs the error hooks).
@@ -579,7 +579,7 @@ Print uncaught errors and unhandled promise rejections with their stacks (the fi
 ### `eval`
 
 ```
-iwdp-cli eval <expression> [flags]
+agent-ios eval <expression> [flags]
 ```
 
 Evaluate a JavaScript expression in the page and print the result, awaiting a returned Promise; the page is the session's, or the tab id or ws:// URL of --page. A string prints as is, other values as JSON; a thrown value exits 1 with its message and stack.
@@ -597,7 +597,7 @@ Evaluate a JavaScript expression in the page and print the result, awaiting a re
 ### `fill`
 
 ```
-iwdp-cli fill <target> [<text>] [flags]
+agent-ios fill <target> [<text>] [flags]
 ```
 
 Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change.
@@ -612,13 +612,13 @@ Replace an input's value: beforeinput (insertReplacementText), the native value 
 
 | Flag | Value | Description |
 |---|---|---|
-| `--stdin` | none | read the value from the standard input (iwdp-cli only), so a secret is not in the command line; one trailing newline is removed |
+| `--stdin` | none | read the value from the standard input (agent-ios only), so a secret is not in the command line; one trailing newline is removed |
 | `--force` | none | skip the actionability checks (attached, visible, stable, enabled, receives events) |
 
 ### `find`
 
 ```
-iwdp-cli find <kind> <value> [<action>...] [flags]
+agent-ios find <kind> <value> [<action>...] [flags]
 ```
 
 Find elements by role, text, label, placeholder, alt, title, testid, or first|last|nth of a selector; print them with refs.
@@ -639,7 +639,7 @@ Find elements by role, text, label, placeholder, alt, title, testid, or first|la
 ### `focus`
 
 ```
-iwdp-cli focus <target>
+agent-ios focus <target>
 ```
 
 Focus an element (el.focus()).
@@ -654,7 +654,7 @@ Focus an element (el.focus()).
 ### `forward`
 
 ```
-iwdp-cli forward [flags]
+agent-ios forward [flags]
 ```
 
 Go forward in the page's history (history.forward), then wait for the load state.
@@ -668,7 +668,7 @@ Go forward in the page's history (history.forward), then wait for the load state
 ### `frame`
 
 ```
-iwdp-cli frame <target>
+agent-ios frame <target>
 ```
 
 Make an iframe (@eN, CSS or locator) the frame that this session's later commands work in, or return to the top document with main.
@@ -682,7 +682,7 @@ Make an iframe (@eN, CSS or locator) the frame that this session's later command
 ### `get`
 
 ```
-iwdp-cli get <what> [<target>] [<name>]
+agent-ios get <what> [<target>] [<name>]
 ```
 
 Get url, title, or text, html, value, attr, count, box or styles of a target (@ref, CSS selector or locator).
@@ -698,7 +698,7 @@ Get url, title, or text, html, value, attr, count, box or styles of a target (@r
 ### `get cdp-url`
 
 ```
-iwdp-cli get cdp-url [flags]
+agent-ios get cdp-url [flags]
 ```
 
 Print a CDP URL for this session's page (starts the CDP endpoint if needed). Clients act for this session; use the URL exactly as printed.
@@ -713,7 +713,7 @@ Print a CDP URL for this session's page (starts the CDP endpoint if needed). Cli
 ### `highlight`
 
 ```
-iwdp-cli highlight [<target>] [flags]
+agent-ios highlight [<target>] [flags]
 ```
 
 Highlight an element on the device screen (DOM.highlightNode) until release.
@@ -732,7 +732,7 @@ Highlight an element on the device screen (DOM.highlightNode) until release.
 ### `hit-test`
 
 ```
-iwdp-cli hit-test <x> <y>
+agent-ios hit-test <x> <y>
 ```
 
 Print the element at a viewport point (CSS pixels): its snapshot line with a ref, its tag and its box.
@@ -747,7 +747,7 @@ Print the element at a viewport point (CSS pixels): its snapshot line with a ref
 ### `hover`
 
 ```
-iwdp-cli hover <target> [flags]
+agent-ios hover <target> [flags]
 ```
 
 Move the pointer over an element (synthetic events do not set CSS :hover; --css forces it).
@@ -767,7 +767,7 @@ Move the pointer over an element (synthetic events do not set CSS :hover; --css 
 ### `is`
 
 ```
-iwdp-cli is <state> <target>
+agent-ios is <state> <target>
 ```
 
 Print true or false: is a target visible, enabled, checked, editable or focused.
@@ -782,7 +782,7 @@ Print true or false: is a target visible, enabled, checked, editable or focused.
 ### `keyboard`
 
 ```
-iwdp-cli keyboard <mode> <text> [flags]
+agent-ios keyboard <mode> <text> [flags]
 ```
 
 Type into the focused element (keyboard type \<text\>) or insert text without key events (keyboard inserttext \<text\>).
@@ -802,7 +802,7 @@ Type into the focused element (keyboard type \<text\>) or insert text without ke
 ### `keydown`
 
 ```
-iwdp-cli keydown <key>
+agent-ios keydown <key>
 ```
 
 Send keydown for a key on the focused element (no default action).
@@ -817,7 +817,7 @@ Send keydown for a key on the focused element (no default action).
 ### `keyup`
 
 ```
-iwdp-cli keyup <key>
+agent-ios keyup <key>
 ```
 
 Send keyup for a key on the focused element.
@@ -832,7 +832,7 @@ Send keyup for a key on the focused element.
 ### `lease break`
 
 ```
-iwdp-cli lease break <page>
+agent-ios lease break <page>
 ```
 
 End the lease on a page whoever holds it, with its cleanup.
@@ -846,7 +846,7 @@ End the lease on a page whoever holds it, with its cleanup.
 ### `lease takeover`
 
 ```
-iwdp-cli lease takeover [<page>]
+agent-ios lease takeover [<page>]
 ```
 
 Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval).
@@ -860,7 +860,7 @@ Reattach a lost page and take its lease for this session (needs the device reser
 ### `mouse`
 
 ```
-iwdp-cli mouse <action> [<a>] [<b>] [flags]
+agent-ios mouse <action> [<a>] [<b>] [flags]
 ```
 
 Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx].
@@ -881,7 +881,7 @@ Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel
 ### `network har start`
 
 ```
-iwdp-cli network har start [flags]
+agent-ios network har start [flags]
 ```
 
 Start recording a HAR of the requests from now on; 'network har stop' writes it.
@@ -895,7 +895,7 @@ Start recording a HAR of the requests from now on; 'network har stop' writes it.
 ### `network har stop`
 
 ```
-iwdp-cli network har stop [<path>] [flags]
+agent-ios network har stop [<path>] [flags]
 ```
 
 Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values masked unless --show-secrets).
@@ -913,7 +913,7 @@ Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values ma
 ### `network request`
 
 ```
-iwdp-cli network request <id> [flags]
+agent-ios network request <id> [flags]
 ```
 
 Show one request of 'network requests': headers, request body and status; --body adds the response body.
@@ -932,7 +932,7 @@ Show one request of 'network requests': headers, request body and status; --body
 ### `network requests`
 
 ```
-iwdp-cli network requests [flags]
+agent-ios network requests [flags]
 ```
 
 List the requests captured since the lease: id, method, status, type and URL; network resets show as gaps.
@@ -950,7 +950,7 @@ List the requests captured since the lease: id, method, status, type and URL; ne
 ### `network route`
 
 ```
-iwdp-cli network route <url> [flags]
+agent-ios network route <url> [flags]
 ```
 
 Abort, fulfill or delay requests whose URL matches: a glob with \* and \*\* matches the whole URL, other text any URL that contains it. Without --abort, --body or --status the request continues after --delay.
@@ -973,7 +973,7 @@ Abort, fulfill or delay requests whose URL matches: a glob with \* and \*\* matc
 ### `network unroute`
 
 ```
-iwdp-cli network unroute [<url>]
+agent-ios network unroute [<url>]
 ```
 
 Remove the routes with this pattern (all without one); requests that a route holds continue unchanged.
@@ -987,7 +987,7 @@ Remove the routes with this pattern (all without one); requests that a route hol
 ### `open`
 
 ```
-iwdp-cli open [<url>] [flags]
+agent-ios open [<url>] [flags]
 ```
 
 Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open).
@@ -1007,7 +1007,7 @@ Open a URL in the page (location.href), then wait for the load state; a URL that
 ### `press`
 
 ```
-iwdp-cli press <key> [flags]
+agent-ios press <key> [flags]
 ```
 
 Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action.
@@ -1027,7 +1027,7 @@ Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused ele
 ### `profiler start`
 
 ```
-iwdp-cli profiler start
+agent-ios profiler start
 ```
 
 Start sampling the page's JavaScript with the WebKit ScriptProfiler (profiler stop writes the .cpuprofile).
@@ -1037,7 +1037,7 @@ Start sampling the page's JavaScript with the WebKit ScriptProfiler (profiler st
 ### `profiler stop`
 
 ```
-iwdp-cli profiler stop [<path>]
+agent-ios profiler stop [<path>]
 ```
 
 Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mode 0600) to path, or to a new file in the temp directory.
@@ -1046,12 +1046,12 @@ Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mo
 
 | Argument | Required | Description |
 |---|---|---|
-| `<path>` | no | the profile file to write (default: a new iwdp-profile-\*.cpuprofile in the temp directory) |
+| `<path>` | no | the profile file to write (default: a new agent-ios-profile-\*.cpuprofile in the temp directory) |
 
 ### `pushstate`
 
 ```
-iwdp-cli pushstate <url>
+agent-ios pushstate <url>
 ```
 
 Change the URL without loading: the Next.js router when the page has one, else history.pushState and a popstate event.
@@ -1065,7 +1065,7 @@ Change the URL without loading: the Next.js router when the page has one, else h
 ### `read`
 
 ```
-iwdp-cli read [<url>] [flags]
+agent-ios read [<url>] [flags]
 ```
 
 Print the visible text of the current page, or of an http(s) URL fetched on this computer; --outline prints only the headings.
@@ -1083,7 +1083,7 @@ Print the visible text of the current page, or of an http(s) URL fetched on this
 ### `reload`
 
 ```
-iwdp-cli reload [flags]
+agent-ios reload [flags]
 ```
 
 Reload the page (Page.reload after withdrawing unused dialog answers), then wait for the load state.
@@ -1098,7 +1098,7 @@ Reload the page (Page.reload after withdrawing unused dialog answers), then wait
 ### `removeinitscript`
 
 ```
-iwdp-cli removeinitscript <id>
+agent-ios removeinitscript <id>
 ```
 
 Remove an init script of this session by the id that addinitscript printed.
@@ -1112,17 +1112,17 @@ Remove an init script of this session by the id that addinitscript printed.
 ### `restart-iwdp`
 
 ```
-iwdp-cli restart-iwdp
+agent-ios restart-iwdp
 ```
 
-Restart the ios_webkit_debug_proxy that iwdp-cli started. Stops only an iwdp that iwdp-cli started and recorded, then starts a new one. Any other iwdp (for example one that the user or another program started) is never stopped: the command fails and names the owner pid and the manual restart command. When no iwdp runs, it starts one.
+Restart the ios_webkit_debug_proxy that agent-ios started. Stops only an iwdp that agent-ios started and recorded, then starts a new one. Any other iwdp (for example one that the user or another program started) is never stopped: the command fails and names the owner pid and the manual restart command. When no iwdp runs, it starts one.
 
 - Page: none; runs in the client process, not in the daemon
 
 ### `screenshot`
 
 ```
-iwdp-cli screenshot [<path>] [flags]
+agent-ios screenshot [<path>] [flags]
 ```
 
 Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture.
@@ -1131,7 +1131,7 @@ Capture the viewport, the full page or one element as PNG; --annotate labels eac
 
 | Argument | Required | Description |
 |---|---|---|
-| `<path>` | no | PNG file to write (default $TMPDIR/iwdp-screenshot-\<time\>.png) |
+| `<path>` | no | PNG file to write (default $TMPDIR/agent-ios-screenshot-\<time\>.png) |
 
 | Flag | Value | Description |
 |---|---|---|
@@ -1145,7 +1145,7 @@ Capture the viewport, the full page or one element as PNG; --annotate labels eac
 ### `scroll`
 
 ```
-iwdp-cli scroll <direction> [<px>] [flags]
+agent-ios scroll <direction> [<px>] [flags]
 ```
 
 Scroll the window or an element up, down, left or right (default 300 px).
@@ -1165,7 +1165,7 @@ Scroll the window or an element up, down, left or right (default 300 px).
 ### `scrollintoview`
 
 ```
-iwdp-cli scrollintoview <target>
+agent-ios scrollintoview <target>
 ```
 
 Scroll an element into the center of the viewport.
@@ -1180,7 +1180,7 @@ Scroll an element into the center of the viewport.
 ### `select`
 
 ```
-iwdp-cli select <target> <values>... [flags]
+agent-ios select <target> <values>... [flags]
 ```
 
 Select options of a \<select\> by value, then by visible label; dispatches input and change.
@@ -1200,17 +1200,17 @@ Select options of a \<select\> by value, then by visible label; dispatches input
 ### `session`
 
 ```
-iwdp-cli session
+agent-ios session
 ```
 
-Print the current session name (--session or IWDP_SESSION; default "default").
+Print the current session name (--session or AGENT_IOS_SESSION; default "default").
 
 - Page: none
 
 ### `session info`
 
 ```
-iwdp-cli session info
+agent-ios session info
 ```
 
 Show this session's leased pages: page, lease state (active or lost), epoch and last use.
@@ -1220,7 +1220,7 @@ Show this session's leased pages: page, lease state (active or lost), epoch and 
 ### `session list`
 
 ```
-iwdp-cli session list
+agent-ios session list
 ```
 
 List the sessions that hold page leases in the daemon.
@@ -1230,7 +1230,7 @@ List the sessions that hold page leases in the daemon.
 ### `session release`
 
 ```
-iwdp-cli session release
+agent-ios session release
 ```
 
 Release this session's page leases and run their cleanup (same as close).
@@ -1240,7 +1240,7 @@ Release this session's page leases and run their cleanup (same as close).
 ### `set credentials`
 
 ```
-iwdp-cli set credentials [<user>] [flags]
+agent-ios set credentials [<user>] [flags]
 ```
 
 Send HTTP Basic credentials to the requests of one origin only; on a command line the password is the first line of stdin. Supported only where a test has shown that other origins and cross-origin redirects never get them (WebKitGTK today).
@@ -1260,7 +1260,7 @@ Send HTTP Basic credentials to the requests of one origin only; on a command lin
 ### `set device`
 
 ```
-iwdp-cli set device [<args>...]
+agent-ios set device [<args>...]
 ```
 
 Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute.
@@ -1274,7 +1274,7 @@ Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Appl
 ### `set geo`
 
 ```
-iwdp-cli set geo <latitude> <longitude> [flags]
+agent-ios set geo <latitude> <longitude> [flags]
 ```
 
 Answer navigator.geolocation with this position (a page-side shim: WebKit has no geolocation override).
@@ -1293,7 +1293,7 @@ Answer navigator.geolocation with this position (a page-side shim: WebKit has no
 ### `set headers`
 
 ```
-iwdp-cli set headers <json>
+agent-ios set headers <json>
 ```
 
 Send these extra HTTP headers with every request of the page; '{}' removes this session's headers.
@@ -1307,7 +1307,7 @@ Send these extra HTTP headers with every request of the page; '{}' removes this 
 ### `set media`
 
 ```
-iwdp-cli set media <scheme> [flags]
+agent-ios set media <scheme> [flags]
 ```
 
 Emulate prefers-color-scheme (dark, light or no-preference), and optionally reduced motion and more contrast.
@@ -1326,7 +1326,7 @@ Emulate prefers-color-scheme (dark, light or no-preference), and optionally redu
 ### `set offline`
 
 ```
-iwdp-cli set offline <state>
+agent-ios set offline <state>
 ```
 
 Fail every request of the page (on) or stop doing so (off), through request interception; navigator.onLine stays true.
@@ -1340,7 +1340,7 @@ Fail every request of the page (on) or stop doing so (off), through request inte
 ### `set useragent`
 
 ```
-iwdp-cli set useragent [<ua>] [flags]
+agent-ios set useragent [<ua>] [flags]
 ```
 
 Override the user agent string of the page (--reset removes the override).
@@ -1358,7 +1358,7 @@ Override the user agent string of the page (--reset removes the override).
 ### `set viewport`
 
 ```
-iwdp-cli set viewport [<args>...]
+agent-ios set viewport [<args>...]
 ```
 
 Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Apple platforms (design 4.3). Screenshots use the device's native size; 'set useragent' is the closest substitute.
@@ -1372,7 +1372,7 @@ Not available on iOS WebKit: Page.setScreenSizeOverride exists only outside Appl
 ### `sim down`
 
 ```
-iwdp-cli sim down [flags]
+agent-ios sim down [flags]
 ```
 
 Stop the forward that sim up started and shut the simulator down; with --mac also run the configuration's stop command (for example the shutdown of a VM).
@@ -1388,7 +1388,7 @@ Stop the forward that sim up started and shut the simulator down; with --mac als
 ### `sim keyboard`
 
 ```
-iwdp-cli sim keyboard [<mode>] [flags]
+agent-ios sim keyboard [<mode>] [flags]
 ```
 
 Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard when sim tap taps a field, as on an iPhone, for keyboard bugs; sim type then sends only lowercase letters, digits and unshifted symbols, on a US layout. hardware (the Simulator's default) types the text that the simulator's keyboard layout has keys for (AXe refuses the rest) but hides the on-screen keyboard. A change restarts the Simulator app and the simulator, then runs sim up; it refuses while a page has an active lease, unless --restart-iwdp.
@@ -1408,7 +1408,7 @@ Show or set the simulator's keyboard: onscreen shows iOS's on-screen keyboard wh
 ### `sim release`
 
 ```
-iwdp-cli sim release [flags]
+agent-ios sim release [flags]
 ```
 
 End your turn on the simulator: close this session (release its page leases, as close does) and release the owner's reservation of the simulator. Close your own tab first (tab close; when Safari refuses, release anyway). Releasing no reservation is not an error; another owner's is refused.
@@ -1418,12 +1418,12 @@ End your turn on the simulator: close this session (release its page leases, as 
 
 | Flag | Value | Description |
 |---|---|---|
-| `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
+| `--owner` | text | reservation owner; default --reservation (AGENT_IOS_DEVICE_RESERVATION), else the session |
 
 ### `sim reserve`
 
 ```
-iwdp-cli sim reserve [flags]
+agent-ios sim reserve [flags]
 ```
 
 Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. While an owner holds it, other owners' page commands on the simulator fail (exit 6), its tabs are hidden from them, and their sim commands that act on it fail. Exit 3 when the wait ends first: the simulator is still another owner's; run the same command again (do not use the simulator meanwhile). The reservation ends with sim release, or --ttl (2m) after the owner's last use (sim commands renew it, and an open page lease keeps renewing it). The owner must be your own name: the default session and qa-login, the name of the guides' examples, are refused.
@@ -1433,14 +1433,14 @@ Reserve the simulator for an owner, waiting up to --wait while another owner hol
 
 | Flag | Value | Description |
 |---|---|---|
-| `--owner` | text | reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session |
+| `--owner` | text | reservation owner; default --reservation (AGENT_IOS_DEVICE_RESERVATION), else the session |
 | `--ttl` | duration (40s, 1m30s) or seconds (40) | lifetime after the owner's last use, at least 30s (a running sim command renews it, and an open page lease keeps renewing it) (default `2m`) |
 | `--wait` | duration (40s, 1m30s) or seconds (40) | how long to wait for another owner's reservation to end, at most 10m (keep it under your tool's timeout) (default `50s`) |
 
 ### `sim screenshot`
 
 ```
-iwdp-cli sim screenshot [<path>] [flags]
+agent-ios sim screenshot [<path>] [flags]
 ```
 
 Capture the simulator's whole screen as PNG (simctl io screenshot): the status bar, Safari's bars, the on-screen keyboard and other apps, which the page capture of screenshot leaves out. The simulator must be booted (sim up); it starts nothing.
@@ -1450,7 +1450,7 @@ Capture the simulator's whole screen as PNG (simctl io screenshot): the status b
 
 | Argument | Required | Description |
 |---|---|---|
-| `<path>` | no | PNG file to write (default $TMPDIR/iwdp-screenshot-\<time\>.png) |
+| `<path>` | no | PNG file to write (default $TMPDIR/agent-ios-screenshot-\<time\>.png) |
 
 | Flag | Value | Description |
 |---|---|---|
@@ -1460,7 +1460,7 @@ Capture the simulator's whole screen as PNG (simctl io screenshot): the status b
 ### `sim status`
 
 ```
-iwdp-cli sim status [flags]
+agent-ios sim status [flags]
 ```
 
 Check each part that sim up sets up (the Mac over ssh, the desktop login, the simulator, its window, the forward, iwdp's listing) without changing any. Exits 0 also when a part is down; --json has "ready".
@@ -1475,7 +1475,7 @@ Check each part that sim up sets up (the Mac over ssh, the desktop login, the si
 ### `sim swipe`
 
 ```
-iwdp-cli sim swipe <x1> <y1> <x2> <y2> [flags]
+agent-ios sim swipe <x1> <y1> <x2> <y2> [flags]
 ```
 
 Swipe on the simulator's screen from \<x1\> \<y1\> to \<x2\> \<y2\> in points (one second; --duration changes it). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone).
@@ -1498,7 +1498,7 @@ Swipe on the simulator's screen from \<x1\> \<y1\> to \<x2\> \<y2\> in points (o
 ### `sim tap`
 
 ```
-iwdp-cli sim tap [<x>] [<y>] [flags]
+agent-ios sim tap [<x>] [<y>] [flags]
 ```
 
 Tap the simulator's screen at \<x\> \<y\>, or the element with --label or --id (sim ui lists them). A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone).
@@ -1521,7 +1521,7 @@ Tap the simulator's screen at \<x\> \<y\>, or the element with --label or --id (
 ### `sim type`
 
 ```
-iwdp-cli sim type <text> [flags]
+agent-ios sim type <text> [flags]
 ```
 
 Type \<text\> into the simulator's focused field as key presses (sim tap the field first). The text is on the command lines of this host and the Mac: never type a secret this way; fill --stdin types into a page without that. A real touch through AXe (the configuration's "axe"), which iOS handles as the user's: a tapped text field opens the on-screen keyboard, unlike click. Coordinates are screen points (sim ui, sim screenshot's size / 3 on a 3x iPhone).
@@ -1540,7 +1540,7 @@ Type \<text\> into the simulator's focused field as key presses (sim tap the fie
 ### `sim ui`
 
 ```
-iwdp-cli sim ui [flags]
+agent-ios sim ui [flags]
 ```
 
 List the elements of the simulator's screen that have a label, value or identifier, with their frames in points (its accessibility tree, through AXe): the targets of sim tap. It shows page and app text.
@@ -1555,10 +1555,10 @@ List the elements of the simulator's screen that have a label, value or identifi
 ### `sim up`
 
 ```
-iwdp-cli sim up [flags]
+agent-ios sim up [flags]
 ```
 
-Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m.
+Make the iOS Simulator of the Mac in the simulator configuration ready for agent-ios, doing only what is still needed: start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that agent-ios started when it does not use that forward. Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that agent-ios did not start. Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m.
 
 - Page: none; runs in the client process, not in the daemon
 - Default deadline: 15m0s (`--timeout` overrides it)
@@ -1573,7 +1573,7 @@ Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-
 ### `skills get`
 
 ```
-iwdp-cli skills get [<name>...] [flags]
+agent-ios skills get [<name>...] [flags]
 ```
 
 Print agent skills built into this binary (each guide without its front matter; --json gives the whole SKILL.md); without a name, or with --all, every skill.
@@ -1591,7 +1591,7 @@ Print agent skills built into this binary (each guide without its front matter; 
 ### `skills list`
 
 ```
-iwdp-cli skills list
+agent-ios skills list
 ```
 
 List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one.
@@ -1602,7 +1602,7 @@ List the agent skills built into this binary (name and description); 'skills get
 ### `skills path`
 
 ```
-iwdp-cli skills path [<name>]
+agent-ios skills path [<name>]
 ```
 
 Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all.
@@ -1616,7 +1616,7 @@ Write the built-in skills to the user cache directory (once per skills version, 
 ### `snapshot`
 
 ```
-iwdp-cli snapshot [flags]
+agent-ios snapshot [flags]
 ```
 
 Print the page's accessibility tree with @eN refs for later commands.
@@ -1634,7 +1634,7 @@ Print the page's accessibility tree with @eN refs for later commands.
 ### `state load`
 
 ```
-iwdp-cli state load <path>
+agent-ios state load <path>
 ```
 
 Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's.
@@ -1648,7 +1648,7 @@ Restore a state file written by state save: the page must be at the file's origi
 ### `state save`
 
 ```
-iwdp-cli state save <path>
+agent-ios state save <path>
 ```
 
 Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials).
@@ -1662,17 +1662,17 @@ Save the cookies, localStorage and sessionStorage of the page's current origin t
 ### `status`
 
 ```
-iwdp-cli status
+agent-ios status
 ```
 
-Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that iwdp-cli starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read.
+Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that agent-ios starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read.
 
 - Page: none; runs in the client process, not in the daemon
 
 ### `storage`
 
 ```
-iwdp-cli storage <area> [<action>] [<key>] [<value>] [flags]
+agent-ios storage <area> [<action>] [<key>] [<value>] [flags]
 ```
 
 Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session).
@@ -1693,7 +1693,7 @@ Read, set or clear localStorage or sessionStorage of the page: storage local [ke
 ### `swipe`
 
 ```
-iwdp-cli swipe <direction> [<px>] [flags]
+agent-ios swipe <direction> [<px>] [flags]
 ```
 
 Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down).
@@ -1713,7 +1713,7 @@ Swipe with synthetic touch events; scrolls as a fallback when the page cancels n
 ### `tab`
 
 ```
-iwdp-cli tab [<id>]
+agent-ios tab [<id>]
 ```
 
 Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs.
@@ -1727,7 +1727,7 @@ Make a tab (tN or label) this session's current page after a liveness probe; wit
 ### `tab close`
 
 ```
-iwdp-cli tab close [<id>]
+agent-ios tab close [<id>]
 ```
 
 Close a tab (default: the current one) with window.close(); works only for tabs that a script opened. In your turn on the simulator, a session that selected no tab must name the tab (exit 5).
@@ -1741,7 +1741,7 @@ Close a tab (default: the current one) with window.close(); works only for tabs 
 ### `tab find`
 
 ```
-iwdp-cli tab find [<url>] [flags]
+agent-ios tab find [<url>] [flags]
 ```
 
 Print the id of the tab whose page shows exactly this URL (query and fragment included), compared inside the page. It only reads: it navigates and selects nothing. The session keeps the lease of the tab that the command prints, as after any read of that tab, and no lease that only the command used on another tab. Exit 7 when no tab shows the URL; exit 1 when several do or a tab could not be read; exit 6 when the listing hides pages of a device that the caller has not reserved (--device limits the search, and that count, to one device).
@@ -1760,7 +1760,7 @@ Print the id of the tab whose page shows exactly this URL (query and fragment in
 ### `tab list`
 
 ```
-iwdp-cli tab list [flags]
+agent-ios tab list [flags]
 ```
 
 List the pages of the device as tabs t1, t2, ... with labels; \* marks this session's current tab.
@@ -1774,7 +1774,7 @@ List the pages of the device as tabs t1, t2, ... with labels; \* marks this sess
 ### `tab new`
 
 ```
-iwdp-cli tab new [<url>] [flags]
+agent-ios tab new [<url>] [flags]
 ```
 
 Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end.
@@ -1793,7 +1793,7 @@ Open a new tab with window.open (emulated user gesture) from the current page an
 ### `tap`
 
 ```
-iwdp-cli tap <target> [<y>] [flags]
+agent-ios tap <target> [<y>] [flags]
 ```
 
 Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and touchend, then the click sequence with pointerType touch.
@@ -1813,7 +1813,7 @@ Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and tou
 ### `trace start`
 
 ```
-iwdp-cli trace start [flags]
+agent-ios trace start [flags]
 ```
 
 Start a WebKit Timeline recording of the page for a Chrome trace file (trace stop writes it).
@@ -1827,7 +1827,7 @@ Start a WebKit Timeline recording of the page for a Chrome trace file (trace sto
 ### `trace stop`
 
 ```
-iwdp-cli trace stop [<path>]
+agent-ios trace stop [<path>]
 ```
 
 Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to path, or to a new file in the temp directory.
@@ -1836,12 +1836,12 @@ Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to pat
 
 | Argument | Required | Description |
 |---|---|---|
-| `<path>` | no | the trace file to write (default: a new iwdp-trace-\*.json in the temp directory) |
+| `<path>` | no | the trace file to write (default: a new agent-ios-trace-\*.json in the temp directory) |
 
 ### `type`
 
 ```
-iwdp-cli type [<target>] <text> [flags]
+agent-ios type [<target>] <text> [flags]
 ```
 
 Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) into an element, or with only \<text\> into the focused element.
@@ -1862,7 +1862,7 @@ Type text key by key (keydown, keypress, beforeinput, insertion, input, keyup) i
 ### `uncheck`
 
 ```
-iwdp-cli uncheck <target> [flags]
+agent-ios uncheck <target> [flags]
 ```
 
 Uncheck a checkbox (a hidden input through its label) and read the state back.
@@ -1881,7 +1881,7 @@ Uncheck a checkbox (a hidden input through its label) and read the state back.
 ### `upload`
 
 ```
-iwdp-cli upload <target> <files>...
+agent-ios upload <target> <files>...
 ```
 
 Set the files of a file input (read on the host, at most 8 MiB in total) and dispatch input and change.
@@ -1897,7 +1897,7 @@ Set the files of a file input (read on the host, at most 8 MiB in total) and dis
 ### `vitals`
 
 ```
-iwdp-cli vitals
+agent-ios vitals
 ```
 
 Show the page's Web Vitals: LCP, CLS, TTFB, FCP, INP, DOMContentLoaded and load (unavailable ones say why).
@@ -1907,7 +1907,7 @@ Show the page's Web Vitals: LCP, CLS, TTFB, FCP, INP, DOMContentLoaded and load 
 ### `wait`
 
 ```
-iwdp-cli wait [<target>] [flags]
+agent-ios wait [<target>] [flags]
 ```
 
 Wait for milliseconds, an element state, text, a URL glob, a load state or a JavaScript condition (default timeout 25 s; exit 3 on timeout).

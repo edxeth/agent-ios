@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 func openRaw(t *testing.T, tr *Transport, id string) transport.MessageConn {

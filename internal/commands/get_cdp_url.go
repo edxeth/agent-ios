@@ -3,8 +3,8 @@ package commands
 import (
 	"context"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // get cdp-url issues the CDP endpoint record of the caller's session and

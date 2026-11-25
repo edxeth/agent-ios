@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // deadlineFixture registers a registry command that needs a page and runs

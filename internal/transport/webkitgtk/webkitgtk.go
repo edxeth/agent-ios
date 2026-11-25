@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Transport reaches one WebKitGTK inspector HTTP server.

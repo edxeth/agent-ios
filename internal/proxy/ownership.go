@@ -195,11 +195,11 @@ func listenerPIDs(ctx context.Context, port uint16) ([]int, error) {
 const startLockPoll = 50 * time.Millisecond
 
 // runtimeName is the name of this user's file of kind for the listing
-// address addr, iwdp-cli-<kind>-<uid>-<address>.<ext>: it carries the user
+// address addr, agent-ios-<kind>-<uid>-<address>.<ext>: it carries the user
 // id, so in a shared directory one user's file never blocks another user.
 func runtimeName(kind, addr, ext string) string {
 	name := strings.NewReplacer(":", "_", "/", "_", "[", "", "]", "", "%", "_").Replace(addr)
-	return fmt.Sprintf("iwdp-cli-%s-%d-%s.%s", kind, os.Getuid(), name, ext)
+	return fmt.Sprintf("agent-ios-%s-%d-%s.%s", kind, os.Getuid(), name, ext)
 }
 
 // lockStart takes the host-wide start lock of the listing address addr, so

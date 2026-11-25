@@ -1,20 +1,20 @@
 # Sessions, leases and device reservations
 
-Safari allows one inspector connection per tab, and a new connection takes the tab from the old one. iwdp-cli therefore has three layers of ownership. This page states the rules; agents must follow them.
+Safari allows one inspector connection per tab, and a new connection takes the tab from the old one. agent-ios therefore has three layers of ownership. This page states the rules; agents must follow them.
 
 ## Sessions
 
-- A session is a name that the client chooses: `--session <name>` or `IWDP_SESSION`. The default is `default`.
+- A session is a name that the client chooses: `--session <name>` or `AGENT_IOS_SESSION`. The default is `default`.
 - The default is for compatibility only. It is not isolation: two agents that both use `default` share leases, refs and dialog answers. **Every agent sets its own stable session name.**
 - Sharing a session is correct only when a CDP client connects through a URL that `get cdp-url` issued for that session ([cdp.md](cdp.md)).
-- `iwdp-cli session` prints the current name; `session info` shows the session's leases; `session list` lists the sessions that hold leases.
+- `agent-ios session` prints the current name; `session info` shows the session's leases; `session list` lists the sessions that hold leases.
 
 ## Leases
 
 A lease binds one page to one session. It carries an **epoch**, a number that increases with each grant. Every operation carries the epoch it was admitted under, and an operation with an old epoch is refused before it sends anything.
 
 - The first page command of a session takes the lease on its page.
-- A command of another session on a leased page fails at once with: `page "<title>" is leased by session "<name>" since <time> (last command <age> ago); use --session <name>, wait, or run 'iwdp-cli lease break <page>'` (exit 4).
+- A command of another session on a leased page fails at once with: `page "<title>" is leased by session "<name>" since <time> (last command <age> ago); use --session <name>, wait, or run 'agent-ios lease break <page>'` (exit 4).
 - `--wait-lease <duration>` waits for the lease inside the command deadline.
 - A lease ends with `close` or `session release` (this session only), after 5 minutes without commands and captures (idle expiry), or with `lease break <page>`.
 - The end of a lease runs the cleanup of the session's state on the page: interception and paused requests are continued, breakpoints removed and the debugger resumed, overrides and init scripts removed, dialog overrides restored, overlays removed. The release does **not** undo what the page did: it does not restore authentication state, and it does not undo submitted forms or transactions.
@@ -26,25 +26,25 @@ When a page connection closes without a request from the daemon (another inspect
 
 - it never reconnects by itself;
 - the next command fails with "connection to page was closed by someone else or by the device; ownership is unknown" (exit 4);
-- only `--takeover` on a command, or `iwdp-cli lease takeover [page]`, reattaches the page. It needs the device reservation and **the approval of the device owner**: a takeover takes the page back from whoever holds it now.
+- only `--takeover` on a command, or `agent-ios lease takeover [page]`, reattaches the page. It needs the device reservation and **the approval of the device owner**: a takeover takes the page back from whoever holds it now.
 
 A page that stops answering is different: it is **stalled**. The daemon then tries one background reconnect (15 s at most), only while the lease is valid and the page is not lost. A command that arrives during that reconnect waits for it within its own deadline.
 
 ## Device reservations
 
-The daemon cannot see every inspector client: another agent's script, an older iwdp-cli, or Safari Web Inspector on a Mac can hold a page, and iwdp gives a page to the newest client. Reservations are the cooperative rule that prevents this between users of iwdp-cli.
+The daemon cannot see every inspector client: another agent's script, an older agent-ios, or Safari Web Inspector on a Mac can hold a page, and iwdp gives a page to the newest client. Reservations are the cooperative rule that prevents this between users of agent-ios.
 
 1. **No page connection to a physical device without a reservation.** Reserve the device before the first page command:
 
    ```bash
-   iwdp-cli device reserve --owner <owner> [--device <udid>] [--ttl 2h]
+   agent-ios device reserve --owner <owner> [--device <udid>] [--ttl 2h]
    ```
 
    Without `--device` the reservation covers every device. It fails when another owner holds a live reservation. The reservation is renewed while the owner holds leases. A page command without a matching reservation fails with exit 6, also on a page that the daemon is already attached to and under a lease that the session took before; so does a CDP operation under such a lease. When the owner's reservation is released, expires or passes to another owner, the daemon's sweep (every 5 s) ends the owner's leases on the device's pages, so that no event stream or CDP attachment goes on without it. A reservation that cannot be read admits nothing on a physical device.
-2. The reservation owner of a command is `--reservation <owner>` or `IWDP_DEVICE_RESERVATION`, else the session name. An orchestrator can reserve once and give its workers its owner name in `IWDP_DEVICE_RESERVATION` (for example `export IWDP_DEVICE_RESERVATION="$OWNER"`).
-3. Release at the end of the run: `iwdp-cli device release --owner <owner>`. `device list` shows the live reservations.
-4. WebKitGTK needs no reservation. An iOS Simulator over SSH is shared by taking turns with `iwdp-cli sim reserve` and `sim release` instead ([simulator.md](simulator.md)): its own reservation, which hides its tabs from other owners and ends 2 minutes after the owner's last use. A simulator without such a reservation needs none.
-5. Before the first attach to a page, the daemon checks the reservation and then a busy hint: iwdp lists an empty `devtoolsFrontendUrl` for a page that already has a client, but only when iwdp runs with its frontend. With `--no-frontend` (how iwdp-cli starts it) ownership is unknown, and the attach is accepted only inside a reservation.
+2. The reservation owner of a command is `--reservation <owner>` or `AGENT_IOS_DEVICE_RESERVATION`, else the session name. An orchestrator can reserve once and give its workers its owner name in `AGENT_IOS_DEVICE_RESERVATION` (for example `export AGENT_IOS_DEVICE_RESERVATION="$OWNER"`).
+3. Release at the end of the run: `agent-ios device release --owner <owner>`. `device list` shows the live reservations.
+4. WebKitGTK needs no reservation. An iOS Simulator over SSH is shared by taking turns with `agent-ios sim reserve` and `sim release` instead ([simulator.md](simulator.md)): its own reservation, which hides its tabs from other owners and ends 2 minutes after the owner's last use. A simulator without such a reservation needs none.
+5. Before the first attach to a page, the daemon checks the reservation and then a busy hint: iwdp lists an empty `devtoolsFrontendUrl` for a page that already has a client, but only when iwdp runs with its frontend. With `--no-frontend` (how agent-ios starts it) ownership is unknown, and the attach is accepted only inside a reservation.
 6. **Hints and reservations are not locks.** They do not stop a client that ignores reservations (another tool, a raw script, Safari Web Inspector).
 7. Tab discovery (`tab list`) and the CDP endpoint list only pages of devices that the owner reserved: `get cdp-url` for another device's page fails with exit 6, and an endpoint issued before its owner lost the reservation no longer lists the device's pages, its selected page included. An owner that is refused learns nothing of the page: the daemon names the page to the client only after the reservation check.
 
@@ -54,7 +54,7 @@ All entry points (CLI commands and CDP messages) are operations in one scheduler
 
 ## Rules for agents
 
-- Set a distinct, stable `--session` (or `IWDP_SESSION`) for each agent.
+- Set a distinct, stable `--session` (or `AGENT_IOS_SESSION`) for each agent.
 - On a physical device: `device reserve` at the start of the run, `close` and `device release` at the end.
 - Never `lease break` or `--takeover` a page that another agent may use, unless the device owner approved it.
 - On "lost": stop and ask; do not retry in a loop.

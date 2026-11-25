@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
 )
 
 // W4-2b commands on WebKitGTK (design docs/design/agentic-parity.md,

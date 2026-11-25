@@ -308,7 +308,7 @@ func TestSimSetupRefusesWhileAnEarlierSetupIsRecorded(t *testing.T) {
 		if code == 0 || !strings.Contains(stderr, "make sim-teardown") {
 			t.Fatalf("setup %v with an earlier setup recorded: exit %d, stderr %q; want a failure that names make sim-teardown", args, code, stderr)
 		}
-		if strings.Contains(stdout, "IWDP_SIM_") {
+		if strings.Contains(stdout, "AGENT_IOS_SIM_") {
 			t.Fatalf("setup %v printed %q; want no variables", args, stdout)
 		}
 		if calls := sim.calls(t); calls != before {
@@ -487,7 +487,7 @@ func TestSimTeardownAndSetupAreSerialized(t *testing.T) {
 // setup or teardown) makes setup fail with advice after its wait, without
 // any simctl call.
 func TestSimSetupFailsClearlyOnAStaleLock(t *testing.T) {
-	env, sim := simScriptEnv(t, "Shutdown", "IWDP_SIM_LOCK_WAIT_SECONDS=1")
+	env, sim := simScriptEnv(t, "Shutdown", "AGENT_IOS_SIM_LOCK_WAIT_SECONDS=1")
 	dir := filepath.Join(sim.stateDir, "iwdp-sim-"+strconv.Itoa(os.Getuid()))
 	if err := os.MkdirAll(filepath.Join(dir, "lock"), 0o700); err != nil {
 		t.Fatal(err)

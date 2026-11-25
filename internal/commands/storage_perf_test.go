@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Tests of the W4-2b command files: cookies clear and set (import),
@@ -80,7 +80,7 @@ func TestStoragePerfCommandsHelpAndFlags(t *testing.T) {
 		called := false
 		newEnv := func(context.Context, *Invocation) (Env, error) { called = true; return nil, fmt.Errorf("no env") }
 		args := append(strings.Fields(name), "--help")
-		if code := RunCLIStarted(context.Background(), args, &out, &errb, nil, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli "+name) || called {
+		if code := RunCLIStarted(context.Background(), args, &out, &errb, nil, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: agent-ios "+name) || called {
 			t.Errorf("%s --help: exit %d, called %v, out %q", name, code, called, out.String())
 		}
 		out.Reset()
@@ -511,7 +511,7 @@ func TestTraceCommands(t *testing.T) {
 		Path   string `json:"path"`
 		Events int    `json:"events"`
 	}
-	if code != 0 || json.Unmarshal([]byte(out), &res) != nil || filepath.Dir(res.Path) != os.TempDir() || !strings.HasPrefix(filepath.Base(res.Path), "iwdp-trace-") {
+	if code != 0 || json.Unmarshal([]byte(out), &res) != nil || filepath.Dir(res.Path) != os.TempDir() || !strings.HasPrefix(filepath.Base(res.Path), "agent-ios-trace-") {
 		t.Fatalf("trace stop without a path: exit %d, %q", code, out)
 	}
 	t.Cleanup(func() { _ = os.Remove(res.Path) })

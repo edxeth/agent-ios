@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // FlagType is the value type of a flag.
@@ -86,7 +86,7 @@ type Command struct {
 	// Local commands run in the client process (the daemon lifecycle);
 	// every other command runs in the daemon (design 2.10).
 	Local bool
-	// ClientStep, when set, runs in the iwdp-cli process after parsing and
+	// ClientStep, when set, runs in the agent-ios process after parsing and
 	// before the command runs or goes to the daemon (RunCLIStarted only), under
 	// the command deadline (ctx). It may change the input: a secret read
 	// from the standard input here (fill --stdin, the password of set
@@ -120,7 +120,7 @@ type RemoteEnv interface {
 
 // Globals are the global flags, parsed once for every command.
 type Globals struct {
-	Session           string        // --session, IWDP_SESSION; default "default" (D8)
+	Session           string        // --session, AGENT_IOS_SESSION; default "default" (D8)
 	Page              string        // --page
 	OnlyTab           bool          // --only-tab: the only tab of the listing (never with --page)
 	Timeout           time.Duration // --timeout; 0: the command's default
@@ -128,10 +128,10 @@ type Globals struct {
 	Transport         string        // --transport auto|iwdp|direct|webkitgtk
 	MaxOutput         int           // --max-output, in bytes; 0: no limit
 	ContentBoundaries bool          // --content-boundaries
-	Reservation       string        // --reservation, IWDP_DEVICE_RESERVATION: device reservation owner (design 2.5)
+	Reservation       string        // --reservation, AGENT_IOS_DEVICE_RESERVATION: device reservation owner (design 2.5)
 	WaitLease         time.Duration // --wait-lease: wait this long for another session's lease
 	Takeover          bool          // --takeover: reattach a lost page (needs the reservation)
-	Private           bool          // --private, IWDP_PRIVATE: print no title, URL, device, session or error text (private.go)
+	Private           bool          // --private, AGENT_IOS_PRIVATE: print no title, URL, device, session or error text (private.go)
 }
 
 // Input is a parsed invocation of a command.

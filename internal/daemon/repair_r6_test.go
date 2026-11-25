@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Regression tests for the sixth W1b review (R6-5, item 3: daemons shared by
 // tests).
 
-// noDaemonCore makes t run the in-process core of IWDP_NO_DAEMON=1 and ends
+// noDaemonCore makes t run the in-process core of AGENT_IOS_NO_DAEMON=1 and ends
 // that core when t ends. The core is one per process, so without the
 // cleanup a later test, or the next run of -count, would get this test's
 // page records, as the CLI tests did with a daemon shared by the suite
@@ -20,7 +20,7 @@ import (
 // fake that gets the same loopback URL).
 func noDaemonCore(t *testing.T) {
 	t.Helper()
-	t.Setenv("IWDP_NO_DAEMON", "1")
+	t.Setenv("AGENT_IOS_NO_DAEMON", "1")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), ShutdownBudget+time.Second)
 		defer cancel()
@@ -39,7 +39,7 @@ func TestNoDaemonCoreIsPerTest(t *testing.T) {
 		// close.
 		f := newFake(t, fakewebkit.Options{})
 		noDaemonCore(t)
-		c, err := Connect(ctxFor(t, 3*time.Second), Options{Dir: filepath.Join(shortDir(t), "iwdp"), Exe: "/bin/false", Version: "test"})
+		c, err := Connect(ctxFor(t, 3*time.Second), Options{Dir: filepath.Join(shortDir(t), "agent-ios"), Exe: "/bin/false", Version: "test"})
 		if err != nil {
 			t.Fatalf("Connect: %v", err)
 		}
@@ -50,7 +50,7 @@ func TestNoDaemonCoreIsPerTest(t *testing.T) {
 	})
 	t.Run("second", func(t *testing.T) {
 		noDaemonCore(t)
-		c, err := Connect(ctxFor(t, 3*time.Second), Options{Dir: filepath.Join(shortDir(t), "iwdp"), Exe: "/bin/false", Version: "test"})
+		c, err := Connect(ctxFor(t, 3*time.Second), Options{Dir: filepath.Join(shortDir(t), "agent-ios"), Exe: "/bin/false", Version: "test"})
 		if err != nil {
 			t.Fatalf("Connect: %v", err)
 		}

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/refs"
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/refs"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // F1: This is the constructor used by core.pageConn.probe for stallErr.

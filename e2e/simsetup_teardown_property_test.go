@@ -19,7 +19,7 @@ import (
 // process that its pid names, for TestSimTeardownSignalsOnlyAVerifiedIWDPProperty.
 type teardownWorld struct {
 	Linux        bool   // the system: Linux (pidfd, /proc) or macOS (signal by pid, KERN_PROCARGS2 built from the probe's /proc)
-	Kind         string // the record: "sim" (scripts/sim-setup.sh's iwdp.pid), "cli" (iwdp-cli-started-*), "mcp" (iwdp-mcp-started-*) or "other" (a JSON record with another name)
+	Kind         string // the record: "sim" (scripts/sim-setup.sh's iwdp.pid), "cli" (agent-ios-started-*), "mcp" (iwdp-mcp-started-*) or "other" (a JSON record with another name)
 	Validity     string // the record: "valid", "public" (others can write it) or "no-fields" (only the pid)
 	Existence    string // "alive", "gone" (the probe was killed) or "not-permitted" (the helper's test seam)
 	StartMatches bool   // ps shows the recorded start time
@@ -33,11 +33,11 @@ type teardownWorld struct {
 // record kind (docs/device-runbook.md, Stopping an iwdp by hand, and the
 // header of scripts/iwdp-owner-check.sh); a JSON record of another name
 // has none.
-var kindVariable = map[string]string{"sim": simTokenEnv, "cli": "IWDP_CLI_START_TOKEN", "mcp": "IWDP_MCP_START_TOKEN"}
+var kindVariable = map[string]string{"sim": simTokenEnv, "cli": "AGENT_IOS_START_TOKEN", "mcp": "IWDP_MCP_START_TOKEN"}
 
 // kindFile is the record's file name for each kind.
 var kindFile = map[string]string{
-	"sim": "iwdp.pid", "cli": "iwdp-cli-started-0-127.0.0.1:9221.json",
+	"sim": "iwdp.pid", "cli": "agent-ios-started-0-127.0.0.1:9221.json",
 	"mcp": "iwdp-mcp-started-0-127.0.0.1:9221.json", "other": "iwdp-started-0-127.0.0.1:9221.json",
 }
 
@@ -165,12 +165,12 @@ func (w teardownWorld) forgetVerdict(goneNow bool) (string, bool) {
 }
 
 // teardownPropertyCount is the number of generated worlds, after the
-// enumerated ones: IWDP_TEARDOWN_PROPERTY_COUNT, else 30.
+// enumerated ones: AGENT_IOS_TEARDOWN_PROPERTY_COUNT, else 30.
 func teardownPropertyCount(t *testing.T) int {
-	if s := os.Getenv("IWDP_TEARDOWN_PROPERTY_COUNT"); s != "" {
+	if s := os.Getenv("AGENT_IOS_TEARDOWN_PROPERTY_COUNT"); s != "" {
 		n, err := strconv.Atoi(s)
 		if err != nil || n < 1 {
-			t.Fatalf("IWDP_TEARDOWN_PROPERTY_COUNT=%q: want a positive integer", s)
+			t.Fatalf("AGENT_IOS_TEARDOWN_PROPERTY_COUNT=%q: want a positive integer", s)
 		}
 		return n
 	}
@@ -178,18 +178,18 @@ func teardownPropertyCount(t *testing.T) int {
 }
 
 // teardownPropertySeed is the seed of the generated worlds:
-// IWDP_TEARDOWN_PROPERTY_SEED, else the time. It is logged, so a failing
+// AGENT_IOS_TEARDOWN_PROPERTY_SEED, else the time. It is logged, so a failing
 // run can be repeated.
 func teardownPropertySeed(t *testing.T) int64 {
 	seed := time.Now().UnixNano()
-	if s := os.Getenv("IWDP_TEARDOWN_PROPERTY_SEED"); s != "" {
+	if s := os.Getenv("AGENT_IOS_TEARDOWN_PROPERTY_SEED"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			t.Fatalf("IWDP_TEARDOWN_PROPERTY_SEED=%q: want an integer", s)
+			t.Fatalf("AGENT_IOS_TEARDOWN_PROPERTY_SEED=%q: want an integer", s)
 		}
 		seed = n
 	}
-	t.Logf("generated worlds: IWDP_TEARDOWN_PROPERTY_SEED=%d", seed)
+	t.Logf("generated worlds: AGENT_IOS_TEARDOWN_PROPERTY_SEED=%d", seed)
 	return seed
 }
 
@@ -245,17 +245,17 @@ func TestSimTeardownSignalsOnlyAVerifiedIWDPProperty(t *testing.T) {
 		case "kind":
 			v := kindVariable[w.Kind]
 			if v == "" {
-				v = "IWDP_CLI_START_TOKEN"
+				v = "AGENT_IOS_START_TOKEN"
 			}
 			env = append(env, v+"="+token)
 		case "other-var":
-			v := "IWDP_CLI_START_TOKEN"
+			v := "AGENT_IOS_START_TOKEN"
 			if w.Kind == "cli" {
 				v = "IWDP_MCP_START_TOKEN"
 			}
 			env = append(env, v+"="+token)
 		default:
-			env = append(env, kindVariable["sim"]+"="+probeToken, "IWDP_CLI_START_TOKEN="+probeToken)
+			env = append(env, kindVariable["sim"]+"="+probeToken, "AGENT_IOS_START_TOKEN="+probeToken)
 		}
 		argv0 := "python3"
 		if w.IsIWDP {
@@ -291,7 +291,7 @@ func TestSimTeardownSignalsOnlyAVerifiedIWDPProperty(t *testing.T) {
 		if w.ReplacedAt != "" {
 			v := kindVariable[w.Kind]
 			if v == "" {
-				v = "IWDP_CLI_START_TOKEN"
+				v = "AGENT_IOS_START_TOKEN"
 			}
 			decoy = startOwnerProbe(t, probeSpec{argv0: iwdpProgram, env: []string{v + "=" + decoyToken}, exitOnTerm: true})
 			if err := os.WriteFile(swapTo, []byte(teardownRecord(w.Kind, decoy.pid, decoyToken)+"\n"), 0o600); err != nil {

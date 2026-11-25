@@ -29,7 +29,7 @@ func init() {
 		Summary: "Replace an input's value: beforeinput (insertReplacementText), the native value setter, input and change.",
 		Args:    []Arg{targetArg("input, textarea or contenteditable"), {Name: "text", Help: "the new value (or --stdin)"}},
 		Flags: []Flag{
-			{Name: "stdin", Type: FlagBool, Help: "read the value from the standard input (iwdp-cli only), so a secret is not in the command line; one trailing newline is removed"},
+			{Name: "stdin", Type: FlagBool, Help: "read the value from the standard input (agent-ios only), so a secret is not in the command line; one trailing newline is removed"},
 			forceFlag,
 		},
 		ClientStep: fillStdin,
@@ -214,7 +214,7 @@ func flagDuration(in Input, name string) time.Duration {
 const maxStdinValue = 1 << 20
 
 // fillStdin is fill's client step: with --stdin it reads the value in the
-// iwdp-cli process and passes it on as the text argument, which reaches
+// agent-ios process and passes it on as the text argument, which reaches
 // the daemon in the /v1/run request body, never in a command line.
 func fillStdin(ctx context.Context, in *Input, stdin io.Reader) error {
 	if !flagBool(*in, "stdin") {
@@ -241,7 +241,7 @@ func fillStdin(ctx context.Context, in *Input, stdin io.Reader) error {
 
 func runFill(ctx context.Context, env Env, in Input) (Result, error) {
 	if flagBool(in, "stdin") {
-		return Result{}, usagef("fill --stdin reads the standard input of iwdp-cli; other callers pass the value as text")
+		return Result{}, usagef("fill --stdin reads the standard input of agent-ios; other callers pass the value as text")
 	}
 	if len(in.Args) < 2 {
 		return Result{}, usagef("fill needs <target> and <text> (or --stdin)")

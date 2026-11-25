@@ -2,7 +2,7 @@
 
 ## The synthetic-input statement
 
-iwdp-cli cannot produce trusted input on iOS. The WebKit Inspector Protocol has no Input domain, so every click, tap, key press, scroll and drag is a **synthetic DOM event** that the injected runtime dispatches in the page. Every such event has `isTrusted === false`.
+agent-ios cannot produce trusted input on iOS. The WebKit Inspector Protocol has no Input domain, so every click, tap, key press, scroll and drag is a **synthetic DOM event** that the injected runtime dispatches in the page. Every such event has `isTrusted === false`.
 
 What this means for results:
 

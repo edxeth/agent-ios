@@ -118,7 +118,7 @@ func TestConsoleEvents(t *testing.T) {
 		"parameters": []any{map[string]any{"type": "string", "value": "careful"}, map[string]any{"type": "number", "value": 1, "description": "1"}},
 		"stackTrace": map[string]any{"callFrames": []any{map[string]any{"functionName": "f", "url": "https://one.example/app.js", "scriptId": "3", "lineNumber": 10, "columnNumber": 5}}},
 	}})
-	fp.consoleDebug("[iwdp:error] {}")
+	fp.consoleDebug("[agent-ios:error] {}")
 	fp.consoleDebug(bindMarker + `{"n":"x","k":"nope","p":"1"}`)
 	fp.f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{
 		"source": "javascript", "level": "error", "text": "TypeError: x is not a function", "url": "https://one.example/app.js", "line": 4, "column": 2,

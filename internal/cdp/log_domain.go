@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // The Log domain (design docs/design/agentic-parity.md, section 5.3):
@@ -99,7 +99,7 @@ func (ps *pageState) dialogEntryLocked(payload string) {
 	}
 	by := "by the session's dialog policy"
 	if u.ID != "" {
-		by = "by the answer " + u.ID + " armed with iwdp-cli dialog"
+		by = "by the answer " + u.ID + " armed with agent-ios dialog"
 	}
 	text := fmt.Sprintf("dialog %s %q answered %s %s; %s", u.Type, u.Message, res, by, errDialogs.Message)
 	ps.emitLocked(domLog, "Log.entryAdded", map[string]any{"entry": map[string]any{

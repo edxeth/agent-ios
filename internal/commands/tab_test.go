@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Tests of tab.go with a daemon manager over fake pages (design 3.8 and
@@ -295,7 +295,7 @@ func TestTabListLeavesOutUnreservedDevicePages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "No tabs.\n1 page(s) are not listed: those of physical devices without a reservation of owner \"a\" (run 'iwdp-cli device reserve --owner a' or pass --reservation <owner>), and the simulator's while another owner reserves it (iwdp-cli sim reserve waits for it)"
+	want := "No tabs.\n1 page(s) are not listed: those of physical devices without a reservation of owner \"a\" (run 'agent-ios device reserve --owner a' or pass --reservation <owner>), and the simulator's while another owner reserves it (agent-ios sim reserve waits for it)"
 	if r.Text != want || strings.Contains(r.Text, "Bank") || r.Data.(map[string]any)["hidden"] != 1 {
 		t.Fatalf("tab list of an unreserved device:\n%s\n%v\nwant:\n%s", r.Text, r.Data, want)
 	}

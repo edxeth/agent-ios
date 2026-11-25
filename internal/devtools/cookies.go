@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Cookie import and clearing for "cookies set --curl <file>" and "cookies

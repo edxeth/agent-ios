@@ -46,11 +46,11 @@ func TestValidHelpNeedsNoArgumentsAndNoConnection(t *testing.T) {
 		args []string
 		want string // stdout prefix
 	}{
-		{[]string{"click", "--help"}, "Usage: iwdp-cli click"},
-		{[]string{"fixture", "click", "--force", "-h"}, "Usage: iwdp-cli fixture click"},
-		{[]string{"fixture", "click", "--button=right", "--json", "--help"}, "Usage: iwdp-cli fixture click"},
-		{[]string{"network", "--help"}, "Usage: iwdp-cli network <command>"},
-		{[]string{"network", "-d", "1", "--help"}, "Usage: iwdp-cli network <command>"},
+		{[]string{"click", "--help"}, "Usage: agent-ios click"},
+		{[]string{"fixture", "click", "--force", "-h"}, "Usage: agent-ios fixture click"},
+		{[]string{"fixture", "click", "--button=right", "--json", "--help"}, "Usage: agent-ios fixture click"},
+		{[]string{"network", "--help"}, "Usage: agent-ios network <command>"},
+		{[]string{"network", "-d", "1", "--help"}, "Usage: agent-ios network <command>"},
 		{[]string{"--help"}, "Commands:"},
 		{[]string{"-h"}, "Commands:"},
 		{[]string{"--help", "-h"}, "Commands:"},

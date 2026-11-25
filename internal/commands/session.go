@@ -10,7 +10,7 @@ import (
 // Session commands (design 4.2 row "session", decision D8).
 func init() {
 	Register(&Command{
-		Name: "session", Summary: "Print the current session name (--session or IWDP_SESSION; default \"default\").",
+		Name: "session", Summary: "Print the current session name (--session or AGENT_IOS_SESSION; default \"default\").",
 		Run: func(_ context.Context, _ Env, in Input) (Result, error) {
 			return Result{Text: in.Global.Session, Data: map[string]string{"session": in.Global.Session}}, nil
 		},

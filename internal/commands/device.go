@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // defaultReservationTTL is the lifetime of a device reservation; the daemon
@@ -16,7 +16,7 @@ const defaultReservationTTL = "2h"
 // Device reservation commands (design 2.5 rule 1, decision D11).
 func init() {
 	deviceFlag := Flag{Name: "device", Type: FlagString, Default: core.AnyDevice, Help: "device UDID; * reserves every device"}
-	ownerFlag := Flag{Name: "owner", Type: FlagString, Help: "reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session"}
+	ownerFlag := Flag{Name: "owner", Type: FlagString, Help: "reservation owner; default --reservation (AGENT_IOS_DEVICE_RESERVATION), else the session"}
 	Register(&Command{
 		Name: "device reserve", Summary: "Reserve a physical device for an owner, so that only that owner's sessions attach to its pages.",
 		Flags: []Flag{deviceFlag, ownerFlag, {Name: "ttl", Type: FlagDuration, Default: defaultReservationTTL, Help: "lifetime, renewed while the owner holds leases"}},
@@ -56,7 +56,7 @@ func init() {
 			// would release nothing and keep the others waiting (live run
 			// 13, 2026-11-24): refuse, naming the command that releases it.
 			if !held && heldSim {
-				return Result{}, &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("device release: %q holds no reservation of device %s, but holds the simulator's: release that with 'iwdp-cli sim release'", owner, dev)}
+				return Result{}, &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("device release: %q holds no reservation of device %s, but holds the simulator's: release that with 'agent-ios sim release'", owner, dev)}
 			}
 			if err := rs.Release(dev, owner); err != nil {
 				return Result{}, err
@@ -97,7 +97,7 @@ func init() {
 func notSimulator(name, instead string) func(Input) error {
 	return func(in Input) error {
 		if d, _ := in.Flags["device"].(string); strings.EqualFold(d, core.SimulatorDevice) {
-			return usagef("%s: the simulator is not a physical device: use 'iwdp-cli %s'", name, instead)
+			return usagef("%s: the simulator is not a physical device: use 'agent-ios %s'", name, instead)
 		}
 		return nil
 	}

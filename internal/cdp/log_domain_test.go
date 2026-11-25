@@ -24,7 +24,7 @@ func TestDialogs(t *testing.T) {
 	r, fp, c, sid, _ := attachPage(t)
 	f := r.fake["One"]
 	_, err := c.Call(ctxFor(t, 5*time.Second), sid, "Page.handleJavaScriptDialog", map[string]any{"accept": true, "promptText": "yes"})
-	if err == nil || !strings.Contains(err.Error(), "dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with iwdp-cli dialog accept|dismiss") {
+	if err == nil || !strings.Contains(err.Error(), "dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with agent-ios dialog accept|dismiss") {
 		t.Fatalf("handleJavaScriptDialog: %v", err)
 	}
 	call(t, c, sid, "Page.enable", nil)
@@ -54,7 +54,7 @@ func TestDialogs(t *testing.T) {
 		t.Fatalf("the policy answer's entry %+v", e)
 	}
 	e = decode[logEntry](t, waitEvent(t, c, seq, sid, "Log.entryAdded", func(p json.RawMessage) bool { return strings.Contains(string(p), "Name?") }).Params)
-	if !strings.Contains(e.Entry.Text, `answered "Ann" by the answer d3 armed with iwdp-cli dialog`) {
+	if !strings.Contains(e.Entry.Text, `answered "Ann" by the answer d3 armed with agent-ios dialog`) {
 		t.Fatalf("the armed answer's entry %+v", e)
 	}
 	for _, ev := range c.Events() {

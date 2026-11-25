@@ -17,9 +17,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Client sources above the transport's message limit (P2 item 2,
@@ -158,7 +158,7 @@ func (m *stageModel) final(realm string, st staged) (string, map[string]any) {
 	src, ok := m.take(realm, st)
 	switch {
 	case !ok:
-		return "", thrown("Error: iwdp: the staged source is incomplete")
+		return "", thrown("Error: agent-ios: the staged source is incomplete")
 	case fault == "" && !probesHold(st):
 		fault = notBuiltinEval
 	}

@@ -22,7 +22,7 @@ import (
 	ios "github.com/danielpaulus/go-ios/ios"
 	"howett.net/plist"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 const (
@@ -39,7 +39,7 @@ const (
 	// infoBudget bounds the lockdown query for the version and name of one device.
 	infoBudget = 2 * time.Second
 	// usbmuxClientName identifies this program to usbmuxd.
-	usbmuxClientName = "iwdp-cli"
+	usbmuxClientName = "agent-ios"
 )
 
 // deviceConn is a device stream with deadlines (the TLS service connection

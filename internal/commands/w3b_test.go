@@ -13,10 +13,10 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/refs"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/refs"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Tests of the W3b command files on the fake WebKit endpoint (the page
@@ -448,7 +448,7 @@ func TestFillStdinReadsTheValueInTheClient(t *testing.T) {
 	if a := h.page.last("act")["args"].(map[string]any); a["text"] != "s3cret" {
 		t.Fatalf("fill --stdin sent %v", a)
 	}
-	if _, err := runFill(t.Context(), pageEnv{h.ps}, Input{Args: []string{"#pw"}, Flags: map[string]any{"stdin": true}}); ExitCodeOf(err) != ExitUsage || !strings.Contains(err.Error(), "standard input of iwdp-cli") {
+	if _, err := runFill(t.Context(), pageEnv{h.ps}, Input{Args: []string{"#pw"}, Flags: map[string]any{"stdin": true}}); ExitCodeOf(err) != ExitUsage || !strings.Contains(err.Error(), "standard input of agent-ios") {
 		t.Fatalf("fill --stdin without the client step: %v", err)
 	}
 }

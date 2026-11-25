@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // "state save <path>" and "state load <path>" (design 4.2): the cookies
@@ -137,7 +137,7 @@ type StateLoadResult struct {
 // and only cookies that the browser sends to its host.
 func checkState(s State) (string, error) {
 	if s.Version != StateVersion {
-		return "", fmt.Errorf("state file version %d: this iwdp-cli reads version %d", s.Version, StateVersion)
+		return "", fmt.Errorf("state file version %d: this agent-ios reads version %d", s.Version, StateVersion)
 	}
 	if len(s.Origins) != 1 {
 		return "", fmt.Errorf("a state file holds one origin; this one has %d", len(s.Origins))
@@ -224,10 +224,10 @@ func DecodeState(data []byte) (State, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&s); err != nil {
-		return State{}, fmt.Errorf("the file is not an iwdp state file: %s", strings.TrimPrefix(err.Error(), "json: "))
+		return State{}, fmt.Errorf("the file is not an agent-ios state file: %s", strings.TrimPrefix(err.Error(), "json: "))
 	}
 	if s.Version != StateVersion {
-		return State{}, fmt.Errorf("the file is not an iwdp state file: version %d, want %d", s.Version, StateVersion)
+		return State{}, fmt.Errorf("the file is not an agent-ios state file: version %d, want %d", s.Version, StateVersion)
 	}
 	return s, nil
 }

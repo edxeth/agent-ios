@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
 )
 
 // The Target domain (design 5.2 and 5.3): each page in the record's scope

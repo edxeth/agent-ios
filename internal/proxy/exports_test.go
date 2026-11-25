@@ -8,7 +8,7 @@ import (
 )
 
 // ownsListing says "not listening" for a free address and "not own" for a
-// listener that iwdp-cli did not start and record: sim up refuses such an
+// listener that agent-ios did not start and record: sim up refuses such an
 // iwdp instead of trusting where it looks for a simulator.
 func TestOwnsListingOfAFreeAndAForeignAddress(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")

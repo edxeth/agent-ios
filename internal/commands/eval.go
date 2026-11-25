@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // eval evaluates JavaScript in the session's page (the agent-browser

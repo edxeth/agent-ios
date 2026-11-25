@@ -1,7 +1,7 @@
 // Package skills serves the agent skills that are embedded in the binary
 // (design docs/design/agentic-parity.md, sections 4.2 "skills get|list|path"
 // and 7.9). The source files are the guides skill-data/<name>/SKILL.md in
-// the repository (package github.com/nnemirovsky/iwdp-cli/skill-data); the
+// the repository (package github.com/nnemirovsky/agent-ios/skill-data); the
 // discovery stubs in skills/ are not embedded.
 package skills
 
@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	files "github.com/nnemirovsky/iwdp-cli/skill-data"
+	files "github.com/nnemirovsky/agent-ios/skill-data"
 )
 
 // FileName is the file of a skill inside its directory.
@@ -65,7 +65,7 @@ func Get(name string) (Skill, error) {
 		}
 		names = append(names, s.Name)
 	}
-	return Skill{}, fmt.Errorf("unknown skill %q; the skills are %s (iwdp-cli skills list)", name, strings.Join(names, ", "))
+	return Skill{}, fmt.Errorf("unknown skill %q; the skills are %s (agent-ios skills list)", name, strings.Join(names, ", "))
 }
 
 // All returns every skill with its content, sorted by name.
@@ -163,8 +163,8 @@ func load() ([]Skill, error) {
 		}
 		out = append(out, s)
 	}
-	// By name, not by path: "iwdp-cdp/SKILL.md" sorts before
-	// "iwdp/SKILL.md", and the core guide comes first.
+	// By name, not by path: "agent-ios-cdp/SKILL.md" sorts before
+	// "agent-ios/SKILL.md", and the core guide comes first.
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }

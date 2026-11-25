@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/upload"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/upload"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Action commands of design 3.5 and 4.2 (W3b): every event is synthetic,

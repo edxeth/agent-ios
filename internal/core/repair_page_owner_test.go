@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Regression tests for the W1b page-owner delta (docs/notes/w1b.md,

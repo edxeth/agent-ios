@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	"github.com/nnemirovsky/agent-ios/internal/daemon"
 )
 
 // confirmOut clicks #confirm and returns the click output and what the

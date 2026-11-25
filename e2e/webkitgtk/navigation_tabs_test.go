@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/daemon"
 )
 
 var labelLine = regexp.MustCompile(`^\[(\d+)\] @(e\d+) (\S+) "(.*)"$`)

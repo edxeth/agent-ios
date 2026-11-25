@@ -14,7 +14,7 @@ import (
 
 // probeLifetimeEnv makes TestOwnerProbeEndsWithItsTestProcess run as the
 // child that starts the probe.
-const probeLifetimeEnv = "IWDP_E2E_PROBE_LIFETIME_CHILD"
+const probeLifetimeEnv = "AGENT_IOS_E2E_PROBE_LIFETIME_CHILD"
 
 // A test process can end without its cleanup: at a test timeout, or when
 // someone kills it. The owner probes that it started must end with it; 96

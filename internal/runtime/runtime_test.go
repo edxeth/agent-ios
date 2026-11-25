@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 func session(t *testing.T, f *fakewebkit.Server) *webkit.Session {
@@ -75,7 +75,7 @@ func TestCallInstallsOnceWhenMissing(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNotInstalled", err)
 	}
 	evals := f.ReceivedMethod("Runtime.evaluate")
-	if len(evals) != 3 || !strings.Contains(string(evals[1].Params), "iwdp-cli agent runtime bundle") {
+	if len(evals) != 3 || !strings.Contains(string(evals[1].Params), "agent-ios agent runtime bundle") {
 		t.Fatalf("evaluates = %d, want call, install of the bundle, one retry", len(evals))
 	}
 }
@@ -280,7 +280,7 @@ func TestReleaseCallsThePageWithoutOwnerOrInstall(t *testing.T) {
 		t.Fatalf("Release on a page without the runtime = %v, want nil", err)
 	}
 	for _, e := range f.ReceivedMethod("Runtime.evaluate") {
-		if strings.Contains(string(e.Params), "iwdp-cli agent runtime bundle") {
+		if strings.Contains(string(e.Params), "agent-ios agent runtime bundle") {
 			t.Fatal("Release installed the runtime")
 		}
 	}

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 // helper creates a mock server and connected client, returning both and a cleanup function.

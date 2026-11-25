@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
 )
 
 // The action part of find (design docs/design/agentic-parity.md, section

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // geoSender records the expressions of the Runtime.evaluate calls it gets.

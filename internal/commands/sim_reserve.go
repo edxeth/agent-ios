@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // Taking turns on the simulator. Several agents share one simulator, and
@@ -48,7 +48,7 @@ var simHoldEvery = time.Second
 var simHintOut io.Writer = os.Stderr
 
 func init() {
-	owner := Flag{Name: "owner", Type: FlagString, Help: "reservation owner; default --reservation (IWDP_DEVICE_RESERVATION), else the session"}
+	owner := Flag{Name: "owner", Type: FlagString, Help: "reservation owner; default --reservation (AGENT_IOS_DEVICE_RESERVATION), else the session"}
 	Register(&Command{
 		Name: "sim reserve", Local: true, Timeout: 11 * time.Minute,
 		Summary: "Reserve the simulator for an owner, waiting up to --wait while another owner holds it; renews the owner's own reservation. " +
@@ -128,7 +128,7 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 		// share one turn, and one that forgets its release holds the
 		// simulator for the others (live run, 2026-11-24). qa-login is the
 		// session of the guides' examples, which agents copy unchanged.
-		return Result{}, usagef("sim reserve: set IWDP_SESSION (or --owner) to a name of your own; the default session is every agent's, and qa-login is the name of the guides' examples")
+		return Result{}, usagef("sim reserve: set AGENT_IOS_SESSION (or --owner) to a name of your own; the default session is every agent's, and qa-login is the name of the guides' examples")
 	}
 	ttl := in.Flags["ttl"].(time.Duration)
 	wait := in.Flags["wait"].(time.Duration)
@@ -140,7 +140,7 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 		if err == nil {
 			waited := time.Since(start).Round(time.Second)
 			return Result{
-				Text: fmt.Sprintf("Simulator reserved by %q until %s (waited %s). Release it with iwdp-cli sim release when your run ends.", o, r.Expires.Format(time.RFC3339), waited),
+				Text: fmt.Sprintf("Simulator reserved by %q until %s (waited %s). Release it with agent-ios sim release when your run ends.", o, r.Expires.Format(time.RFC3339), waited),
 				Data: simReservation{Reserved: true, Owner: o, Expires: r.Expires, Waited: waited.String()},
 			}, nil
 		}
@@ -155,7 +155,7 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 			// --json, whose stdout is the JSON result alone: then on
 			// stderr, and in private mode, whose stderr is the one status
 			// line, nowhere (that line of exit 3 says to run it again).
-			line := fmt.Sprintf("waiting: the simulator is in another agent's turn; this waits up to %s. If it is cut off (a tool timeout), run 'iwdp-cli sim reserve' again: waiting is normal", wait)
+			line := fmt.Sprintf("waiting: the simulator is in another agent's turn; this waits up to %s. If it is cut off (a tool timeout), run 'agent-ios sim reserve' again: waiting is normal", wait)
 			switch {
 			case !in.Global.JSON:
 				env.Emit(line)
@@ -171,7 +171,7 @@ func runSimReserve(ctx context.Context, env Env, in Input) (Result, error) {
 				holder = fmt.Sprintf("%q (last used %s ago; it ends by %s at the latest)", other.Owner, time.Since(other.Expires.Add(-other.TTL)).Round(time.Second), other.Expires.Format(time.RFC3339))
 			}
 			return Result{}, &core.CodedError{Code: ExitWaitTimeout, Err: fmt.Errorf(
-				"the simulator is still reserved by %s after waiting %s: another agent is using it. Run 'iwdp-cli sim reserve' again to keep waiting, and do not use the simulator or its pages meanwhile",
+				"the simulator is still reserved by %s after waiting %s: another agent is using it. Run 'agent-ios sim reserve' again to keep waiting, and do not use the simulator or its pages meanwhile",
 				holder, time.Since(start).Round(time.Second))}
 		}
 		select {
@@ -214,7 +214,7 @@ func simGate(ctx context.Context, in Input) (context.Context, func(*error), erro
 	}
 	if mine == nil && other != nil {
 		return nil, nil, &core.CodedError{Code: ExitReservation, Err: fmt.Errorf(
-			"%w: the simulator is reserved by %q until %s at the latest: another agent is using it. Run 'iwdp-cli sim reserve' (it waits), then this command",
+			"%w: the simulator is reserved by %q until %s at the latest: another agent is using it. Run 'agent-ios sim reserve' (it waits), then this command",
 			core.ErrReserved, other.Owner, other.Expires.Format(time.RFC3339))}
 	}
 	var turn *core.Reservation // nil: admitted on a free simulator
@@ -273,7 +273,7 @@ func simTurnHeld(rs *core.Reservations, owner string, turn *core.Reservation) er
 		case err != nil:
 			return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: renewing the reservation: %w", errSimTurnLost, err)}
 		case !ok:
-			return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: the reservation of %q that the command started in was released or expired, so the command stopped; run 'iwdp-cli sim reserve' (it waits), then this command", errSimTurnLost, owner)}
+			return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: the reservation of %q that the command started in was released or expired, so the command stopped; run 'agent-ios sim reserve' (it waits), then this command", errSimTurnLost, owner)}
 		}
 		return nil
 	}
@@ -282,7 +282,7 @@ func simTurnHeld(rs *core.Reservations, owner string, turn *core.Reservation) er
 	case err != nil:
 		return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: reading the reservation: %w", errSimTurnLost, err)}
 	case other != nil:
-		return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: %w: %q reserved the simulator, so the command stopped; run 'iwdp-cli sim reserve' (it waits), then this command", errSimTurnLost, core.ErrReserved, other.Owner)}
+		return &core.CodedError{Code: ExitReservation, Err: fmt.Errorf("%w: %w: %q reserved the simulator, so the command stopped; run 'agent-ios sim reserve' (it waits), then this command", errSimTurnLost, core.ErrReserved, other.Owner)}
 	}
 	return nil
 }

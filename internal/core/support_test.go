@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Test support of this package's tests only: nothing in the daemon uses

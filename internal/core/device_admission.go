@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // The reservation rule of a page's device holds on every way to the page,
@@ -57,7 +57,7 @@ func (m *Manager) physicalAdmits(d transport.Device, owner string) error {
 	if other != nil {
 		return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: device %s is reserved by %q until %s; wait, or ask that owner", ErrReserved, d.Label, other.Owner, other.Expires.Format(time.RFC3339))}
 	}
-	return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w for %q: a physical device needs one before any page connection; run 'iwdp-cli device reserve --owner %s' (or set IWDP_DEVICE_RESERVATION to the owner of an existing reservation)", ErrNoReservation, owner, owner)}
+	return &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w for %q: a physical device needs one before any page connection; run 'agent-ios device reserve --owner %s' (or set AGENT_IOS_DEVICE_RESERVATION to the owner of an existing reservation)", ErrNoReservation, owner, owner)}
 }
 
 // refused reports whether err of admits is a refusal, not a reservation

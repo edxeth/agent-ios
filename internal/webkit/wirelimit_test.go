@@ -12,7 +12,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // pipeConn is an in-memory routed MessageConn: it announces page-1 and

@@ -1,6 +1,6 @@
 # Binaries
 bin/
-/iwdp-cli
+/agent-ios
 
 # Coverage
 coverage.out

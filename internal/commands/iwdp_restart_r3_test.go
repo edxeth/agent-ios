@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
 )
 
 // The serve fake iwdp of these tests is that of the internal/proxy tests
@@ -24,8 +24,8 @@ import (
 // private address of fakeIWDPAddrEnv and ends when its parent, the test
 // process of fakeIWDPParentEnv, is gone.
 const (
-	fakeIWDPAddrEnv   = "IWDP_COMMANDS_TEST_FAKE_IWDP_ADDR"
-	fakeIWDPParentEnv = "IWDP_COMMANDS_TEST_FAKE_IWDP_PARENT"
+	fakeIWDPAddrEnv   = "AGENT_IOS_COMMANDS_TEST_FAKE_IWDP_ADDR"
+	fakeIWDPParentEnv = "AGENT_IOS_COMMANDS_TEST_FAKE_IWDP_PARENT"
 )
 
 // TestFakeIWDPServe is the body of the serve fake iwdp; without

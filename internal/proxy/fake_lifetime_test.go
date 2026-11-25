@@ -23,9 +23,9 @@ import (
 // fakeStarts), the fake's listing address, and the file for the fake's
 // pid.
 const (
-	fakeParentHowEnv  = "IWDP_PROXY_TEST_PARENT_HOW"
-	fakeParentAddrEnv = "IWDP_PROXY_TEST_PARENT_ADDR"
-	fakeParentPIDEnv  = "IWDP_PROXY_TEST_PARENT_PID_FILE"
+	fakeParentHowEnv  = "AGENT_IOS_PROXY_TEST_PARENT_HOW"
+	fakeParentAddrEnv = "AGENT_IOS_PROXY_TEST_PARENT_ADDR"
+	fakeParentPIDEnv  = "AGENT_IOS_PROXY_TEST_PARENT_PID_FILE"
 )
 
 // fakeStarts are the ways the tests start a fake that runs the test

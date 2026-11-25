@@ -2,7 +2,7 @@
 #
 # Boot an iOS Simulator, open Safari to a test page of its own, and start
 # ios_webkit_debug_proxy. Prints, on stdout, the export lines of
-# IWDP_SIM_WS_URL (the WebSocket URL of that page) and IWDP_SIM_PAGE_URL
+# AGENT_IOS_SIM_WS_URL (the WebSocket URL of that page) and AGENT_IOS_SIM_PAGE_URL
 # (its URL, unique by a random query) for the simulator tests. Exits
 # non-zero, after its teardown, when a step fails; check the exit status
 # before you evaluate the output.
@@ -15,7 +15,7 @@
 #
 # Usage:
 #   ./scripts/sim-setup.sh                         # setup; prints the export lines,
-#                                                  # also IWDP_SIM_RUN_TOKEN
+#                                                  # also AGENT_IOS_SIM_RUN_TOKEN
 #   ./scripts/sim-setup.sh --teardown-run TOKEN    # automatic teardown of the run TOKEN
 #                                                  # only; no-op for an empty TOKEN
 #   ./scripts/sim-setup.sh --teardown              # manual recovery after a crashed run
@@ -41,14 +41,14 @@ SIMFILE="$STATE_DIR/device"
 # down and release the lease) runs while this script holds LOCKDIR, a
 # directory that mkdir creates atomically (macOS has no flock command).
 LOCKDIR="$STATE_DIR/lock"
-LOCK_WAIT_SECONDS="${IWDP_SIM_LOCK_WAIT_SECONDS:-30}"
+LOCK_WAIT_SECONDS="${AGENT_IOS_SIM_LOCK_WAIT_SECONDS:-30}"
 HAVE_LOCK=""
 PORT=9221 # iwdp's listing port
 # iwdp-owner-check.sh proves that a recorded process is the iwdp that this
 # script started; teardown signals nothing without its "verified".
 OWNER_CHECK="$(dirname "${BASH_SOURCE[0]}")/iwdp-owner-check.sh"
 # How long teardown waits for its iwdp to exit after SIGTERM.
-STOP_WAIT_SECONDS="${IWDP_SIM_STOP_WAIT_SECONDS:-5}"
+STOP_WAIT_SECONDS="${AGENT_IOS_SIM_STOP_WAIT_SECONDS:-5}"
 
 # check_private dir|file PATH fails unless PATH (not followed when it is a
 # symlink) is this user's directory with mode 0700, or this user's regular
@@ -459,7 +459,7 @@ if [ "${1:-}" = "--boot-simulator" ]; then
   boot_simulator
   unlock
   wait_boot
-  echo "export IWDP_SIM_RUN_TOKEN='$RUN_TOKEN'"
+  echo "export AGENT_IOS_SIM_RUN_TOKEN='$RUN_TOKEN'"
   exit 0
 fi
 
@@ -512,7 +512,7 @@ echo "Found socket: $SOCKET_PATH" >&2
 #    token and the start time, which exec does not change; teardown proves
 #    the process with iwdp-owner-check.sh before it signals it.
 TOKEN=$(new_token)
-IWDP_SIM_START_TOKEN=$TOKEN ios_webkit_debug_proxy -s "unix:$SOCKET_PATH" --no-frontend >&2 2>&1 &
+AGENT_IOS_SIM_START_TOKEN=$TOKEN ios_webkit_debug_proxy -s "unix:$SOCKET_PATH" --no-frontend >&2 2>&1 &
 IWDP_PID=$!
 write_state "$PIDFILE" "$IWDP_PID $TOKEN $(proc_start "$IWDP_PID")"
 
@@ -555,6 +555,6 @@ fi
 echo "Simulator ready. WebSocket URL: $WS_URL" >&2
 # select_page allows only [A-Za-z0-9.:[]-] and "/" in WS_URL, and
 # SIM_PAGE_URL has a hex token: neither can hold a quote.
-echo "export IWDP_SIM_WS_URL='$WS_URL'"
-echo "export IWDP_SIM_PAGE_URL='$SIM_PAGE_URL'"
-echo "export IWDP_SIM_RUN_TOKEN='$RUN_TOKEN'"
+echo "export AGENT_IOS_SIM_WS_URL='$WS_URL'"
+echo "export AGENT_IOS_SIM_PAGE_URL='$SIM_PAGE_URL'"
+echo "export AGENT_IOS_SIM_RUN_TOKEN='$RUN_TOKEN'"

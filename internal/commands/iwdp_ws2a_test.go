@@ -5,16 +5,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
 )
 
-// Device check 3, P3-D: "iwdp-cli status" names the log of an iwdp that
-// iwdp-cli starts (proxy.LogPath), or why it is unknown. (Moved with
-// status from cmd/iwdp-cli, WS2a.)
+// Device check 3, P3-D: "agent-ios status" names the log of an iwdp that
+// agent-ios starts (proxy.LogPath), or why it is unknown. (Moved with
+// status from cmd/agent-ios, WS2a.)
 func TestStatusNamesTheIWDPLog(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
-	if got, want := iwdpLogLine(proxy.LogPath()), "iwdp log of an iwdp that iwdp-cli starts: "+filepath.Join(state, "iwdp-cli", "iwdp.log"); got != want {
+	if got, want := iwdpLogLine(proxy.LogPath()), "iwdp log of an iwdp that agent-ios starts: "+filepath.Join(state, "agent-ios", "iwdp.log"); got != want {
 		t.Fatalf("iwdpLogLine = %q, want %q", got, want)
 	}
 	t.Setenv("XDG_STATE_HOME", "")
@@ -27,7 +27,7 @@ func TestStatusNamesTheIWDPLog(t *testing.T) {
 // The three iwdp commands need no page, arguments or flags (WS2a brief,
 // section 3); the help of restart-iwdp states which iwdp it may stop.
 // status and restart-iwdp run in the client; devices runs in the daemon,
-// which is then, without IWDP_NO_DAEMON=1, the only process that starts
+// which is then, without AGENT_IOS_NO_DAEMON=1, the only process that starts
 // iwdp automatically, so its start back-off covers every automatic start
 // (review of 2026-11-12; docs/known-limits.md).
 func TestIWDPCommandsAreLocalRegistryCommands(t *testing.T) {

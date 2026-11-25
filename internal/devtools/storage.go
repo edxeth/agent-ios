@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // StorageEntry is one localStorage or sessionStorage item.

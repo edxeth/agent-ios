@@ -27,11 +27,11 @@ const (
 )
 
 // DefaultTimeout is the command deadline when neither --timeout,
-// IWDP_TIMEOUT nor the command sets one (design 2.6, W0 default).
+// AGENT_IOS_TIMEOUT nor the command sets one (design 2.6, W0 default).
 const DefaultTimeout = 30 * time.Second
 
 // commandTimeout is the deadline of one run of c (design 2.6): --timeout or
-// IWDP_TIMEOUT, else the command's own timeout, else DefaultTimeout.
+// AGENT_IOS_TIMEOUT, else the command's own timeout, else DefaultTimeout.
 func commandTimeout(c *Command, g Globals) time.Duration {
 	switch {
 	case g.Timeout > 0:
@@ -74,9 +74,9 @@ type globalSpec struct {
 	set   func(g *Globals, v string) error
 }
 
-// parseTimeout parses the value of --timeout, IWDP_TIMEOUT or --wait-lease
+// parseTimeout parses the value of --timeout, AGENT_IOS_TIMEOUT or --wait-lease
 // (name): a Go duration ("30s", "1m30s") or a bare whole number of seconds
-// ("30"; strconv.Atoi syntax), greater than zero. Earlier iwdp-cli versions
+// ("30"; strconv.Atoi syntax), greater than zero. Earlier agent-ios versions
 // accepted both forms. A second count too large for a time.Duration is
 // refused, as time.ParseDuration refuses the same count with an "s".
 func parseTimeout(name, v string) (time.Duration, error) {
@@ -192,19 +192,19 @@ type Invocation struct {
 
 // Parse parses a registry command line: global flags anywhere before "--",
 // the command path, then its flags and arguments. It never connects to
-// anything. env supplies IWDP_SESSION, IWDP_TRANSPORT, IWDP_TIMEOUT and
-// IWDP_PRIVATE defaults; the flags override them.
+// anything. env supplies AGENT_IOS_SESSION, AGENT_IOS_TRANSPORT, AGENT_IOS_TIMEOUT and
+// AGENT_IOS_PRIVATE defaults; the flags override them.
 func Parse(args []string, env func(string) string) (*Invocation, error) {
 	g := Globals{Session: "default", Transport: "auto"}
-	if v := env("IWDP_SESSION"); v != "" {
+	if v := env("AGENT_IOS_SESSION"); v != "" {
 		g.Session = v
 	}
-	if v := env("IWDP_TRANSPORT"); v != "" {
+	if v := env("AGENT_IOS_TRANSPORT"); v != "" {
 		g.Transport = v
 	}
-	g.Reservation = env("IWDP_DEVICE_RESERVATION")
-	if v := env("IWDP_TIMEOUT"); v != "" {
-		d, err := parseTimeout("IWDP_TIMEOUT", v)
+	g.Reservation = env("AGENT_IOS_DEVICE_RESERVATION")
+	if v := env("AGENT_IOS_TIMEOUT"); v != "" {
+		d, err := parseTimeout("AGENT_IOS_TIMEOUT", v)
 		if err != nil {
 			return nil, &UsageError{err.Error()}
 		}
@@ -235,17 +235,17 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 				return &Invocation{Help: true}, nil
 			}
 			if name := unknownLongFlag(rest); name != "" {
-				return nil, &UsageError{fmt.Sprintf("no command in %q: unknown flag %s (run 'iwdp-cli --help')", strings.Join(args, " "), name)}
+				return nil, &UsageError{fmt.Sprintf("no command in %q: unknown flag %s (run 'agent-ios --help')", strings.Join(args, " "), name)}
 			}
 			// Only global options, or a flag before any command word.
-			return nil, &UsageError{fmt.Sprintf("no command in %q (run 'iwdp-cli --help')", strings.Join(args, " "))}
+			return nil, &UsageError{fmt.Sprintf("no command in %q (run 'agent-ios --help')", strings.Join(args, " "))}
 		}
 		if list, ok := GroupHelp(words); ok {
 			if help {
 				// A group has no flags of its own.
 				if name := unknownLongFlag(rest[len(words):]); name != "" {
 					group := strings.Join(words, " ")
-					return nil, &UsageError{fmt.Sprintf("%s: unknown flag %s (run 'iwdp-cli %s --help')", group, name, group)}
+					return nil, &UsageError{fmt.Sprintf("%s: unknown flag %s (run 'agent-ios %s --help')", group, name, group)}
 				}
 				return &Invocation{Help: true, Group: list}, nil
 			}
@@ -259,7 +259,7 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 		// be the command's, with valid values (Check).
 		in := Input{Global: g, Flags: map[string]any{}}
 		if err := parseFlags(c, rest[n:], &in); err != nil {
-			return nil, &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
+			return nil, &UsageError{fmt.Sprintf("%s: %v (run 'agent-ios %s --help')", c.Name, err, c.Name)}
 		}
 		if err := checkValues(c, in); err != nil {
 			return nil, err
@@ -267,7 +267,7 @@ func Parse(args []string, env func(string) string) (*Invocation, error) {
 		return inv, nil
 	}
 	if err := parseCommand(c, rest[n:], &inv.Input); err != nil {
-		return nil, &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
+		return nil, &UsageError{fmt.Sprintf("%s: %v (run 'agent-ios %s --help')", c.Name, err, c.Name)}
 	}
 	if err := CheckPageArgs(c, inv.Input); err != nil {
 		return nil, err
@@ -287,7 +287,7 @@ func checkValues(c *Command, in Input) error {
 		return nil
 	}
 	if err := c.Check(in); err != nil {
-		return &UsageError{fmt.Sprintf("%s: %v (run 'iwdp-cli %s --help')", c.Name, err, c.Name)}
+		return &UsageError{fmt.Sprintf("%s: %v (run 'agent-ios %s --help')", c.Name, err, c.Name)}
 	}
 	return nil
 }
@@ -466,7 +466,7 @@ func checkArgs(c *Command, in *Input) error {
 	if max >= 0 && len(in.Args) > max {
 		extra := in.Args[max]
 		if isPageURL(extra) {
-			// Earlier iwdp-cli versions took the page URL as the last
+			// Earlier agent-ios versions took the page URL as the last
 			// argument.
 			return fmt.Errorf("unexpected argument %q: a page URL is not an argument; pass it with --page <ws:// URL>", extra)
 		}
@@ -548,7 +548,7 @@ func durationHelp(f Flag) string {
 // Help returns the help text of c.
 func Help(c *Command) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Usage: iwdp-cli %s", c.Name)
+	fmt.Fprintf(&b, "Usage: agent-ios %s", c.Name)
 	for _, a := range c.Args {
 		n := "<" + a.Name + ">"
 		if a.Variadic {
@@ -614,7 +614,7 @@ func GroupHelp(words []string) (string, bool) {
 		return "", false
 	}
 	group := strings.TrimSpace(prefix)
-	return fmt.Sprintf("Usage: iwdp-cli %s <command>\n\nCommands of %q:\n%sRun 'iwdp-cli %s <command> --help' for the help of one.\n", group, group, b.String(), group), true
+	return fmt.Sprintf("Usage: agent-ios %s <command>\n\nCommands of %q:\n%sRun 'agent-ios %s <command> --help' for the help of one.\n", group, group, b.String(), group), true
 }
 
 // Usage lists every registered command.
@@ -637,19 +637,19 @@ var ErrInterrupted = errors.New("interrupted by a signal")
 // SIGTERM) ended: 128 + SIGINT, as shells report it.
 const ExitInterrupted = 130
 
-// Outcome is how one run of iwdp-cli ends: its exit code and the text
+// Outcome is how one run of agent-ios ends: its exit code and the text
 // that stderr gets last. Every exit path of the CLI ends with one
 // Outcome, and Line is the one decision of that text, so that private
 // mode prints exactly one status line on every path: a registry command
 // (RunCLIOutcome), help and usage errors, and the ends that the process
-// decides itself (a signal, the deadline watchdog; cmd/iwdp-cli).
+// decides itself (a signal, the deadline watchdog; cmd/agent-ios).
 type Outcome struct {
 	// Command is the command, or the words of the command group, that the
 	// line names; "" when it names none (the overview, a line that Parse
 	// refused). It is a registry name, never an argument.
 	Command string
 	Code    int
-	// Private is private mode (--private, IWDP_PRIVATE; privateRequested
+	// Private is private mode (--private, AGENT_IOS_PRIVATE; privateRequested
 	// for a line that Parse refused).
 	Private bool
 	// Status is the status line of a command that succeeded in private
@@ -676,7 +676,7 @@ func (o Outcome) Line() string {
 	case o.Command != "":
 		return o.Command + " exit 0"
 	}
-	return "iwdp-cli exit 0"
+	return "agent-ios exit 0"
 }
 
 // Print writes Line and a newline on w; it writes nothing for an empty
@@ -725,14 +725,14 @@ func PrivateRequested(args []string) bool {
 //
 // A line that Parse refused, and a help request, have no parsed options:
 // privateRequested reads them as Parse does. A command runs in the mode of
-// its options (--private, IWDP_PRIVATE), with one rule:
+// its options (--private, AGENT_IOS_PRIVATE), with one rule:
 //
 // Private mode is a mode of the output of a client command, and "daemon
 // run" is not a client command: it is the daemon itself. A client starts
-// it on demand with the client's environment, so IWDP_PRIVATE=1 reaches
+// it on demand with the client's environment, so AGENT_IOS_PRIVATE=1 reaches
 // it, and its stderr is the daemon's log, which has its own policy of
 // safe arguments (internal/logsafe). So private mode never applies to a
-// run of "daemon run": with --private or IWDP_PRIVATE=1 it logs on
+// run of "daemon run": with --private or AGENT_IOS_PRIVATE=1 it logs on
 // stderr, prints no status line and exits as without them. Its help, and
 // a line of its words that Parse refuses, are output of the client and
 // stay in private mode.
@@ -885,12 +885,12 @@ type withResult struct {
 func (e *withResult) Error() string { return e.Err.Error() }
 func (e *withResult) Unwrap() error { return e.Err }
 
-// pageURLEnv is the environment variable with which earlier iwdp-cli
+// pageURLEnv is the environment variable with which earlier agent-ios
 // versions selected the page of a command by its WebSocket URL.
-const pageURLEnv = "IWDP_WS_URL"
+const pageURLEnv = "AGENT_IOS_WS_URL"
 
 // refusePageURLEnv refuses a page command (one whose Page is not NoPage)
-// without --page while IWDP_WS_URL is set: earlier versions ran it on the
+// without --page while AGENT_IOS_WS_URL is set: earlier versions ran it on the
 // page that the variable names, so running it on the session's page
 // instead could act on another page than the caller expects. The usage
 // error (exit 2) names --page; an explicit --page or --only-tab wins over

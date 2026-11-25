@@ -10,7 +10,7 @@
 #     reported by c8, pinned in e2e/cdpcompat/package-lock.json.
 # Needs what the WebKitGTK suite and make test-cdpcompat need, with the
 # Node project installed (make e2e/cdpcompat/node_modules/.package-lock.json)
-# and, when agent-browser on PATH is a script, IWDP_CDPCOMPAT_PATH_AGENT_BROWSER
+# and, when agent-browser on PATH is a script, AGENT_IOS_CDPCOMPAT_PATH_AGENT_BROWSER
 # (e2e/cdpcompat/README.md).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,8 +22,8 @@ if [ ! -x "$c8" ]; then
 fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-IWDP_JSCOV_LCOV="$work/shim.lcov" go test -tags=webkitgtk -count=1 -run '^TestCheckVisibilityShimMatchesNative$' ./e2e/webkitgtk/
-(cd e2e/cdpcompat && CDPCOMPAT_V8_COVERAGE="$work/v8" IWDP_CDP_COMPAT=1 go test -tags=cdpcompat -count=1 -timeout=900s \
+AGENT_IOS_JSCOV_LCOV="$work/shim.lcov" go test -tags=webkitgtk -count=1 -run '^TestCheckVisibilityShimMatchesNative$' ./e2e/webkitgtk/
+(cd e2e/cdpcompat && CDPCOMPAT_V8_COVERAGE="$work/v8" AGENT_IOS_CDP_COMPAT=1 go test -tags=cdpcompat -count=1 -timeout=900s \
 	-run '^(TestPlaywrightLocatorsWithoutNativeCheckVisibility|TestClientScenarios|TestAwaitedInterceptedFetch)$/^playwright$' .)
 "$c8" report --temp-directory "$work/v8" --reporter lcovonly --report-dir "$work/c8" --include e2e/cdpcompat/clients/playwright.mjs
 cat "$work/shim.lcov" "$work/c8/lcov.info" >coverage-js.lcov

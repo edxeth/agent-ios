@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/sim"
+	"github.com/nnemirovsky/agent-ios/internal/sim"
 )
 
 // Review F18: sim up --url prints the tab id of the new tab that it saw,
@@ -30,8 +30,8 @@ func TestSimUpPrintsTheNewTabsID(t *testing.T) {
 	r := sim.UpReport{Pages: 2, TabOpened: true, NewPage: "ws://new"}
 	r.Tab = simUpTab(context.Background(), nil, in, r.NewPage)
 	text := strings.Join(simUpNext(r, "http://10.0.2.2:8791/"), "\n")
-	if r.Tab != "t3" || !strings.Contains(text, "iwdp-cli tab t3") || len(asked) != 1 || asked[0] != "s1 ws://new" {
-		t.Fatalf("tab %q, text %q, asked %q; want t3 for session s1 and 'iwdp-cli tab t3'", r.Tab, text, asked)
+	if r.Tab != "t3" || !strings.Contains(text, "agent-ios tab t3") || len(asked) != 1 || asked[0] != "s1 ws://new" {
+		t.Fatalf("tab %q, text %q, asked %q; want t3 for session s1 and 'agent-ios tab t3'", r.Tab, text, asked)
 	}
 	data, err := json.Marshal(r)
 	if err != nil {

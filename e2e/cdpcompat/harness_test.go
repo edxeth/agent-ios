@@ -10,7 +10,7 @@
 //
 // The driver runs the daemon in this test process (daemon.Run with
 // RunOptions.CDPObserve), so it records every HTTP request and WebSocket
-// upgrade that the endpoint sees. The real iwdp-cli binary, built from
+// upgrade that the endpoint sees. The real agent-ios binary, built from
 // this checkout, talks to that daemon through the shared socket directory
 // and prints the URLs; each client gets the printed URL unchanged.
 package cdpcompat
@@ -33,15 +33,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/internal/daemon"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 // gateEnv is the design's gate of the suite (8.4). The build tag cdpcompat
 // keeps the suite out of "go test ./..."; the gate makes a run with the
 // tag an explicit choice ("make test-cdpcompat" sets it).
-const gateEnv = "IWDP_CDP_COMPAT"
+const gateEnv = "AGENT_IOS_CDP_COMPAT"
 
 // v8CoverageVar is the driver option that turns on V8 coverage of the
 // Node client scripts (README.md, "How to run"): an
@@ -52,13 +52,13 @@ const v8CoverageVar = "CDPCOMPAT_V8_COVERAGE"
 
 // proxyListingVar is the link-time seam of internal/proxy (W1c T01): the
 // iwdp listing address of a binary.
-const proxyListingVar = "github.com/nnemirovsky/iwdp-cli/internal/proxy.listingAddr"
+const proxyListingVar = "github.com/nnemirovsky/agent-ios/internal/proxy.listingAddr"
 
 // Time limits of the driver.
 const (
-	// cliTimeout bounds one iwdp-cli run.
+	// cliTimeout bounds one agent-ios run.
 	cliTimeout = 30 * time.Second
-	// buildTimeout bounds the build of iwdp-cli in TestMain.
+	// buildTimeout bounds the build of agent-ios in TestMain.
 	buildTimeout = 5 * time.Minute
 	// daemonStart bounds the start of the in-process daemon.
 	daemonStart = 10 * time.Second
@@ -70,7 +70,7 @@ const (
 // 60 s (clients/result.mjs scriptLimit). A variable: a test shortens it.
 var clientTimeout = 90 * time.Second
 
-// clientOutputLimit bounds the output of one client or iwdp-cli run that
+// clientOutputLimit bounds the output of one client or agent-ios run that
 // the driver keeps; the log says how much was dropped.
 const clientOutputLimit = 8 << 20
 
@@ -78,7 +78,7 @@ const clientOutputLimit = 8 << 20
 var (
 	// nodeDir is this directory: the Node project of the client scripts.
 	nodeDir string
-	// cliBin is the iwdp-cli binary of this checkout, linked to a dead
+	// cliBin is the agent-ios binary of this checkout, linked to a dead
 	// iwdp listing.
 	cliBin string
 	// logDir keeps the logs of a run: CDPCOMPAT_LOG_DIR, else a temp dir.
@@ -107,14 +107,14 @@ var (
 // the user's daemon, iwdp and devices (the e2e harness guard of W1c): a
 // private XDG_RUNTIME_DIR and XDG_STATE_HOME, fake ios_webkit_debug_proxy
 // and pkill first on PATH, a dead iwdp listing for the in-process daemon
-// (iwdp.DefaultListingAddr) and for the iwdp-cli binary (link-time seam).
+// (iwdp.DefaultListingAddr) and for the agent-ios binary (link-time seam).
 func TestMain(m *testing.M) {
 	os.Exit(run(m))
 }
 
 // lifetimeHelperMode is the helperVar value of the child process of
 // TestBrowserEndsWithItsTestProcess (Linux). TestMain runs only the tests
-// in that child (that one), without the isolation and the iwdp-cli build:
+// in that child (that one), without the isolation and the agent-ios build:
 // the child starts no daemon and no client, and its SIGKILL would leave
 // the temp dirs of the isolation behind.
 const lifetimeHelperMode = "browser-lifetime"
@@ -153,7 +153,7 @@ func run(m *testing.M) int {
 	return m.Run()
 }
 
-// isolate sets up the private environment below tmp and builds iwdp-cli.
+// isolate sets up the private environment below tmp and builds agent-ios.
 func isolate(tmp string) error {
 	run := filepath.Join(tmp, "run")
 	if err := os.Mkdir(run, 0o700); err != nil {
@@ -167,7 +167,7 @@ func isolate(tmp string) error {
 			return err
 		}
 	}
-	for _, k := range []string{"IWDP_SESSION", "IWDP_DEVICE_RESERVATION", "IWDP_TRANSPORT", "IWDP_DAEMON_DIR", "IWDP_NO_DAEMON"} {
+	for _, k := range []string{"AGENT_IOS_SESSION", "AGENT_IOS_DEVICE_RESERVATION", "AGENT_IOS_TRANSPORT", "AGENT_IOS_DAEMON_DIR", "AGENT_IOS_NO_DAEMON"} {
 		if err := os.Unsetenv(k); err != nil {
 			return err
 		}
@@ -208,9 +208,9 @@ func isolate(tmp string) error {
 			return err
 		}
 	}
-	cliBin = filepath.Join(tmp, "iwdp-cli")
-	if _, err := runBounded(buildTimeout, "", nil, "go", "build", "-ldflags", "-X "+proxyListingVar+"="+dead, "-o", cliBin, "../../cmd/iwdp-cli"); err != nil {
-		return fmt.Errorf("building iwdp-cli: %w", err)
+	cliBin = filepath.Join(tmp, "agent-ios")
+	if _, err := runBounded(buildTimeout, "", nil, "go", "build", "-ldflags", "-X "+proxyListingVar+"="+dead, "-o", cliBin, "../../cmd/agent-ios"); err != nil {
+		return fmt.Errorf("building agent-ios: %w", err)
 	}
 	return nil
 }
@@ -269,7 +269,7 @@ type endpoint struct {
 }
 
 // startDaemon runs the daemon in this process with the CDP endpoint on a
-// free port and request recording, and stops it at cleanup. The iwdp-cli
+// free port and request recording, and stops it at cleanup. The agent-ios
 // runs of the test reach it through the shared socket directory: the
 // daemon reports cliBin as its executable (RunOptions.Executable), so
 // they reuse it instead of replacing it with a daemon of their own.
@@ -373,7 +373,7 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// cliExit runs the real iwdp-cli like cli and returns its exit code,
+// cliExit runs the real agent-ios like cli and returns its exit code,
 // stdout and stderr; only a timeout, a start or wait failure and dropped
 // output fail the test.
 func cliExit(t *testing.T, args ...string) (int, string, string) {
@@ -383,12 +383,12 @@ func cliExit(t *testing.T, args ...string) (int, string, string) {
 	cmd.Stdout, cmd.Stderr = out, errb
 	timedOut, err := runOwned(cmd, cliTimeout, false)
 	if exit := (*exec.ExitError)(nil); timedOut || (err != nil && !errors.As(err, &exit)) || out.dropped > 0 {
-		t.Fatalf("iwdp-cli %s: %v (timed out after %v: %v; stdout bytes dropped: %d)", strings.Join(args, " "), err, cliTimeout, timedOut, out.dropped)
+		t.Fatalf("agent-ios %s: %v (timed out after %v: %v; stdout bytes dropped: %d)", strings.Join(args, " "), err, cliTimeout, timedOut, out.dropped)
 	}
 	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
-// cli runs the real iwdp-cli (runOwned, within cliTimeout) and fails the
+// cli runs the real agent-ios (runOwned, within cliTimeout) and fails the
 // test unless it exits 0 with all of its output kept. It returns stdout.
 func cli(t *testing.T, args ...string) string {
 	t.Helper()
@@ -397,7 +397,7 @@ func cli(t *testing.T, args ...string) string {
 	cmd.Stdout, cmd.Stderr = out, errb
 	timedOut, err := runOwned(cmd, cliTimeout, false)
 	if timedOut || err != nil || out.dropped > 0 {
-		t.Fatalf("iwdp-cli %s: %v (timed out after %v: %v; stdout bytes dropped: %d); stdout %q, stderr %q", strings.Join(args, " "), err, cliTimeout, timedOut, out.dropped, out.String(), errb.String())
+		t.Fatalf("agent-ios %s: %v (timed out after %v: %v; stdout bytes dropped: %d); stdout %q, stderr %q", strings.Join(args, " "), err, cliTimeout, timedOut, out.dropped, out.String(), errb.String())
 	}
 	return out.String()
 }
@@ -413,7 +413,7 @@ type cdpURLs struct {
 	Host string
 }
 
-// getCDPURL runs "iwdp-cli --session <session> get cdp-url" and the same
+// getCDPURL runs "agent-ios --session <session> get cdp-url" and the same
 // with --json for page ("": the session's current page, as resolved for
 // any command), and checks that both name the same record.
 func (e *endpoint) getCDPURL(t *testing.T, session, page string) cdpURLs {
@@ -445,7 +445,7 @@ func (e *endpoint) getCDPURL(t *testing.T, session, page string) cdpURLs {
 	return u
 }
 
-// unknownCounts runs "iwdp-cli cdp log --json": the endpoint's counts of
+// unknownCounts runs "agent-ios cdp log --json": the endpoint's counts of
 // unknown methods (design 5.4).
 func unknownCounts(t *testing.T) map[string]int {
 	t.Helper()

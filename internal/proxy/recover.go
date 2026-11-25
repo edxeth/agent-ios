@@ -178,7 +178,7 @@ func (s *Starter) Recover(ctx context.Context) (bool, error) {
 	kind, what, retry := ErrUSBLost, "usbmuxd", ""
 	if lost == lostDevice {
 		kind, what = ErrDeviceLost, "its device"
-		retry = fmt.Sprintf(" A device can refuse a new connection for a while after it lost one: keep it unlocked, and run the command again after %s, when iwdp-cli restarts ios_webkit_debug_proxy once more.", deviceRestartBackoff)
+		retry = fmt.Sprintf(" A device can refuse a new connection for a while after it lost one: keep it unlocked, and run the command again after %s, when agent-ios restarts ios_webkit_debug_proxy once more.", deviceRestartBackoff)
 	}
 	stopped, err := s.stopOwn(ctx, ep)
 	if err != nil {
@@ -188,12 +188,12 @@ func (s *Starter) Recover(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	if err := s.startLocked(ctx, true); err != nil {
-		return false, fmt.Errorf("%w (%s), so iwdp-cli restarted it, and the start failed: %w", kind, s.addr, err)
+		return false, fmt.Errorf("%w (%s), so agent-ios restarted it, and the start failed: %w", kind, s.addr, err)
 	}
 	listed, err := s.awaitDevice(ctx)
 	switch {
 	case err != nil:
-		return true, fmt.Errorf("iwdp-cli restarted ios_webkit_debug_proxy on %s because it had lost %s, and the new one's listing failed: %w", s.addr, what, err)
+		return true, fmt.Errorf("agent-ios restarted ios_webkit_debug_proxy on %s because it had lost %s, and the new one's listing failed: %w", s.addr, what, err)
 	case !listed:
 		return true, fmt.Errorf("%w on %s after %s, although a usbmuxd runs. %s.%s", ErrDeviceNotListed, s.addr, recoveredDeviceWait, DeviceAdvice, retry)
 	}

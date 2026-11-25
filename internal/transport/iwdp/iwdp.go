@@ -12,9 +12,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // DefaultListingAddr is iwdp's device list (proxy.ListingAddr).

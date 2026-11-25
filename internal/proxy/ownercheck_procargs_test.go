@@ -36,7 +36,7 @@ const ownerCheckScript = "../../scripts/iwdp-owner-check.sh"
 //     other exception is a traceback and fails the test;
 //   - "check": cases {"buffer", "token"}; for each, the result line and
 //     exit code of the script's main in mode "check" (it never signals)
-//     for a private iwdp-cli record of this Python process (its pid, the
+//     for a private agent-ios record of this Python process (its pid, the
 //     start time ownerCheckStart and the token), with uname answering
 //     Darwin, ps answering the start time and darwin_procargs returning
 //     the buffer;
@@ -76,7 +76,7 @@ oc.run = lambda argv: {"uname": "Darwin\n", "ps": start + "\n"}.get(argv[0])
 for case in req["check"]:
     buf = base64.b64decode(case["buffer"])
     oc.darwin_procargs = lambda pid, buf=buf: buf
-    path = os.path.join(tempfile.mkdtemp(), "iwdp-cli-started-0-127.0.0.1:9221.json")
+    path = os.path.join(tempfile.mkdtemp(), "agent-ios-started-0-127.0.0.1:9221.json")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.write(fd, json.dumps({"pid": os.getpid(), "start": start, "token": case["token"]}).encode())
     os.close(fd)
@@ -102,7 +102,7 @@ for case in req.get("terminate", []):
         oc.Process, os.kill, oc.pidfd_send_signal = real_process, real_kill, real_pidfd
     child = subprocess.Popen(["sleep", "60"])
     try:
-        path = os.path.join(tempfile.mkdtemp(), "iwdp-cli-started-0-127.0.0.1:9221.json")
+        path = os.path.join(tempfile.mkdtemp(), "agent-ios-started-0-127.0.0.1:9221.json")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.write(fd, json.dumps({"pid": child.pid, "start": start, "token": case["token"]}).encode())
         os.close(fd)
@@ -297,7 +297,7 @@ func decoded(t *testing.T, in []string) []string {
 //     one that takes the token entry for an argument is a mismatch.
 func TestOwnerCheckProcargsOnCraftedBuffers(t *testing.T) {
 	const tok = "tok-0123456789abcdef"
-	entry := "IWDP_CLI_START_TOKEN=" + tok
+	entry := "AGENT_IOS_START_TOKEN=" + tok
 	const path = "/opt/homebrew/bin/ios_webkit_debug_proxy"
 	iwdpArgs := []string{"ios_webkit_debug_proxy", "-F", "-s", "127.0.0.1:27753"}
 	env := []string{"HOME=/Users/u", entry, "PATH=/usr/bin"}
@@ -472,7 +472,7 @@ func TestOwnerCheckProcargsMatchesProcargsEnv(t *testing.T) {
 func TestOwnerCheckTerminateSignalsThroughAPidfdOnLinux(t *testing.T) {
 	const tok = "tok-terminate-0123456789"
 	const sysPidfdOpen, sysPidfdSendSignal = 434, 424 // the Linux system call numbers
-	buf := procargsBuffer("/opt/homebrew/bin/ios_webkit_debug_proxy", []string{"ios_webkit_debug_proxy"}, []string{"IWDP_CLI_START_TOKEN=" + tok}, nil, 3)
+	buf := procargsBuffer("/opt/homebrew/bin/ios_webkit_debug_proxy", []string{"ios_webkit_debug_proxy"}, []string{"AGENT_IOS_START_TOKEN=" + tok}, nil, 3)
 	for _, python := range []struct {
 		name   string
 		remove []string // the functions that noPidfdSite removes; none: this python3 as it is

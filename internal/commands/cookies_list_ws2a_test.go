@@ -9,9 +9,9 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // listCookiesCmd runs "cookies" with argv on page p.
@@ -33,7 +33,7 @@ const listedSecret = "s3cr3t-session-token-1234567890"
 // WS2a brief, section 2 (user-stated): "cookies" lists the cookies that
 // Page.getCookies returns, with name, domain, path, expiry or session,
 // httpOnly, secure and sameSite. Values are hidden by default and printed
-// with --show-values. The line form is the legacy listing's (cmd/iwdp-cli
+// with --show-values. The line form is the legacy listing's (cmd/agent-ios
 // formatCookie at f731071) with "(hidden)" in place of the value.
 func TestCookiesListsAttributesAndHidesValues(t *testing.T) {
 	p := devtoolstest.New(t, "https://example.com")

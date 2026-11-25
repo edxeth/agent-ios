@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Change runs fn as one change of the page's desired state (design 2.4 and

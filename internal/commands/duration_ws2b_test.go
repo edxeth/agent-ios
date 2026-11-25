@@ -12,8 +12,8 @@ import (
 )
 
 // baseParsePositiveDuration is the duration parser of --timeout,
-// IWDP_TIMEOUT and --wait-lease before the registry took over these
-// settings: parsePositiveDuration in cmd/iwdp-cli/deadline.go at f731071,
+// AGENT_IOS_TIMEOUT and --wait-lease before the registry took over these
+// settings: parsePositiveDuration in cmd/agent-ios/deadline.go at f731071,
 // copied unchanged. It is the reference of the tests below.
 func baseParsePositiveDuration(v string) (time.Duration, error) {
 	var d time.Duration
@@ -50,9 +50,9 @@ var durationSettings = []struct {
 		}
 		return inv.Input.Global.Timeout, nil
 	}},
-	{"IWDP_TIMEOUT", func(v string) (time.Duration, error) {
+	{"AGENT_IOS_TIMEOUT", func(v string) (time.Duration, error) {
 		inv, err := Parse([]string{"eval", "1"}, func(k string) string {
-			if k == "IWDP_TIMEOUT" {
+			if k == "AGENT_IOS_TIMEOUT" {
 				return v
 			}
 			return ""
@@ -76,7 +76,7 @@ func noEnv(string) string { return "" }
 // bareThirty matches the example "30" of a bare second count, not "30s".
 var bareThirty = regexp.MustCompile(`(^|[^0-9])30([^0-9a-zµ]|$)`)
 
-// WS2b-1b-b item 1: --timeout, IWDP_TIMEOUT and --wait-lease accept what
+// WS2b-1b-b item 1: --timeout, AGENT_IOS_TIMEOUT and --wait-lease accept what
 // the base parser accepted, as the same values: a Go duration or a bare
 // whole number of seconds (strconv.Atoi, so a leading "+" or zeros too),
 // greater than zero. The expected values follow baseParsePositiveDuration.
@@ -151,7 +151,7 @@ func TestDurationSettingsMatchTheBaseParser(t *testing.T) {
 		return err == nil && (n > math.MaxInt64/int(time.Second) || n < math.MinInt64/int(time.Second))
 	}
 	check := func(v string) bool {
-		// An empty IWDP_TIMEOUT is unset, in the base parser too.
+		// An empty AGENT_IOS_TIMEOUT is unset, in the base parser too.
 		if v == "" || overflows(v) {
 			return true
 		}

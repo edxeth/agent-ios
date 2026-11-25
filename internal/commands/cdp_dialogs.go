@@ -3,7 +3,7 @@ package commands
 import (
 	"context"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
 )
 
 // CDPDialogs is the dialog bridge of CDP Input events (cdp.Options.Dialogs;

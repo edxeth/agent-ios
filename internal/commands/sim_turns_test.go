@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/sim"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/sim"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // Regression tests of the simulator's turns (review of 2026-11-24,
@@ -446,7 +446,7 @@ func TestDeviceCommandsRefuseTheSimulator(t *testing.T) {
 		{"device", "release", "--device", "simulator"},
 	} {
 		_, err := Parse(argv, func(string) string { return "" })
-		if ExitCodeOf(err) != ExitUsage || !strings.Contains(err.Error(), "iwdp-cli sim ") {
+		if ExitCodeOf(err) != ExitUsage || !strings.Contains(err.Error(), "agent-ios sim ") {
 			t.Errorf("%v: %v (exit %d), want exit 2 naming the sim command", argv, err, ExitCodeOf(err))
 		}
 	}

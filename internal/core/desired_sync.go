@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Keeping provisional targets in step with the desired state (design 2.4

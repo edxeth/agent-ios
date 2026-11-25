@@ -2,7 +2,7 @@
 
 Design: docs/design/agentic-parity.md, sections 5.1, 5.2 ("Pins"), 5.4, 5.5, 7.8 (tests 8, 10 and 12) and 8.4.
 
-The suite runs the pinned CDP clients against the daemon's CDP endpoint and checks what they do. A Go driver (the `_test.go` files, build tag `cdpcompat`) starts the endpoint, runs the real `iwdp-cli` to get the URLs, runs one client script per client and form, and checks the JSON result of each script and the requests that the endpoint saw.
+The suite runs the pinned CDP clients against the daemon's CDP endpoint and checks what they do. A Go driver (the `_test.go` files, build tag `cdpcompat`) starts the endpoint, runs the real `agent-ios` to get the URLs, runs one client script per client and form, and checks the JSON result of each script and the requests that the endpoint saw.
 
 Built: the Node project, the pins, the driver, the result and expected-missing formats, test 10 (endpoint resolution; W5c-2a), and the client scenarios on WebKitGTK: test 8 for agent-browser (both builds), Puppeteer, Playwright and chrome-devtools-mcp, test 11 (a) and (d) with Puppeteer, and test 12 with Puppeteer and Playwright (W5c-2b part 2; "Scenarios" below).
 
@@ -12,7 +12,7 @@ Built: the Node project, the pins, the driver, the result and expected-missing f
 make test-cdpcompat
 ```
 
-- The target runs `npm ci` in this directory when `package.json` or `package-lock.json` is newer than `node_modules` (with `PUPPETEER_SKIP_DOWNLOAD=1`: no browser download is needed), then runs `IWDP_CDP_COMPAT=1 go test -tags=cdpcompat ./e2e/cdpcompat/ -v -count=1`.
+- The target runs `npm ci` in this directory when `package.json` or `package-lock.json` is newer than `node_modules` (with `PUPPETEER_SKIP_DOWNLOAD=1`: no browser download is needed), then runs `AGENT_IOS_CDP_COMPAT=1 go test -tags=cdpcompat ./e2e/cdpcompat/ -v -count=1`.
 - Requirements: Node.js 24 or later with npm. The lockfile pins every client, agent-browser included. The scenario tests also need the WebKitGTK MiniBrowser (/usr/lib/webkit2gtk-4.1/MiniBrowser), broadwayd, gcc and pkg-config gdk-3.0 (for the DPI shim of e2e/webkitgtk), as the WebKitGTK suite does. A missing requirement fails the suite with a message that says what to install; the suite never skips.
 - npm ci runs with --ignore-scripts: agent-browser's postinstall would download a missing binary and patches global bin links. The package ships its binaries; the Makefile sets their execute bit.
 - `CDPCOMPAT_LOG_DIR=<dir>` keeps the logs of a run: the daemon log, the output of every client run and every result file. Tokens and endpoint ids in them are replaced with `<secretN>`.
@@ -20,14 +20,14 @@ make test-cdpcompat
 
 ### The gate
 
-The design gates the suite with `IWDP_CDP_COMPAT=1` (8.4). Here the gate has two parts:
+The design gates the suite with `AGENT_IOS_CDP_COMPAT=1` (8.4). Here the gate has two parts:
 - The build tag `cdpcompat` keeps the suite out of `go test ./...`, which needs no Node.
-- `IWDP_CDP_COMPAT=1` must be set when the tag is given; without it, the test binary stops at once with exit 2 and says how to run the suite. `make test-cdpcompat` sets it.
+- `AGENT_IOS_CDP_COMPAT=1` must be set when the tag is given; without it, the test binary stops at once with exit 2 and says how to run the suite. `make test-cdpcompat` sets it.
 
 ### Isolation
 
-- The driver runs the daemon inside the test process (`daemon.Run` with `RunOptions.CDPObserve`), on a free port, in a private `XDG_RUNTIME_DIR`. The `iwdp-cli` binary is built from this checkout and reaches that daemon through the shared socket directory.
-- No process of the suite can reach the user's daemon, iwdp or devices (the e2e guard of W1c): private `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`, fake `ios_webkit_debug_proxy` and `pkill` first on `PATH`, and a dead iwdp listing for the in-process daemon (`iwdp.DefaultListingAddr`) and for `iwdp-cli` (the link-time seam `proxy.listingAddr`).
+- The driver runs the daemon inside the test process (`daemon.Run` with `RunOptions.CDPObserve`), on a free port, in a private `XDG_RUNTIME_DIR`. The `agent-ios` binary is built from this checkout and reaches that daemon through the shared socket directory.
+- No process of the suite can reach the user's daemon, iwdp or devices (the e2e guard of W1c): private `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`, fake `ios_webkit_debug_proxy` and `pkill` first on `PATH`, and a dead iwdp listing for the in-process daemon (`iwdp.DefaultListingAddr`) and for `agent-ios` (the link-time seam `proxy.listingAddr`).
 - Clients run without proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NODE_USE_ENV_PROXY`), with `NO_PROXY=127.0.0.1,localhost`, and without the user's `AGENT_BROWSER_*` settings, so nothing sits between a client and the endpoint.
 - agent-browser gets a session name unique to the run (`cdpc-<pid>-<n>`); the driver closes each session at the end. Its sockets live in a short directory below `/tmp` (`AGENT_BROWSER_SOCKET_DIR`), because agent-browser refuses a socket path longer than 103 bytes.
 
@@ -78,7 +78,7 @@ Each client script (`clients/<client>.mjs <scenario> <url> <result-file>`) write
   - agent-browser has no hook: the driver uses the endpoint's unknown-method counts (below) for it.
 - The parser (`parseResult`) refuses unknown fields and a result without `client`, `version`, `scenario`, `form` or `url`.
 
-For every client run, the driver also reads `iwdp-cli cdp log --json` before and after the run; the counts that grew are the run's unknown methods (design 5.4).
+For every client run, the driver also reads `agent-ios cdp log --json` before and after the run; the counts that grew are the run's unknown methods (design 5.4).
 
 ## Expected-missing lists
 
@@ -102,7 +102,7 @@ For every client run, the driver also reads `iwdp-cli cdp log --json` before and
 
 ## Scenarios on WebKitGTK (tests 8, 11 and 12)
 
-Each test starts broadwayd, MiniBrowser (with the DPI shim of e2e/webkitgtk) on fixtures/second.html, a fixture server and the in-process daemon on the webkitgtk transport (`startGTK`, gtk_test.go). Every client gets a fresh browser and its own logical session; the driver issues its URLs with `iwdp-cli --session <s> get cdp-url` and closes the session afterwards, which releases the lease. Every step is checked by its effect on the page, by the script and, after the run, by `iwdp-cli --session <s> eval` in the same logical session (an oracle that does not depend on the client).
+Each test starts broadwayd, MiniBrowser (with the DPI shim of e2e/webkitgtk) on fixtures/second.html, a fixture server and the in-process daemon on the webkitgtk transport (`startGTK`, gtk_test.go). Every client gets a fresh browser and its own logical session; the driver issues its URLs with `agent-ios --session <s> get cdp-url` and closes the session afterwards, which releases the lease. Every step is checked by its effect on the page, by the script and, after the run, by `agent-ios --session <s> eval` in the same logical session (an oracle that does not depend on the client).
 
 Fixtures (fixtures/): form.html (a heading, the fields Name and Email, a button "Press me" that becomes "Clicked N" and adds #late 300 ms later, #status that shows every input of Name), second.html (the start page), form-no-checkvisibility.html (form.html with a head script that removes WebKitGTK's native `Element.prototype.checkVisibility`, as Safari 16.6 lacks it; it never removes the endpoint's shim). The fixture server also answers /resource with "from the server" and counts the requests.
 
@@ -145,10 +145,10 @@ The user chose: upstream pinned, and the build on PATH also run.
 ### agent-browser on PATH
 
 - **A native binary** (an ELF file, or a symlink to one): the driver runs it directly.
-- **A script** (a wrapper such as `~/.pi/agent/bin/agent-browser`, or the npm launcher `bin/agent-browser.js`): the driver never runs it and does not guess which build it runs. Set `IWDP_CDPCOMPAT_PATH_AGENT_BROWSER` to the absolute path of the native binary that the script runs:
+- **A script** (a wrapper such as `~/.pi/agent/bin/agent-browser`, or the npm launcher `bin/agent-browser.js`): the driver never runs it and does not guess which build it runs. Set `AGENT_IOS_CDPCOMPAT_PATH_AGENT_BROWSER` to the absolute path of the native binary that the script runs:
 
   ```sh
-  IWDP_CDPCOMPAT_PATH_AGENT_BROWSER=$HOME/projects/agent-browser/cli/target/release/agent-browser make test-cdpcompat
+  AGENT_IOS_CDPCOMPAT_PATH_AGENT_BROWSER=$HOME/projects/agent-browser/cli/target/release/agent-browser make test-cdpcompat
   ```
 
   Without it, the suite fails at once with the script's path and this setting. With it, the scenarios run the named binary with the driver's home, working directory and `--config`, like the pinned binary.
@@ -158,7 +158,7 @@ The user chose: upstream pinned, and the build on PATH also run.
 
 ### Deadlines of client runs
 
-Every client run (a Node script, an agent-browser command and its session close), every `iwdp-cli` run and the build of `iwdp-cli` run in their own process group under a deadline (90 s for a client run, 30 s for the close and for `iwdp-cli`, 5 min for the build). At the deadline the driver kills the whole group, so a child that holds the output open (for example a session daemon) cannot block the run; the pipes close at most 2 s later, and the process is reaped. The run fails with the timeout, and its log keeps the output so far (at most 8 MiB per run, with a note of what was dropped). A client run that ends by itself keeps its group: agent-browser's session must live until its close, which the driver runs after each agent-browser run, also after a timeout (`TestScenarioTimeoutEndsItsChild`, `TestScenarioTimeoutStillClosesSession`).
+Every client run (a Node script, an agent-browser command and its session close), every `agent-ios` run and the build of `agent-ios` run in their own process group under a deadline (90 s for a client run, 30 s for the close and for `agent-ios`, 5 min for the build). At the deadline the driver kills the whole group, so a child that holds the output open (for example a session daemon) cannot block the run; the pipes close at most 2 s later, and the process is reaped. The run fails with the timeout, and its log keeps the output so far (at most 8 MiB per run, with a note of what was dropped). A client run that ends by itself keeps its group: agent-browser's session must live until its close, which the driver runs after each agent-browser run, also after a timeout (`TestScenarioTimeoutEndsItsChild`, `TestScenarioTimeoutStillClosesSession`).
 
 ## Client isolation
 

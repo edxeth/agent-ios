@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // Waits of the tab actions (window.open and window.close take effect
@@ -245,7 +245,7 @@ func (rec *record) createTarget(ctx context.Context, url string) (target, error)
 		return target{}, err
 	}
 	if len(ts) == 0 || ts[0].key != rec.selected.Key {
-		return target{}, fmt.Errorf("the selected page %q is gone; issue a new URL with 'iwdp-cli get cdp-url'", rec.selected.Title)
+		return target{}, fmt.Errorf("the selected page %q is gone; issue a new URL with 'agent-ios get cdp-url'", rec.selected.Title)
 	}
 	lit, _ := json.Marshal(url) // a string always marshals
 	raw, err := rec.evalIn(ctx, ts[0], "Target.createTarget", fmt.Sprintf("!!window.open(%s, '_blank')", lit), true)

@@ -48,7 +48,7 @@ func connectAsync(t *testing.T, o Options) <-chan connectResult {
 // daemon, and A then waited for that new daemon to exit until its
 // deadline.
 func TestConcurrentClientsReplaceAnIdleDaemonOnce(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	f := startFakeDaemonOf(t, o.Dir, previousProtocol, 0)
 	replied, release := make(chan struct{}), make(chan struct{})
 	var held atomic.Bool
@@ -95,12 +95,12 @@ func TestConcurrentClientsReplaceAnIdleDaemonOnce(t *testing.T) {
 	}
 }
 
-// WS2 round-2 race check (cmd/iwdp-cli TestAnotherBinaryReplacesAnIdleDaemon):
+// WS2 round-2 race check (cmd/agent-ios TestAnotherBinaryReplacesAnIdleDaemon):
 // a daemon closes its listener before it releases run.lock (Run), and a
 // daemon started before that release exits at once. So WaitGone waits
 // until run.lock is free too, not only until the socket stops answering.
 func TestWaitGoneWaitsForTheRunLock(t *testing.T) {
-	dir := filepath.Join(shortDir(t), "iwdp")
+	dir := filepath.Join(shortDir(t), "agent-ios")
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestWaitGoneWaitsForTheRunLock(t *testing.T) {
 }
 
 // WS2 round-2 race check, TestAnotherBinaryReplacesAnIdleDaemon (exit 1:
-// "the iwdp daemon exited at start"), with a real daemon (Run): a daemon
+// "the agent-ios daemon exited at start"), with a real daemon (Run): a daemon
 // that exits closes its listener first and then waits up to streamDrain
 // for open connections before it releases run.lock. A connection that
 // sent no request yet (held here) makes that wait last. A new daemon
@@ -186,7 +186,7 @@ func TestDaemonStartsAfterWaitGone(t *testing.T) {
 // one; before, its daemon exited at once ("already running") and Connect
 // failed. Here the test holds run.lock with no socket, as such a daemon.
 func TestConnectWaitsForTheRunLockOfAnExitingDaemon(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	if err := EnsureDir(o.Dir); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func holdRunLock(t *testing.T, dir string) func() {
 // daemon without a listener holds ends at the command's deadline with the
 // deadline error, and starts no daemon.
 func TestRunLockWaitEndsAtTheDeadline(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	holdRunLock(t, o.Dir)
 	// The deadline and its grace are the behavior under test: Connect
 	// returns by the command deadline plus grace (round-5 review: a
@@ -284,13 +284,13 @@ func TestRunLockWaitEndsAtTheDeadline(t *testing.T) {
 func TestRunLockWaitReusesADaemonThatAnswers(t *testing.T) {
 	base := shortDir(t)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
-	dir := filepath.Join(base, "iwdp")
+	dir := filepath.Join(base, "agent-ios")
 	holdRunLock(t, dir)
 	// The executable to start does not exist, so a Connect that starts a
 	// daemon fails: the answering daemon must be reused instead (round-5
 	// review: a Connect that ignored the answer and started a daemon still
 	// found the answering one in its start loop).
-	exe := filepath.Join(base, "no-such-iwdp-cli")
+	exe := filepath.Join(base, "no-such-agent-ios")
 	exePath, err := selfExe()
 	if err != nil {
 		t.Fatal(err)

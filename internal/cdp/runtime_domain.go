@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // The Runtime domain (design docs/design/agentic-parity.md, section 5.3).
@@ -509,7 +509,7 @@ const (
 	bindMarker     = "__iwdp_bind__ "
 	dialogMarker   = "__iwdp_dialog__ "
 	internalPrefix = "__iwdp_"
-	devtoolsPrefix = "[iwdp:"
+	devtoolsPrefix = "[agent-ios:"
 )
 
 // wipConsoleMessage is a WIP Console.ConsoleMessage.

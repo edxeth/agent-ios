@@ -66,7 +66,7 @@ func (p retirePlan) String() string {
 
 // lockDelayEnv names the delay of a test daemon before Run takes run.lock
 // (TestMain).
-const lockDelayEnv = "IWDP_TEST_LOCK_DELAY"
+const lockDelayEnv = "AGENT_IOS_TEST_LOCK_DELAY"
 
 // exitDelay is how long a generated daemon that exits takes after the
 // shutdown request before it closes its socket.
@@ -298,10 +298,10 @@ func TestRetireProperty(t *testing.T) {
 // the shutdown requests in the old daemon, and the owner of run.lock by a
 // probe at Connect's return.
 func runRetirePlan(t *testing.T, p retirePlan, waitBound time.Duration) string {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m", lockDelayEnv+"="+p.lockDelay.String())
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m", lockDelayEnv+"="+p.lockDelay.String())
 	f := startRetireDaemon(t, o.Dir, p)
 	spawns := probeSpawns(t)
-	busy := "daemon version 0.4.0 (protocol 1) is running with active sessions; run 'iwdp-cli daemon stop' when they finish"
+	busy := "daemon version 0.4.0 (protocol 1) is running with active sessions; run 'agent-ios daemon stop' when they finish"
 	goingAway := p.leases == 0 && p.end.goingAway()
 	limit := 8 * time.Second
 	if goingAway && !p.exits {

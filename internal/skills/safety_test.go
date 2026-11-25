@@ -18,14 +18,14 @@ var safetyRules = []struct {
 }{
 	{"no infrastructure writes, stop on a guard refusal", []string{"No infrastructure writes", "guard or wrapper refuses", "stop and report the refusal"}},
 	{"one bounded diagnostic budget, then stop", []string{"One bounded diagnostic budget, then stop", "fails twice", "health probe"}},
-	{"private mode; masking, 0600, HAR and state deletion, no account page dumps", []string{"IWDP_PRIVATE=1", "password and token fields", "[masked]", "mode 0600", "delete them before the run ends", "account, security or settings pages", "--url-file"}},
+	{"private mode; masking, 0600, HAR and state deletion, no account page dumps", []string{"AGENT_IOS_PRIVATE=1", "password and token fields", "[masked]", "mode 0600", "delete them before the run ends", "account, security or settings pages", "--url-file"}},
 	{"preserve and restore cookie owners; revocation by the auth helper", []string{"Preserve and restore cookie owners", "restore it", "belongs to the sign-in helper"}},
 	{"bounded shell calls, known evidence folders, no filesystem-wide search", []string{"Give every shell call a timeout", "evidence folder", "Never search the filesystem"}},
 	{"never stop or restart another agent's iwdp; reserve and release", []string{"Never stop, restart or kill an iwdp", "Reserve the device", "release it at the end"}},
 }
 
 func TestTheCoreGuideStatesTheSafetyRules(t *testing.T) {
-	s, err := Get("iwdp")
+	s, err := Get("agent-ios")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +44,13 @@ func TestTheCoreGuideStatesTheSafetyRules(t *testing.T) {
 // stacks; eval returns what the page returns), named by the skill that
 // documents them. Each skill must say that they are not masked.
 var rawOutputs = map[string][]string{
-	"iwdp": {"get value", "get text", "`eval`", "`console`", "`errors`", "snapshot text"},
+	"agent-ios": {"get value", "get text", "`eval`", "`console`", "`errors`", "snapshot text"},
 }
 
 // noRawOutput are the guides beside the core guide: they document no raw
 // output, so they need no raw-output sentence; the masking claims of every
 // guide are still checked.
-var noRawOutput = map[string]bool{"iwdp-cdp": true, "iwdp-device": true, "iwdp-devtools": true}
+var noRawOutput = map[string]bool{"agent-ios-cdp": true, "agent-ios-device": true, "agent-ios-devtools": true}
 
 // rawTerms are words that name a raw output in any skill.
 var rawTerms = []string{"console", "errors", "get value", "get text", "`eval`", "snapshot"}

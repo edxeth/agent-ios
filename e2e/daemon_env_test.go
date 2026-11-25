@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/internal/daemon"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 // e2eRuntimeDir is the private XDG_RUNTIME_DIR and XDG_STATE_HOME of the
@@ -30,8 +30,8 @@ func init() {
 	e2eRuntimeDir = dir
 	_ = os.Setenv("XDG_RUNTIME_DIR", dir)
 	_ = os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	_ = os.Setenv("IWDP_DAEMON_IDLE", e2eDaemonIdle)
-	for _, k := range []string{"IWDP_SESSION", "IWDP_DEVICE_RESERVATION", "IWDP_TRANSPORT", "IWDP_DAEMON_DIR"} {
+	_ = os.Setenv("AGENT_IOS_DAEMON_IDLE", e2eDaemonIdle)
+	for _, k := range []string{"AGENT_IOS_SESSION", "AGENT_IOS_DEVICE_RESERVATION", "AGENT_IOS_TRANSPORT", "AGENT_IOS_DAEMON_DIR"} {
 		_ = os.Unsetenv(k)
 	}
 	// devices, pages and status start iwdp when it does not
@@ -69,7 +69,7 @@ func TestE2EDaemonsUseAPrivateRuntimeDir(t *testing.T) {
 	if p, err := daemon.LogPath(); err != nil || !strings.HasPrefix(p, e2eRuntimeDir) {
 		t.Fatalf("daemon log %s (%v) is not below %s", p, err, e2eRuntimeDir)
 	}
-	for _, k := range []string{"IWDP_SESSION", "IWDP_DEVICE_RESERVATION", "IWDP_DAEMON_DIR"} {
+	for _, k := range []string{"AGENT_IOS_SESSION", "AGENT_IOS_DEVICE_RESERVATION", "AGENT_IOS_DAEMON_DIR"} {
 		if v, ok := os.LookupEnv(k); ok {
 			t.Errorf("%s=%q leaks into the tested binaries", k, v)
 		}

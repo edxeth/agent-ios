@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/skills"
+	"github.com/nnemirovsky/agent-ios/internal/skills"
 )
 
 // listDescriptionRunes is where "skills list" cuts a description, as
@@ -72,7 +72,7 @@ func init() {
 			if err != nil {
 				return Result{}, fmt.Errorf("finding the user cache directory for the skills: %w", err)
 			}
-			dir, err := skills.Install(filepath.Join(cache, "iwdp", "skills"))
+			dir, err := skills.Install(filepath.Join(cache, "agent-ios", "skills"))
 			if err != nil {
 				return Result{}, err
 			}

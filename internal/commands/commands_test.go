@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // fixture commands cover the spec features; production commands registered
@@ -82,7 +82,7 @@ func TestHelpNeverRunsACommand(t *testing.T) {
 		for _, form := range [][]string{{"--help"}, {"-h"}, {"--json", "--help"}} {
 			args := append(strings.Fields(c.Name), form...)
 			code, out, _, env := runCLI(args...)
-			if code != ExitOK || env != 0 || !strings.Contains(out, "Usage: iwdp-cli "+c.Name) {
+			if code != ExitOK || env != 0 || !strings.Contains(out, "Usage: agent-ios "+c.Name) {
 				t.Fatalf("%v: code %d, env calls %d, output %q", args, code, env, out)
 			}
 		}
@@ -136,7 +136,7 @@ func TestUsageErrorsExitTwoBeforeAnyConnection(t *testing.T) {
 
 func TestParseFlagsArgsGlobalsAndAliases(t *testing.T) {
 	withFixtures(t)
-	env := func(k string) string { return map[string]string{"IWDP_SESSION": "agent-1"}[k] }
+	env := func(k string) string { return map[string]string{"AGENT_IOS_SESSION": "agent-1"}[k] }
 	inv, err := Parse([]string{"--json", "fixture", "type", "@e3", "-d", "300ms", "--timeout=5s", "a", "--", "--b"}, env)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestRegisterRejectsDuplicatesAndMissingHelp(t *testing.T) {
 }
 
 // Design 2.6: one absolute deadline per command. The CLI binding applies
-// --timeout, IWDP_TIMEOUT or the command's own timeout before it builds the
+// --timeout, AGENT_IOS_TIMEOUT or the command's own timeout before it builds the
 // environment, and a command that waits for its context ends at that
 // deadline with exit code 3.
 func TestRunCLIAppliesCommandDeadline(t *testing.T) {
@@ -231,12 +231,12 @@ func TestRunCLIAppliesCommandDeadline(t *testing.T) {
 		args []string
 	}{
 		{"flag", "", []string{"--timeout", "80ms", "fixture", "wait"}},
-		{"IWDP_TIMEOUT", "80ms", []string{"fixture", "wait"}},
+		{"AGENT_IOS_TIMEOUT", "80ms", []string{"fixture", "wait"}},
 		{"command default", "", []string{"fixture", "slow"}},
 		{"flag beats command default", "", []string{"fixture", "long", "--timeout=40ms"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("IWDP_TIMEOUT", tc.env)
+			t.Setenv("AGENT_IOS_TIMEOUT", tc.env)
 			start := time.Now()
 			code, _, stderr, _ := runCLI(tc.args...)
 			if el := time.Since(start); code != ExitTimeout || el > time.Second {
@@ -244,11 +244,11 @@ func TestRunCLIAppliesCommandDeadline(t *testing.T) {
 			}
 		})
 	}
-	t.Setenv("IWDP_TIMEOUT", "soon")
+	t.Setenv("AGENT_IOS_TIMEOUT", "soon")
 	if code, _, _, env := runCLI("fixture", "deadline"); code != ExitUsage || env != 0 {
-		t.Fatalf("IWDP_TIMEOUT=soon: exit %d, env calls %d; want exit 2 before any connection", code, env)
+		t.Fatalf("AGENT_IOS_TIMEOUT=soon: exit %d, env calls %d; want exit 2 before any connection", code, env)
 	}
-	t.Setenv("IWDP_TIMEOUT", "")
+	t.Setenv("AGENT_IOS_TIMEOUT", "")
 	if code, _, stderr, _ := runCLI("fixture", "deadline"); code != ExitOK || seen < 29*time.Second || seen > DefaultTimeout {
 		t.Fatalf("exit %d (%s), time left %s; want the default deadline of 30 s", code, stderr, seen)
 	}

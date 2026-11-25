@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/refs"
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/refs"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
 )
 
 // pageRuntime is what the W3a commands (snapshot, get, is, find, hit-test,

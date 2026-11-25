@@ -39,7 +39,7 @@ func urlFromFile(_ context.Context, in *Input, _ io.Reader) error {
 	if path == "" {
 		if len(in.Args) == 0 {
 			// The words of the parser for a missing required argument.
-			return usagef("missing argument <url>, or --url-file <path> (run 'iwdp-cli <command> --help')")
+			return usagef("missing argument <url>, or --url-file <path> (run 'agent-ios <command> --help')")
 		}
 		return nil
 	}
@@ -120,7 +120,7 @@ func (e *fileURLError) Unwrap() error { return e.err }
 // writer), and the check is on the opened file, so a file that replaced
 // the path after a check of the path cannot pass it. A symbolic link
 // counts as the file it names. O_NOCTTY keeps the open of a terminal from
-// making it the controlling terminal of iwdp-cli.
+// making it the controlling terminal of agent-ios.
 func openRegular(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
@@ -169,7 +169,7 @@ func needURL(in Input, name string) error {
 		return nil
 	}
 	if urlFile(in) != "" {
-		return usagef("%s --url-file reads a file of iwdp-cli's caller; other callers pass the URL as the argument", name)
+		return usagef("%s --url-file reads a file of agent-ios's caller; other callers pass the URL as the argument", name)
 	}
 	return usagef("%s needs <url> or --url-file <path>", name)
 }

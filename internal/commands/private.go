@@ -10,19 +10,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
-	"github.com/nnemirovsky/iwdp-cli/internal/sim"
-	"github.com/nnemirovsky/iwdp-cli/internal/skills"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/sim"
+	"github.com/nnemirovsky/agent-ios/internal/skills"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
-// Private output (--private, IWDP_PRIVATE=1) is for a transcript that
-// other parties read, as an agent's is. What iwdp-cli says about a page
+// Private output (--private, AGENT_IOS_PRIVATE=1) is for a transcript that
+// other parties read, as an agent's is. What agent-ios says about a page
 // can be private: its title, its URL, its origin, its key with the device
 // identifier, the session that holds it, and the text of an error, which
-// can repeat any of them. In private mode iwdp-cli says none of that.
+// can repeat any of them. In private mode agent-ios says none of that.
 //
 // The mode has two channels. Stdout holds the result, and only for a
 // command whose result the caller asked for: a read (privateReads: content
@@ -57,7 +57,7 @@ import (
 
 // privateEnv is the environment variable that turns private mode on; the
 // flag --private overrides it.
-const privateEnv = "IWDP_PRIVATE"
+const privateEnv = "AGENT_IOS_PRIVATE"
 
 // privateRead is a command whose result private mode prints: what the
 // result is, data, the shape of the members of its JSON data that print
@@ -310,7 +310,7 @@ var (
 	// is what the flag asks for.
 	privateNode = treeNode()
 	// privateMetric is a metric of vitals (devtools.VitalsMetric); the
-	// reason of an unavailable metric is a fixed sentence of iwdp-cli's
+	// reason of an unavailable metric is a fixed sentence of agent-ios's
 	// page function (devtools.vitalsFn), not the text of an error.
 	privateMetric = object(fields{"value": scalar, "unavailable": scalar})
 	// headers are HTTP headers: names are data, values strings.
@@ -911,7 +911,7 @@ func tabsSummary(data json.RawMessage) (string, any, bool) {
 	}
 	fmt.Fprintf(&b, "hidden %d", *list.Hidden)
 	if *list.Hidden > 0 {
-		b.WriteString("\nnot listed: pages of physical devices without a reservation of your owner (run 'iwdp-cli device reserve --owner <owner>'), and the simulator's while another owner reserves it (run 'iwdp-cli sim reserve', it waits)")
+		b.WriteString("\nnot listed: pages of physical devices without a reservation of your owner (run 'agent-ios device reserve --owner <owner>'), and the simulator's while another owner reserves it (run 'agent-ios sim reserve', it waits)")
 	}
 	return b.String(), map[string]any{"tabs": tabs, "hidden": *list.Hidden}, true
 }
@@ -999,7 +999,7 @@ func simUpSummary(data json.RawMessage) (string, any, bool) {
 		text += "\nnew tab unknown: " + simSharedURLNext
 		value["sharedURL"] = true
 	case r.TabOpened:
-		text += "\nnew tab unknown: run iwdp-cli tab find --device SIMULATOR --url-file <file of the --url>"
+		text += "\nnew tab unknown: run agent-ios tab find --device SIMULATOR --url-file <file of the --url>"
 	}
 	return text, value, true
 }
@@ -1067,7 +1067,7 @@ func simStatusSummary(data json.RawMessage) (string, any, bool) {
 func privateMeaning(code int) string {
 	switch code {
 	case ExitUsage:
-		return "usage error; 'iwdp-cli <command> --help' prints the usage"
+		return "usage error; 'agent-ios <command> --help' prints the usage"
 	case ExitWaitTimeout:
 		return "a wait timed out"
 	case ExitBusy:
@@ -1075,7 +1075,7 @@ func privateMeaning(code int) string {
 	case ExitNoPage:
 		return "no device or page"
 	case ExitReservation:
-		return "the device reservation is missing, or another owner holds it (on the simulator: run 'iwdp-cli sim reserve', which waits)"
+		return "the device reservation is missing, or another owner holds it (on the simulator: run 'agent-ios sim reserve', which waits)"
 	case ExitNoMatch:
 		return "no tab shows the target"
 	case ExitTimeout:
@@ -1092,19 +1092,19 @@ func privateMeaning(code int) string {
 // without --private prints it.
 func privateErrorLine(name string, code int) string {
 	if name == "" {
-		name = "iwdp-cli"
+		name = "agent-ios"
 	}
 	// The simulator's turn-taking: fixed sentences that tell an agent what
 	// to do, since the message that names the owner is hidden.
 	switch {
 	case name == "device release" && code == ExitReservation:
-		return name + " exit 6: nothing of yours released: another owner holds that device, or you hold the simulator, which 'iwdp-cli sim release' releases (private mode hides the message)"
+		return name + " exit 6: nothing of yours released: another owner holds that device, or you hold the simulator, which 'agent-ios sim release' releases (private mode hides the message)"
 	case name == "sim reserve" && code == ExitWaitTimeout:
-		return name + " exit 3: the simulator is still reserved by another agent; run 'iwdp-cli sim reserve' again to keep waiting, and do not use the simulator meanwhile (private mode hides the message)"
+		return name + " exit 3: the simulator is still reserved by another agent; run 'agent-ios sim reserve' again to keep waiting, and do not use the simulator meanwhile (private mode hides the message)"
 	case name == "sim up" && code == ExitNoMatch:
 		return name + " exit 7: Safari shows no new tab of your --url (a tab of an earlier run with that URL does not count): check that your server answers on the same port of this host (curl http://127.0.0.1:<port>/) and runs outside your tool call; the simulator reaches this host at 10.0.2.2 (private mode hides the message)"
 	case strings.HasPrefix(name, "sim ") && code == ExitReservation:
-		return fmt.Sprintf("%s exit %d: the simulator is reserved by another agent; run 'iwdp-cli sim reserve' (it waits), then this command (private mode hides the message)", name, code)
+		return fmt.Sprintf("%s exit %d: the simulator is reserved by another agent; run 'agent-ios sim reserve' (it waits), then this command (private mode hides the message)", name, code)
 	}
 	return fmt.Sprintf("%s exit %d: %s (private mode hides the message)", name, code, privateMeaning(code))
 }

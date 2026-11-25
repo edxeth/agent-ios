@@ -17,10 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/dialogpolicy"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/dialogpolicy"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // The Page domain (design docs/design/agentic-parity.md, sections 5.2 and
@@ -66,7 +66,7 @@ func init() {
 
 // Errors of the design (5.2, 5.3).
 var (
-	errDialogs   = serverError("dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with iwdp-cli dialog accept|dismiss")
+	errDialogs   = serverError("dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with agent-ios dialog accept|dismiss")
 	errBypassCSP = serverError("bypassing the Content Security Policy is not supported on iOS WebKit")
 	errNoFrame   = serverError("No frame for given id found")
 )

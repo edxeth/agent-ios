@@ -7,9 +7,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Tombstones (W4 repair round 4). A removal of an interception rule

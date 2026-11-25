@@ -1,4 +1,4 @@
-module github.com/nnemirovsky/iwdp-cli
+module github.com/nnemirovsky/agent-ios
 
 go 1.26.0
 

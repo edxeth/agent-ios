@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // lockedBuffer is a daemon log that the test reads while the daemon writes.
@@ -338,7 +338,7 @@ func TestDaemonCDPPortBusyFailsTheStart(t *testing.T) {
 	busy := l.Addr().(*net.TCPAddr).Port
 	base := shortDir(t)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
-	dir := filepath.Join(base, "iwdp")
+	dir := filepath.Join(base, "agent-ios")
 	err = Run(ctxFor(t, 10*time.Second), RunOptions{Dir: dir, Version: "test", CDPPort: busy, Log: io.Discard})
 	if err == nil || !strings.Contains(err.Error(), "--cdp-port "+strconv.Itoa(busy)) {
 		t.Fatalf("daemon run --cdp-port %d (busy): %v, want an error naming the flag", busy, err)

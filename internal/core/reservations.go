@@ -17,7 +17,7 @@ import (
 const AnyDevice = "*"
 
 // Reservation is a cooperative device reservation (design 2.5, rule 1):
-// flock-protected JSON files that every iwdp-cli of this version
+// flock-protected JSON files that every agent-ios of this version
 // honours. It does not stop clients that ignore it.
 type Reservation struct {
 	Device  string        `json:"device"` // UDID, or AnyDevice
@@ -39,7 +39,7 @@ func (r Reservation) Live(now time.Time) bool { return now.Before(r.Expires) }
 // of its listing). Its reservation stands apart from the physical
 // devices': AnyDevice does not cover it and it covers none of them, so an
 // agent on a plugged-in iPhone and agents taking turns on the simulator
-// (iwdp-cli sim reserve) do not block one another.
+// (agent-ios sim reserve) do not block one another.
 const SimulatorDevice = "SIMULATOR"
 
 // Covers reports whether r applies to device.

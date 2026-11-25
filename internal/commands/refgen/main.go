@@ -1,5 +1,5 @@
 // refgen writes docs/commands.md, the command reference, from the command
-// registry (internal/commands): every registry command of iwdp-cli with its
+// registry (internal/commands): every registry command of agent-ios with its
 // usage, arguments and flags. It registers the
 // same commands as the binaries: those of internal/commands and the daemon
 // commands of internal/daemon.
@@ -15,10 +15,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
 	// The daemon lifecycle commands register in internal/daemon, because
 	// that package imports internal/commands.
-	_ "github.com/nnemirovsky/iwdp-cli/internal/daemon"
+	_ "github.com/nnemirovsky/agent-ios/internal/daemon"
 )
 
 func main() {
@@ -38,10 +38,10 @@ var header = strings.Join([]string{
 	"",
 	"<!-- Generated from the command registry by \"make docs\" (go run ./internal/commands/refgen docs/commands.md). Do not edit by hand. -->",
 	"",
-	"This page lists every registry command of `iwdp-cli`: the commands that run in the iwdp daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.",
+	"This page lists every registry command of `agent-ios`: the commands that run in the agent-ios daemon and share sessions, leases and refs. For each command it gives the usage, the arguments and the flags.",
 	"",
-	"- `iwdp-cli` runs only these commands. [The migration notes](migration.md) map each removed command of earlier versions (for example `pages`, `set-breakpoint`, `get-matched-styles`) to its registry command, or say that it was removed.",
-	"- `iwdp-cli <command> --help` prints the same usage and never connects to a page.",
+	"- `agent-ios` runs only these commands. [The migration notes](migration.md) map each removed command of earlier versions (for example `pages`, `set-breakpoint`, `get-matched-styles`) to its registry command, or say that it was removed.",
+	"- `agent-ios <command> --help` prints the same usage and never connects to a page.",
 	"",
 	"",
 }, "\n")

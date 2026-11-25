@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Client sources above the transport's message limit (proof P2 item 2;
@@ -134,7 +134,7 @@ var (
 	// entry is incomplete.
 	stageRunJS = `(function (k, n, p, v, q, w, f) { var g = globalThis, d = g.__iwdpSrc, e = d && d[k], s = "", i, x, ev, r; ` +
 		`if (d) { delete d[k]; x = true; for (i in d) { x = false; break; } if (x) { delete g.__iwdpSrc; } } ` +
-		`if (!e || e.length !== n) { throw new Error("iwdp: the staged source " + k + " is incomplete"); } ` +
+		`if (!e || e.length !== n) { throw new Error("agent-ios: the staged source " + k + " is incomplete"); } ` +
 		`r = e.r; for (i = 0; i < n; i++) { s += e[i]; } ` +
 		`try { ev = g.eval; x = typeof ev === "function" && ev(p) === v && ev(q) === w; } catch (y) { throw r + y; } ` +
 		`if (!x) { throw r + "` + notBuiltinEval + `"; } ` +

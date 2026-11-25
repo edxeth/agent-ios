@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 go build ./...                    # Compile (quick check)
-make build                        # Compile to bin/iwdp-cli
-make install                      # Install iwdp-cli via go install
+make build                        # Compile to bin/agent-ios
+make install                      # Install agent-ios via go install
 make test                         # Run unit + smoke tests (go test ./... -v -count=1)
 make test-e2e                     # macOS: boot iOS Sim + iwdp, run the simulator tests (shared helpers, proxy listing)
 make test-coverage                # Run tests with coverage → coverage.html
-make sim-setup                    # Boot iOS Simulator + iwdp, open a test page (prints IWDP_SIM_WS_URL, IWDP_SIM_PAGE_URL)
+make sim-setup                    # Boot iOS Simulator + iwdp, open a test page (prints AGENT_IOS_SIM_WS_URL, AGENT_IOS_SIM_PAGE_URL)
 make sim-teardown                 # Manual recovery after a crashed run only (one Simulator run per user; never while another run is active): shut down the simulator if setup booted it; stop setup's iwdp only through scripts/iwdp-owner-check.sh --terminate, which verifies it (pid, start time, start token, program) and signals only it, and keep its record until it is gone; otherwise it leaves that iwdp running, says why and sends no signal (docs/device-runbook.md, Stopping an iwdp by hand)
 make fmt                          # gofumpt -w . (format all Go files)
 make lint                         # golangci-lint run ./... (needs golangci-lint v2.15+ built with Go 1.27)
@@ -66,23 +66,23 @@ Some `<Domain>.enable` methods work through iwdp Target routing (e.g., `Debugger
 ### Deadlines
 
 - `webkit.Client.Send` applies `DefaultSendTimeout` (30 s) when the context has no deadline, and `NewClient` uses a 5 s WebSocket handshake timeout (`DialTimeout`).
-- Every `iwdp-cli` command runs under a deadline: 30 s, `--timeout <duration>` or `IWDP_TIMEOUT`. A command's own default (for example 5 s of click and fill) applies without them. A deadline error exits 124 and names the command, page, elapsed time and likely causes; a watchdog ends commands that ignore the context.
-- `iwdp-cli <command> --help` (or `-h`) prints usage and exits before any connection. iwdp-cli runs registry commands only: a new command is a new file in `internal/commands` whose init() calls `Register`; the CLI parser, help, overview (usage.go) and docs/commands.md come from it. `TestEveryCommandHasHelp` checks the overview and the help of every registry command.
-- Every usage error exits 2 before any connection: an unknown command or `--flag`, a bad global option, a trailing `ws://` argument, and a page command with `IWDP_WS_URL` set and no `--page` (`refusePageURLEnv` in internal/commands/cli.go). Name the page with `--page`.
+- Every `agent-ios` command runs under a deadline: 30 s, `--timeout <duration>` or `AGENT_IOS_TIMEOUT`. A command's own default (for example 5 s of click and fill) applies without them. A deadline error exits 124 and names the command, page, elapsed time and likely causes; a watchdog ends commands that ignore the context.
+- `agent-ios <command> --help` (or `-h`) prints usage and exits before any connection. agent-ios runs registry commands only: a new command is a new file in `internal/commands` whose init() calls `Register`; the CLI parser, help, overview (usage.go) and docs/commands.md come from it. `TestEveryCommandHasHelp` checks the overview and the help of every registry command.
+- Every usage error exits 2 before any connection: an unknown command or `--flag`, a bad global option, a trailing `ws://` argument, and a page command with `AGENT_IOS_WS_URL` set and no `--page` (`refusePageURLEnv` in internal/commands/cli.go). Name the page with `--page`.
 - Registry arguments (`commands.parseCommand`): only exact, known flags are flags. Another `--name` is a usage error; every other token, also `-1` or `-Math.abs(2)`, is an argument; `--` ends the flags. Never add a heuristic for dash-leading arguments.
 - Registry deadlines: `startRegistry` (daemon_cli.go) records the command for `RunCLIStarted` before its ClientStep, so every stage (stdin, daemon start, run) prints the CLI's deadline message. The daemon gets the full remaining deadline; `RunRemote` waits up to `deadlineGrace` (200 ms) past it for the daemon's error. The daemon's `/v1/run` stream sends a `page` item as soon as an operation resolved its page (`core.WithPageObserver`), before attach, lease and queue.
-- Daemon reuse: a client reuses a running daemon only with the same `Protocol` and the same executable content (`Hello.Executable`: the file's identity, else its SHA-256; internal/daemon/executable.go); an idle daemon of another binary is replaced, a busy one stays (run `iwdp-cli daemon stop`). A harness that embeds the daemon for a separately built iwdp-cli sets `daemon.RunOptions.Executable` to that binary (e2e/cdpcompat).
+- Daemon reuse: a client reuses a running daemon only with the same `Protocol` and the same executable content (`Hello.Executable`: the file's identity, else its SHA-256; internal/daemon/executable.go); an idle daemon of another binary is replaced, a busy one stays (run `agent-ios daemon stop`). A harness that embeds the daemon for a separately built agent-ios sets `daemon.RunOptions.Executable` to that binary (e2e/cdpcompat).
 - Only **one WebSocket debugger connection per page** — simulator tests use a `sync.Once` shared connection pattern.
 
 ### Rules for agents working on a device
 
-- Never stop, restart or pattern-kill an iwdp you did not start. `restart-iwdp` refuses every iwdp whose record iwdp-cli did not write, also one that the removed iwdp-mcp started (record field `writer`, internal/proxy/restart.go; decision L02, docs/device-runbook.md).
+- Never stop, restart or pattern-kill an iwdp you did not start. `restart-iwdp` refuses every iwdp whose record agent-ios did not write, also one that the removed iwdp-mcp started (record field `writer`, internal/proxy/restart.go; decision L02, docs/device-runbook.md).
 - Stop an iwdp by hand only if you started it yourself and nobody else uses it; otherwise send no signal and ask whoever started it, or the user. The stop is `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone` ([docs/device-runbook.md, Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand)).
 - Use a distinct `--session`; reserve physical devices (`device reserve`) and release them; on "lost" stop and ask before `--takeover`.
 - The iOS Simulator over SSH is shared by agents in turns: `sim reserve` (refuses the `default` session and the guides' `qa-login`, waits, exit 3 to retry), work in your own tab (`sim up --url` prints its id for `tab <id>`; else `tab find --device SIMULATOR`), `tab close <id>` (when it fails, still release; without an id and a selected tab it refuses in your turn), `sim release`; an unused reservation ends after 2 minutes (internal/commands/sim_reserve.go, docs/simulator.md).
 - All input is synthetic (`isTrusted=false`); `set viewport`, PDF, downloads and browser contexts are impossible (docs/synthetic-input.md).
 - Pause-on-start is on in the daemon but best effort; "runs before page scripts" is partial without it.
-- ios_webkit_debug_proxy 1.9.2 subscribes to usbmuxd once; after usbmuxd restarts (Linux: an unplug and replug) it lists no device for good. On Linux the daemon restarts only the iwdp that iwdp-cli recorded, and only when it holds no Unix socket (no usbmuxd connection) while usbmuxd's socket answers (`proxy.Recover`, internal/proxy/recover.go); another iwdp needs its owner.
+- ios_webkit_debug_proxy 1.9.2 subscribes to usbmuxd once; after usbmuxd restarts (Linux: an unplug and replug) it lists no device for good. On Linux the daemon restarts only the iwdp that agent-ios recorded, and only when it holds no Unix socket (no usbmuxd connection) while usbmuxd's socket answers (`proxy.Recover`, internal/proxy/recover.go); another iwdp needs its owner.
 - iwdp sends error `data` as a JSON array `[{"code":...,"message":...}]` — `ErrorData.Data` is `json.RawMessage` to handle this.
 
 ## Architecture
@@ -93,7 +93,7 @@ A per-user daemon (`internal/daemon`, started on demand as `<binary> daemon run`
 
 One binary over the `internal/` package tree:
 
-- `cmd/iwdp-cli/` — CLI and daemon binary: main (registry dispatch), usage (overview), deadline (deadline message, watchdog), daemon_cli (daemon client, process exit and cleanup)
+- `cmd/agent-ios/` — CLI and daemon binary: main (registry dispatch), usage (overview), deadline (deadline message, watchdog), daemon_cli (daemon client, process exit and cleanup)
 
 ### Package Layout
 
@@ -114,11 +114,11 @@ One binary over the `internal/` package tree:
 - All WebKit protocol communication goes through a `webkit.Caller` (`webkit.Session` for daemon pages)
 - Helpers return structured results; formatting is done by the caller
 - Unit tests use mock WebSocket server from `internal/webkit/testutil/` (`NeverRespond(method)` simulates a stalled page; `ReceivedMethods()` and `ConnectionCount()` show what a command sent)
-- CLI behavior tests in `cmd/iwdp-cli/cli_w0_test.go` re-run the test binary as `iwdp-cli` (`runCLI`) to check exit codes, output and written files
+- CLI behavior tests in `cmd/agent-ios/cli_w0_test.go` re-run the test binary as `agent-ios` (`runCLI`) to check exit codes, output and written files
 - E2E tests in `e2e/` run the CLI binary against fake listings and pages (`listingLDFlags` links it with a private listing and no usbmuxd, so it never recovers the fake iwdp for a USB device of the host); `e2e/webkitgtk` (`-tags=webkitgtk`) runs commands against a real WebKitGTK MiniBrowser; the simulator tests (`-tags=simulator`, e2e/simulator_test.go) test the shared helpers of internal/tools, the proxy listing helpers and the iwdp transport against real Safari via iOS Simulator + iwdp, only on the test page that scripts/sim-setup.sh opened (`getSimClient` checks the device and the page's location on every call); e2e/simsetup_script_test.go runs that script's page selection, lease and Simulator teardown against fakes on any host, and e2e/sim_entry_test.go the Makefile targets and the CI setup step
 - E2E simulator tests share a single WebSocket connection via `sync.Once` (`getSimClient` in `e2e/sim_helpers_test.go`) — never create multiple connections to the same page
-- Every destructive step of a simulator test (data deletion, cookie changes, DOM replacement, any other change of the page or its origin) goes through `simMutate`, which checks the device and the page's location right before it acts; a test that navigates the page restores `IWDP_SIM_PAGE_URL` before it ends
-- Destructive targets of the simulator tests (cookie URL and domain, origin) come from the checked `IWDP_SIM_PAGE_URL`, never from page state read earlier; every cookie, database and storage key that they create or delete has a name derived from `IWDP_SIM_RUN_TOKEN` (`simTarget.testName`)
+- Every destructive step of a simulator test (data deletion, cookie changes, DOM replacement, any other change of the page or its origin) goes through `simMutate`, which checks the device and the page's location right before it acts; a test that navigates the page restores `AGENT_IOS_SIM_PAGE_URL` before it ends
+- Destructive targets of the simulator tests (cookie URL and domain, origin) come from the checked `AGENT_IOS_SIM_PAGE_URL`, never from page state read earlier; every cookie, database and storage key that they create or delete has a name derived from `AGENT_IOS_SIM_RUN_TOKEN` (`simTarget.testName`)
 - Error messages should be actionable (tell the user what to do)
 - gorilla/websocket is not concurrent-write-safe — the one-token channel `Client.writeSem` protects `conn.WriteMessage`; `Send` stops waiting for it when its context ends
 - Almost never use `t.Skipf`/`t.Skip`. Use `t.Fatalf`/`t.Fatal` instead. The env-var check in `getSimClient` is the only legitimate `t.Skip` in the simulator tests.
@@ -151,7 +151,7 @@ refactor/proxy-port-parsing
 
 ## Version Bumps
 
-The git tag is the only version source. goreleaser names the release and its archives after the tag, and the Go toolchain stamps the tag into the binary's build information (`go version -m`), which `iwdp-cli daemon status` reports (`daemon.BuildVersion`). No file holds a version number. To release:
+The git tag is the only version source. goreleaser names the release and its archives after the tag, and the Go toolchain stamps the tag into the binary's build information (`go version -m`), which `agent-ios daemon status` reports (`daemon.BuildVersion`). No file holds a version number. To release:
 
 ```bash
 git tag vX.Y.Z

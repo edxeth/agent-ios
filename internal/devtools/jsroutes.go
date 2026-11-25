@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // jsRoutePatch is the JavaScript fallback of "network route --mode js"
@@ -63,7 +63,7 @@ const jsRoutePatch = `(function (rules) {
         var self = this, args = arguments;
         return new Promise(function (res) { hold(r, res); }).then(function (unchanged) {
           if (unchanged) return origFetch.apply(self, args);
-          if (r.abort) throw new TypeError("Load failed (iwdp route abort)");
+          if (r.abort) throw new TypeError("Load failed (agent-ios route abort)");
           if (fulfills(r)) return new Response(r.body || "", {status: r.status || 200, headers: headersOf(r)});
           return origFetch.apply(self, args);
         });

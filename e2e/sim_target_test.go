@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 // runTokenRE matches a run token of scripts/sim-setup.sh (new_token).
@@ -25,7 +25,7 @@ var runTokenRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // page of one scripts/sim-setup.sh run (WebKit allows one debugger
 // connection per page). getSimClient hands it out through get.
 type simTarget struct {
-	// runToken is IWDP_SIM_RUN_TOKEN, the lease token of the setup run:
+	// runToken is AGENT_IOS_SIM_RUN_TOKEN, the lease token of the setup run:
 	// the names of the run's test data derive from it (testName).
 	listingURL, wsURL, pageURL, runToken string
 
@@ -43,10 +43,10 @@ type simTarget struct {
 // next test runs.
 func (s *simTarget) get(ctx context.Context) (*webkit.Client, error) {
 	if s.pageURL == "" {
-		return nil, errors.New("IWDP_SIM_PAGE_URL is not set; run make sim-setup and export the variables that it prints")
+		return nil, errors.New("AGENT_IOS_SIM_PAGE_URL is not set; run make sim-setup and export the variables that it prints")
 	}
 	if !runTokenRE.MatchString(s.runToken) {
-		return nil, fmt.Errorf("IWDP_SIM_RUN_TOKEN %q is not a run token (32 hex digits); run make sim-setup and export the variables that it prints", s.runToken)
+		return nil, fmt.Errorf("AGENT_IOS_SIM_RUN_TOKEN %q is not a run token (32 hex digits); run make sim-setup and export the variables that it prints", s.runToken)
 	}
 	if err := checkSimTarget(ctx, s.listingURL, s.wsURL, s.pageURL); err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func (s *simTarget) get(ctx context.Context) (*webkit.Client, error) {
 		err = json.Unmarshal(result.Result.Value, &href)
 	}
 	if err != nil || href != s.pageURL {
-		return nil, fmt.Errorf("the page at %s reports location %q (error %v); want IWDP_SIM_PAGE_URL %s", s.wsURL, href, err, s.pageURL)
+		return nil, fmt.Errorf("the page at %s reports location %q (error %v); want AGENT_IOS_SIM_PAGE_URL %s", s.wsURL, href, err, s.pageURL)
 	}
 	return s.client, nil
 }
@@ -90,8 +90,8 @@ func (s *simTarget) mutate(ctx context.Context, what string, action func(*webkit
 // checkSimTarget checks, before any simulator test changes a page, that
 // the iwdp listing at listingURL ("http://host:port") has exactly one
 // SIMULATOR entry and that this Simulator lists exactly one page with the
-// URL pageURL (IWDP_SIM_PAGE_URL, unique to one scripts/sim-setup.sh run),
-// whose WebSocket URL is wsURL (IWDP_SIM_WS_URL). A page of another
+// URL pageURL (AGENT_IOS_SIM_PAGE_URL, unique to one scripts/sim-setup.sh run),
+// whose WebSocket URL is wsURL (AGENT_IOS_SIM_WS_URL). A page of another
 // device or another tab fails the check.
 func checkSimTarget(ctx context.Context, listingURL, wsURL, pageURL string) error {
 	var devices []webkit.DeviceEntry
@@ -125,7 +125,7 @@ func checkSimTarget(ctx context.Context, listingURL, wsURL, pageURL string) erro
 		return fmt.Errorf("the SIMULATOR (%s) lists %d pages with the URL %s; want 1", devURL, len(matches), pageURL)
 	}
 	if got := matches[0].WebSocketDebuggerURL; got != wsURL {
-		return fmt.Errorf("the SIMULATOR's page %s has the WebSocket URL %q, not IWDP_SIM_WS_URL %q", pageURL, got, wsURL)
+		return fmt.Errorf("the SIMULATOR's page %s has the WebSocket URL %q, not AGENT_IOS_SIM_WS_URL %q", pageURL, got, wsURL)
 	}
 	return nil
 }
@@ -256,7 +256,7 @@ func TestCheckSimTarget(t *testing.T) {
 		{"the Simulator's test page", []fakeIWDPDevice{phone(fakePage(simTestPageURL, ws)), sim(fakePage("https://mail.example/", "ws://localhost:9223/devtools/page/1"), fakePage(simTestPageURL, ws))}, ""},
 		{"the test page only on a phone", []fakeIWDPDevice{phone(fakePage(simTestPageURL, ws)), sim()}, "lists 0 pages"},
 		{"no Simulator", []fakeIWDPDevice{phone(fakePage(simTestPageURL, ws))}, "0 SIMULATOR entries"},
-		{"another tab at the WebSocket URL", []fakeIWDPDevice{sim(fakePage("https://mail.example/", ws), fakePage(simTestPageURL, "ws://localhost:9223/devtools/page/3"))}, "not IWDP_SIM_WS_URL"},
+		{"another tab at the WebSocket URL", []fakeIWDPDevice{sim(fakePage("https://mail.example/", ws), fakePage(simTestPageURL, "ws://localhost:9223/devtools/page/3"))}, "not AGENT_IOS_SIM_WS_URL"},
 		{"two test pages", []fakeIWDPDevice{sim(fakePage(simTestPageURL, ws), fakePage(simTestPageURL, "ws://localhost:9223/devtools/page/3"))}, "lists 2 pages"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

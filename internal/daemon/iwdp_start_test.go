@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
 )
 
 // Regression tests for the iwdp auto-start of the first device smoke test

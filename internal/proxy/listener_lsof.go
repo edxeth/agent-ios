@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
+	"github.com/nnemirovsky/agent-ios/internal/logcause"
 )
 
 const (

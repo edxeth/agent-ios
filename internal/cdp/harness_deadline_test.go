@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
 )
 
 // oldFixedBound is the fixed time that call and waitSessionEvent waited

@@ -3,7 +3,7 @@ package daemon
 import (
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // A restart of iwdp ends every page connection, the simulator's too, so

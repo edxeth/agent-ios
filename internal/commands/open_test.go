@@ -17,7 +17,7 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Tests of open.go on the fake WebKit endpoint. The fake page models what
@@ -350,7 +350,7 @@ func TestNavigationCommandsHelpAndUnknownFlag(t *testing.T) {
 			return nil, errors.New("no connection in this test")
 		}
 		var out, errb bytes.Buffer
-		if code := RunCLIStarted(context.Background(), append(append([]string{}, words...), "--help"), &out, &errb, nil, factory); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli ") {
+		if code := RunCLIStarted(context.Background(), append(append([]string{}, words...), "--help"), &out, &errb, nil, factory); code != 0 || !strings.HasPrefix(out.String(), "Usage: agent-ios ") {
 			t.Errorf("%s --help: exit %d, stdout %q", name, code, out.String())
 		}
 		out.Reset()

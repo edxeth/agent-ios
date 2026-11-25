@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
 )
 
 // The daemon runs RunOptions.RecoverIWDP (proxy.Recover in the binaries)
@@ -63,7 +63,7 @@ func TestEnsureIWDPRecoversAnAnsweringIWDPOnTheDefaultAddress(t *testing.T) {
 			t.Fatalf("ensureIWDP on a custom address: %v", err)
 		}
 		if n := calls.Load(); n != 0 {
-			t.Fatalf("RecoverIWDP ran %d times for a custom address, want 0: only the iwdp that iwdp-cli starts is recovered", n)
+			t.Fatalf("RecoverIWDP ran %d times for a custom address, want 0: only the iwdp that agent-ios starts is recovered", n)
 		}
 	})
 }

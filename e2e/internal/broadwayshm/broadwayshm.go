@@ -62,20 +62,20 @@ const Dir = "/dev/shm"
 const namePrefix = "/bdw-"
 
 // LogEnv names the log file to which the preloaded library appends.
-const LogEnv = "IWDP_BROADWAY_SHM_LOG"
+const LogEnv = "AGENT_IOS_BROADWAY_SHM_LOG"
 
 // DirEnv, when set, names the directory in which NewRecorder makes its own
 // directory, instead of the caller's: a parent test passes it to a child
 // test process whose browser outlives the child, so that the parent can
 // end the recording (EndIn) after the child was killed. Only the
 // recorder's own directory is ever removed (Keep), never this one.
-const DirEnv = "IWDP_BROADWAY_SHM_DIR"
+const DirEnv = "AGENT_IOS_BROADWAY_SHM_DIR"
 
 // PIDNSEnv holds the harness's PID namespace (the target of
 // /proc/self/ns/pid). A process in another PID namespace (a sandbox such
 // as WebKit's bwrap) cannot be followed through the harness's /proc: the
 // library marks no such process and refuses its Broadway creations (EIO).
-const PIDNSEnv = "IWDP_BROADWAY_SHM_PIDNS"
+const PIDNSEnv = "AGENT_IOS_BROADWAY_SHM_PIDNS"
 
 // Wait bounds End's wait for the processes that loaded the library.
 const Wait = 5 * time.Second
@@ -119,7 +119,7 @@ const shimSource = `#define _GNU_SOURCE
 static pid_t marked_pid;
 
 static int append(const char *line, int n) {
-	const char *path = getenv("IWDP_BROADWAY_SHM_LOG");
+	const char *path = getenv("AGENT_IOS_BROADWAY_SHM_LOG");
 	if (path == NULL || n <= 0) return -1;
 	int fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
 	if (fd < 0) return -1;
@@ -129,9 +129,9 @@ static int append(const char *line, int n) {
 }
 
 /* same_pidns reports whether this process is in the harness's PID
-   namespace (IWDP_BROADWAY_SHM_PIDNS). */
+   namespace (AGENT_IOS_BROADWAY_SHM_PIDNS). */
 static int same_pidns(void) {
-	const char *want = getenv("IWDP_BROADWAY_SHM_PIDNS");
+	const char *want = getenv("AGENT_IOS_BROADWAY_SHM_PIDNS");
 	char ns[128];
 	ssize_t n = readlink("/proc/self/ns/pid", ns, sizeof ns - 1);
 	if (want == NULL || n <= 0) return 0;

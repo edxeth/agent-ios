@@ -139,7 +139,7 @@ const (
 	recordedIWDPStart = "Mon Nov 10 10:00:00 2026"
 	otherIWDPStart    = "Mon Nov 10 11:30:00 2026"
 	iwdpProgram       = "ios_webkit_debug_proxy"
-	simTokenEnv       = "IWDP_SIM_START_TOKEN"
+	simTokenEnv       = "AGENT_IOS_SIM_START_TOKEN"
 )
 
 // randomHex returns n random bytes in hex: a start token, or a marker
@@ -301,13 +301,13 @@ func prepareOwnerRun(t *testing.T, w ownerWorld, p *probeProcess, record string,
 	env := []string{
 		"FAKE_PS_PID=" + strconv.Itoa(p.pid), "FAKE_PS_LSTART=" + w.psStart,
 		"FAKE_PS_COMMAND=" + strings.Join(p.argv, " "), "FAKE_PS_ENV=" + strings.Join(p.env, " "),
-		"IWDP_SIM_STOP_WAIT_SECONDS=1",
+		"AGENT_IOS_SIM_STOP_WAIT_SECONDS=1",
 	}
 	if w.psFail {
 		env = append(env, "FAKE_PS_FAIL=1")
 	}
 	if w.notPermitted {
-		env = append(env, "IWDP_OWNER_CHECK_TEST_NOT_PERMITTED=1")
+		env = append(env, "AGENT_IOS_OWNER_CHECK_TEST_NOT_PERMITTED=1")
 	}
 	full, sim := simScriptEnv(t, "Shutdown", append(env, extra...)...)
 	dir := filepath.Dir(sim.stateDir)

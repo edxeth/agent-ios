@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
 )
 
 // cdp start|stop|status|log: the CDP endpoint of the daemon (design
@@ -112,14 +112,14 @@ func runCDPStart(_ context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	return Result{
-		Text: fmt.Sprintf("CDP endpoint listening on %s. Run 'iwdp-cli get cdp-url' for a client URL.", addr),
+		Text: fmt.Sprintf("CDP endpoint listening on %s. Run 'agent-ios get cdp-url' for a client URL.", addr),
 		Data: map[string]any{"addr": addr},
 	}, nil
 }
 
 func cdpStatusText(st cdp.Status) string {
 	if !st.Listening {
-		return "The CDP endpoint is not running; start it with 'iwdp-cli cdp start' or 'iwdp-cli get cdp-url'."
+		return "The CDP endpoint is not running; start it with 'agent-ios cdp start' or 'agent-ios get cdp-url'."
 	}
 	origins := "none"
 	if len(st.AllowOrigins) > 0 {

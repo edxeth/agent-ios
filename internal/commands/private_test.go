@@ -18,16 +18,16 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
-// Tests of private mode (private.go): --private and IWDP_PRIVATE print no
+// Tests of private mode (private.go): --private and AGENT_IOS_PRIVATE print no
 // page title, URL, page key, device, session name or error text. The
 // marker stands in every such place of the fakes; it must never reach the
 // output.
@@ -82,7 +82,7 @@ func TestPrivateModePrintsIDsAndCountsOnly(t *testing.T) {
 		err  string
 	}{
 		// The session holds no page yet, and the command then sends "pages": null
-		// (found by e2e/webkitgtk TestSkillExamplesRunOnWebKitGTK, iwdp-device).
+		// (found by e2e/webkitgtk TestSkillExamplesRunOnWebKitGTK, agent-ios-device).
 		{"a session without a page", []string{"--private", "session", "info"}, 0, "pages 0\n", "session info exit 0\n"},
 		{"the tab listing", []string{"--private", "tab", "list"}, 0, "  t1 debuggable\n  t2 debuggable\nhidden 0\n", "tab list exit 0\n"},
 		{"tab without an id lists too", []string{"--private", "tab"}, 0, "  t1 debuggable\n  t2 debuggable\nhidden 0\n", "tab exit 0\n"},
@@ -132,7 +132,7 @@ func TestPrivateModeNeverPrintsTheTextOfAnError(t *testing.T) {
 		{&core.CodedError{Code: ExitWaitTimeout, Err: text}, ExitWaitTimeout, "click exit 3: a wait timed out (private mode hides the message)\n"},
 		{&core.CodedError{Code: core.CodeBusy, Err: text}, ExitBusy, "click exit 4: the page is leased by another session, or its connection was lost (private mode hides the message)\n"},
 		{&core.CodedError{Code: core.CodeNoPage, Err: text}, ExitNoPage, "click exit 5: no device or page (private mode hides the message)\n"},
-		{&core.CodedError{Code: core.CodeReservation, Err: text}, ExitReservation, "click exit 6: the device reservation is missing, or another owner holds it (on the simulator: run 'iwdp-cli sim reserve', which waits) (private mode hides the message)\n"},
+		{&core.CodedError{Code: core.CodeReservation, Err: text}, ExitReservation, "click exit 6: the device reservation is missing, or another owner holds it (on the simulator: run 'agent-ios sim reserve', which waits) (private mode hides the message)\n"},
 		{&core.CodedError{Code: core.CodeTimeout, Err: text}, ExitTimeout, "click exit 124: the command deadline passed (private mode hides the message)\n"},
 	} {
 		code, out, errOut := runPrivate(t, &remoteStub{t: t, fail: tc.err}, "--private", "click", "@e1")
@@ -855,8 +855,8 @@ func TestPrivateReadsWithoutAPage(t *testing.T) {
 	checkPrivateRead(t, run, privateCase{args: []string{"session"}, shown: []string{askedMarker}})
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir()) // os.UserCacheDir reads XDG_CACHE_HOME first
-	checkPrivateRead(t, run, privateCase{args: []string{"skills", "list"}, shown: []string{"iwdp"}})
-	checkPrivateRead(t, run, privateCase{args: []string{"skills", "get", "iwdp"}, shown: []string{"iwdp-cli"}})
+	checkPrivateRead(t, run, privateCase{args: []string{"skills", "list"}, shown: []string{"agent-ios"}})
+	checkPrivateRead(t, run, privateCase{args: []string{"skills", "get", "agent-ios"}, shown: []string{"agent-ios"}})
 	checkPrivateRead(t, run, privateCase{args: []string{"skills", "path"}, shown: []string{"skills"}})
 
 	srv := cdp.New(cdp.Options{Manager: m})

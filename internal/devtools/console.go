@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // DefaultMaxMessages bounds the console buffer of a session. WebKit itself
@@ -16,7 +16,7 @@ import (
 const DefaultMaxMessages = 1000
 
 // errorMarker starts the console.debug text of the error hooks (ErrorHooks).
-const errorMarker = "[iwdp:error] "
+const errorMarker = "[agent-ios:error] "
 
 // noScriptURL is the url that iOS 16.7 WebKit gives a console message and
 // its stack frames for a script without a URL, such as code that

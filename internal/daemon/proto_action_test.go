@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // The reply of an action whose attempts the deadline ended carries that
 // fact, so that the CLI's deadline message names the action's checks
-// (cmd/iwdp-cli TestDeadlineMessageOfAnActionNamesItsChecks); another
+// (cmd/agent-ios TestDeadlineMessageOfAnActionNamesItsChecks); another
 // deadline does not.
 func TestErrorReplyMarksAnActionTimeout(t *testing.T) {
 	action := toErrorReply(fmt.Errorf("click stopped before step 1 of 1: no element matches: %w", core.ErrActionTimeout))

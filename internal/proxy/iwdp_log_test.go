@@ -35,7 +35,7 @@ func TestStartWritesTheIWDPLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(os.Getenv("XDG_STATE_HOME"), "iwdp-cli", "iwdp.log"); path != want {
+	if want := filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-ios", "iwdp.log"); path != want {
 		t.Fatalf("LogPath() = %s, want %s", path, want)
 	}
 	if err := testStarter(addr, 10*time.Second).Start(context.Background()); err != nil {
@@ -140,15 +140,15 @@ func TestStartFailsWithoutAUsableIWDPLog(t *testing.T) {
 	}
 }
 
-// Without XDG_STATE_HOME the log is ~/.local/state/iwdp-cli/iwdp.log: a
-// directory of iwdp-cli's own, because another tool that starts iwdp may
+// Without XDG_STATE_HOME the log is ~/.local/state/agent-ios/iwdp.log: a
+// directory of agent-ios's own, because another tool that starts iwdp may
 // write and truncate ~/.local/state/iwdp/iwdp.log.
 func TestIWDPLogPathDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv("HOME", home)
 	path, err := LogPath()
-	if want := filepath.Join(home, ".local", "state", "iwdp-cli", "iwdp.log"); err != nil || path != want {
+	if want := filepath.Join(home, ".local", "state", "agent-ios", "iwdp.log"); err != nil || path != want {
 		t.Fatalf("LogPath() = %s, %v; want %s", path, err, want)
 	}
 }

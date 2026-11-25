@@ -17,8 +17,8 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // The release and attach lifecycle property (core-events round 3,
@@ -823,28 +823,28 @@ var reviewerPlans = map[string]lifecyclePlan{
 }
 
 func lifecycleCount(t *testing.T) int {
-	if s := os.Getenv("IWDP_LIFECYCLE_COUNT"); s != "" {
+	if s := os.Getenv("AGENT_IOS_LIFECYCLE_COUNT"); s != "" {
 		n, err := strconv.Atoi(s)
 		if err != nil || n < 1 {
-			t.Fatalf("IWDP_LIFECYCLE_COUNT=%q: want a positive integer", s)
+			t.Fatalf("AGENT_IOS_LIFECYCLE_COUNT=%q: want a positive integer", s)
 		}
 		return n
 	}
 	return 25
 }
 
-// lifecycleSeed is the seed of the generated plans: IWDP_LIFECYCLE_SEED,
+// lifecycleSeed is the seed of the generated plans: AGENT_IOS_LIFECYCLE_SEED,
 // or the time. It is logged, so a failing run can be repeated.
 func lifecycleSeed(t *testing.T) int64 {
 	seed := time.Now().UnixNano()
-	if s := os.Getenv("IWDP_LIFECYCLE_SEED"); s != "" {
+	if s := os.Getenv("AGENT_IOS_LIFECYCLE_SEED"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			t.Fatalf("IWDP_LIFECYCLE_SEED=%q: want an integer", s)
+			t.Fatalf("AGENT_IOS_LIFECYCLE_SEED=%q: want an integer", s)
 		}
 		seed = n
 	}
-	t.Logf("generated plans: IWDP_LIFECYCLE_SEED=%d", seed)
+	t.Logf("generated plans: AGENT_IOS_LIFECYCLE_SEED=%d", seed)
 	return seed
 }
 

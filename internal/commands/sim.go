@@ -18,15 +18,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/sim"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/sim"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // The simulator commands: sim up, sim status and sim down manage an iOS
 // Simulator on a Mac that this host reaches over SSH (internal/sim,
-// docs/simulator.md). They are Local: they run in the iwdp-cli process,
+// docs/simulator.md). They are Local: they run in the agent-ios process,
 // which starts the ssh forward. Before a restart of iwdp they count the
 // daemon's active leases through ActiveLeases, which the daemon package
 // sets (it holds the daemon client).
@@ -34,10 +34,10 @@ func init() {
 	device := Flag{Name: "device", Type: FlagString, Help: "the simulator: its UDID or exact name (default: \"device\" of the configuration, else the one booted simulator)"}
 	Register(&Command{
 		Name: "sim up", Local: true, Timeout: 15 * time.Minute,
-		Summary: "Make the iOS Simulator of the Mac in the simulator configuration ready for iwdp-cli, doing only what is still needed: " +
+		Summary: "Make the iOS Simulator of the Mac in the simulator configuration ready for agent-ios, doing only what is still needed: " +
 			"start the Mac with the configuration's start command when ssh gets no answer, wait for the desktop login, boot the simulator, open its window, start Safari, " +
-			"forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that iwdp-cli started when it does not use that forward. " +
-			"Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that iwdp-cli did not start. " +
+			"forward 127.0.0.1:27753 to its Web Inspector over ssh, and start ios_webkit_debug_proxy, or restart the one that agent-ios started when it does not use that forward. " +
+			"Refuses that restart while a page has an active lease, unless --restart-iwdp, and refuses an iwdp that agent-ios did not start. " +
 			"Exit 7 when Safari shows no tab of --url in time (check your server). Default deadline 15m.",
 		Flags: []Flag{
 			device,
@@ -63,7 +63,7 @@ func init() {
 		Name: "sim screenshot", Local: true, Timeout: time.Minute,
 		Summary: "Capture the simulator's whole screen as PNG (simctl io screenshot): the status bar, Safari's bars, the on-screen keyboard and other apps, which the page capture of screenshot leaves out. " +
 			"The simulator must be booted (sim up); it starts nothing.",
-		Args:  []Arg{{Name: "path", Help: "PNG file to write (default $TMPDIR/iwdp-screenshot-<time>.png)"}},
+		Args:  []Arg{{Name: "path", Help: "PNG file to write (default $TMPDIR/agent-ios-screenshot-<time>.png)"}},
 		Flags: []Flag{{Name: "output", Short: "o", Type: FlagString, Help: "PNG file to write (same as path)"}, device},
 		Check: func(in Input) error { _, err := simShotPath(in); return err },
 		Run:   runSimScreenshot,
@@ -226,7 +226,7 @@ func (h hostIWDP) State(ctx context.Context) (sim.IWDPState, error) {
 
 func (h hostIWDP) Start(ctx context.Context) error { return withUSBMuxHint(proxy.Start(ctx)) }
 
-// Restart restarts iwdp (proxy.Restart: only the one that iwdp-cli started).
+// Restart restarts iwdp (proxy.Restart: only the one that agent-ios started).
 func (h hostIWDP) Restart(ctx context.Context) error { return withUSBMuxHint(proxy.Restart(ctx)) }
 
 func (h hostIWDP) ActiveLeases(ctx context.Context) (int, error) {
@@ -378,18 +378,18 @@ func simUpTab(ctx context.Context, env Env, in Input, newPage string) string {
 func simUpNext(r sim.UpReport, openURL string) []string {
 	switch {
 	case r.Tab != "":
-		return []string{"  new tab:    " + r.Tab + " (shows --url)", "Next: iwdp-cli tab " + r.Tab}
+		return []string{"  new tab:    " + r.Tab + " (shows --url)", "Next: agent-ios tab " + r.Tab}
 	case openURL != "" && r.SharedURL:
 		return []string{"  new tab:    its id is not known, and another tab shows the same URL", "Next: " + simSharedURLNext}
 	case openURL != "":
-		return []string{"  new tab:    its id is not known", "Next: iwdp-cli tab find --device SIMULATOR --url-file <file of the --url>, then iwdp-cli tab <id>"}
+		return []string{"  new tab:    its id is not known", "Next: agent-ios tab find --device SIMULATOR --url-file <file of the --url>, then agent-ios tab <id>"}
 	}
-	return []string{simDid(r.Pages > 0, "Next: iwdp-cli tab list", "Safari offers no tab for inspection yet (its start page is not inspectable): run iwdp-cli sim up --url <url>")}
+	return []string{simDid(r.Pages > 0, "Next: agent-ios tab list", "Safari offers no tab for inspection yet (its start page is not inspectable): run agent-ios sim up --url <url>")}
 }
 
 // simSharedURLNext is what sim up tells to do when it has no id for the
 // new tab of --url and another tab shows that URL.
-const simSharedURLNext = "tab find would find several tabs of this URL and cannot tell yours; leave the other tabs alone, they are not yours to touch: serve your page on a URL that no other tab shows (a port or path of your own) and run iwdp-cli sim up --url with it"
+const simSharedURLNext = "tab find would find several tabs of this URL and cannot tell yours; leave the other tabs alone, they are not yours to touch: serve your page on a URL that no other tab shows (a port or path of your own) and run agent-ios sim up --url with it"
 
 func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 	s, err := newSim(env)
@@ -419,7 +419,7 @@ func runSimStatus(ctx context.Context, env Env, in Input) (Result, error) {
 		device = "unknown"
 	}
 	lines := []string{
-		"ready:      " + yn(st.Ready) + simDid(st.Ready, "", " (run iwdp-cli sim up)"),
+		"ready:      " + yn(st.Ready) + simDid(st.Ready, "", " (run agent-ios sim up)"),
 		"mac:        " + s.Cfg.SSH + ", answers over ssh: " + yn(st.MacReachable),
 		"login:      " + yn(st.LoggedIn),
 		"simulator:  " + device,
@@ -659,11 +659,11 @@ func simUIText(els []sim.Element) string {
 func simReservedText(st sim.Status) string {
 	switch {
 	case st.ReservedBy == "":
-		return "no (free; agents taking turns run iwdp-cli sim reserve first)"
+		return "no (free; agents taking turns run agent-ios sim reserve first)"
 	case st.ReservedByYou:
 		return fmt.Sprintf("by you (%q) until %s", st.ReservedBy, st.ReservedUntil.Format(time.RFC3339))
 	}
-	return fmt.Sprintf("by %q until %s at the latest: another agent's run; run iwdp-cli sim reserve, which waits", st.ReservedBy, st.ReservedUntil.Format(time.RFC3339))
+	return fmt.Sprintf("by %q until %s at the latest: another agent's run; run agent-ios sim reserve, which waits", st.ReservedBy, st.ReservedUntil.Format(time.RFC3339))
 }
 
 func runSimDown(ctx context.Context, env Env, in Input) (_ Result, err error) {

@@ -570,7 +570,7 @@ func TestUpRestartsIWDPAfterANewForward(t *testing.T) {
 	}
 }
 
-// Up refuses, before it changes the forward or iwdp, an iwdp that iwdp-cli
+// Up refuses, before it changes the forward or iwdp, an iwdp that agent-ios
 // did not start, and a restart that would end other devices' leases.
 func TestUpRefusesBeforeAnyChange(t *testing.T) {
 	fm := readyMac()

@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // fakeProtocol1Daemon serves the lifecycle endpoints of a daemon of
@@ -128,11 +128,11 @@ func runLifecycle(t *testing.T, o Options, words ...string) (commands.Result, er
 func TestLifecycleCommandsReachAProtocol1Daemon(t *testing.T) {
 	for _, leases := range []int{0, 1} {
 		t.Run(fmt.Sprintf("leases=%d", leases), func(t *testing.T) {
-			o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+			o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 			f := startFakeProtocol1Daemon(t, o.Dir, leases)
 			if leases > 0 {
 				_, err := Connect(ctxFor(t, 5*time.Second), o)
-				if err == nil || !strings.Contains(err.Error(), "daemon version v0.9.0 (protocol 1) is running with active sessions; run 'iwdp-cli daemon stop' when they finish") {
+				if err == nil || !strings.Contains(err.Error(), "daemon version v0.9.0 (protocol 1) is running with active sessions; run 'agent-ios daemon stop' when they finish") {
 					t.Fatalf("a command against the busy protocol-1 daemon: %v; want the daemon stop advice", err)
 				}
 			}
@@ -145,7 +145,7 @@ func TestLifecycleCommandsReachAProtocol1Daemon(t *testing.T) {
 			if leases > 0 {
 				wantPage = `p1  "Old page"  connection attached, lease active by session s1`
 			}
-			for _, want := range []string{"iwdp daemon v0.9.0 (protocol 1) pid 4242", "older", "protocol 2", wantPage} {
+			for _, want := range []string{"agent-ios daemon v0.9.0 (protocol 1) pid 4242", "older", "protocol 2", wantPage} {
 				if !strings.Contains(res.Text, want) {
 					t.Errorf("daemon status text %q lacks %q", res.Text, want)
 				}
@@ -155,7 +155,7 @@ func TestLifecycleCommandsReachAProtocol1Daemon(t *testing.T) {
 			}
 			res, err = runLifecycle(t, o, "daemon", "stop")
 			_, shutdowns = f.counts()
-			if err != nil || res.Text != fmt.Sprintf("Stopped the iwdp daemon (pid %d).", protocol1PID) || len(shutdowns) != 1 || shutdowns[0] != `{"force":false,"ifIdle":false}` {
+			if err != nil || res.Text != fmt.Sprintf("Stopped the agent-ios daemon (pid %d).", protocol1PID) || len(shutdowns) != 1 || shutdowns[0] != `{"force":false,"ifIdle":false}` {
 				t.Fatalf("daemon stop: %q, %v; shutdown requests %q; want one plain shutdown request", res.Text, err, shutdowns)
 			}
 			if _, err := os.Lstat(SocketPath(o.Dir)); !errors.Is(err, os.ErrNotExist) {
@@ -171,7 +171,7 @@ func TestLifecycleCommandsReachAProtocol1Daemon(t *testing.T) {
 func TestNoStartReachesPreviousProtocol(t *testing.T) {
 	for _, leases := range []int{0, 1} {
 		t.Run(fmt.Sprintf("leases=%d", leases), func(t *testing.T) {
-			o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+			o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 			f := startFakeDaemonOf(t, o.Dir, Protocol-1, leases)
 			o.NoStart = true
 			c, err := Connect(ctxFor(t, 5*time.Second), o)
@@ -193,7 +193,7 @@ func TestNoStartReachesPreviousProtocol(t *testing.T) {
 // knows: a daemon of a newer protocol is reported as not reachable, and
 // it is not asked to exit.
 func TestNoStartRefusesANewerProtocol(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	f := startFakeDaemonOf(t, o.Dir, Protocol+1, 0)
 	o.NoStart = true
 	_, err := Connect(ctxFor(t, 5*time.Second), o)
@@ -270,7 +270,7 @@ func untilTestDeadline(t *testing.T) <-chan time.Time {
 // 'daemon stop' advice and is kept.
 func TestConcurrentStartByAnotherBinary(t *testing.T) {
 	t.Run("idle", func(t *testing.T) {
-		o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+		o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 		release := holdStartLock(t, o)
 		waiting := lockWaiter(t)
 		done := make(chan error, 1)
@@ -295,7 +295,7 @@ func TestConcurrentStartByAnotherBinary(t *testing.T) {
 		}
 	})
 	t.Run("busy", func(t *testing.T) {
-		o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+		o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 		release := holdStartLock(t, o)
 		waiting := lockWaiter(t)
 		done := make(chan error, 1)
@@ -313,7 +313,7 @@ func TestConcurrentStartByAnotherBinary(t *testing.T) {
 		f.mu.Lock()
 		n := f.shutdown
 		f.mu.Unlock()
-		if err == nil || n != 0 || !strings.Contains(err.Error(), "run 'iwdp-cli daemon stop' when they finish") {
+		if err == nil || n != 0 || !strings.Contains(err.Error(), "run 'agent-ios daemon stop' when they finish") {
 			t.Fatalf("Connect while a busy incompatible daemon starts: err=%v, shutdowns=%d; want the daemon stop advice and no shutdown", err, n)
 		}
 	})

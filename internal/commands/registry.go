@@ -102,7 +102,7 @@ func Lookup(words []string) (*Command, int) {
 
 // Unregister removes a command. It is test support: no production code
 // calls it, and the tests of this package and of other packages
-// (internal/daemon, cmd/iwdp-cli) use it to clean up the commands they
+// (internal/daemon, cmd/agent-ios) use it to clean up the commands they
 // register.
 func Unregister(c *Command) {
 	regMu.Lock()

@@ -3,11 +3,11 @@ package commands
 import (
 	"errors"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // errNeedsDaemon: a session, lease or device command ran outside the daemon.
-var errNeedsDaemon = errors.New("this command runs in the iwdp daemon")
+var errNeedsDaemon = errors.New("this command runs in the agent-ios daemon")
 
 // managerOf returns the daemon's manager from env (the daemon's Env offers
 // Manager; Env itself stays small for the W1a fakes).

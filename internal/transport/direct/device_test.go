@@ -3,7 +3,7 @@
 package direct
 
 // Gated real-device check of the direct transport (design 7.4 test 4 and
-// 8.3). It runs only with -tags device and IWDP_DEVICE_TEST=1, after the
+// 8.3). It runs only with -tags device and AGENT_IOS_DEVICE_TEST=1, after the
 // orchestrator has granted the device; runbook in docs/notes/w2.md. It takes
 // the chosen page from any other inspector (ios_webkit_debug_proxy, Safari
 // on a Mac), so never run it while another agent uses the device.
@@ -16,18 +16,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 func TestDeviceDirectEval(t *testing.T) {
-	if os.Getenv("IWDP_DEVICE_TEST") != "1" {
-		t.Fatal("set IWDP_DEVICE_TEST=1 after the device grant (docs/notes/w2.md)")
+	if os.Getenv("AGENT_IOS_DEVICE_TEST") != "1" {
+		t.Fatal("set AGENT_IOS_DEVICE_TEST=1 after the device grant (docs/notes/w2.md)")
 	}
-	udid := os.Getenv("IWDP_DEVICE_UDID")
-	urlPart := os.Getenv("IWDP_DEVICE_PAGE_URL") // a substring of the URL of the granted tab
+	udid := os.Getenv("AGENT_IOS_DEVICE_UDID")
+	urlPart := os.Getenv("AGENT_IOS_DEVICE_PAGE_URL") // a substring of the URL of the granted tab
 	if udid == "" || urlPart == "" {
-		t.Fatal("set IWDP_DEVICE_UDID and IWDP_DEVICE_PAGE_URL")
+		t.Fatal("set AGENT_IOS_DEVICE_UDID and AGENT_IOS_DEVICE_PAGE_URL")
 	}
 	tr, err := New(Options{})
 	if err != nil {

@@ -21,6 +21,6 @@ body:
       description: |
         - OS and version
         - iOS version
-        - iwdp-cli version (release tag, or the version that `iwdp-cli daemon status` prints)
+        - agent-ios version (release tag, or the version that `agent-ios daemon status` prints)
         - ios-webkit-debug-proxy version
-        - How iwdp-cli runs (shell, or the agent that calls it)
+        - How agent-ios runs (shell, or the agent that calls it)

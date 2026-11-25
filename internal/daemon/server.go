@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // DefaultCommandTimeout is the deadline of a request that names none
@@ -254,7 +254,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		// A help request runs nothing; the client prints the help: of a
 		// command, of a group (no Cmd) or the overview (no Cmd). Parse has
 		// checked the option values of a command (Command.Check).
-		name := "iwdp-cli"
+		name := "agent-ios"
 		if inv.Cmd != nil {
 			name = inv.Cmd.Name
 		}

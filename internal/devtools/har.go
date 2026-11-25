@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // HAR 1.2 (http://www.softwareishard.com/blog/har-12-spec/). Every
@@ -126,7 +126,7 @@ type HAROptions struct {
 func BuildHAR(reqs []Request, gaps []Gap, bodies map[string]HARBody, o HAROptions) HAR {
 	h := HAR{Log: HARLog{Version: "1.2", Creator: o.Creator, Pages: []any{}, Entries: []HAREntry{}}}
 	if h.Log.Creator.Name == "" {
-		h.Log.Creator = HARCreator{Name: "iwdp-cli", Version: "dev"}
+		h.Log.Creator = HARCreator{Name: "agent-ios", Version: "dev"}
 	}
 	if !o.ShowValues {
 		h.Log.Comment = "secret header, cookie, query and field values are masked as " + Masked

@@ -7,17 +7,17 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/sim"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/sim"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // The ios_webkit_debug_proxy commands: status, devices and restart-iwdp.
 // They talk to iwdp's listing address (proxy.ListingAddr) and to the
 // processes of this host, not to a page. status and restart-iwdp are
 // Local. devices runs in the daemon, like page commands: it may start or
-// restart iwdp, and the daemon is then, without IWDP_NO_DAEMON=1, the one
+// restart iwdp, and the daemon is then, without AGENT_IOS_NO_DAEMON=1, the one
 // process that does so automatically, so the start back-off of its
 // proxy.Starter covers every automatic start (review of 2026-11-12; the
 // cases where it does not are in docs/known-limits.md). Their output is
@@ -25,21 +25,21 @@ import (
 func init() {
 	Register(&Command{
 		Name:    "status",
-		Summary: "Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that iwdp-cli starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read.",
+		Summary: "Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that agent-ios starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read.",
 		Local:   true,
 		Run:     runStatus,
 	})
 	Register(&Command{
 		Name: "devices",
 		Summary: "List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). " +
-			"Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that iwdp-cli started when it lost its devices, as page commands do. " +
+			"Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that agent-ios started when it lost its devices, as page commands do. " +
 			"Exits 5 when it lists no device although usbmuxd reports one.",
 		Run: runDevices,
 	})
 	Register(&Command{
 		Name: "restart-iwdp",
-		Summary: "Restart the ios_webkit_debug_proxy that iwdp-cli started. " +
-			"Stops only an iwdp that iwdp-cli started and recorded, then starts a new one. " +
+		Summary: "Restart the ios_webkit_debug_proxy that agent-ios started. " +
+			"Stops only an iwdp that agent-ios started and recorded, then starts a new one. " +
 			"Any other iwdp (for example one that the user or another program started) is never stopped: the command fails and names the owner pid and the manual restart command. " +
 			"When no iwdp runs, it starts one.",
 		Local: true,
@@ -57,11 +57,11 @@ func init() {
 // private address, because no test may reach iwdp's address.
 var restartIWDP = proxy.Restart
 
-// iwdpLogLine names the log of an iwdp that iwdp-cli starts (its stdout
+// iwdpLogLine names the log of an iwdp that agent-ios starts (its stdout
 // and stderr: path and err from proxy.LogPath), or why its path is
 // unknown; status prints it for every outcome.
 func iwdpLogLine(path string, err error) string {
-	const label = "iwdp log of an iwdp that iwdp-cli starts: "
+	const label = "iwdp log of an iwdp that agent-ios starts: "
 	if err != nil {
 		return label + "unknown (" + err.Error() + ")"
 	}
@@ -148,7 +148,7 @@ func runStatus(ctx context.Context, _ Env, _ Input) (Result, error) {
 }
 
 // simulatorHint is status's line for a configured simulator.
-const simulatorHint = "simulator: an iOS Simulator is configured (devices counts none): run 'iwdp-cli sim reserve', then 'iwdp-cli sim up --url <your page>'"
+const simulatorHint = "simulator: an iOS Simulator is configured (devices counts none): run 'agent-ios sim reserve', then 'agent-ios sim up --url <your page>'"
 
 // simConfigured reports whether a simulator configuration exists (sim
 // commands); tests replace it.
@@ -202,7 +202,7 @@ func runDevices(ctx context.Context, _ Env, _ Input) (Result, error) {
 			return Result{}, fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", serr)
 		}
 		if _, aerr := devicesAwait(ctx); aerr != nil {
-			return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("iwdp-cli started ios_webkit_debug_proxy, and its listing failed: %w", aerr)}
+			return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("agent-ios started ios_webkit_debug_proxy, and its listing failed: %w", aerr)}
 		}
 		err = proxy.CheckListing(ctx, addr)
 	}

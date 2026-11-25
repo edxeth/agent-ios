@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Protocol is the socket API version (design 2.2). A client that sees
@@ -32,7 +32,7 @@ type Hello struct {
 	Version  string `json:"version"`
 	Protocol int    `json:"protocol"`
 	// Executable is the executable that the daemon runs, recorded at
-	// its start (reusable); the in-process core of IWDP_NO_DAEMON has
+	// its start (reusable); the in-process core of AGENT_IOS_NO_DAEMON has
 	// none.
 	Executable Executable `json:"executable,omitzero"`
 	PID        int        `json:"pid"`

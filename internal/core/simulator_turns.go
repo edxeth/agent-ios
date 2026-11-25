@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Agents taking turns on the simulator (iwdp-cli sim reserve): while an
+// Agents taking turns on the simulator (agent-ios sim reserve): while an
 // owner reserves the simulator, its pages are that owner's run. The rules
 // hold on every way to a simulator page, not only on a first connection
 // (device_admission.go, which applies them with the physical devices'):
@@ -52,7 +52,7 @@ func (m *Manager) simulatorTurn(owner string) (mine bool, err error) {
 		return false, &CodedError{Code: CodeReservation, Err: fmt.Errorf("reading the simulator's reservation: %w", err)}
 	}
 	if r == nil && other != nil {
-		return false, &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: the simulator is reserved by %q until %s, so its pages belong to that owner's run: run 'iwdp-cli sim reserve' (it waits for that owner), or use --reservation <owner> if your run already holds the reservation under another name", ErrReserved, other.Owner, other.Expires.Format(time.RFC3339))}
+		return false, &CodedError{Code: CodeReservation, Err: fmt.Errorf("%w: the simulator is reserved by %q until %s, so its pages belong to that owner's run: run 'agent-ios sim reserve' (it waits for that owner), or use --reservation <owner> if your run already holds the reservation under another name", ErrReserved, other.Owner, other.Expires.Format(time.RFC3339))}
 	}
 	return r != nil, nil
 }
@@ -70,7 +70,7 @@ func (m *Manager) admitSimulator(ctx context.Context, sreq PageRequest, t pageTa
 		return err
 	}
 	if n > 1 {
-		return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the simulator shows %d tabs, and this session has chosen none; the others may be other agents' work: find yours with 'iwdp-cli tab find --device SIMULATOR --url-file <file>' and select it with 'iwdp-cli tab <id>', or pass --page <id>", ErrNoPage, n)}
+		return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the simulator shows %d tabs, and this session has chosen none; the others may be other agents' work: find yours with 'agent-ios tab find --device SIMULATOR --url-file <file>' and select it with 'agent-ios tab <id>', or pass --page <id>", ErrNoPage, n)}
 	}
 	return nil
 }

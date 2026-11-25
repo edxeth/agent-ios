@@ -12,8 +12,8 @@ import (
 	"testing/quick"
 	"unicode/utf16"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // W4 repair round 3, storage review findings storage.go:46 (a failed

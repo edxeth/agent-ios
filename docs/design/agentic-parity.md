@@ -1,10 +1,10 @@
-# Design: agentic parity, CDP endpoint and direct transport for iwdp-cli
+# Design: agentic parity, CDP endpoint and direct transport for agent-ios
 
-> **Note (2026-11-10):** the MCP server (commit f731071) and the old CLI commands (WS2b) are removed; iwdp-cli runs registry commands only. The parts of this design about the MCP server, its tools and the legacy commands are history.
+> **Note (2026-11-10):** the MCP server (commit f731071) and the old CLI commands (WS2b) are removed; agent-ios runs registry commands only. The parts of this design about the MCP server, its tools and the legacy commands are history.
 > The daemon protocol parts of section 2.2 are history too. The endpoints `/v1/op`, `/v1/raw`, `/v1/events` and `/v1/lease` are removed, with the operation scopes and raw calls of the legacy commands and the event streams of MCP clients. `/v1/run` takes an absolute `deadline` instead of `timeoutMs`. `/v1/batch` was never built. The current protocol (version 2) is in internal/daemon/proto.go; internal/daemon/server.go routes its four endpoints: `GET /v1/hello`, `GET /v1/status`, `POST /v1/run` and `POST /v1/shutdown`.
 
 Status: design for implementation, revised after the two design reviews of 2026-11-06 (section 7.10). Date: 2026-11-06. Base branch: `feat/agentic-parity` (b42bb20).
-Scope: make iwdp-cli and iwdp-mcp fast, agentic (parity with agent-browser 0.41.2), CDP-compatible, and able to reach the iPhone without ios_webkit_debug_proxy (iwdp).
+Scope: make agent-ios and iwdp-mcp fast, agentic (parity with agent-browser 0.41.2), CDP-compatible, and able to reach the iPhone without ios_webkit_debug_proxy (iwdp).
 Targets: Safari 16.6 on iOS 16.7 (iPhone X, permanent test device) and current iOS 26/27.
 
 Evidence used (paths are absolute so that workers can open them):
@@ -25,7 +25,7 @@ Words used in this document:
 - **CDP**: Chrome DevTools Protocol.
 - **Page connection**: one inspector connection to one Safari tab. Safari allows one per tab; a new one takes the tab from the old one.
 - **Target routing**: WIP wraps every page command in `Target.sendMessageToTarget` and every reply in `Target.dispatchMessageFromTarget` (CLAUDE.md).
-- **Runtime**: the JavaScript that iwdp-cli injects into the page (section 3). Not the WIP `Runtime` domain; that one is written `Runtime.*`.
+- **Runtime**: the JavaScript that agent-ios injects into the page (section 3). Not the WIP `Runtime` domain; that one is written `Runtime.*`.
 - **Ref**: an element handle such as `@e7` that a snapshot prints and later commands accept.
 - **Lease**: exclusive right of one named session to drive one page (section 2.5).
 
@@ -43,7 +43,7 @@ Words used in this document:
 
 ### 1.1 How a command runs today
 
-Every iwdp-cli command runs on `context.Background()` and does this (INV A1-A8):
+Every agent-ios command runs on `context.Background()` and does this (INV A1-A8):
 1. HTTP probe of iwdp port 9221 (up to 5 s).
 2. Sequential HTTP listing of devices, then pages per device (up to 5 s each).
 3. WebSocket dial with gorilla's default 45 s handshake timeout.
@@ -59,13 +59,13 @@ W0 (brief: /home/devkit/.pi/artifacts/retro/browser-checker-20261106/briefs/W0-q
 
 | Command family | Calls | p50 | p90 | max | Note |
 |---|---|---|---|---|---|
-| iwdp-cli eval | 1025 | 1.2 s | 7.6 s | 1238 s | agent-browser eval: p50 0.2 s, p90 1.3 s |
-| iwdp-cli navigate | 261 | 4.8 s | 11.9 s | 1837 s | returns on ack, not on load (AGG [144]) |
-| iwdp-cli screenshot | 139 | 1.8 s | 8.9 s | 126 s | |
-| iwdp-cli fill | 44 | 5.5 s | 30.5 s | 53 s | |
-| all iwdp-cli | 2397 | 1.4 s | 8.9 s | 1837 s | 16205 s total, 42 timeouts (heuristic count) |
+| agent-ios eval | 1025 | 1.2 s | 7.6 s | 1238 s | agent-browser eval: p50 0.2 s, p90 1.3 s |
+| agent-ios navigate | 261 | 4.8 s | 11.9 s | 1837 s | returns on ack, not on load (AGG [144]) |
+| agent-ios screenshot | 139 | 1.8 s | 8.9 s | 126 s | |
+| agent-ios fill | 44 | 5.5 s | 30.5 s | 53 s | |
+| all agent-ios | 2397 | 1.4 s | 8.9 s | 1837 s | 16205 s total, 42 timeouts (heuristic count) |
 
-LAT reads the long tail as rare stalls, not normal per-command overhead, and states that the benefit of session reuse is a hypothesis until measured. The design therefore treats deadlines and hang recovery as the first fix and session reuse as the second, and section 8.5 measures both. The category "latency-hang" holds 200 findings and 36232 s of estimated wasted time (AGG; estimates overlap and are not additive). Six P0 findings are iwdp-cli or page-socket calls with no deadline that hung 13 to 30 minutes, and three P0 findings are pages that stayed stalled for minutes after a connection closed (AGG P0 [116], [165], [170]).
+LAT reads the long tail as rare stalls, not normal per-command overhead, and states that the benefit of session reuse is a hypothesis until measured. The design therefore treats deadlines and hang recovery as the first fix and session reuse as the second, and section 8.5 measures both. The category "latency-hang" holds 200 findings and 36232 s of estimated wasted time (AGG; estimates overlap and are not additive). Six P0 findings are agent-ios or page-socket calls with no deadline that hung 13 to 30 minutes, and three P0 findings are pages that stayed stalled for minutes after a connection closed (AGG P0 [116], [165], [170]).
 
 ### 1.3 What agents asked for (AGG "Missing capabilities", AB section 2)
 
@@ -79,12 +79,12 @@ Two of these cannot be fully delivered on WIP: trusted input (WIP has no Input d
 ### 2.1 Process model
 
 ```
- iwdp-cli (one process per command)   iwdp-mcp (stdio, one per agent)   CDP clients (agent-browser --cdp,
+ agent-ios (one process per command)   iwdp-mcp (stdio, one per agent)   CDP clients (agent-browser --cdp,
         |                                   |                          Playwright, Puppeteer, chrome-devtools-mcp)
         |  HTTP/1.1 + NDJSON over a Unix socket                        |  HTTP + WebSocket on 127.0.0.1:<cdp-port>
         v                                   v                          v
  +-------------------------------------------------------------------------------------+
- | iwdp daemon (one per user)                                                          |
+ | agent-ios daemon (one per user)                                                          |
  |  command registry -> core.Manager (devices, pages, sessions, leases, captures)      |
  |  cdp.Server (CDP <-> WIP + runtime)       devtools (netlog, HAR, routes, traces)    |
  |  core.PageSession: webkit.Session (Target routing, swaps, deadlines, reconnect)     |
@@ -98,13 +98,13 @@ Two of these cannot be fully delivered on WIP: trusted input (WIP has no Input d
 
 Decisions:
 - **One daemon per user.** It is the only process that opens page connections. Two processes that each open a page connection take the page from each other (MAP fact 1; reproduced in spike A, section 11.1 step C).
-- **The daemon is the same binary.** Both `iwdp-cli` and `iwdp-mcp` contain `internal/daemon` and start it as `<own executable> daemon run`. No third binary to install.
+- **The daemon is the same binary.** Both `agent-ios` and `iwdp-mcp` contain `internal/daemon` and start it as `<own executable> daemon run`. No third binary to install.
 - **The MCP server is a daemon client**, not an in-process owner. Reason: the same agent often uses the MCP server and the CLI, and both must share leases and refs. The extra hop is a Unix socket round trip (well under 1 ms), small next to a WIP call. Decision D1 (section 10).
-- **No-daemon mode stays.** `IWDP_NO_DAEMON=1` runs the same core in-process for one command, for debugging and for the unit tests. It gives no leases across processes.
+- **No-daemon mode stays.** `AGENT_IOS_NO_DAEMON=1` runs the same core in-process for one command, for debugging and for the unit tests. It gives no leases across processes.
 
 ### 2.2 Local socket API
 
-Socket: `$XDG_RUNTIME_DIR/iwdp/daemon.sock`, else `$TMPDIR/iwdp-$UID/daemon.sock`. The directory is created with mode 0700. At every start the daemon checks it with `lstat`: it must not be a symlink, must be owned by the current uid and must have mode exactly 0700; otherwise the daemon refuses to start (R16). Protocol: HTTP/1.1 on the Unix socket (Go `net/http`; easy to debug with `curl --unix-socket`). Streams are NDJSON with chunked encoding.
+Socket: `$XDG_RUNTIME_DIR/agent-ios/daemon.sock`, else `$TMPDIR/agent-ios-$UID/daemon.sock`. The directory is created with mode 0700. At every start the daemon checks it with `lstat`: it must not be a symlink, must be owned by the current uid and must have mode exactly 0700; otherwise the daemon refuses to start (R16). Protocol: HTTP/1.1 on the Unix socket (Go `net/http`; easy to debug with `curl --unix-socket`). Streams are NDJSON with chunked encoding.
 
 | Method and path | Body | Answer |
 |---|---|---|
@@ -118,13 +118,13 @@ Socket: `$XDG_RUNTIME_DIR/iwdp/daemon.sock`, else `$TMPDIR/iwdp-$UID/daemon.sock
 | GET /v1/status | none | devices, pages, sessions, leases, captures, CDP listener, transport health |
 | POST /v1/shutdown | `{force}` | ok; graceful cleanup first (2.4) |
 
-`protocol` is an integer. A client with a different protocol number asks the daemon to exit when the daemon has no leases, and starts its own version. If leases exist, the client fails with: "daemon version X (protocol N) is running with active sessions; run 'iwdp-cli daemon stop' when they finish". The CLI sends `cwd` so that relative output paths resolve in the caller's directory, never in the daemon's.
+`protocol` is an integer. A client with a different protocol number asks the daemon to exit when the daemon has no leases, and starts its own version. If leases exist, the client fails with: "daemon version X (protocol N) is running with active sessions; run 'agent-ios daemon stop' when they finish". The CLI sends `cwd` so that relative output paths resolve in the caller's directory, never in the daemon's.
 
 ### 2.3 Auto-start, lifecycle and idle exit
 
-- Start: a client connects to the socket. On ENOENT or ECONNREFUSED it takes an exclusive `flock` on `daemon.lock` in the same directory, checks again, then runs `<own executable> daemon run` with `Setsid`, stdin closed and stdout and stderr appended to `$XDG_STATE_HOME/iwdp/daemon.log` (fallback `~/.local/state/iwdp/daemon.log`). It polls the socket every 20 ms for up to 3 s. This matches agent-browser's auto-start.
-- Commands: `iwdp-cli daemon run|start|stop|status|logs`.
-- Idle exit: the daemon exits after 15 minutes with no requests, no leases, no running captures and no CDP clients (`IWDP_DAEMON_IDLE` overrides).
+- Start: a client connects to the socket. On ENOENT or ECONNREFUSED it takes an exclusive `flock` on `daemon.lock` in the same directory, checks again, then runs `<own executable> daemon run` with `Setsid`, stdin closed and stdout and stderr appended to `$XDG_STATE_HOME/agent-ios/daemon.log` (fallback `~/.local/state/agent-ios/daemon.log`). It polls the socket every 20 ms for up to 3 s. This matches agent-browser's auto-start.
+- Commands: `agent-ios daemon run|start|stop|status|logs`.
+- Idle exit: the daemon exits after 15 minutes with no requests, no leases, no running captures and no CDP clients (`AGENT_IOS_DAEMON_IDLE` overrides).
 - Page connections that have no lease and no capture close after 10 minutes, so that other tools (for example Safari Web Inspector on a Mac) can take the page.
 - SIGTERM, `daemon stop` and idle exit run the cleanup of section 2.4 for every page, with a 5 s total budget.
 
@@ -158,12 +158,12 @@ Release runs only on a connection the daemon still owns. After an unexpected dis
 ### 2.5 Sessions, leases, device ownership and arbitration
 
 Sessions and leases inside the daemon:
-- A **session** is a name chosen by the client: `--session <name>` or `IWDP_SESSION`; default `default` (agent-browser rule; decision D8). The shared default is a compatibility default, not isolation: agent and MCP workflows must set distinct stable names. Sharing a session is intentional only when the CLI and the MCP server use the same name, or when a CDP client connects through an endpoint issued for that name (5.2).
-- A **lease** binds one page to one session and carries an **epoch** (a counter that increases on each grant). Every operation carries the epoch it was admitted under; an operation with an old epoch is rejected before it sends anything. Release: `iwdp-cli close` (this session only), `session release`, idle TTL of 5 minutes without commands and without captures, or `lease break`.
-- A page command from another session on a leased page fails at once with: `page "<title>" is leased by session "<name>" since <time> (last command <age> ago); use --session <name>, wait, or run 'iwdp-cli lease break <page>'`. `--wait-lease <duration>` waits, inside the command deadline (2.6).
+- A **session** is a name chosen by the client: `--session <name>` or `AGENT_IOS_SESSION`; default `default` (agent-browser rule; decision D8). The shared default is a compatibility default, not isolation: agent and MCP workflows must set distinct stable names. Sharing a session is intentional only when the CLI and the MCP server use the same name, or when a CDP client connects through an endpoint issued for that name (5.2).
+- A **lease** binds one page to one session and carries an **epoch** (a counter that increases on each grant). Every operation carries the epoch it was admitted under; an operation with an old epoch is rejected before it sends anything. Release: `agent-ios close` (this session only), `session release`, idle TTL of 5 minutes without commands and without captures, or `lease break`.
+- A page command from another session on a leased page fails at once with: `page "<title>" is leased by session "<name>" since <time> (last command <age> ago); use --session <name>, wait, or run 'agent-ios lease break <page>'`. `--wait-lease <duration>` waits, inside the command deadline (2.6).
 
-Device ownership (outside the daemon). The daemon cannot see every inspector client: another agent's raw script, an older iwdp-cli, or Safari Web Inspector on a Mac can hold a page, and iwdp takes a page from its current owner when a new client attaches (ios_webkit_debug_proxy.c lines 1202-1235). Rules:
-1. **No page connection to a physical device without a reservation.** `iwdp-cli device reserve [--device d] --owner <name> [--ttl 2h]` writes a cooperative reservation (flock-protected JSON in `$XDG_RUNTIME_DIR/iwdp/reservations/`, honored by every iwdp-cli and iwdp-mcp of this version, renewed while leases are active). It fails if another live reservation exists. `IWDP_DEVICE_RESERVATION=<owner>` lets an orchestrator create the reservation once and pass it to workers. Local targets (WebKitGTK, simulators) need no reservation.
+Device ownership (outside the daemon). The daemon cannot see every inspector client: another agent's raw script, an older agent-ios, or Safari Web Inspector on a Mac can hold a page, and iwdp takes a page from its current owner when a new client attaches (ios_webkit_debug_proxy.c lines 1202-1235). Rules:
+1. **No page connection to a physical device without a reservation.** `agent-ios device reserve [--device d] --owner <name> [--ttl 2h]` writes a cooperative reservation (flock-protected JSON in `$XDG_RUNTIME_DIR/agent-ios/reservations/`, honored by every agent-ios of this version, renewed while leases are active). It fails if another live reservation exists. `AGENT_IOS_DEVICE_RESERVATION=<owner>` lets an orchestrator create the reservation once and pass it to workers. Local targets (WebKitGTK, simulators) need no reservation.
 2. **Preflight before every first attach.** The daemon checks the reservation, then a non-disruptive busy hint where one exists: iwdp lists `devtoolsFrontendUrl` as empty for a page that already has a WebSocket client (ios_webkit_debug_proxy.c lines 1854-1863), but only when iwdp runs with its frontend; with `-F` or `--no-frontend` (how `proxy.Start` starts it) the hint is always empty and ownership is **unknown**. A busy hint fails the attach; an unknown state is accepted only inside a reservation. Hints are not locks and do not protect against clients that ignore reservations; the docs say so.
 3. **Unexpected disconnect means ownership unknown.** When a page connection closes without a request from the daemon, the lease moves to `lost`. The daemon never reconnects by itself, and the next ordinary command fails with "connection to page was closed by someone else or by the device; ownership is unknown". Only `--takeover` (or the `lease takeover` command) reattaches, and the docs require the device owner's approval for it (the orchestrator gates device sessions; decisions.md).
 4. **Scope.** The CDP endpoint and `tab` discovery list pages only of reserved devices, and CDP discovery and auto-attach are limited to the selected page of the endpoint record unless the record was issued with `--scope device` (5.2).
@@ -172,7 +172,7 @@ Scheduling inside one session: every operation (registry command, legacy raw ope
 
 ### 2.6 Deadlines, cancellation, heartbeats and hang detection
 
-**One absolute deadline per operation.** The command deadline (W0: default 30 s, `--timeout`, `IWDP_TIMEOUT`; waits default 25 s like agent-browser) is fixed when the request arrives and covers queueing, lease wait, discovery, connect, probes, re-applying desired state, the calls themselves and any retry. Every step gets `min(step budget, remaining time)`. When it expires the command returns at once with exit code 124 (like `timeout(1)`; decision D9); nothing after that point is charged to the caller.
+**One absolute deadline per operation.** The command deadline (W0: default 30 s, `--timeout`, `AGENT_IOS_TIMEOUT`; waits default 25 s like agent-browser) is fixed when the request arrives and covers queueing, lease wait, discovery, connect, probes, re-applying desired state, the calls themselves and any retry. Every step gets `min(step budget, remaining time)`. When it expires the command returns at once with exit code 124 (like `timeout(1)`; decision D9); nothing after that point is charged to the caller.
 
 | Step budget | Default | Reason |
 |---|---|---|
@@ -271,7 +271,7 @@ type Limits struct {
 }
 ```
 
-Transport selection: `--transport auto|iwdp|direct|webkitgtk` or `IWDP_TRANSPORT`. `auto` uses iwdp when it is running (this keeps today's behavior and never competes with another agent that uses iwdp), otherwise `direct` when the device and its iOS version are supported (section 11.2), otherwise it starts iwdp as today (`proxy.Start`). Device ids are the same UDIDs in iwdp and direct, so a lease survives a transport change.
+Transport selection: `--transport auto|iwdp|direct|webkitgtk` or `AGENT_IOS_TRANSPORT`. `auto` uses iwdp when it is running (this keeps today's behavior and never competes with another agent that uses iwdp), otherwise `direct` when the device and its iOS version are supported (section 11.2), otherwise it starts iwdp as today (`proxy.Start`). Device ids are the same UDIDs in iwdp and direct, so a lease survives a transport change.
 
 ### 2.9 Layers inside the daemon
 
@@ -514,7 +514,7 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 
 ### 4.1 Rules
 
-- agent-browser names, flags and output forms are kept wherever WIP can support them, so that skills and prompts move with few edits. Existing iwdp-cli names stay as aliases (for example `navigate` for `open`, `type-text` for `type`).
+- agent-browser names, flags and output forms are kept wherever WIP can support them, so that skills and prompts move with few edits. Existing agent-ios names stay as aliases (for example `navigate` for `open`, `type-text` for `type`).
 - Every command is a registry entry (2.11) with one MCP tool name. MCP names follow the repository's snake_case style; existing MCP names are kept when the meaning is the same and get new optional parameters (for example `click` gets `target`, which accepts `@eN`).
 - Global flags: `--session`, `--page <tN|id|url-substring>`, `--device`, `--timeout`, `--json`, `--transport`, `--max-output`, `--content-boundaries`.
 - MCP profiles (decision D2): `core` is the default (about 40 agentic and key debugging tools); `devtools` (W4 extras) and `legacy` (the 116 existing tools) are added with `IWDP_MCP_TOOLS=core,devtools,legacy` or `--tools`; `all` registers everything.
@@ -522,7 +522,7 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 
 ### 4.2 Mapping table
 
-| agent-browser | iwdp-cli command and flags | MCP tool | WIP mechanism | WS |
+| agent-browser | agent-ios command and flags | MCP tool | WIP mechanism | WS |
 |---|---|---|---|---|
 | **Navigation** | | | | |
 | `open [url]` (aliases `goto`, `navigate`) | `open <url> [--wait load\|domcontentloaded\|networkidle\|none]`; aliases `goto`, `navigate` | `navigate` (+`wait_until`) | `location.href` by evaluate, then wait (3.6) | W3b |
@@ -633,17 +633,17 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 
 ### 5.1 Listener, authorization and HTTP surface
 
-- Started by `iwdp-cli cdp start [--port 9230]`, `get cdp-url`, or the daemon flag `--cdp-port`. Not started by default (decision D3). Default port 9230: 9221 to 9229 belong to iwdp, and 9222 is often used by a local Chrome (it is on this host).
+- Started by `agent-ios cdp start [--port 9230]`, `get cdp-url`, or the daemon flag `--cdp-port`. Not started by default (decision D3). Default port 9230: 9221 to 9229 belong to iwdp, and 9222 is often used by a local Chrome (it is on this host).
 - Binds `127.0.0.1` only. Rejects requests whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding guard, as Chrome does).
 - Loopback plus a Host check does not stop a web page or another local user, so the endpoint also has these rules:
-  - **Token.** The daemon generates a random 256-bit token at each start and requires it on every HTTP path and WebSocket upgrade as a path prefix (`/t/<token>/`). A request without a valid token gets 404 and no discovery data; there is no unauthenticated discovery at the root. The token reaches clients only through the private Unix API (`iwdp-cli get cdp-url`, 2.2); it is never logged, and URLs in logs and status output are redacted.
+  - **Token.** The daemon generates a random 256-bit token at each start and requires it on every HTTP path and WebSocket upgrade as a path prefix (`/t/<token>/`). A request without a valid token gets 404 and no discovery data; there is no unauthenticated discovery at the root. The token reaches clients only through the private Unix API (`agent-ios get cdp-url`, 2.2); it is never logged, and URLs in logs and status output are redacted.
   - **Endpoint forms.** `get cdp-url` issues an endpoint record (5.2) and prints its `ws` form; `--json` returns both typed forms. Every path of the record is below `/t/<token>/e/<endpoint>`.
     - `ws`: the browser WebSocket URL `ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/browser/<endpoint>`. It is the default form for every client, because clients use a `ws://` URL verbatim. agent-browser 0.41.2 needs it: for an `http://` URL its resolver keeps only host, port and query and then requests the unprefixed `/json/version`, so the token path is lost (agent-browser commit d52a5e90, `cli/src/native/browser.rs` lines 2920-2948 and `cli/src/native/cdp/discovery.rs` lines 130-150).
     - `http`: the discovery base `http://127.0.0.1:9230/t/<token>/e/<endpoint>`, only for clients whose pinned version appends `/json/version` to the base path: playwright-core 1.65.0 (`server/chromium/chromium.ts` lines 457-464) and puppeteer-core 25.16.0 (`common/BrowserConnector.ts` lines 203-209). Any other client uses the `ws` form until the endpoint-resolution test (7.8 test 10) shows the exact request it makes.
   - **Origin.** Requests with any `Origin` header (browser pages, including `null`) are rejected unless the origin is in `--cdp-allow-origin` (empty by default).
   - **No side effects on GET.** `/json/new`, `/json/close` and `/json/activate` accept only `PUT`.
   - The socket directory check of 2.2 protects the Unix API that hands out the token.
-- HTTP, all below `/t/<token>/e/<endpoint>`: `GET /json/version` (also with a trailing slash, which Playwright sends; `Browser: "Safari/<iOS version> (iwdp-cli <version>)"`, `Protocol-Version: "1.3"`, `webSocketDebuggerUrl` of the record's browser endpoint), `GET /json` and `/json/list` (one entry per page in the record's scope, `type: "page"`, `webSocketDebuggerUrl: ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/page/<targetId>`), `PUT /json/new?url` (`window.open`, see 3.8), `PUT /json/close/<id>` (`window.close()`), `PUT /json/activate/<id>` (probe only; error text if the tab is not visible), `GET /json/protocol` (the supported subset in CDP JSON form, generated from the handler table).
+- HTTP, all below `/t/<token>/e/<endpoint>`: `GET /json/version` (also with a trailing slash, which Playwright sends; `Browser: "Safari/<iOS version> (agent-ios <version>)"`, `Protocol-Version: "1.3"`, `webSocketDebuggerUrl` of the record's browser endpoint), `GET /json` and `/json/list` (one entry per page in the record's scope, `type: "page"`, `webSocketDebuggerUrl: ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/page/<targetId>`), `PUT /json/new?url` (`window.open`, see 3.8), `PUT /json/close/<id>` (`window.close()`), `PUT /json/activate/<id>` (probe only; error text if the tab is not visible), `GET /json/protocol` (the supported subset in CDP JSON form, generated from the handler table).
 - WebSocket, below `/t/<token>/e/<endpoint>`: `/devtools/browser/<endpoint>` (flat sessions through `Target.attachToTarget{flatten:true}`; Puppeteer, Playwright, agent-browser) and `/devtools/page/<targetId>` (one page; chrome-devtools-mcp through Puppeteer uses the browser endpoint, older tools use this).
 
 ### 5.2 Target model
@@ -663,7 +663,7 @@ The rules below come from the initialization code of the pinned clients (Puppete
 - **Node ids.** CDP `nodeId` is the WIP `nodeId` of the page session's connection. CDP `backendNodeId` is a runtime handle number (the number of a ref or an internal handle), resolved in the page; the same element keeps its number for its document. This avoids one `DOM.requestNode` round trip per AX node.
 - **Navigation identity.** The bridge owns loader ids: one per document generation (2.7). `Page.navigate` returns it after the document request or the generation change is seen; `frameNavigated` carries the same id; the main-frame document request in `Network.requestWillBeSent` uses `requestId == loaderId` (Playwright frames.ts lines 719-745, crNetworkManager.ts lines 369-370). Same-document navigations return no loader id and emit `navigatedWithinDocument`. Lifecycle events carry the session id of the page session.
 - **Required on attach.** `Performance.enable` is fatal in Puppeteer if it fails (Page.ts lines 433-447), so it is tier 1 and returns success with the runtime metrics of 5.3.
-- **Dialogs.** `Page.handleJavaScriptDialog` returns the error "dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with iwdp-cli dialog accept|dismiss". The bridge never emits `javascriptDialogOpening` or `javascriptDialogClosed`, and no answer from a CDP client is kept for a later dialog. The session's dialog policy (3.7) still answers dialogs (otherwise a native dialog would block the page), and each automatic answer is reported as a `Log.entryAdded` warning, not as a dialog event.
+- **Dialogs.** `Page.handleJavaScriptDialog` returns the error "dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with agent-ios dialog accept|dismiss". The bridge never emits `javascriptDialogOpening` or `javascriptDialogClosed`, and no answer from a CDP client is kept for a later dialog. The session's dialog policy (3.7) still answers dialogs (otherwise a native dialog would block the page), and each automatic answer is reported as a `Log.entryAdded` warning, not as a dialog event.
 - **Pins.** chrome-devtools-mcp 1.12.0 with the Puppeteer it pins (25.16.0), playwright-core 1.65.0, agent-browser 0.41.2 (binary checksum recorded). The minimum method set is derived from each client's initialization code and frozen by the compatibility tests (8.4), which assert behavior (locator found the element, navigation resolved, value changed), not only method names.
 - **Early proofs.** Before W5 starts, W1a runs proof P1 (provisional setup across a document swap) and proof P2 (pinned Playwright and Puppeteer attach plus one utility-world locator against a minimal bridge); see 7.1.
 
@@ -695,13 +695,13 @@ Tier 1 is required for the four named clients (agent-browser method list taken f
 
 - The bridge never forwards a CDP method that it does not translate. Unknown or unsupported methods get `{"code": -32601, "message": "'<Domain.method>' wasn't found"}`, the same text Chrome uses for a missing method, so clients that probe for optional features continue.
 - Methods with no effect on iOS but that clients call on every attach (listed in the table as "no effect") return success, so that attach does not fail.
-- Each unknown method is logged once per CDP session; `iwdp-cli cdp log` prints the counts. The compatibility tests fail on an unknown method that is not on an expected-missing list per client; each entry on such a list names the optional client feature it belongs to and is reviewed, so a required client operation cannot fail while the tests stay green.
-- Passthrough to WIP exists only behind `IWDP_CDP_PASSTHROUGH=<Domain.method,...>` and only for methods in the iOS command list of the device's version (MAP section 0). `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` are always refused (CLAUDE.md known limitation).
+- Each unknown method is logged once per CDP session; `agent-ios cdp log` prints the counts. The compatibility tests fail on an unknown method that is not on an expected-missing list per client; each entry on such a list names the optional client feature it belongs to and is reviewed, so a required client operation cannot fail while the tests stay green.
+- Passthrough to WIP exists only behind `AGENT_IOS_CDP_PASSTHROUGH=<Domain.method,...>` and only for methods in the iOS command list of the device's version (MAP section 0). `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` are always refused (CLAUDE.md known limitation).
 - The command lists per iOS version (16.4, 17.0, 18.0, 26.0, 26.2, 26.4, 27.0, 27.3) are generated into `internal/wip/methods_gen.go` from SRC/webkit-legacy-ios (method names are facts; the file header names the source). The bridge and the runtime layer use them to choose, for example, `Storage.getCookies` on 27.3 and later.
 
 ### 5.5 Client notes
 
-- Every client uses the exact URL that `iwdp-cli get cdp-url` prints, the `ws` form of 5.1, written `<cdp-ws-url>` below; the `http` form is written `<cdp-http-url>`. Never assemble a URL by hand.
+- Every client uses the exact URL that `agent-ios get cdp-url` prints, the `ws` form of 5.1, written `<cdp-ws-url>` below; the `http` form is written `<cdp-http-url>`. Never assemble a URL by hand.
 - agent-browser: `agent-browser --cdp <cdp-ws-url> open <url>`, `snapshot -i`, `click @e3`. Its snapshot calls `Accessibility.getFullAXTree` and `DOM.resolveNode{backendNodeId}`; both are served from the runtime, so its refs and ours are separate but consistent.
 - Puppeteer and chrome-devtools-mcp: connect with `defaultViewport: null` (otherwise Puppeteer sends `Emulation.setDeviceMetricsOverride`). Puppeteer: `connect({browserWSEndpoint: '<cdp-ws-url>'})`, or `browserURL: '<cdp-http-url>'`. chrome-devtools-mcp: `--wsEndpoint <cdp-ws-url>`.
 - Playwright: `chromium.connectOverCDP('<cdp-ws-url>')` (or `<cdp-http-url>`), use `browser.contexts()[0]`; `newContext()` and `newPage()` in a new context fail (no browser contexts). Locators work through Runtime and DOM; `page.mouse`, `page.keyboard` and `page.touchscreen` go through Input (untrusted).
@@ -720,7 +720,7 @@ Based on spike B (section 11.2). Package `internal/transport/direct` (W2).
   - `MaxOutgoing` stays 16 MiB (the go-ios `maxMessageSize`; the device-side limit is not measured).
   - Operations with a known large result (full-page screenshots, heap snapshots) are refused before sending when their estimate exceeds the cap. Results above the cap need chunk reassembly (`WIRMessageDataTypeChunkSupportedKey: 1` with Partial and Final messages), which is not in v1; the heap snapshot command then prints "use --transport iwdp".
 - **Selection.** `--transport direct` first; `auto` chooses direct only when iwdp is not running, and only after the device test in 8.3 passes on iOS 16.7 and on one iOS 17 or later device. Never use direct and iwdp on the same device at the same time: both connect to webinspectord, and page connections take pages from each other.
-- **Cost.** go-ios v1.3.2 requires `go 1.26.0`; iwdp-cli is at `go 1.25.7`, and a 1.25.7 toolchain fails to build with it (spike B). Linked modules grow from 8 to 20, the stripped binary from 9.70 MB to 10.68 MB, no cgo, all licenses MIT, BSD or Apache. Decision D5 accepts go-ios and the Go 1.26 floor. If the adapter cannot avoid every leaking path, the fallback is a minimal own usbmuxd and lockdown client behind the same interface (mobium, Apache-2.0, shows that this is possible without dependencies).
+- **Cost.** go-ios v1.3.2 requires `go 1.26.0`; agent-ios is at `go 1.25.7`, and a 1.25.7 toolchain fails to build with it (spike B). Linked modules grow from 8 to 20, the stripped binary from 9.70 MB to 10.68 MB, no cgo, all licenses MIT, BSD or Apache. Decision D5 accepts go-ios and the Go 1.26 floor. If the adapter cannot avoid every leaking path, the fallback is a minimal own usbmuxd and lockdown client behind the same interface (mobium, Apache-2.0, shows that this is possible without dependencies).
 - **Wrapped surface** (W2 defines it inside its package; nothing outside `direct` imports go-ios):
 
 ```go
@@ -759,7 +759,7 @@ W1b daemon, leases, reservations,                     │
                         W6 final docs, skills, prompt drafts
 ```
 
-- W1a is a small first merge: `internal/transport` interfaces; `webkit.Caller` and `webkit.Session` (routing, active and setup targets, deadlines, wire-byte limits); the `core.Scheduler`, `core.DesiredState` and `core.BootstrapParts` types with operation classes and epoch fencing; the `internal/commands` registry with CLI and MCP binding; `internal/webkit/testutil/fakewebkit`; `internal/runtime` API stubs (`Call`, `CallAsync` signatures); the `internal/refs` interface; the esbuild test dependency (D4). After it merges, W2, W3a and W6 start. W3a can run against WebKitGTK and `IWDP_NO_DAEMON=1` before W1b lands.
+- W1a is a small first merge: `internal/transport` interfaces; `webkit.Caller` and `webkit.Session` (routing, active and setup targets, deadlines, wire-byte limits); the `core.Scheduler`, `core.DesiredState` and `core.BootstrapParts` types with operation classes and epoch fencing; the `internal/commands` registry with CLI and MCP binding; `internal/webkit/testutil/fakewebkit`; `internal/runtime` API stubs (`Call`, `CallAsync` signatures); the `internal/refs` interface; the esbuild test dependency (D4). After it merges, W2, W3a and W6 start. W3a can run against WebKitGTK and `AGENT_IOS_NO_DAEMON=1` before W1b lands.
 - W1a also runs two contract proofs. Their code lives in `e2e/proofs/` (Go test package plus a Node directory with its own lockfile); W5 deletes that directory when its own suite covers the same scenarios.
   - **P1, provisional setup.** On WebKitGTK, a cross-origin navigation between two local ports. The session sends `Page.enable` and a bootstrap part to the provisional target before commit. Pass: the first inline `<script>` of the new document sees the marker set by the bootstrap part in 10 of 10 runs, with pause-on-start on and off; the active target changes at commit; an abandoned provisional target is dropped.
   - **P2, CDP attach and utility world.** A minimal bridge (tab and page targets, filtered auto-attach, one utility-world alias, `Runtime.evaluate` and `callFunctionOn`, `DOM.resolveNode`, `Performance.enable`) in front of WebKitGTK. Pass: pinned playwright-core 1.65.0 `connectOverCDP` reads `locator('#target').textContent()`, and pinned Puppeteer 25.16.0 `connect` completes `page.waitForSelector('#target')`; both through the utility-world alias. P2 also gives agent-browser 0.41.2 `--cdp` the exact tokenized `ws` URL that the minimal bridge issues and checks that agent-browser connects through it with the token path intact (5.1).
@@ -796,7 +796,7 @@ Merge order. Every workstream works on its own branch from `feat/agentic-parity`
 | Shared file | Only owner | Rule for others |
 |---|---|---|
 | `go.mod`, `go.sum` | W1a (esbuild test dependency, D4); W2 (go-ios and the Go 1.26 floor, D5) | others ask in their report |
-| `cmd/iwdp-cli/main.go` | W1 | none; new commands are registry files |
+| `cmd/agent-ios/main.go` | W1 | none; new commands are registry files |
 | `cmd/iwdp-mcp/main.go` | W1 (one call that registers registry tools; daemon-backed `getClient`) | none |
 | `internal/webkit/client.go`, `types.go` | W1 | others use `webkit.Caller` |
 | `internal/core/{scheduler.go, desired_state.go, bootstrap.go}` | W1 | others register owners, desired-state entries and bootstrap parts through the API; they do not edit these files |
@@ -810,7 +810,7 @@ Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. S
 
 ### 7.3 W1: daemon, transport interface, core and registry
 
-- Owns: `internal/transport/{transport.go, iwdp/, webkitgtk/}`, `internal/webkit/{session.go, caller.go, wsconn.go}` and the split of `client.go`, `internal/webkit/testutil/fakewebkit/`, `internal/core/` (Manager, PageSession, Scheduler, DesiredState, BootstrapParts, leases, reservations), `internal/daemon/` (server, client, auto-start, lifecycle, socket directory checks), `internal/commands/{registry.go, spec.go, cli.go, mcp.go, output.go}` and the command files `daemon.go`, `session.go`, `lease.go`, `device.go` (`device reserve`), `close.go`, `connect.go`, `doctor.go`, `batch.go`, `devices.go`, `pages.go`, `eval.go` (moved from W0's code), `internal/wip/methods_gen.go` and its generator, `cmd/iwdp-cli/main.go`, `cmd/iwdp-mcp/main.go`, `internal/tools/*` signature change, `internal/proxy` (parse `deviceOSVersion` and the busy hint), `e2e/proofs/**` (W1a).
+- Owns: `internal/transport/{transport.go, iwdp/, webkitgtk/}`, `internal/webkit/{session.go, caller.go, wsconn.go}` and the split of `client.go`, `internal/webkit/testutil/fakewebkit/`, `internal/core/` (Manager, PageSession, Scheduler, DesiredState, BootstrapParts, leases, reservations), `internal/daemon/` (server, client, auto-start, lifecycle, socket directory checks), `internal/commands/{registry.go, spec.go, cli.go, mcp.go, output.go}` and the command files `daemon.go`, `session.go`, `lease.go`, `device.go` (`device reserve`), `close.go`, `connect.go`, `doctor.go`, `batch.go`, `devices.go`, `pages.go`, `eval.go` (moved from W0's code), `internal/wip/methods_gen.go` and its generator, `cmd/agent-ios/main.go`, `cmd/iwdp-mcp/main.go`, `internal/tools/*` signature change, `internal/proxy` (parse `deviceOSVersion` and the busy hint), `e2e/proofs/**` (W1a).
 - Provides: `transport.Transport`, `transport.MessageConn`, `webkit.Caller`, `webkit.Session`, `core.Manager`, `core.PageSession`, `core.Scheduler` (with the control lane and barriers of 2.10 and the daemon-owned attempt loop of 2.6), `core.DesiredState`, `commands.Register` and `commands.Env`, daemon API (2.2), `fakewebkit`.
 - Consumes: W0's deadline and help code.
 - Acceptance (tests run with `go test ./... -count=1`, with `fakewebkit` unless marked; the part that owns each test is named in brackets):
@@ -826,7 +826,7 @@ Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. S
   10. [W1a] Event routing and bad replies: while a subscriber blocks on an event flood, replies still arrive within 50 ms (bounded per-subscriber queue, never the read loop); malformed and unsupported-method replies give errors and keep the session.
   11. [W1b] Daemon: auto-start under concurrent starts creates exactly one daemon (10 parallel clients); protocol mismatch path; idle exit; `SIGTERM` cleanup within 5 s; a socket directory that is a symlink, owned by another uid or not mode 0700 makes the daemon refuse to start.
   12. [W1a] Registry: help for every command prints without calling `Run` (table test over all registered commands); an unknown flag exits 2 before any connection; MCP schemas pass `codexCompatibleInputSchema`; names and aliases are unique; the MCP registration manifest has no duplicate tool name.
-  13. [W1b] Legacy bridge: all existing `cmd/iwdp-cli` and `cmd/iwdp-mcp` tests pass unchanged against the daemon-backed `Caller`.
+  13. [W1b] Legacy bridge: all existing `cmd/agent-ios` and `cmd/iwdp-mcp` tests pass unchanged against the daemon-backed `Caller`.
   14. [W1b] WebKitGTK (build tag `webkitgtk`): `eval 1+1` through CLI and daemon; p50 of 50 warm CLI evals at or below 50 ms on this host.
   15. [W1a] Proofs P1 and P2 (7.1) report pass or fail with their logs.
   16. [W1a] Control lane (2.10): (a) an exclusive operation sends a `Runtime.evaluate` whose reply the fake holds until it receives `Network.interceptContinue` for request `r1`, after it has emitted `Network.requestIntercepted{r1}`; the owner's continue for `r1`, sent while the evaluation waits, reaches the fake at once, and the evaluation completes within 1 s of its 10 s deadline. (b) A second continue for `r1`, a continue for an unknown request id, one with an old epoch and one from another logical session are refused, and the fake receives none of them. (c) An ordinary mutation submitted during the wait reaches the fake only after the evaluation ends. (d) Paused evaluation: the fake emits `Debugger.paused` and holds the evaluation until `Debugger.resume`; a resume sent during the wait passes, and the evaluation completes. (e) Cancel behind a wait: canceling the waiting operation sends `__iwdp.cancel` within 1 s while the operation still holds its slot. (f) A release during the wait closes admission, continues `r1` and resumes the debugger through the control lane, and only then sends its cleanup.
@@ -841,7 +841,7 @@ Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. S
   1. A fake webinspectord (plist over a `net.Pipe`) drives: identifier report, application list, listing with revision counter, socket setup, data in both directions routed by `WIRDestinationKey` to two concurrent pages, `_rpc_forwardDidClose:` on close, application disconnect ends the page connections with `ErrPageClosed`.
   2. Oversized frame (cap set to 1 MiB in the test): the reader drains the frame under its deadline; the next frame, for page B, decodes correctly; every page session of the device receives the "device dropped an N-byte message" event; the call whose reply was dropped fails at its deadline instead of hanging. A drain that misses its deadline closes the device connection, and every page session of the device fails with `ErrPageClosed`. A full-page screenshot whose estimate exceeds the cap is refused before sending.
   3. Error paths at the lower boundary: a fake usbmuxd Unix socket injects a failure, and in a second run a stall, at every step (usbmuxd connect, `ReadPairRecord`, lockdown session start, TLS handshake, `StartService`, service connect, first read). After each run the fake's count of accepted connections equals its count of closed connections, the call returns within its context deadline, and lockdown retries stop after 2.
-  4. Device test (gate `IWDP_DEVICE_TEST=1`, runbook 8.3) on iOS 16.7: devices, pages, `eval`, `snapshot -i`, `click` through `--transport direct`. One iOS 17 or later device run before `auto` may pick direct.
+  4. Device test (gate `AGENT_IOS_DEVICE_TEST=1`, runbook 8.3) on iOS 16.7: devices, pages, `eval`, `snapshot -i`, `click` through `--transport direct`. One iOS 17 or later device run before `auto` may pick direct.
 - Size: see 7.1.
 
 ### 7.5 W3a: runtime core, snapshot, refs, getters
@@ -904,17 +904,17 @@ Acceptance lists below are numbered; "7.3 test 7" means item 7 of the W1 list. S
   5. Navigation identity: the `loaderId` returned by `Page.navigate` equals the one in `frameNavigated` and the `requestId` of the main-frame document request; a same-document navigation returns no loader id and emits `navigatedWithinDocument`; lifecycle events carry the page session id.
   6. Dialogs: `Page.handleJavaScriptDialog` returns the unsupported error; no `javascriptDialogOpening` is emitted; an automatic policy answer appears as a `Log.entryAdded` warning; a later dialog is answered by the session policy, never by an earlier CDP call.
   7. `Performance.enable` and `Performance.getMetrics` succeed on attach.
-  8. Compatibility on WebKitGTK (gate `IWDP_CDP_COMPAT=1`; needs Node). Every client connects with the exact URL printed by `get cdp-url` (5.5), never a hand-assembled one. agent-browser `--cdp`: open, snapshot -i, click @ref, fill, get title, screenshot; Puppeteer: connect, goto, `$eval`, `waitForSelector`, click, type, screenshot, `accessibility.snapshot`; Playwright `connectOverCDP`: goto, evaluate, `getByRole().click()`, fill, a locator read through the utility world, screenshot, `ariaSnapshot`; chrome-devtools-mcp: take_snapshot, click by uid, navigate_page, list_network_requests, take_screenshot. Each scenario asserts behavior (locator found the element, navigation resolved, value changed). Each script records the methods it sent; an unknown method fails the test unless it is on the client's expected-missing list, where each entry names the optional feature it belongs to and was reviewed.
+  8. Compatibility on WebKitGTK (gate `AGENT_IOS_CDP_COMPAT=1`; needs Node). Every client connects with the exact URL printed by `get cdp-url` (5.5), never a hand-assembled one. agent-browser `--cdp`: open, snapshot -i, click @ref, fill, get title, screenshot; Puppeteer: connect, goto, `$eval`, `waitForSelector`, click, type, screenshot, `accessibility.snapshot`; Playwright `connectOverCDP`: goto, evaluate, `getByRole().click()`, fill, a locator read through the utility world, screenshot, `ariaSnapshot`; chrome-devtools-mcp: take_snapshot, click by uid, navigate_page, list_network_requests, take_screenshot. Each scenario asserts behavior (locator found the element, navigation resolved, value changed). Each script records the methods it sent; an unknown method fails the test unless it is on the client's expected-missing list, where each entry names the optional feature it belongs to and was reviewed.
   9. Device: the scenarios of test 8 run on the device behind the device gate (8.3) before any of them is advertised as supported on iOS.
   10. Endpoint resolution (no browser; a recording HTTP and WebSocket server): each pinned client receives the exact output of `get cdp-url`. agent-browser 0.41.2 with the `ws` form opens exactly that WebSocket URL, token and endpoint path included, and makes no discovery request; with the `http` form it requests the unprefixed `/json/version` and gets 404, which is why `ws` is its form. playwright-core 1.65.0 and puppeteer-core 25.16.0 with the `http` form request `/t/<token>/e/<endpoint>/json/version` (Playwright with a trailing slash) and then open the advertised WebSocket URL. No request without the token gets discovery data.
-  11. Logical session binding (5.2): (a) `iwdp-cli --session s1 snapshot -i`, then `iwdp-cli --session s1 get cdp-url`; Puppeteer connects with that URL, attaches the tab and then its page, and evaluates in the page; s1's lease epoch is unchanged, and `iwdp-cli --session s1 click @eN` with a ref from the snapshot still works. (b) The tab and page attachments have distinct CDP session ids; detaching the page attachment removes only the state it set (an extra header it set is gone) and leaves the lease with s1. (c) A second connection through the same URL joins s1 without a lease change. (d) `iwdp-cli --session s2 get title` on the same page exits 4 with the lease message, and a Puppeteer connection through an endpoint issued for s2 lists the page but fails `Target.attachToTarget` on it with the lease message; in both cases s1's lease epoch and its CDP connections are unchanged. (e) After `iwdp-cli --session s1 close`, the s1 URLs get 404.
+  11. Logical session binding (5.2): (a) `agent-ios --session s1 snapshot -i`, then `agent-ios --session s1 get cdp-url`; Puppeteer connects with that URL, attaches the tab and then its page, and evaluates in the page; s1's lease epoch is unchanged, and `agent-ios --session s1 click @eN` with a ref from the snapshot still works. (b) The tab and page attachments have distinct CDP session ids; detaching the page attachment removes only the state it set (an extra header it set is gone) and leaves the lease with s1. (c) A second connection through the same URL joins s1 without a lease change. (d) `agent-ios --session s2 get title` on the same page exits 4 with the lease message, and a Puppeteer connection through an endpoint issued for s2 lists the page but fails `Target.attachToTarget` on it with the lease message; in both cases s1's lease epoch and its CDP connections are unchanged. (e) After `agent-ios --session s1 close`, the s1 URLs get 404.
   12. Awaited intercepted fetch (2.10): Puppeteer with `page.setRequestInterception(true)` and a handler that answers `/resource` with `respond({body: 'ok'})`; `page.evaluate(() => fetch('/resource').then(r => r.text()))` returns "ok" within 2 s of a 10 s deadline. The same with Playwright `page.route('/resource', r => r.fulfill({body: 'ok'}))`.
 - Size: see 7.1.
 
 ### 7.9 W6: docs, skills, agent prompts (drafts for approval)
 
 - Owns: `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `skills/**` and `skill-data/**` of this repository, `docs/**` except `docs/design/`, embedded skills (`internal/skills/`, `skills get`).
-- Skill layout (agent-browser's): `skills/<name>/SKILL.md` is a short discovery stub with the name and description of its guide and no bash block; it is the only file of its directory, because Pi finds nested SKILL.md files too. The guide is `skill-data/<name>/SKILL.md`, which the binary embeds and `iwdp-cli skills get <name>` prints, so an agent always reads the guide of the installed binary. Agents install the stub by a symlink of `skills/<name>` into an Agent Skills directory (README, Agent Skill).
+- Skill layout (agent-browser's): `skills/<name>/SKILL.md` is a short discovery stub with the name and description of its guide and no bash block; it is the only file of its directory, because Pi finds nested SKILL.md files too. The guide is `skill-data/<name>/SKILL.md`, which the binary embeds and `agent-ios skills get <name>` prints, so an agent always reads the guide of the installed binary. Agents install the stub by a symlink of `skills/<name>` into an Agent Skills directory (README, Agent Skill).
 - Agent prompts and active skills outside the repository (browser-checker prompt, safari-agent skill) are produced as **draft copies plus diffs staged for the user's approval**; W6 never edits the active agent configuration (decisions.md).
 - Content: the agentic loop; session, reservation and lease rules; synthetic-input statement; impossible features; CDP how-to with tokens; device runbook; migration notes. Draft safety rules from AGG: no infrastructure writes and stop on a guard refusal (P0 [047]; P1 [015], [063], [108], [262]); build, origin and auth preflight and one final verdict contract (P0 [026], [108], [161], [292]); one bounded diagnostic budget then BLOCKED (P1 [097], [116], [165], [170]); default masking of password and token fields, 0600 permissions and deletion rules for HAR and state files, no dumps of account or security pages (P1 [191], [202], [304], [108], [212], [197]; agent-browser-skill [044]); cookie owner preservation and restore, with server-session revocation assigned to the auth helper (P1 [176], [177], [301]); bounded shell calls and known evidence directories, no filesystem-wide searches (P0 [305], [317]; P1 [179], [180], [268], [310], [312], [314], [330], [334]). Shell-level timeouts stay for external helpers that do not go through the daemon.
 - A finding-to-owner matrix (`docs/notes/retro-coverage.md`) lists each P0 and P1 finding as solved by a workstream, constrained by a rule, or owned elsewhere (harness and provider gaps, auth helpers, container naming).
@@ -1000,16 +1000,16 @@ Spike A shows that WebKitGTK 2.54 MiniBrowser runs headless under `broadwayd` an
 
 ### 8.3 Real-device tests (gated) and runbook
 
-Build tag `device`; the suite refuses to run unless `IWDP_DEVICE_TEST=1` and a device reservation (2.5) exist. The orchestrator grants each device session; the suite never restarts or stops iwdp, never runs `iwdp-cli restart-iwdp`, and never navigates the visible tab without that grant (decisions.md).
+Build tag `device`; the suite refuses to run unless `AGENT_IOS_DEVICE_TEST=1` and a device reservation (2.5) exist. The orchestrator grants each device session; the suite never restarts or stops iwdp, never runs `agent-ios restart-iwdp`, and never navigates the visible tab without that grant (decisions.md).
 - **Contracts fail the gate.** Shared semantic fixtures have hand-written expected results (snapshots, visibility, event outcomes, waits, dialogs). On iOS 16.7 any mismatch fails, except entries in `e2e/device/known-differences.yaml`, each with a reason and a reviewer. WebKitGTK output is never the expected answer.
 - **Capability probes are separate and report-only**: interception, whether `Network.setExtraHTTPHeaders` merges or replaces the header map (2.4), the rate of the page's `performance.now()` against the host monotonic clock (2.6), `getResponseBody`, `Touch` construction, `DOM.getAccessibilityPropertiesForNode` cost, reconnect gap, large evaluate.
 - The CDP scenarios of 8.4 run on the device under the same grant before any scenario is advertised as supported on iOS.
-- Cleanup is session-scoped (`iwdp-cli close --session <test session>`); the suite checks that its own lease, interception and breakpoints are gone and does not touch other sessions.
+- Cleanup is session-scoped (`agent-ios close --session <test session>`); the suite checks that its own lease, interception and breakpoints are gone and does not touch other sessions.
 - Target devices: iPhone X on iOS 16.7 (permanent contract) and a named iOS 26 or 27 device for current-version claims.
 
 ### 8.4 CDP compatibility tests
 
-`e2e/cdpcompat` (W5), gate `IWDP_CDP_COMPAT=1`, needs Node and `npm ci` in that directory (decision D7). Each client script runs a fixed scenario against the CDP endpoint in front of WebKitGTK, records every CDP method sent, and writes a JSON result that a Go test checks. Versions are pinned: agent-browser 0.41.2, playwright-core 1.65.0, puppeteer-core 25.16.0 (the version chrome-devtools-mcp 1.12.0 pins), chrome-devtools-mcp 1.12.0. The same scripts run against the device behind the device gate.
+`e2e/cdpcompat` (W5), gate `AGENT_IOS_CDP_COMPAT=1`, needs Node and `npm ci` in that directory (decision D7). Each client script runs a fixed scenario against the CDP endpoint in front of WebKitGTK, records every CDP method sent, and writes a JSON result that a Go test checks. Versions are pinned: agent-browser 0.41.2, playwright-core 1.65.0, puppeteer-core 25.16.0 (the version chrome-devtools-mcp 1.12.0 pins), chrome-devtools-mcp 1.12.0. The same scripts run against the device behind the device gate.
 
 ### 8.5 Latency targets (measured, not assumed)
 
@@ -1059,7 +1059,7 @@ Recorded in /home/devkit/.pi/artifacts/retro/browser-checker-20261106/decisions.
 - **D5** The direct transport uses go-ios (its `ios` package only, through the W2 adapter of section 6) and the module's Go floor rises to 1.26.0 when W2 merges. Direct stays opt-in until the device gates of 7.4 pass per iOS version.
 - **D6** An unanswered `confirm` returns false and `prompt` returns null while the session's override is active; the policy can change it; release restores normal behavior.
 - **D7** Node-based CDP compatibility tests live in `e2e/cdpcompat` behind `make test-cdpcompat`, with a lockfile; they are not part of `go test ./...`.
-- **D8** The session flag is `--session` (`IWDP_SESSION`), default `default`.
+- **D8** The session flag is `--session` (`AGENT_IOS_SESSION`), default `default`.
 - Module files: W1a adds the esbuild test dependency; W2 adds go-ios and the Go floor; nobody else edits `go.mod`.
 
 ## 11. Spikes
@@ -1115,7 +1115,7 @@ Full report: /home/devkit/.pi/artifacts/retro/browser-checker-20261106/analysis/
 
 ## 12. Licensing and attribution
 
-- iwdp-cli stays MIT. New dependencies allowed by this design: go-ios (MIT, D5), esbuild Go API as a test-only dependency (MIT, D4). gorilla/websocket and the MCP SDK are already used.
+- agent-ios stays MIT. New dependencies allowed by this design: go-ios (MIT, D5), esbuild Go API as a test-only dependency (MIT, D4). gorilla/websocket and the MCP SDK are already used.
 - Do not copy code from pymobiledevice3 (GPL-3.0), mobilecli (FSL-1.1-ALv2) or sonic-ios-bridge (AGPL-3.0). Behavior facts from them (message names, timings) are cited, not copied.
 - Playwright (Apache-2.0) and agent-browser (Apache-2.0): prefer own implementations. If a worker adapts code (for example role tables from `roleUtils.ts` or key tables from `webViewInput.ts`), that file keeps the original copyright and license header, a `NOTICE` file at the repository root names the source and license, and the README license section mentions it.
 - WebKit protocol method lists (`internal/wip/methods_gen.go`) contain names only; the generator header cites the WebKit source files (BSD-style license).

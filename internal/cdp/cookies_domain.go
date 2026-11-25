@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // The cookie methods (design 5.3): Network getCookies, setCookie,
@@ -266,7 +266,7 @@ func (rec *record) selectedTarget(ctx context.Context) (target, error) {
 		return target{}, err
 	}
 	if len(ts) == 0 || ts[0].key != rec.selected.Key {
-		return target{}, fmt.Errorf("the selected page %q is gone; issue a new URL with 'iwdp-cli get cdp-url'", rec.selected.Title)
+		return target{}, fmt.Errorf("the selected page %q is gone; issue a new URL with 'agent-ios get cdp-url'", rec.selected.Title)
 	}
 	return ts[0], nil
 }

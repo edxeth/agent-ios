@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // Lease commands (design 2.5).
@@ -19,7 +19,7 @@ func init() {
 			}
 			pg := m.FindAttached(in.Args[0])
 			if pg == nil {
-				return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("%w: no attached page matches %q (see 'iwdp-cli daemon status')", core.ErrNoPage, in.Args[0])}
+				return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("%w: no attached page matches %q (see 'agent-ios daemon status')", core.ErrNoPage, in.Args[0])}
 			}
 			if err := m.Break(ctx, pg.Key); err != nil {
 				return Result{}, err

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Review F18: with an earlier and a new simulator tab of the same URL,
@@ -56,7 +56,7 @@ func TestSimulatorTabSelectsTheNewTab(t *testing.T) {
 	}
 }
 
-// Final review F1: under IWDP_NO_DAEMON=1 the core lives for one command,
+// Final review F1: under AGENT_IOS_NO_DAEMON=1 the core lives for one command,
 // so a tab id that it hands out does not reach the next command, whose own
 // core numbers the tabs of another listing. SimulatorTab gives no id there
 // and starts no core: sim up then prints the tab find route in its text,
@@ -70,7 +70,7 @@ func TestSimulatorTabGivesNoIDWithoutADaemon(t *testing.T) {
 	in := commands.Input{Global: commands.Globals{Session: "s1"}}
 	id, err := commands.SimulatorTab(ctx, lifecycleHost{Options{Dir: shortDir(t)}}, in, "ws://127.0.0.1:1/devtools/page/1")
 	if id != "" || err != nil {
-		t.Fatalf("SimulatorTab under IWDP_NO_DAEMON=1 = %q, %v; want no id and no error", id, err)
+		t.Fatalf("SimulatorTab under AGENT_IOS_NO_DAEMON=1 = %q, %v; want no id and no error", id, err)
 	}
 	inproc.mu.Lock()
 	started := inproc.l != nil

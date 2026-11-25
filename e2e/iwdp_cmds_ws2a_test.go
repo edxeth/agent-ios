@@ -118,7 +118,7 @@ func TestStatusNotRunningStreams(t *testing.T) {
 		start += " -s 127.0.0.1:27753"
 	}
 	stdout, stderr, code := runBinIn(t, bin, "status")
-	if code != 1 || !strings.HasPrefix(stdout, "ios_webkit_debug_proxy is NOT running\niwdp log of an iwdp that iwdp-cli starts: ") || !strings.Contains(stderr, start+"\n") {
+	if code != 1 || !strings.HasPrefix(stdout, "ios_webkit_debug_proxy is NOT running\niwdp log of an iwdp that agent-ios starts: ") || !strings.Contains(stderr, start+"\n") {
 		t.Errorf("status without iwdp: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	stdout, _, code = runBinIn(t, bin, "status", "--json")
@@ -132,7 +132,7 @@ func TestStatusNotRunningStreams(t *testing.T) {
 }
 
 // restart-iwdp refuses an iwdp listing address that a process owns but
-// that no iwdp-cli start recorded (decision L02): it stops nothing, exits
+// that no agent-ios start recorded (decision L02): it stops nothing, exits
 // 1 and names the address and the manual restart command. The owner here
 // is this test's private dead listing, never iwdp's default address.
 func TestRestartIWDPRefusesAnUnrecordedOwner(t *testing.T) {
@@ -167,12 +167,12 @@ func stalledListing(t *testing.T, answered int64) string {
 }
 
 // wantDeadlineMessage checks the CLI's deadline error of command (exit
-// 124, cmd/iwdp-cli/deadline.go timeoutMessage) and that the command
+// 124, cmd/agent-ios/deadline.go timeoutMessage) and that the command
 // itself ended at its deadline: the watchdog, which ends a command that
 // ignores its deadline 2 s later, did not.
 func wantDeadlineMessage(t *testing.T, command, stdout, stderr string, code int) {
 	t.Helper()
-	if code != 124 || !strings.Contains(stderr, "Error: iwdp-cli "+command+" timed out after") || !strings.Contains(stderr, "--timeout <duration>") || strings.Contains(stderr, "watchdog") {
+	if code != 124 || !strings.Contains(stderr, "Error: agent-ios "+command+" timed out after") || !strings.Contains(stderr, "--timeout <duration>") || strings.Contains(stderr, "watchdog") {
 		t.Errorf("%s past its deadline: exit %d, stdout %q, stderr %q; want exit 124 with the CLI's deadline message, ended by the command's deadline", command, code, stdout, stderr)
 	}
 }
@@ -207,7 +207,7 @@ func TestStatusHonorsTheDeadline(t *testing.T) {
 func TestRestartIWDPHonorsTheDeadline(t *testing.T) {
 	addr := deadCLIListing().Addr()
 	dir := t.TempDir()
-	name := fmt.Sprintf("iwdp-cli-start-%d-%s.lock", os.Getuid(), strings.ReplaceAll(addr, ":", "_")) // proxy.runtimeName
+	name := fmt.Sprintf("agent-ios-start-%d-%s.lock", os.Getuid(), strings.ReplaceAll(addr, ":", "_")) // proxy.runtimeName
 	lock, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)

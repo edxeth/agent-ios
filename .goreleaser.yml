@@ -1,9 +1,9 @@
 version: 2
 
 builds:
-  - id: iwdp-cli
-    main: ./cmd/iwdp-cli
-    binary: iwdp-cli
+  - id: agent-ios
+    main: ./cmd/agent-ios
+    binary: agent-ios
     goos:
       - darwin
       - linux
@@ -12,11 +12,11 @@ builds:
       - arm64
 
 archives:
-  - id: iwdp-cli
+  - id: agent-ios
     builds:
-      - iwdp-cli
+      - agent-ios
     format: binary
-    name_template: "iwdp-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "agent-ios_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 changelog:
   sort: asc
@@ -29,4 +29,4 @@ changelog:
 release:
   github:
     owner: nnemirovsky
-    name: iwdp-cli
+    name: agent-ios

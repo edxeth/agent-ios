@@ -10,15 +10,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // noDaemonEnv selects the in-process core (design 2.1).
-const noDaemonEnv = "IWDP_NO_DAEMON"
+const noDaemonEnv = "AGENT_IOS_NO_DAEMON"
 
-// NoDaemon reports whether IWDP_NO_DAEMON=1 asks for the in-process core:
+// NoDaemon reports whether AGENT_IOS_NO_DAEMON=1 asks for the in-process core:
 // the same core and socket API without a daemon process, a socket or a
 // socket directory, for debugging and test isolation. It gives no leases
 // across processes.
@@ -46,7 +46,7 @@ func connectInProcess(ctx context.Context, o Options) (*Client, error) {
 	inproc.mu.Lock()
 	if inproc.l == nil {
 		ro := RunOptions{Dir: o.Dir, Version: o.Version, Transport: string(transport.KindIWDP), StartIWDP: o.StartIWDP, RecoverIWDP: o.RecoverIWDP, Log: log.Writer()}
-		logger := log.New(ro.Log, "iwdp (no daemon): ", log.LstdFlags|log.Lmicroseconds)
+		logger := log.New(ro.Log, "agent-ios (no daemon): ", log.LstdFlags|log.Lmicroseconds)
 		m, srv, tr := newCore(ro, logger.Printf)
 		l := &memListener{conns: make(chan net.Conn), done: make(chan struct{})}
 		hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
@@ -64,7 +64,7 @@ func connectInProcess(ctx context.Context, o Options) (*Client, error) {
 	return c, nil
 }
 
-// CloseInProcess ends the in-process core of IWDP_NO_DAEMON=1, if one
+// CloseInProcess ends the in-process core of AGENT_IOS_NO_DAEMON=1, if one
 // runs, as a daemon ends at shutdown (design 2.3, 2.4): event streams get
 // their final item, every lease is released with the cleanup of its owned
 // page state within ctx, and the page connections close. A CLI process

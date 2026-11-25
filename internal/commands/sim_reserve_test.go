@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // While an owner reserves the simulator, its pages are that owner's run:
@@ -74,7 +74,7 @@ func TestSimReserveWaitsForTheOtherOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := runSimReserve(ctx, nil, simInput("b", 50*time.Millisecond))
-	if ExitCodeOf(err) != ExitWaitTimeout || !strings.Contains(err.Error(), "'iwdp-cli sim reserve' again") {
+	if ExitCodeOf(err) != ExitWaitTimeout || !strings.Contains(err.Error(), "'agent-ios sim reserve' again") {
 		t.Fatalf("a held simulator: %v (exit %d), want exit 3 that says to run it again", err, ExitCodeOf(err))
 	}
 	go func() {
@@ -109,7 +109,7 @@ func TestSimReserveSaysAtOnceThatItWaits(t *testing.T) {
 		t.Fatalf("free simulator: %v, lines %q", err, env.lines)
 	}
 	_, _ = runSimReserve(context.Background(), env, simInput("b", 100*time.Millisecond))
-	if len(env.lines) != 1 || !strings.Contains(env.lines[0], "run 'iwdp-cli sim reserve' again") || strings.Contains(env.lines[0], `"a"`) {
+	if len(env.lines) != 1 || !strings.Contains(env.lines[0], "run 'agent-ios sim reserve' again") || strings.Contains(env.lines[0], `"a"`) {
 		t.Fatalf("waiting lines: %q", env.lines)
 	}
 	_ = res
@@ -175,7 +175,7 @@ func TestSimGate(t *testing.T) {
 
 // In private mode the turn-taking errors still tell the agent what to do.
 func TestPrivateSimReservationLines(t *testing.T) {
-	if l := privateErrorLine("sim reserve", ExitWaitTimeout); !strings.Contains(l, "run 'iwdp-cli sim reserve' again") {
+	if l := privateErrorLine("sim reserve", ExitWaitTimeout); !strings.Contains(l, "run 'agent-ios sim reserve' again") {
 		t.Errorf("sim reserve exit 3: %q", l)
 	}
 	// sim up's page that never shows: private mode still says what to check.

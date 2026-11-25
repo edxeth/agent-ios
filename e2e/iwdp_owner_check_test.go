@@ -244,7 +244,7 @@ func checkPidfdCalls(t *testing.T, c pidfdCalls, removed pidfdRemoved, pid int, 
 	}
 }
 
-// linuxStartTicks returns the start time of process pid as the iwdp-cli
+// linuxStartTicks returns the start time of process pid as the agent-ios
 // record holds it on Linux: field 22 of /proc/<pid>/stat.
 func linuxStartTicks(t *testing.T, pid int) string {
 	t.Helper()
@@ -260,7 +260,7 @@ func linuxStartTicks(t *testing.T, pid int) string {
 // TestOwnerCheckContract: iwdp-owner-check.sh prints one line
 // "<result>: <reason>" and exits 0 (verified), 1 (mismatch), 2
 // (cannot-check) or 3 (gone), as its header documents, for the records
-// of iwdp-cli, of the removed iwdp-mcp and of scripts/sim-setup.sh; the
+// of agent-ios, of the removed iwdp-mcp and of scripts/sim-setup.sh; the
 // manual stop of docs/device-runbook.md runs it on the first two.
 func TestOwnerCheckContract(t *testing.T) {
 	type checkCase struct {
@@ -280,73 +280,73 @@ func TestOwnerCheckContract(t *testing.T) {
 		wantWhy  string
 	}
 	cliRecord := func(pid int, token, ticks string) string {
-		return fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":"127.0.0.1:9221","start":%q,"token":%q,"writer":"iwdp-cli"}`, pid, pid, ticks, token)
+		return fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":"127.0.0.1:9221","start":%q,"token":%q,"writer":"agent-ios"}`, pid, pid, ticks, token)
 	}
 	darwin := func(pid int, token, _ string) string {
 		return fmt.Sprintf(`{"pid":%d,"start":%q,"token":%q}`, pid, recordedIWDPStart, token)
 	}
 	cases := []checkCase{
-		{name: "macOS: iwdp-cli record", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", record: darwin, wantCode: 0, wantWord: "verified"},
+		{name: "macOS: agent-ios record", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", record: darwin, wantCode: 0, wantWord: "verified"},
 		{name: "macOS: iwdp-mcp record", system: "Darwin", tokenVar: "IWDP_MCP_START_TOKEN", record: darwin, wantCode: 0, wantWord: "verified"},
 		// darwin-argv-spoof.sh and darwin-argument-token.py: the token text
 		// only in an argument (the earlier helper read macOS ps -E, which
 		// prints the arguments and the environment as one list).
-		{name: "macOS: the token only in an argument (darwin-argv-spoof.sh)", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", inArg: true, record: darwin, wantCode: 1, wantWord: "mismatch", wantWhy: "start token"},
+		{name: "macOS: the token only in an argument (darwin-argv-spoof.sh)", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", inArg: true, record: darwin, wantCode: 1, wantWord: "mismatch", wantWhy: "start token"},
 		{name: "macOS: a JSON record does not take the Simulator's variable", system: "Darwin", tokenVar: simTokenEnv, record: darwin, wantCode: 1, wantWord: "mismatch", wantWhy: "start token"},
 		{
-			name: "macOS: a Linux start time cannot be checked", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN",
+			name: "macOS: a Linux start time cannot be checked", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN",
 			record: func(pid int, token, _ string) string {
 				return fmt.Sprintf(`{"pid":%d,"start":"12345","token":%q}`, pid, token)
 			},
 			wantCode: 2, wantWord: "cannot-check", wantWhy: "start time",
 		},
-		{name: "another system", system: "FreeBSD", tokenVar: "IWDP_CLI_START_TOKEN", record: darwin, wantCode: 2, wantWord: "cannot-check", wantWhy: "this system"},
-		{name: "a record that group members can write", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", record: darwin, mode: 0o620, wantCode: 2, wantWord: "cannot-check", wantWhy: "not a private file"},
+		{name: "another system", system: "FreeBSD", tokenVar: "AGENT_IOS_START_TOKEN", record: darwin, wantCode: 2, wantWord: "cannot-check", wantWhy: "this system"},
+		{name: "a record that group members can write", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", record: darwin, mode: 0o620, wantCode: 2, wantWord: "cannot-check", wantWhy: "not a private file"},
 		// The record is checked before the process (review WS3 round 6,
 		// stop-safety reviewer): an invalid record is never "gone".
-		{name: "a record that others can write, of a gone process", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", record: darwin, mode: 0o602, gone: true, wantCode: 2, wantWord: "cannot-check", wantWhy: "not a private file"},
-		{name: "a symlink record", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", record: darwin, symlink: true, wantCode: 2, wantWord: "cannot-check", wantWhy: "cannot be opened"},
+		{name: "a record that others can write, of a gone process", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", record: darwin, mode: 0o602, gone: true, wantCode: 2, wantWord: "cannot-check", wantWhy: "not a private file"},
+		{name: "a symlink record", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", record: darwin, symlink: true, wantCode: 2, wantWord: "cannot-check", wantWhy: "cannot be opened"},
 		{
-			name: "a record without a token", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN",
+			name: "a record without a token", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN",
 			record:   func(pid int, _, _ string) string { return fmt.Sprintf(`{"pid":%d,"start":%q}`, pid, recordedIWDPStart) },
 			wantCode: 2, wantWord: "cannot-check", wantWhy: "no start token",
 		},
 		{
-			name: "a record without a pid", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN",
+			name: "a record without a pid", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN",
 			record: func(_ int, token, _ string) string {
 				return fmt.Sprintf(`{"pid":"1","start":%q,"token":%q}`, recordedIWDPStart, token)
 			},
 			wantCode: 2, wantWord: "cannot-check", wantWhy: "names no pid",
 		},
 		{
-			name: "a record of pid 1", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", name2: "iwdp.pid",
+			name: "a record of pid 1", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", name2: "iwdp.pid",
 			record:   func(_ int, token, _ string) string { return simRecord(1, token, recordedIWDPStart, "") },
 			wantCode: 2, wantWord: "cannot-check", wantWhy: "names no pid",
 		},
 		// cross-token-namespace.sh: the variable belongs to the record kind,
 		// which the file name gives.
-		{name: "an iwdp-cli record and only the old variable (cross-token-namespace.sh)", system: "Darwin", tokenVar: "IWDP_MCP_START_TOKEN", name2: "iwdp-cli-started-0-127.0.0.1:9221.json", record: darwin, wantCode: 1, wantWord: "mismatch", wantWhy: "start token"},
-		{name: "an iwdp-mcp record and only the new variable", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", name2: "iwdp-mcp-started-0-127.0.0.1:9221.json", record: darwin, wantCode: 1, wantWord: "mismatch", wantWhy: "start token"},
-		{name: "a JSON record of an unclear kind", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", name2: "record.json", record: darwin, wantCode: 2, wantWord: "cannot-check", wantWhy: "kind"},
-		{name: "a pid of 5000 digits (long-pid.record)", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", name2: "iwdp.pid", record: func(_ int, token, _ string) string {
+		{name: "an agent-ios record and only the old variable (cross-token-namespace.sh)", system: "Darwin", tokenVar: "IWDP_MCP_START_TOKEN", name2: "agent-ios-started-0-127.0.0.1:9221.json", record: darwin, wantCode: 1, wantWord: "mismatch", wantWhy: "start token"},
+		{name: "an iwdp-mcp record and only the new variable", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", name2: "iwdp-mcp-started-0-127.0.0.1:9221.json", record: darwin, wantCode: 1, wantWord: "mismatch", wantWhy: "start token"},
+		{name: "a JSON record of an unclear kind", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", name2: "record.json", record: darwin, wantCode: 2, wantWord: "cannot-check", wantWhy: "kind"},
+		{name: "a pid of 5000 digits (long-pid.record)", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", name2: "iwdp.pid", record: func(_ int, token, _ string) string {
 			return strings.Repeat("9", 5000) + " " + token + " " + recordedIWDPStart
 		}, wantCode: 2, wantWord: "cannot-check", wantWhy: "names no pid"},
-		{name: "a gone process", system: "Darwin", tokenVar: "IWDP_CLI_START_TOKEN", record: darwin, gone: true, wantCode: 3, wantWord: "gone"},
+		{name: "a gone process", system: "Darwin", tokenVar: "AGENT_IOS_START_TOKEN", record: darwin, gone: true, wantCode: 3, wantWord: "gone"},
 	}
 	// Linux reads the probe's real /proc files: the start time in clock
-	// ticks (iwdp-cli's Linux record), the environment and the arguments.
+	// ticks (agent-ios's Linux record), the environment and the arguments.
 	if runtime.GOOS == "linux" {
 		cases = append(cases,
-			checkCase{name: "Linux: iwdp-cli record", system: "Linux", tokenVar: "IWDP_CLI_START_TOKEN", argv0: "/usr/local/bin/" + iwdpProgram, record: cliRecord, wantCode: 0, wantWord: "verified"},
+			checkCase{name: "Linux: agent-ios record", system: "Linux", tokenVar: "AGENT_IOS_START_TOKEN", argv0: "/usr/local/bin/" + iwdpProgram, record: cliRecord, wantCode: 0, wantWord: "verified"},
 			checkCase{name: "Linux: iwdp-mcp record", system: "Linux", tokenVar: "IWDP_MCP_START_TOKEN", argv0: iwdpProgram, record: cliRecord, wantCode: 0, wantWord: "verified"},
 			checkCase{
-				name: "Linux: another start time", system: "Linux", tokenVar: "IWDP_CLI_START_TOKEN", argv0: iwdpProgram,
+				name: "Linux: another start time", system: "Linux", tokenVar: "AGENT_IOS_START_TOKEN", argv0: iwdpProgram,
 				record:   func(pid int, token, ticks string) string { return cliRecord(pid, token, ticks+"1") },
 				wantCode: 1, wantWord: "mismatch", wantWhy: "another time",
 			},
-			checkCase{name: "Linux: a token holder that is not iwdp", system: "Linux", tokenVar: "IWDP_CLI_START_TOKEN", argv0: "python3", record: cliRecord, wantCode: 1, wantWord: "mismatch", wantWhy: "not ios_webkit_debug_proxy"},
+			checkCase{name: "Linux: a token holder that is not iwdp", system: "Linux", tokenVar: "AGENT_IOS_START_TOKEN", argv0: "python3", record: cliRecord, wantCode: 1, wantWord: "mismatch", wantWhy: "not ios_webkit_debug_proxy"},
 			checkCase{
-				name: "Linux: the token inside another variable", system: "Linux", tokenVar: "OTHER_IWDP_CLI_START_TOKEN", argv0: iwdpProgram, record: cliRecord,
+				name: "Linux: the token inside another variable", system: "Linux", tokenVar: "OTHER_AGENT_IOS_START_TOKEN", argv0: iwdpProgram, record: cliRecord,
 				wantCode: 1, wantWord: "mismatch", wantWhy: "start token",
 			},
 		)
@@ -382,7 +382,7 @@ func TestOwnerCheckContract(t *testing.T) {
 			run := prepareOwnerRun(t, ownerWorld{system: tc.system, psStart: recordedIWDPStart}, probe, "")
 			name := tc.name2
 			if name == "" {
-				name = "iwdp-cli-started-0-127.0.0.1:9221.json"
+				name = "agent-ios-started-0-127.0.0.1:9221.json"
 				if tc.tokenVar == "IWDP_MCP_START_TOKEN" {
 					name = "iwdp-mcp-started-0-127.0.0.1:9221.json"
 				}
@@ -606,7 +606,7 @@ func TestOwnerCheckRefusesWhenThePidfdFallbackFails(t *testing.T) {
 // tells how to stop an iwdp by hand states the same conditions and steps
 // and names that section: by a Markdown link, or by its path and name
 // where no link renders (CLAUDE.md's code block, and the embedded skill
-// that 'iwdp-cli skills get' serves outside the repository).
+// that 'agent-ios skills get' serves outside the repository).
 func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
@@ -641,7 +641,7 @@ func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 	for _, want := range []string{
 		"- Never run `pkill`, `killall` or `kill` on `ios_webkit_debug_proxy`, and never run any other script or command that stops or restarts it.",
 		"Only three tools may stop an iwdp, and each proves the identity of that iwdp before it signals it:",
-		"`iwdp-cli restart-iwdp`, only for an iwdp that iwdp-cli started and recorded",
+		"`agent-ios restart-iwdp`, only for an iwdp that agent-ios started and recorded",
 		"the Simulator teardown (`make sim-teardown` or `scripts/sim-setup.sh --teardown`), only for the iwdp that setup started, under the run lease",
 		"`scripts/iwdp-owner-check.sh --terminate`, only for a stop by hand of an iwdp that you started yourself and nobody else uses, as [Stopping an iwdp by hand](#stopping-an-iwdp-by-hand) describes",
 	} {
@@ -681,7 +681,7 @@ func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 		}
 	}
 	// The earlier procedure's steps, in any document.
-	for _, path := range []string{"docs/device-runbook.md", "README.md", "CLAUDE.md", "docs/guide.md", "docs/migration.md", "docs/known-limits.md", "docs/cdp.md", "skill-data/iwdp/SKILL.md"} {
+	for _, path := range []string{"docs/device-runbook.md", "README.md", "CLAUDE.md", "docs/guide.md", "docs/migration.md", "docs/known-limits.md", "docs/cdp.md", "skill-data/agent-ios/SKILL.md"} {
 		text := read(path)
 		for _, bad := range []string{"ss -Hltnp", "-sTCP:LISTEN", "grep -Fx", "kill <pid>"} {
 			if strings.Contains(text, bad) {
@@ -713,7 +713,7 @@ func TestManualStopUsesOnlyTheIdentityCheck(t *testing.T) {
 		"docs/cdp.md":          {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
 		"docs/known-limits.md": {"[Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand)"},
 		// The guide of the device and its faults, which the core guide names.
-		"skill-data/iwdp-device/SKILL.md": {"docs/device-runbook.md (Stopping an iwdp by hand)"},
+		"skill-data/agent-ios-device/SKILL.md": {"docs/device-runbook.md (Stopping an iwdp by hand)"},
 	} {
 		text := read(path)
 		for _, want := range append(slices.Clone(steps), ref...) {
@@ -827,7 +827,7 @@ func TestOwnerCheckReadsTheRecordOnce(t *testing.T) {
 // The file name decides the kind and the format of a record: content in
 // the other format, or an unknown name, is cannot-check with that reason
 // (review WS3 round 5, r1 F12; the earlier helper chose the format by the
-// content and verified a line record under an iwdp-cli name with the
+// content and verified a line record under an agent-ios name with the
 // Simulator's variable). The records name the pid of a live probe
 // that runs ios_webkit_debug_proxy with the recorded token and start
 // time, so a record that the helper wrongly read as valid would verify
@@ -836,7 +836,7 @@ func TestOwnerCheckReadsTheRecordOnce(t *testing.T) {
 // word, nothing on stderr and no signal.
 func TestOwnerCheckMalformedRecords(t *testing.T) {
 	tok := randomHex(t, 16)
-	probe := startOwnerProbe(t, probeSpec{argv0: iwdpProgram, env: []string{"IWDP_CLI_START_TOKEN=" + tok, "IWDP_MCP_START_TOKEN=" + tok, simTokenEnv + "=" + tok}, exitOnTerm: true})
+	probe := startOwnerProbe(t, probeSpec{argv0: iwdpProgram, env: []string{"AGENT_IOS_START_TOKEN=" + tok, "IWDP_MCP_START_TOKEN=" + tok, simTokenEnv + "=" + tok}, exitOnTerm: true})
 	run := prepareOwnerRun(t, ownerWorld{system: "Darwin", psStart: recordedIWDPStart}, probe, "")
 	pid := strconv.Itoa(probe.pid)
 	const start = recordedIWDPStart
@@ -849,7 +849,7 @@ func TestOwnerCheckMalformedRecords(t *testing.T) {
 		return strings.Map(func(r rune) rune { return zero + (r - '0') }, pid)
 	}
 	long := strings.Repeat("9", 5000)
-	const jsonName, simName = "iwdp-cli-started-0-127.0.0.1:9221.json", "iwdp.pid"
+	const jsonName, simName = "agent-ios-started-0-127.0.0.1:9221.json", "iwdp.pid"
 	cases := []struct{ name, file, text string }{
 		{"JSON: a pid of 5000 digits", jsonName, jsonRec(long)},
 		{"JSON: a pid string of 5000 digits", jsonName, jsonRec(`"` + long + `"`)},
@@ -903,14 +903,14 @@ func TestOwnerCheckMalformedRecords(t *testing.T) {
 	// cross-format records are valid in the other format, so the earlier
 	// helper verified most of them, and gave another reason for the rest.
 	why := map[string]string{}
-	const wrongFormat, unknownName = "the content of the record does not match the format of its file name", "its file name is neither iwdp.pid nor iwdp-cli-started-*.json nor iwdp-mcp-started-*.json"
+	const wrongFormat, unknownName = "the content of the record does not match the format of its file name", "its file name is neither iwdp.pid nor agent-ios-started-*.json nor iwdp-mcp-started-*.json"
 	for _, c := range []struct{ name, file, text, why string }{
 		{"cross-format: JSON content under iwdp.pid", simName, jsonRec(pid), wrongFormat},
-		{"cross-format: a line record under iwdp-cli-started-*.json", jsonName, simLine(pid), wrongFormat},
+		{"cross-format: a line record under agent-ios-started-*.json", jsonName, simLine(pid), wrongFormat},
 		{"cross-format: a line record under iwdp-mcp-started-*.json", "iwdp-mcp-started-0-127.0.0.1:9221.json", simLine(pid), wrongFormat},
 		{"cross-format: JSON content under an unknown name", "record.json", jsonRec(pid), unknownName},
 		{"cross-format: a line record under an unknown name", "record.pid", simLine(pid), unknownName},
-		{"cross-format: JSON content under iwdp-cli-started-*.pid", "iwdp-cli-started-0-127.0.0.1:9221.pid", jsonRec(pid), unknownName},
+		{"cross-format: JSON content under agent-ios-started-*.pid", "agent-ios-started-0-127.0.0.1:9221.pid", jsonRec(pid), unknownName},
 	} {
 		cases = append(cases, struct{ name, file, text string }{c.name, c.file, c.text})
 		why[c.name] = c.why
@@ -954,7 +954,7 @@ func TestOwnerCheckMalformedRecords(t *testing.T) {
 		seen := map[string]int{}
 		prop := func(simKind bool, ops []uint32) bool {
 			wrong := randomHex(t, 16)
-			text := []byte(fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":"127.0.0.1:9221","start":%q,"token":%q,"writer":"iwdp-cli"}`, probe.pid, probe.pid, start, wrong))
+			text := []byte(fmt.Sprintf(`{"pid":%d,"pgid":%d,"addr":"127.0.0.1:9221","start":%q,"token":%q,"writer":"agent-ios"}`, probe.pid, probe.pid, start, wrong))
 			file := jsonName
 			if simKind {
 				text, file = []byte(simRecord(probe.pid, wrong, start, "")), simName

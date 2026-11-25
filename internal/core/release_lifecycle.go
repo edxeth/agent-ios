@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // The release and attach lifecycle (design 2.4, 2.5 and 2.10; core-events

@@ -1,4 +1,4 @@
-// Package daemon is the long-lived iwdp daemon and its client (design
+// Package daemon is the long-lived agent-ios daemon and its client (design
 // docs/design/agentic-parity.md, sections 2.1 to 2.3): HTTP/1.1 with NDJSON
 // streams on a Unix socket in a private directory, auto-start, idle exit
 // and cleanup on shutdown. The daemon is the same binary as the CLI,
@@ -13,31 +13,48 @@ import (
 	"syscall"
 )
 
-// SocketDir is $XDG_RUNTIME_DIR/iwdp, else $TMPDIR/iwdp-$UID (design 2.2).
+// SocketDir is $XDG_RUNTIME_DIR/agent-ios, else $TMPDIR/agent-ios-$UID (design 2.2).
 func SocketDir() string {
 	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		return filepath.Join(d, "iwdp")
+		return filepath.Join(d, "agent-ios")
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("iwdp-%d", os.Getuid()))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("agent-ios-%d", os.Getuid()))
 }
 
 // SocketPath is the daemon socket in dir.
 func SocketPath(dir string) string { return filepath.Join(dir, "daemon.sock") }
 
+// maxSocketPath is the longest path of a Unix socket on this system: the
+// size of sockaddr_un's sun_path less its terminating NUL (107 bytes on
+// Linux, 103 on macOS).
+const maxSocketPath = len(syscall.RawSockaddrUnix{}.Path) - 1
+
+// ErrSocketPathTooLong: the daemon socket path passes maxSocketPath.
+var ErrSocketPathTooLong = errors.New("daemon socket path too long")
+
+// checkSocketPath returns ErrSocketPathTooLong, naming sock and the limit,
+// when sock is longer than a Unix socket path can be.
+func checkSocketPath(sock string) error {
+	if len(sock) > maxSocketPath {
+		return fmt.Errorf("%w: %s is %d bytes, over the limit of %d bytes for a Unix socket on this system; set XDG_RUNTIME_DIR (else TMPDIR) to a shorter directory", ErrSocketPathTooLong, sock, len(sock), maxSocketPath)
+	}
+	return nil
+}
+
 // ReservationsDir is the device reservation directory in dir (design 2.5).
 func ReservationsDir(dir string) string { return filepath.Join(dir, "reservations") }
 
-// LogPath is $XDG_STATE_HOME/iwdp/daemon.log, else
-// ~/.local/state/iwdp/daemon.log (design 2.3).
+// LogPath is $XDG_STATE_HOME/agent-ios/daemon.log, else
+// ~/.local/state/agent-ios/daemon.log (design 2.3).
 func LogPath() (string, error) {
 	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "iwdp", "daemon.log"), nil
+		return filepath.Join(d, "agent-ios", "daemon.log"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("daemon log: no XDG_STATE_HOME and no home directory: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "iwdp", "daemon.log"), nil
+	return filepath.Join(home, ".local", "state", "agent-ios", "daemon.log"), nil
 }
 
 // ErrUnsafeDir: the socket directory fails the lstat check of design 2.2.

@@ -41,14 +41,14 @@ type Config struct {
 // ErrNoConfig is the error of Load when the configuration file is missing.
 var ErrNoConfig = errors.New("no simulator configuration")
 
-// ConfigPath is the configuration file: $XDG_CONFIG_HOME/iwdp-cli/simulator.json
+// ConfigPath is the configuration file: $XDG_CONFIG_HOME/agent-ios/simulator.json
 // (os.UserConfigDir).
 func ConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("finding the simulator configuration: %w", err)
 	}
-	return filepath.Join(dir, "iwdp-cli", "simulator.json"), nil
+	return filepath.Join(dir, "agent-ios", "simulator.json"), nil
 }
 
 // configExample is the configuration that the error of a missing file shows.

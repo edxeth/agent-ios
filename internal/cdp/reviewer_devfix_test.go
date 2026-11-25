@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
 )
 
 // Review devfix-R1 F1: an error that the CDP endpoint logs (the cleanup of

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/sim"
+	"github.com/nnemirovsky/agent-ios/internal/sim"
 )
 
 // fakeSSHHost points the simulator configuration at a fake ssh that logs

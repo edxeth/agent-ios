@@ -63,7 +63,7 @@ func runCLIWithin(t *testing.T, limit time.Duration, args []string, newEnv func(
 	}
 }
 
-// Design 2.10 and the CLAUDE.md deadline rule (every iwdp-cli command
+// Design 2.10 and the CLAUDE.md deadline rule (every agent-ios command
 // runs under its deadline; a deadline error exits 124): the client step of
 // fill --stdin reads under the command deadline, so a standard input that
 // never ends stops the command at the deadline with exit 124. What was

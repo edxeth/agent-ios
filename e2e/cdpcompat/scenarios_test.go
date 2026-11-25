@@ -38,7 +38,7 @@ type formState struct {
 	Late   bool   `json:"late"`
 }
 
-// pageState reads the form fixture's state through "iwdp-cli eval" in
+// pageState reads the form fixture's state through "agent-ios eval" in
 // session: an oracle that does not depend on the client under test.
 func pageState(t *testing.T, session string) formState {
 	t.Helper()
@@ -183,7 +183,7 @@ func agentBrowserRef(t *testing.T, snapshot, role, name string) string {
 
 // agentBrowserScenario is test 8 for agent-browser --cdp with the binary
 // bin: open, snapshot -i, click @ref, fill @ref, get title, screenshot. All
-// commands run in one agent-browser session; iwdp-cli eval in the same
+// commands run in one agent-browser session; agent-ios eval in the same
 // logical session checks each effect on the page.
 func agentBrowserScenario(t *testing.T, bin string) {
 	// agent-browser used exactly the printed ws URL and made no discovery
@@ -295,13 +295,13 @@ func leaseEpoch(t *testing.T, session string) uint64 {
 }
 
 // Design 7.8 test 11 (a) and (d) through Puppeteer (the Go-client form is
-// cmd/iwdp-cli TestCDPSessionBindingThroughTheCLI):
-//   - (a) after "iwdp-cli --session s1 snapshot -i" and "get cdp-url",
+// cmd/agent-ios TestCDPSessionBindingThroughTheCLI):
+//   - (a) after "agent-ios --session s1 snapshot -i" and "get cdp-url",
 //     Puppeteer connects with s1's URL (tab, then page) and evaluates in the
 //     page; s1's lease epoch is unchanged, and "click @eN" with the
 //     snapshot's ref works through the CLI while Puppeteer stays connected
 //     (the script sees the click).
-//   - (d) "iwdp-cli --session s2 get title" exits 4 with the lease
+//   - (d) "agent-ios --session s2 get title" exits 4 with the lease
 //     message; a Puppeteer connection through s2's URL lists the page and
 //     Target.attachToTarget fails with the lease message; s1's lease epoch
 //     and its Puppeteer connection are unchanged.

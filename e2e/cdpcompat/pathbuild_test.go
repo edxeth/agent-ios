@@ -21,7 +21,7 @@ import (
 // which build a script runs: what a script runs for one command (for
 // example --help) does not show what it runs for another, so the user
 // states it (README.md, "agent-browser on PATH").
-const pathMappingVar = "IWDP_CDPCOMPAT_PATH_AGENT_BROWSER"
+const pathMappingVar = "AGENT_IOS_CDPCOMPAT_PATH_AGENT_BROWSER"
 
 // resolvePathBuild records the agent-browser that PATH names, which the
 // user's agents run, and the binary that its scenario runs will execute.

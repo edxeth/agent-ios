@@ -92,7 +92,7 @@ func onLinux(t *testing.T) {
 }
 
 // startedIWDP starts the fake iwdp through a Starter for a free address,
-// as iwdp-cli's auto-start does. Its device list holds listing from the
+// as agent-ios's auto-start does. Its device list holds listing from the
 // start number listFrom on (0: never) and is empty before. It returns the
 // Starter, the fake, the address and the setter of the listing file.
 func startedIWDP(t *testing.T, listing string, listFrom int) (*Starter, *fakeIWDP, string, func(string)) {
@@ -159,7 +159,7 @@ func TestRecoverRestartsOnceAndAdvisesOnAnUnlistedDevice(t *testing.T) {
 					t.Errorf("error %q does not contain %q", err, want)
 				}
 			}
-			other := testStarter(addr, 10*time.Second) // another process of iwdp-cli
+			other := testStarter(addr, 10*time.Second) // another process of agent-ios
 			other.usbmuxdLive, other.unixSockets = s.usbmuxdLive, s.unixSockets
 			if restarted, err := other.Recover(context.Background()); restarted || err != nil {
 				t.Fatalf("Recover of the restarted iwdp = %v, %v; want nothing done", restarted, err)

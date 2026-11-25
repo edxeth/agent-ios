@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Tracing (design 5.3, tier 2): Tracing.start and Tracing.end with the
@@ -451,7 +451,7 @@ func scriptProfilerBusy(method string, err error) error {
 	if !errors.As(err, &busy) {
 		return err
 	}
-	return serverError("%s: the page's ScriptProfiler runs one recording at a time, and %s holds it; stop that recording first (Profiler.stop, Tracing.end, 'iwdp-cli profiler stop' or 'iwdp-cli trace stop' of its session)", method, busy.Owner)
+	return serverError("%s: the page's ScriptProfiler runs one recording at a time, and %s holds it; stop that recording first (Profiler.stop, Tracing.end, 'agent-ios profiler stop' or 'agent-ios trace stop' of its session)", method, busy.Owner)
 }
 
 func tracingEnd(ctx context.Context, call *Call) (any, Later, error) {

@@ -15,8 +15,8 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // The pause-on-start lifecycle property (W1c-3 R1, F2): generated
@@ -578,27 +578,27 @@ func runPausePlan(t *testing.T, p pausePlan) []string {
 	return bad
 }
 
-// pauseSeed is the seed of the generated plans: IWDP_PAUSE_SEED, else the
+// pauseSeed is the seed of the generated plans: AGENT_IOS_PAUSE_SEED, else the
 // clock. It is logged so that a failure can be replayed.
 func pauseSeed(t *testing.T) int64 {
 	seed := time.Now().UnixNano()
-	if s := os.Getenv("IWDP_PAUSE_SEED"); s != "" {
+	if s := os.Getenv("AGENT_IOS_PAUSE_SEED"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			t.Fatalf("IWDP_PAUSE_SEED=%q: want an integer", s)
+			t.Fatalf("AGENT_IOS_PAUSE_SEED=%q: want an integer", s)
 		}
 		seed = n
 	}
-	t.Logf("generated plans: IWDP_PAUSE_SEED=%d", seed)
+	t.Logf("generated plans: AGENT_IOS_PAUSE_SEED=%d", seed)
 	return seed
 }
 
-// pauseCount is the number of generated plans: IWDP_PAUSE_COUNT, else 25.
+// pauseCount is the number of generated plans: AGENT_IOS_PAUSE_COUNT, else 25.
 func pauseCount(t *testing.T) int {
-	if s := os.Getenv("IWDP_PAUSE_COUNT"); s != "" {
+	if s := os.Getenv("AGENT_IOS_PAUSE_COUNT"); s != "" {
 		n, err := strconv.Atoi(s)
 		if err != nil || n < 1 {
-			t.Fatalf("IWDP_PAUSE_COUNT=%q: want a positive integer", s)
+			t.Fatalf("AGENT_IOS_PAUSE_COUNT=%q: want a positive integer", s)
 		}
 		return n
 	}

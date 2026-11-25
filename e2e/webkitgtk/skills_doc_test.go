@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
 )
 
 // Design 7.9 acceptance 2: the command examples of the skills run against
 // WebKitGTK. Every ```bash block of the guides skill-data/*/SKILL.md (what
-// "iwdp-cli skills get" prints) is an example; the stubs in skills/ have
+// "agent-ios skills get" prints) is an example; the stubs in skills/ have
 // no bash block (internal/skills TestSkillStubsPointAtTheirGuides). The
 // blocks of one skill run in file order in one bash process (so an export
 // in one block holds for the next), each block's output in its own files,
@@ -56,11 +56,11 @@ const exampleOrigin = "https://example.com"
 
 // statusLineRE matches a status line of private mode (privateResult and
 // privateErrorLine in internal/commands/private.go): "<command> exit
-// <code>", where <command> is a command of the registry or iwdp-cli for a
+// <code>", where <command> is a command of the registry or agent-ios for a
 // line that names none, then the end of the line, or a space and the
 // counts of an action, or ": " and the meaning of the code.
 func statusLineRE() *regexp.Regexp {
-	names := []string{"iwdp-cli"}
+	names := []string{"agent-ios"}
 	for _, c := range commands.All() {
 		names = append(names, regexp.QuoteMeta(c.Name))
 	}
@@ -214,7 +214,7 @@ func TestSkillExamplesRunOnWebKitGTK(t *testing.T) {
 			// the core guide's navigation example leaves it on /second.
 			for _, args := range [][]string{{"open", origin + "/login"}, {"close"}} {
 				if r := cli(t, append([]string{"--session", "qa-login"}, args...)...); r.code != 0 {
-					t.Fatalf("%s: iwdp-cli %v before the examples: exit %d, stderr %q", name, args, r.code, r.stderr)
+					t.Fatalf("%s: agent-ios %v before the examples: exit %d, stderr %q", name, args, r.code, r.stderr)
 				}
 			}
 			blocks := docBlocks(t, p)

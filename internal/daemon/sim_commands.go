@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
 )
 
 // The daemon's part of the sim commands (internal/commands/sim.go): the
@@ -51,7 +51,7 @@ func init() {
 // returns the id of the tab whose page key is the iwdp page pageID of the
 // simulator ("" when the listing does not have it). It starts the daemon
 // when none runs, as the tab command that selects the tab would: the
-// daemon keeps the ids for its life. Under IWDP_NO_DAEMON=1 it gives no
+// daemon keeps the ids for its life. Under AGENT_IOS_NO_DAEMON=1 it gives no
 // id ("") and starts nothing: the in-process core ends with this command,
 // and the next command's core numbers the tabs of another listing, so its
 // "tab <id>" could select another device's page (final review F1).

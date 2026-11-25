@@ -28,14 +28,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/e2e/internal/broadwayshm"
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/refs"
-	iwdpruntime "github.com/nnemirovsky/iwdp-cli/internal/runtime"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/e2e/internal/broadwayshm"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/refs"
+	iwdpruntime "github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 const miniBrowser = "/usr/lib/webkit2gtk-4.1/MiniBrowser"
@@ -53,7 +53,7 @@ func fixtureDir() string {
 // lifetimeHelperEnv makes the test binary the child process of
 // TestBrowserEndsWithItsTestProcess (Linux): TestMain then runs only the
 // tests (that one), without the suite's browser and CLI.
-const lifetimeHelperEnv = "IWDP_GTK_LIFETIME_HELPER"
+const lifetimeHelperEnv = "AGENT_IOS_GTK_LIFETIME_HELPER"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(lifetimeHelperEnv) != "" {

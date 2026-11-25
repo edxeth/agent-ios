@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/e2e/jscov"
+	"github.com/nnemirovsky/agent-ios/e2e/jscov"
 )
 
 // shimFile is the page shims' path in the repository, the file of their
@@ -26,7 +26,7 @@ const shimFile = "internal/cdp/page_shims.js"
 // writes the page shims' line coverage to (docs/notes/w5.md, "JavaScript
 // coverage of the page shims"); unset, the test measures the coverage and
 // writes nothing.
-const jscovVar = "IWDP_JSCOV_LCOV"
+const jscovVar = "AGENT_IOS_JSCOV_LCOV"
 
 // shimCoverage turns on JavaScriptCore's control-flow profiler, which must
 // be on before a script is compiled, and the Debugger domain, whose

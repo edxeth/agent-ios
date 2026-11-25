@@ -27,13 +27,13 @@ import (
 // loopback address; the tests run inside unshare -rn.
 
 // recordPath is where Starter records the iwdp it started for addr: a
-// file in the private directory iwdp-cli of XDG_RUNTIME_DIR (private to the
+// file in the private directory agent-ios of XDG_RUNTIME_DIR (private to the
 // test after installFakeIWDP, else TestMain's), named like the start lock.
 // It creates the directory.
 func recordPath(addr string) string {
-	dir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "iwdp-cli")
+	dir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "agent-ios")
 	_ = os.Mkdir(dir, 0o700)
-	return filepath.Join(dir, fmt.Sprintf("iwdp-cli-started-%d-%s.json", os.Getuid(), strings.ReplaceAll(addr, ":", "_")))
+	return filepath.Join(dir, fmt.Sprintf("agent-ios-started-%d-%s.json", os.Getuid(), strings.ReplaceAll(addr, ":", "_")))
 }
 
 // writeRecord writes a record of an iwdp with pid and process group pgid
@@ -233,11 +233,11 @@ func TestRestartRefusesARecordWithoutTheWriter(t *testing.T) {
 	if err := os.WriteFile(recordPath(addr), old, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Another process of iwdp-cli finds the iwdp only through the file.
+	// Another process of agent-ios finds the iwdp only through the file.
 	useStd(t, testStarter(addr, 10*time.Second))
 	pids := f.pids()
 	err = Restart(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "restart refused") || !strings.Contains(err.Error(), "not written by iwdp-cli") {
+	if err == nil || !strings.Contains(err.Error(), "restart refused") || !strings.Contains(err.Error(), "not written by agent-ios") {
 		t.Fatalf("Restart with the record %s = %v, want a refusal that names the missing writer", old, err)
 	}
 	for _, pid := range pids {

@@ -9,7 +9,7 @@ This release serves every domain and method in the table below. The method table
 - The four pinned clients pass their scenarios on WebKitGTK (see "Compatibility suite").
 - Device check 3 (iPhone X, iOS 16.7, Safari 16.6, iwdp 1.9.2) passed agent-browser (pinned and PATH builds), Puppeteer, chrome-devtools-mcp and the awaited intercepted fetch of Puppeteer and Playwright. Playwright's goto, evaluate, screenshot and `page.route` passed; its locator actions failed with `TypeError: element.checkVisibility is not a function`, which the endpoint now fixes with a page shim (see "Page compatibility shims"). Device check 4 (the same iPhone, code a8aec70) ran Playwright 1.65.0 with the shim: all 15 steps of its scenario passed (connectOverCDP, goto, evaluate, a `getByRole` click, a `getByLabel` fill, a locator read, a screenshot, `ariaSnapshot`, and an awaited fetch that `page.route` fulfilled), with no `checkVisibility` error. The remaining open device questions are in [known-limits.md](known-limits.md#open-device-questions).
 
-A method that the endpoint does not translate is never forwarded. It gets `{"code": -32601, "message": "'<Domain.method>' wasn't found"}`, the same answer as Chrome, so clients that probe optional features continue. `iwdp-cli cdp log` counts the unknown methods per client session.
+A method that the endpoint does not translate is never forwarded. It gets `{"code": -32601, "message": "'<Domain.method>' wasn't found"}`, the same answer as Chrome, so clients that probe optional features continue. `agent-ios cdp log` counts the unknown methods per client session.
 
 ## Method table
 
@@ -65,28 +65,28 @@ Not translated: every other method of these domains (for example `Network.getAll
 1. Pick the session and page as for any command, and get the URL:
 
    ```bash
-   export IWDP_SESSION=pw-run
-   iwdp-cli device reserve --owner pw-run        # physical devices only
-   iwdp-cli open https://example.com             # the session's page
-   iwdp-cli get cdp-url
+   export AGENT_IOS_SESSION=pw-run
+   agent-ios device reserve --owner pw-run        # physical devices only
+   agent-ios open https://example.com             # the session's page
+   agent-ios get cdp-url
    # ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/browser/<endpoint>
    ```
 
    `get cdp-url` starts the endpoint when it is not running.
 2. Give the client **the exact URL as printed**. Never build a URL by hand: the token and the endpoint id are part of the path.
-3. When the work is done, run `iwdp-cli close` for the session. It releases the lease and revokes the session's CDP URLs; later requests to them get 404.
+3. When the work is done, run `agent-ios close` for the session. It releases the lease and revokes the session's CDP URLs; later requests to them get 404.
 
 Which page the URL selects:
 
 `get cdp-url` resolves the page as every page command of the session does, in this order:
 
-1. `--page`, when given: a tab id or label (`t2`, as `tab list` printed it), a page key (the first column of a page line in `iwdp-cli daemon status`, or `key` in `iwdp-cli tab list --json`), a part of a page's title or URL (the first listed page that matches), or a `ws://` page URL.
+1. `--page`, when given: a tab id or label (`t2`, as `tab list` printed it), a page key (the first column of a page line in `agent-ios daemon status`, or `key` in `agent-ios tab list --json`), a part of a page's title or URL (the first listed page that matches), or a `ws://` page URL.
 2. Else the page chosen with `tab <id>`.
 3. Else the session's default page (the page that its last command without `--page` used), while the daemon holds that page's connection open. This step reads no listing.
 4. Else the listing's first debuggable page.
 5. When none of these gives a page (for example the chosen tab is gone, or the listing has no page), the command exits 5.
 
-The transport of the request (`--transport` or `IWDP_TRANSPORT`) limits steps 2 and 3: step 2 skips a tab that was chosen with another explicit transport, and step 3 uses only a default page that a command with the same transport value set (no value counts as `auto`).
+The transport of the request (`--transport` or `AGENT_IOS_TRANSPORT`) limits steps 2 and 3: step 2 skips a tab that was chosen with another explicit transport, and step 3 uses only a default page that a command with the same transport value set (no value counts as `auto`).
 
 Issuing a URL takes no lease and does not change the session's default page.
 
@@ -101,10 +101,10 @@ Limit: issuing a URL can avoid the listing for a page that the daemon holds open
 
 Other commands:
 
-- `iwdp-cli cdp start [--port 9230] [--allow-origin a,b]` starts the endpoint without issuing a URL. `--port 0` picks a free port. The daemon flag `daemon start --cdp-port <port>` starts it with the daemon.
-- `iwdp-cli cdp status` shows the address, the allowed origins and, per endpoint record, its session, page, scope, connections and attachments. It never prints the token.
-- `iwdp-cli cdp log` shows the unknown-method counts per CDP session.
-- `iwdp-cli cdp stop` closes every client connection (each releases its state) and revokes every URL.
+- `agent-ios cdp start [--port 9230] [--allow-origin a,b]` starts the endpoint without issuing a URL. `--port 0` picks a free port. The daemon flag `daemon start --cdp-port <port>` starts it with the daemon.
+- `agent-ios cdp status` shows the address, the allowed origins and, per endpoint record, its session, page, scope, connections and attachments. It never prints the token.
+- `agent-ios cdp log` shows the unknown-method counts per CDP session.
+- `agent-ios cdp stop` closes every client connection (each releases its state) and revokes every URL.
 
 ### URL forms
 
@@ -135,11 +135,11 @@ The endpoint gives full control of Safari on the device, so it has these rules:
 
 ## Client notes
 
-`<cdp-ws-url>` is the default output of `get cdp-url`; `<cdp-http-url>` is the output of `get cdp-url --form http`. Get them into a variable, for example `CDP="$(iwdp-cli get cdp-url)"`, and never print or store them.
+`<cdp-ws-url>` is the default output of `get cdp-url`; `<cdp-http-url>` is the output of `get cdp-url --form http`. Get them into a variable, for example `CDP="$(agent-ios get cdp-url)"`, and never print or store them.
 
 The pinned versions are agent-browser 0.41.2, playwright-core 1.65.0, puppeteer-core 25.16.0 and chrome-devtools-mcp 1.12.0. "Loses" lists the optional features whose methods the endpoint answers with "wasn't found" (e2e/cdpcompat/expected-missing.json has each method with the client code that sends it). The client continues without them.
 
-- **agent-browser**: `agent-browser --cdp <cdp-ws-url> open <url>`, then `snapshot -i`, `click @e3`, `fill @e4 text`, `get title`, `screenshot`. Use the ws form only. It attaches the page directly and makes no discovery request. Its refs are its own and are separate from iwdp-cli's refs. It prints "launched browser" also with `--cdp`; it launches nothing.
+- **agent-browser**: `agent-browser --cdp <cdp-ws-url> open <url>`, then `snapshot -i`, `click @e3`, `fill @e4 text`, `get title`, `screenshot`. Use the ws form only. It attaches the page directly and makes no discovery request. Its refs are its own and are separate from agent-ios's refs. It prints "launched browser" also with `--cdp`; it launches nothing.
   - Loses: the experimental `webmcp` commands (`WebMCP.enable`; WebKit has no WebMCP).
 - **Puppeteer**: `puppeteer.connect({browserWSEndpoint: '<cdp-ws-url>', defaultViewport: null})`, or `browserURL: '<cdp-http-url>'`. Always pass `defaultViewport: null`; otherwise Puppeteer sends `Emulation.setDeviceMetricsOverride`, which fails because the viewport is fixed. `page.setRequestInterception(true)` works through Fetch (suite test 12). `page.tracing` uses Tracing with a stream and IO, which the endpoint serves; the suite does not run it through Puppeteer.
   - Loses: `page.webmcp` (`WebMCP.enable`).
@@ -152,7 +152,7 @@ The pinned versions are agent-browser 0.41.2, playwright-core 1.65.0, puppeteer-
   - Loses: `get_css_styles` (`CSS.enable`; the endpoint never serves CSS), source-mapped stack traces of console messages and errors (`Debugger.*`), the element or request selected in an open DevTools window (`Target.getDevToolsTarget`), `list_webmcp_tools` and `execute_webmcp_tool` (`WebMCP.enable`), and DevTools-SDK extras that no tool reads (`Autofill.*`, `Log.startViolationsReport`, `Network.setAttachDebugStack`, `Runtime.getIsolateId`, `Storage.getStorageKey`). Most of these come from the second, DevTools-SDK CDP session that the server opens per page.
   - Not checked: whether its trace tools accept a trace converted from WebKit's Timeline (they expect Chrome's trace metadata).
 - **Worlds**: Playwright's and Puppeteer's utility worlds are emulated as named contexts in the page's main world. They are not isolated from page scripts.
-- **Dialogs**: `Page.handleJavaScriptDialog` fails with "dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with iwdp-cli dialog accept|dismiss". The session's dialog policy still answers dialogs (`Page.enable` installs it when the session has none), and each automatic answer is reported as a `Log.entryAdded` warning. No `Page.javascriptDialog*` events are sent.
+- **Dialogs**: `Page.handleJavaScriptDialog` fails with "dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with agent-ios dialog accept|dismiss". The session's dialog policy still answers dialogs (`Page.enable` installs it when the session has none), and each automatic answer is reported as a `Log.entryAdded` warning. No `Page.javascriptDialog*` events are sent.
 
 ## Page compatibility shims
 
@@ -187,7 +187,7 @@ CDP clients believe that they drive Chromium, so their page scripts call newer W
 
 General:
 
-- An endpoint started under `IWDP_NO_DAEMON=1` ends with that CLI process.
+- An endpoint started under `AGENT_IOS_NO_DAEMON=1` ends with that CLI process.
 - The endpoint reads iwdp's page listing for its target list; see "When iwdp does not list pages".
 - Workers and service workers are not exposed as targets, and their Network events are not reported.
 
@@ -215,7 +215,7 @@ Page:
 - `navigate` of a child frame is refused.
 - `networkAlmostIdle` comes together with `networkIdle` (500 ms without a request in flight).
 - `setBypassCSP` fails: bypassing the Content Security Policy is not supported on iOS WebKit.
-- A console replay by WebKit can repeat old navigation markers or dialog warnings of the current document. CDP navigations do not withdraw dialog answers armed with `iwdp-cli dialog`; they expire with their document.
+- A console replay by WebKit can repeat old navigation markers or dialog warnings of the current document. CDP navigations do not withdraw dialog answers armed with `agent-ios dialog`; they expire with their document.
 
 DOM:
 
@@ -234,7 +234,7 @@ Input and Emulation:
 
 Network:
 
-- **emulateNetworkConditions: download limit only.** `downloadThroughput` is applied through WIP `Network.setEmulatedConditions` when the device's command list has it, else the call fails. `offline: true` fails and points to `iwdp-cli set offline on`; a positive `latency` or `uploadThroughput` fails before any change. The unthrottled values that clients send (latency 0, throughput -1 or 0) are accepted.
+- **emulateNetworkConditions: download limit only.** `downloadThroughput` is applied through WIP `Network.setEmulatedConditions` when the device's command list has it, else the call fails. `offline: true` fails and points to `agent-ios set offline on`; a positive `latency` or `uploadThroughput` fails before any change. The unthrottled values that clients send (latency 0, throughput -1 or 0) are accepted.
 - Post data comes only from WIP's `requestWillBeSent`: post data above 64 KiB is left out of the event, and `getRequestPostData` keeps at most 1 MiB per request and 16 MiB in total.
 - A request in flight ends with `loadingFailed` (`net::ERR_ABORTED`, canceled) when its target is replaced or destroyed, when the record bound (2000 requests) pushes it out, or at a reset of the attachment's events.
   - **Reset on the same connection** (for example after lost or overflowed events): a request that the attachment holds paused through Fetch (`Fetch.requestPaused` without an answer) stays paused, because WebKit still holds it. It still needs an answer (`continueRequest`, `fulfillRequest` or `failRequest`); every other request in flight ends.
@@ -263,7 +263,7 @@ Fetch:
 Tracing, IO and Profiler:
 
 - **Browser-level Tracing is not served.** `Tracing.start` and `Tracing.end` exist on page sessions only.
-- A trace is a WIP Timeline recording (plus ScriptProfiler events when the categories ask for V8), converted to Chrome's trace format; it is capped at 32 MiB (`dataLossOccurred: true` beyond). One Timeline recording per page: a second start, or another Timeline user (also `iwdp-cli trace start`), fails with "Tracing has already been started (possibly in another tab)."
+- A trace is a WIP Timeline recording (plus ScriptProfiler events when the categories ask for V8), converted to Chrome's trace format; it is capped at 32 MiB (`dataLossOccurred: true` beyond). One Timeline recording per page: a second start, or another Timeline user (also `agent-ios trace start`), fails with "Tracing has already been started (possibly in another tab)."
 - `IO` serves only trace streams; at most 2 unread streams per attachment.
 - `Profiler`: no coverage methods. A start while another recording holds the page's ScriptProfiler fails and names the holder.
 - A detach or the end of the connection stops the attachment's recordings.
@@ -281,20 +281,20 @@ On the second device check, the user's iwdp closed every listing request without
 - The target discovery that runs every 2 s while a client discovers or auto-attaches logs the failure and announces nothing.
 - `get cdp-url` reads no listing when it selects a page that the daemon holds open: the session's `tab` choice, its default page, or `--page` with its tab id, label, key or `ws://` URL (steps 1 to 3 of "Which page the URL selects"). It reads the listing for a title or URL text, for the `ws://` URL of a page that the daemon does not hold open, and for the listing's first page.
 
-Advice: run `iwdp-cli daemon stop` to close the page connections (this also stops the endpoint and revokes its URLs), or restart that iwdp (`iwdp-cli restart-iwdp` for an iwdp that iwdp-cli started; any other iwdp only whoever started it, and only when nobody else uses it: `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand) in device-runbook.md describes; otherwise ask whoever started it, or the user); then get a new URL. Not checked on a device: whether a CDP client can work on such an iwdp at all, because its own attachment opens a page connection.
+Advice: run `agent-ios daemon stop` to close the page connections (this also stops the endpoint and revokes its URLs), or restart that iwdp (`agent-ios restart-iwdp` for an iwdp that agent-ios started; any other iwdp only whoever started it, and only when nobody else uses it: `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand) in device-runbook.md describes; otherwise ask whoever started it, or the user); then get a new URL. Not checked on a device: whether a CDP client can work on such an iwdp at all, because its own attachment opens a page connection.
 
 ## Compatibility suite
 
 `make test-cdpcompat` runs the pinned clients against the endpoint (e2e/cdpcompat; its README has the details).
 
-- It runs `npm ci --ignore-scripts` when the lockfile is newer than `node_modules`, then `IWDP_CDP_COMPAT=1 go test -tags=cdpcompat ./e2e/cdpcompat/`. It needs Node.js 24 or later with npm, the WebKitGTK MiniBrowser, broadwayd, gcc and `pkg-config gdk-3.0`. A missing requirement fails the suite; it never skips.
-- agent-browser: the pinned release binary always runs. The agent-browser on `PATH` runs the same scenarios too, but only when `PATH` has one and the binary that it runs differs from the pinned binary (another SHA-256); otherwise the record says why it did not run. So a passing suite has not always run a second build. When `PATH` names a script (a wrapper), set `IWDP_CDPCOMPAT_PATH_AGENT_BROWSER` to the absolute path of the native binary that the script runs; without it the suite fails and names the script. Example: `IWDP_CDPCOMPAT_PATH_AGENT_BROWSER=$HOME/projects/agent-browser/cli/target/release/agent-browser make test-cdpcompat`.
+- It runs `npm ci --ignore-scripts` when the lockfile is newer than `node_modules`, then `AGENT_IOS_CDP_COMPAT=1 go test -tags=cdpcompat ./e2e/cdpcompat/`. It needs Node.js 24 or later with npm, the WebKitGTK MiniBrowser, broadwayd, gcc and `pkg-config gdk-3.0`. A missing requirement fails the suite; it never skips.
+- agent-browser: the pinned release binary always runs. The agent-browser on `PATH` runs the same scenarios too, but only when `PATH` has one and the binary that it runs differs from the pinned binary (another SHA-256); otherwise the record says why it did not run. So a passing suite has not always run a second build. When `PATH` names a script (a wrapper), set `AGENT_IOS_CDPCOMPAT_PATH_AGENT_BROWSER` to the absolute path of the native binary that the script runs; without it the suite fails and names the script. Example: `AGENT_IOS_CDPCOMPAT_PATH_AGENT_BROWSER=$HOME/projects/agent-browser/cli/target/release/agent-browser make test-cdpcompat`.
 - `CDPCOMPAT_LOG_DIR` keeps the logs of a run in that directory, with tokens and endpoint ids replaced. Example: `CDPCOMPAT_LOG_DIR="$PWD/cdpcompat-logs" make test-cdpcompat`.
 
 What it proves, on WebKitGTK:
 
 - Endpoint resolution (test 10, fake page): each client opens exactly the printed URL; agent-browser's ws form makes no discovery request; Playwright and Puppeteer with the http form read `/json/version` below the token prefix and open the advertised URL; no request without the token gets data.
-- Client scenarios (test 8): agent-browser (both builds), Puppeteer and Playwright (ws and http forms) and chrome-devtools-mcp navigate, snapshot, click, type or fill, read, wait and take screenshots, and each step is checked on the page through an `iwdp-cli eval` of the same session.
+- Client scenarios (test 8): agent-browser (both builds), Puppeteer and Playwright (ws and http forms) and chrome-devtools-mcp navigate, snapshot, click, type or fill, read, wait and take screenshots, and each step is checked on the page through an `agent-ios eval` of the same session.
 - Interception (test 12): an awaited `fetch` that Puppeteer's request interception or Playwright's `page.route` fulfills returns within 2 s.
 - Session binding (test 11 a and d): a Puppeteer connection joins the CLI session without a lease change, and a URL of another session lists the page but cannot attach it.
 - Page compatibility shims: on a page that removed its native `checkVisibility` before the client attached, Playwright's `getByRole().click()`, `getByLabel().fill()` and `ariaSnapshot` pass through the shim; without the shim they fail with the device's TypeError.

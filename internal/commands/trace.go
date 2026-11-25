@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
 )
 
 // trace start and trace stop (design docs/design/agentic-parity.md,
@@ -34,7 +34,7 @@ func init() {
 	Register(&Command{
 		Name:    "trace stop",
 		Summary: "Stop the Timeline recording and write it as Chrome trace JSON (mode 0600) to path, or to a new file in the temp directory.",
-		Args:    []Arg{{Name: "path", Help: "the trace file to write (default: a new iwdp-trace-*.json in the temp directory)"}},
+		Args:    []Arg{{Name: "path", Help: "the trace file to write (default: a new agent-ios-trace-*.json in the temp directory)"}},
 		Page:    LeasedPage,
 		Mutates: true,
 		Output:  OutputText,
@@ -109,7 +109,7 @@ func runTraceStop(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("encoding the trace: %w", err)
 	}
-	path, err := outputPath(env, arg(in, 0), "iwdp-trace-*.json")
+	path, err := outputPath(env, arg(in, 0), "agent-ios-trace-*.json")
 	if err != nil {
 		return Result{}, err
 	}

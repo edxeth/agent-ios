@@ -15,12 +15,12 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // W4 parity of the CDP recording lifecycle (W5c-1b finish brief, item
@@ -366,7 +366,7 @@ func TestCDPScriptProfilerBusyNamesTheHolder(t *testing.T) {
 		mark := len(f.Received())
 		for _, m := range []string{"Profiler.start", "Tracing.start"} {
 			e := cdpFail(t, c, page, m, nil)
-			if !strings.Contains(e.Message, "profiler:s1 holds it") || !strings.Contains(e.Message, "'iwdp-cli profiler stop'") {
+			if !strings.Contains(e.Message, "profiler:s1 holds it") || !strings.Contains(e.Message, "'agent-ios profiler stop'") {
 				t.Errorf("%s beside the CLI profiler: %q, want the holder and its stop", m, e.Message)
 			}
 		}

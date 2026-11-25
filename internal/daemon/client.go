@@ -18,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logcause"
 )
 
 // Auto-start timing (design 2.3): poll the socket every 20 ms for up to 3 s.
@@ -42,7 +42,7 @@ func BuildVersion() string {
 }
 
 // ErrNotRunning: no daemon answers on the socket (Options.NoStart).
-var ErrNotRunning = errors.New("the iwdp daemon is not running")
+var ErrNotRunning = errors.New("the agent-ios daemon is not running")
 
 // Options configure Connect.
 type Options struct {
@@ -52,7 +52,7 @@ type Options struct {
 	Env     []string // added to the started daemon's environment
 	Version string   // this client's version, for messages
 	NoStart bool     // only connect; ErrNotRunning when no daemon answers
-	// StartIWDP is the in-process core's iwdp start (IWDP_NO_DAEMON; see
+	// StartIWDP is the in-process core's iwdp start (AGENT_IOS_NO_DAEMON; see
 	// RunOptions.StartIWDP). A started daemon uses its own.
 	StartIWDP func(context.Context) error
 	// RecoverIWDP is the in-process core's iwdp recovery (see
@@ -170,13 +170,16 @@ const serverClosedIdle = "http: server closed idle connection"
 // older binary, idle or busy.
 // The socket directory is checked (lstat: no symlink, this user's, mode
 // 0700) before any connection, so a socket that another user placed is
-// never trusted. With IWDP_NO_DAEMON=1 the core runs in this process.
+// never trusted. With AGENT_IOS_NO_DAEMON=1 the core runs in this process.
 func Connect(ctx context.Context, o Options) (*Client, error) {
 	if o.Dir == "" {
 		o.Dir = SocketDir()
 	}
 	if NoDaemon() {
 		return connectInProcess(ctx, o)
+	}
+	if err := checkSocketPath(SocketPath(o.Dir)); err != nil {
+		return nil, err
 	}
 	if err := CheckDir(o.Dir, os.Getuid()); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -194,7 +197,7 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 	if err == nil {
 		if o.NoStart {
 			if h.Protocol != Protocol && h.Protocol != previousProtocol {
-				return nil, fmt.Errorf("daemon version %s (protocol %d) is running at %s; this iwdp-cli speaks protocol %d and cannot inspect or stop it: use the iwdp-cli that started it", h.Version, h.Protocol, SocketPath(o.Dir), Protocol)
+				return nil, fmt.Errorf("daemon version %s (protocol %d) is running at %s; this agent-ios speaks protocol %d and cannot inspect or stop it: use the agent-ios that started it", h.Version, h.Protocol, SocketPath(o.Dir), Protocol)
 			}
 			c.Hello = h
 			return c, nil
@@ -209,7 +212,7 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 		}
 		// Another protocol or executable: retired under the lock below.
 	} else if !notRunning(err) {
-		return nil, fmt.Errorf("connecting to the iwdp daemon at %s: %w", SocketPath(o.Dir), err)
+		return nil, fmt.Errorf("connecting to the agent-ios daemon at %s: %w", SocketPath(o.Dir), err)
 	}
 	if o.NoStart {
 		return nil, fmt.Errorf("%w (no daemon answers at %s)", ErrNotRunning, SocketPath(o.Dir))
@@ -239,7 +242,7 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("starting the iwdp daemon: a daemon that does not answer holds %s: %w", filepath.Join(o.Dir, "run.lock"), ctx.Err())
+			return nil, fmt.Errorf("starting the agent-ios daemon: a daemon that does not answer holds %s: %w", filepath.Join(o.Dir, "run.lock"), ctx.Err())
 		case <-time.After(startPoll):
 		}
 		c.Close() // a kept-alive connection would still reach the old daemon
@@ -280,13 +283,13 @@ func Connect(ctx context.Context, o Options) (*Client, error) {
 		}
 		select {
 		case werr := <-exited:
-			return nil, logcause.Errorf("the iwdp daemon exited at start (%v); see %s", werr, logPath)
+			return nil, logcause.Errorf("the agent-ios daemon exited at start (%v); see %s", werr, logPath)
 		case <-ctx.Done():
-			return nil, fmt.Errorf("starting the iwdp daemon: %w", ctx.Err())
+			return nil, fmt.Errorf("starting the agent-ios daemon: %w", ctx.Err())
 		case <-time.After(startPoll):
 		}
 		if time.Since(start) > StartTimeout {
-			return nil, logcause.Errorf("the iwdp daemon did not answer within %s of its start (last error: %v); see %s", StartTimeout, err, logPath)
+			return nil, logcause.Errorf("the agent-ios daemon did not answer within %s of its start (last error: %v); see %s", StartTimeout, err, logPath)
 		}
 	}
 }
@@ -312,7 +315,7 @@ func (c *Client) retire(ctx context.Context, h Hello) error {
 	if h.Protocol == Protocol {
 		build = ", another executable"
 	}
-	busy := fmt.Errorf("daemon version %s (protocol %d%s) is running with active sessions; run 'iwdp-cli daemon stop' when they finish", h.Version, h.Protocol, build)
+	busy := fmt.Errorf("daemon version %s (protocol %d%s) is running with active sessions; run 'agent-ios daemon stop' when they finish", h.Version, h.Protocol, build)
 	if h.Leases > 0 {
 		return busy
 	}
@@ -355,7 +358,7 @@ func (c *Client) WaitGone(ctx context.Context, limit time.Duration) error {
 			still = "holding " + filepath.Join(c.dir, "run.lock")
 		}
 		if time.Now().After(end) {
-			return fmt.Errorf("the iwdp daemon at %s is still %s after %s", SocketPath(c.dir), still, limit)
+			return fmt.Errorf("the agent-ios daemon at %s is still %s after %s", SocketPath(c.dir), still, limit)
 		}
 		select {
 		case <-ctx.Done():
@@ -434,7 +437,7 @@ func spawn(o Options) (exited <-chan error, logPath string, err error) {
 	exe := o.Exe
 	if exe == "" {
 		if exe, err = os.Executable(); err != nil {
-			return nil, "", fmt.Errorf("starting the iwdp daemon: %w", err)
+			return nil, "", fmt.Errorf("starting the agent-ios daemon: %w", err)
 		}
 	}
 	args := o.Args
@@ -454,7 +457,7 @@ func spawn(o Options) (exited <-chan error, logPath string, err error) {
 	defer func() { _ = logf.Close() }() // the child keeps its own descriptor
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = "/" // never keep a caller's (possibly temporary) directory busy
-	cmd.Env = append(os.Environ(), "IWDP_DAEMON_DIR="+o.Dir)
+	cmd.Env = append(os.Environ(), "AGENT_IOS_DAEMON_DIR="+o.Dir)
 	cmd.Env = append(cmd.Env, o.Env...)
 	cmd.Stdout, cmd.Stderr = logf, logf // stdin stays /dev/null
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -462,7 +465,7 @@ func spawn(o Options) (exited <-chan error, logPath string, err error) {
 		spawnStarting(o.Dir)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, "", fmt.Errorf("starting the iwdp daemon (%s daemon run): %w", exe, err)
+		return nil, "", fmt.Errorf("starting the agent-ios daemon (%s daemon run): %w", exe, err)
 	}
 	ch := make(chan error, 1)
 	go func() { ch <- cmd.Wait() }() // reaps the child if it exits while this process runs

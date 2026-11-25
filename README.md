@@ -1,11 +1,11 @@
 # iOS WebKit Debug Proxy CLI
 
-[![CI](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/test.yml/badge.svg)](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/test.yml)
-[![Lint](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/lint.yml/badge.svg)](https://github.com/nnemirovsky/iwdp-cli/actions/workflows/lint.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nnemirovsky/iwdp-cli)](https://goreportcard.com/report/github.com/nnemirovsky/iwdp-cli)
+[![CI](https://github.com/nnemirovsky/agent-ios/actions/workflows/test.yml/badge.svg)](https://github.com/nnemirovsky/agent-ios/actions/workflows/test.yml)
+[![Lint](https://github.com/nnemirovsky/agent-ios/actions/workflows/lint.yml/badge.svg)](https://github.com/nnemirovsky/agent-ios/actions/workflows/lint.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nnemirovsky/agent-ios)](https://goreportcard.com/report/github.com/nnemirovsky/agent-ios)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Debug iOS Safari from your AI agent or your shell.** `iwdp-cli` drives Safari on a real iPhone or iPad. Chrome tooling speaks the Chrome DevTools Protocol (CDP), which WebKit does not; this project bridges that gap.
+**Debug iOS Safari from your AI agent or your shell.** `agent-ios` drives Safari on a real iPhone or iPad. Chrome tooling speaks the Chrome DevTools Protocol (CDP), which WebKit does not; this project bridges that gap.
 
 <video src="https://github.com/user-attachments/assets/dcc0dc05-3a1f-4454-88a8-51ee28da9fd2" poster="https://github.com/user-attachments/assets/3901f7ff-6531-4866-b49e-cf5d17304327" autoplay loop muted playsinline></video>
 
@@ -18,7 +18,7 @@ Documentation: [docs/README.md](docs/README.md) (user guide, sessions and leases
 - Agent tooling exists for desktop Chrome. **Nothing existed for iOS Safari** — until now.
 - **httpOnly cookies** are invisible to `document.cookie`. This tool reads them via the protocol.
 - **Real device testing** catches iOS-specific bugs that simulators miss.
-- Works from any agent or script that can run a command; an agent reads the built-in skill with `iwdp-cli skills get iwdp`.
+- Works from any agent or script that can run a command; an agent reads the built-in skill with `agent-ios skills get agent-ios`.
 
 ## Installation
 
@@ -37,18 +37,18 @@ For Linux and other platforms, see the [ios-webkit-debug-proxy installation guid
 ### Go Install
 
 ```bash
-go install github.com/nnemirovsky/iwdp-cli/cmd/iwdp-cli@latest
+go install github.com/nnemirovsky/agent-ios/cmd/agent-ios@latest
 ```
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/nnemirovsky/iwdp-cli/releases).
+Download from [GitHub Releases](https://github.com/nnemirovsky/agent-ios/releases).
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/nnemirovsky/iwdp-cli.git
-cd iwdp-cli
+git clone https://github.com/nnemirovsky/agent-ios.git
+cd agent-ios
 make build
 ```
 
@@ -56,10 +56,10 @@ make build
 
 The agent skill has two parts, as in agent-browser:
 
-- `skills/iwdp/SKILL.md` is a short discovery stub. It has the skill's name and description, so an agent finds it, and it tells the agent to load the guide with `iwdp-cli skills get iwdp`.
-- `skill-data/iwdp/SKILL.md` is the guide: safety rules, the agentic loop, errors and limits. The binary embeds it, and `iwdp-cli skills get iwdp` prints it, so the guide always matches the installed binary.
+- `skills/agent-ios/SKILL.md` is a short discovery stub. It has the skill's name and description, so an agent finds it, and it tells the agent to load the guide with `agent-ios skills get agent-ios`.
+- `skill-data/agent-ios/SKILL.md` is the guide: safety rules, the agentic loop, errors and limits. The binary embeds it, and `agent-ios skills get agent-ios` prints it, so the guide always matches the installed binary.
 
-To install the stub, symlink `skills/iwdp` of a checkout into an Agent Skills directory, for example `ln -s "$PWD/skills/iwdp" ~/.agents/skills/iwdp`, or install the skill with a skills manager from this repository. Install `iwdp-cli` too: the stub holds no guide text of its own.
+To install the stub, symlink `skills/agent-ios` of a checkout into an Agent Skills directory, for example `ln -s "$PWD/skills/agent-ios" ~/.agents/skills/agent-ios`, or install the skill with a skills manager from this repository. Install `agent-ios` too: the stub holds no guide text of its own.
 
 ## Quick Start
 
@@ -70,67 +70,67 @@ To install the stub, symlink `skills/iwdp` of a checkout into an Agent Skills di
 ios_webkit_debug_proxy --no-frontend &
 
 # List connected devices (port 9221)
-iwdp-cli devices
+agent-ios devices
 
 # Page commands on a physical device need a session and a device reservation
 # (docs/sessions.md); the reservation owner defaults to the session name
-export IWDP_SESSION=my-run
-iwdp-cli device reserve --owner my-run
+export AGENT_IOS_SESSION=my-run
+agent-ios device reserve --owner my-run
 
 # List the Safari tabs of the reserved devices (t1, t2, ...)
-iwdp-cli tab list
+agent-ios tab list
 
 # Evaluate JavaScript in the session's page, or in a tab named with --page
 # (a returned Promise is awaited; an exception prints message and stack and exits 1)
-iwdp-cli eval "document.title"
-iwdp-cli --page t2 eval "fetch('/api/me').then(r => r.status)"
+agent-ios eval "document.title"
+agent-ios --page t2 eval "fetch('/api/me').then(r => r.status)"
 
 # Take a screenshot: viewport by default, or --full-page, or --selector <css>.
-# Without -o the PNG goes to $TMPDIR/iwdp-screenshot-<timestamp>.png.
-iwdp-cli screenshot
-iwdp-cli screenshot --selector '#checkout' -o checkout.png
+# Without -o the PNG goes to $TMPDIR/agent-ios-screenshot-<timestamp>.png.
+agent-ios screenshot
+agent-ios screenshot --selector '#checkout' -o checkout.png
 
 # Show all cookies (including httpOnly); values are hidden unless --show-values
-iwdp-cli cookies
+agent-ios cookies
 
 # Set a cookie (SameSite defaults to Lax) and verify it by reading it back
-iwdp-cli cookies set session abc123 --domain example.com --same-site Lax --secure --http-only --expires 2030-01-01T00:00:00Z
+agent-ios cookies set session abc123 --domain example.com --same-site Lax --secure --http-only --expires 2030-01-01T00:00:00Z
 
 # Print the console messages and the network requests since the session leased the page
-iwdp-cli console
-iwdp-cli network requests
+agent-ios console
+agent-ios network requests
 
 # Help for one command, or the list of a command group (never connects to a page)
-iwdp-cli screenshot --help
-iwdp-cli network --help
+agent-ios screenshot --help
+agent-ios network --help
 
 # End the session and release the device
-iwdp-cli close && iwdp-cli device release --owner my-run
+agent-ios close && agent-ios device release --owner my-run
 ```
 
 ### The agentic loop
 
 ```bash
-export IWDP_SESSION=my-agent                    # one stable session per agent
-iwdp-cli device reserve --owner my-agent        # physical devices need a reservation
-iwdp-cli open https://example.com/login         # navigate and wait for load
-iwdp-cli snapshot -i                            # accessibility tree with @eN refs
-iwdp-cli fill @e3 user@example.com
-iwdp-cli dialog accept                          # arm the answer before the action
-iwdp-cli click @e5                              # synthetic events after actionability checks
-iwdp-cli wait --url '**/home'
-iwdp-cli close && iwdp-cli device release --owner my-agent
+export AGENT_IOS_SESSION=my-agent                    # one stable session per agent
+agent-ios device reserve --owner my-agent        # physical devices need a reservation
+agent-ios open https://example.com/login         # navigate and wait for load
+agent-ios snapshot -i                            # accessibility tree with @eN refs
+agent-ios fill @e3 user@example.com
+agent-ios dialog accept                          # arm the answer before the action
+agent-ios click @e5                              # synthetic events after actionability checks
+agent-ios wait --url '**/home'
+agent-ios close && agent-ios device release --owner my-agent
 ```
 
-All input is synthetic (`isTrusted=false`); see [docs/synthetic-input.md](docs/synthetic-input.md). Sessions, leases and reservations: [docs/sessions.md](docs/sessions.md). A CDP URL for other clients: `iwdp-cli get cdp-url` ([docs/cdp.md](docs/cdp.md)).
+All input is synthetic (`isTrusted=false`); see [docs/synthetic-input.md](docs/synthetic-input.md). Sessions, leases and reservations: [docs/sessions.md](docs/sessions.md). A CDP URL for other clients: `agent-ios get cdp-url` ([docs/cdp.md](docs/cdp.md)).
 
-Every command runs under a deadline: 30 s by default, set with `--timeout <duration>` (any position) or `IWDP_TIMEOUT`, a duration such as `10s` or whole seconds such as `10`. On expiry the command exits 124 and prints the page, the elapsed time and the likely causes (another inspector session holds the page, the page is stalled or shows a dialog, the device is locked).
+Every command runs under a deadline: 30 s by default, set with `--timeout <duration>` (any position) or `AGENT_IOS_TIMEOUT`, a duration such as `10s` or whole seconds such as `10`. On expiry the command exits 124 and prints the page, the elapsed time and the likely causes (another inspector session holds the page, the page is stalled or shows a dialog, the device is locked).
 
 ## How It Works
 
 ```
 ┌────────────┐    USB     ┌──────────┐   HTTP/WS    ┌──────────┐
-│ iOS Device │◄──────────►│   iwdp   │◄────────────►│ iwdp-cli │
+│ iOS Device │◄──────────►│   iwdp   │◄────────────►│ agent-ios │
 │  (Safari)  │            │ :9221-N  │              │          │
 └────────────┘            └──────────┘              └──────────┘
 ```
@@ -140,16 +140,16 @@ Every command runs under a deadline: 30 s by default, set with `--timeout <durat
 - **Port 9222+** — each device gets an incremented port listing its Safari tabs
 - Each tab provides a **WebSocket URL** for the WebKit Inspector Protocol
 
-`iwdp-cli` starts a per-user daemon (`iwdp-cli daemon run`) that connects to those WebSocket endpoints, keeps the page connections, and serves the CLI and the optional CDP endpoint over a private Unix socket. `--transport direct` reaches the device through usbmuxd without iwdp (opt-in), and `--transport webkitgtk` drives a local WebKitGTK MiniBrowser for tests. See [docs/guide.md](docs/guide.md).
+`agent-ios` starts a per-user daemon (`agent-ios daemon run`) that connects to those WebSocket endpoints, keeps the page connections, and serves the CLI and the optional CDP endpoint over a private Unix socket. `--transport direct` reaches the device through usbmuxd without iwdp (opt-in), and `--transport webkitgtk` drives a local WebKitGTK MiniBrowser for tests. See [docs/guide.md](docs/guide.md).
 
 ## Commands
 
-[docs/commands.md](docs/commands.md) lists every registry command with its arguments and flags. `iwdp-cli --help` lists every command, [docs/migration.md](docs/migration.md) maps the removed commands of earlier versions, and `iwdp-cli <command> --help` prints the usage of one command without connecting to a page. `iwdp-cli <group> --help` lists the commands of a group, for example `network` or `cdp`.
+[docs/commands.md](docs/commands.md) lists every registry command with its arguments and flags. `agent-ios --help` lists every command, [docs/migration.md](docs/migration.md) maps the removed commands of earlier versions, and `agent-ios <command> --help` prints the usage of one command without connecting to a page. `agent-ios <group> --help` lists the commands of a group, for example `network` or `cdp`.
 
 ## Development
 
 ```bash
-make build              # Build iwdp-cli
+make build              # Build agent-ios
 make test               # Run unit + smoke tests
 make test-e2e           # Simulator tests (macOS: boots iOS Simulator, tests the shared helpers against Safari)
 make test-coverage      # Tests with coverage report
@@ -173,18 +173,18 @@ make test-e2e
 
 The supported model is one Simulator run per user account at a time: setup takes a lease, and every other run is refused while the lease is held. When setup refuses because an earlier run holds the lease, wait until that run has finished; that run tears itself down. Run `make sim-teardown` only after a crashed run, as the manual recovery: it tears down whatever run holds the lease.
 
-To debug one simulator test by hand, run `make sim-setup`. Only when it succeeds, export the variables that it prints (`IWDP_SIM_WS_URL`, `IWDP_SIM_PAGE_URL` and `IWDP_SIM_RUN_TOKEN`) and run the test, for example `go test -tags=simulator ./e2e/ -v -run TestSim_EvaluateBasic`. When you are done, tear down this run only: `./scripts/sim-setup.sh --teardown-run "$IWDP_SIM_RUN_TOKEN"`. A failed setup prints no variables; do not run the tests with values from an earlier setup.
+To debug one simulator test by hand, run `make sim-setup`. Only when it succeeds, export the variables that it prints (`AGENT_IOS_SIM_WS_URL`, `AGENT_IOS_SIM_PAGE_URL` and `AGENT_IOS_SIM_RUN_TOKEN`) and run the test, for example `go test -tags=simulator ./e2e/ -v -run TestSim_EvaluateBasic`. When you are done, tear down this run only: `./scripts/sim-setup.sh --teardown-run "$AGENT_IOS_SIM_RUN_TOKEN"`. A failed setup prints no variables; do not run the tests with values from an earlier setup.
 
 > **Note:** the simulator tests require macOS with Xcode and `ios-webkit-debug-proxy` installed. GitHub Actions `macos-latest` runners have Xcode and iOS Simulator runtimes pre-installed.
 >
-> Setup opens a test page of its own (`IWDP_SIM_PAGE_URL`, unique by a random query) in the Simulator, and the tests run only against that page. Teardown (at the end of `make test-e2e`, in CI, or `make sim-teardown` after a crashed run) shuts down the Simulator only when setup's own boot started it; a Simulator that was already running stays booted. Teardown stops the iwdp that setup started only through `scripts/iwdp-owner-check.sh --terminate`, which verifies that process (the recorded pid, start time and start token, and the program ios_webkit_debug_proxy) and sends SIGTERM only to it. It removes the record only with `scripts/iwdp-owner-check.sh --forget`, which reads it again and removes it only when the process that this read names is gone and the file did not change after that read; a changed record that `--forget` keeps under a private name is not checked by the next teardown (the warning names it; see docs/device-runbook.md). Otherwise no signal is sent, or teardown reports an iwdp that still runs after SIGTERM; it gives the check's reason and keeps the record for the next teardown, and the next setup refuses meanwhile. Never stop that iwdp with a command of your own; if it stays running, report it. Stop any other iwdp by hand only if you started it yourself and nobody else uses it; otherwise send no signal and ask whoever started it, or the user. The stop is `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand) in docs/device-runbook.md describes.
+> Setup opens a test page of its own (`AGENT_IOS_SIM_PAGE_URL`, unique by a random query) in the Simulator, and the tests run only against that page. Teardown (at the end of `make test-e2e`, in CI, or `make sim-teardown` after a crashed run) shuts down the Simulator only when setup's own boot started it; a Simulator that was already running stays booted. Teardown stops the iwdp that setup started only through `scripts/iwdp-owner-check.sh --terminate`, which verifies that process (the recorded pid, start time and start token, and the program ios_webkit_debug_proxy) and sends SIGTERM only to it. It removes the record only with `scripts/iwdp-owner-check.sh --forget`, which reads it again and removes it only when the process that this read names is gone and the file did not change after that read; a changed record that `--forget` keeps under a private name is not checked by the next teardown (the warning names it; see docs/device-runbook.md). Otherwise no signal is sent, or teardown reports an iwdp that still runs after SIGTERM; it gives the check's reason and keeps the record for the next teardown, and the next setup refuses meanwhile. Never stop that iwdp with a command of your own; if it stays running, report it. Stop any other iwdp by hand only if you started it yourself and nobody else uses it; otherwise send no signal and ask whoever started it, or the user. The stop is `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](docs/device-runbook.md#stopping-an-iwdp-by-hand) in docs/device-runbook.md describes.
 
 ### Project Structure
 
 ```
-iwdp-cli/
+agent-ios/
 ├── cmd/
-│   └── iwdp-cli/          # CLI and daemon binary
+│   └── agent-ios/          # CLI and daemon binary
 ├── internal/
 │   ├── webkit/            # WebKit Inspector Protocol client
 │   │   ├── client.go      # WebSocket connection + message routing
@@ -197,8 +197,8 @@ iwdp-cli/
 │   ├── cdp/               # Opt-in CDP endpoint
 │   ├── tools/             # Shared helpers: evaluation, screenshots, DOM lookup, cookies
 │   └── proxy/             # iwdp process detection + management
-├── skill-data/            # Agent skill guides, embedded (iwdp-cli skills get iwdp)
-└── skills/                # Agent skill discovery stubs (skills/iwdp/SKILL.md)
+├── skill-data/            # Agent skill guides, embedded (agent-ios skills get agent-ios)
+└── skills/                # Agent skill discovery stubs (skills/agent-ios/SKILL.md)
 ```
 
 ## License

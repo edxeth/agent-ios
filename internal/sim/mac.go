@@ -265,7 +265,7 @@ func controlAt(cfg Config, dir, route string) string {
 
 // controlFallback is the directory of the control sockets when the state
 // directory is too long for them (macOS's $TMPDIR).
-var controlFallback = func() string { return fmt.Sprintf("/tmp/iwdp-ssh-%d", os.Getuid()) }
+var controlFallback = func() string { return fmt.Sprintf("/tmp/agent-ios-ssh-%d", os.Getuid()) }
 
 // ControlDir returns the private directory of the shared ssh connection:
 // "ssh" in base, the private state directory, or controlFallback when a

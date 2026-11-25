@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/wip"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/wip"
 )
 
 // The Network domain (design docs/design/agentic-parity.md, sections 5.2
@@ -855,7 +855,7 @@ func setCacheDisabled(ctx context.Context, call *Call) (any, Later, error) {
 // emulateNetworkConditions limits the download rate with WIP
 // Network.setEmulatedConditions, where the device's iOS command list has
 // it. WIP has no latency, upload or offline emulation: a positive
-// latency or upload limit and offline are refused (iwdp-cli set offline
+// latency or upload limit and offline are refused (agent-ios set offline
 // emulates offline by interception).
 func emulateNetworkConditions(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
@@ -869,7 +869,7 @@ func emulateNetworkConditions(ctx context.Context, call *Call) (any, Later, erro
 	}
 	s := call.session
 	if p.Offline {
-		return nil, nil, serverError("offline emulation through Network.emulateNetworkConditions is not supported on iOS WebKit; use iwdp-cli set offline on")
+		return nil, nil, serverError("offline emulation through Network.emulateNetworkConditions is not supported on iOS WebKit; use agent-ios set offline on")
 	}
 	// A positive latency or upload limit turns throttling on in Chrome;
 	// WIP cannot emulate either, so it is refused before any change. 0 and

@@ -1,4 +1,4 @@
-# Contributing to iwdp-cli
+# Contributing to agent-ios
 
 Thanks for your interest in contributing!
 
@@ -6,8 +6,8 @@ Thanks for your interest in contributing!
 
 ```bash
 # Clone and build
-git clone https://github.com/nnemirovsky/iwdp-cli.git
-cd iwdp-cli
+git clone https://github.com/nnemirovsky/agent-ios.git
+cd agent-ios
 make build
 
 # Install ios-webkit-debug-proxy (macOS)
@@ -61,7 +61,7 @@ refactor/proxy-port-parsing
 - `internal/webkit/` — WebKit Inspector Protocol client (WebSocket + Target routing)
 - `internal/tools/` — shared WebKit Inspector Protocol helpers (evaluation, screenshots, DOM lookup, cookies)
 - `internal/proxy/` — iwdp process detection and management
-- `cmd/iwdp-cli/` — CLI binary
+- `cmd/agent-ios/` — CLI binary
 
 - `internal/daemon/`, `internal/core/` — the daemon, sessions, leases, reservations, desired state, scheduler
 - `internal/commands/` — the command registry (one file per command; `make docs` writes docs/commands.md)

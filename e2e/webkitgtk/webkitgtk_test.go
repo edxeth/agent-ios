@@ -27,10 +27,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/e2e/internal/broadwayshm"
-	"github.com/nnemirovsky/iwdp-cli/internal/daemon"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/e2e/internal/broadwayshm"
+	"github.com/nnemirovsky/agent-ios/internal/daemon"
+	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 // Latency target of design 8.5: p50 of 50 warm CLI evals at or below
@@ -41,12 +41,12 @@ const (
 )
 
 // runtimeDir is the private XDG_RUNTIME_DIR and XDG_STATE_HOME of the
-// CLI runs; cliBin is the iwdp-cli binary under test.
+// CLI runs; cliBin is the agent-ios binary under test.
 var runtimeDir, userRuntimeDir, cliBin string
 
 // setupCLISuite prepares the CLI and daemon runs of the suite (called by
 // TestMain in runtime_harness_test.go before the shared browser starts):
-// a private runtime directory, the fake iwdp first on PATH and the iwdp-cli
+// a private runtime directory, the fake iwdp first on PATH and the agent-ios
 // binary. The returned cleanup stops the suite's daemon and removes the
 // directory.
 func setupCLISuite() (func(), error) {
@@ -62,8 +62,8 @@ func setupCLISuite() (func(), error) {
 	}
 	_ = os.Setenv("XDG_RUNTIME_DIR", dir)
 	_ = os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	_ = os.Setenv("IWDP_DAEMON_IDLE", "30s")
-	for _, k := range []string{"IWDP_SESSION", "IWDP_DEVICE_RESERVATION", "IWDP_TRANSPORT", "IWDP_DAEMON_DIR", "IWDP_WS_URL", "IWDP_TIMEOUT"} {
+	_ = os.Setenv("AGENT_IOS_DAEMON_IDLE", "30s")
+	for _, k := range []string{"AGENT_IOS_SESSION", "AGENT_IOS_DEVICE_RESERVATION", "AGENT_IOS_TRANSPORT", "AGENT_IOS_DAEMON_DIR", "AGENT_IOS_WS_URL", "AGENT_IOS_TIMEOUT"} {
 		_ = os.Unsetenv(k)
 	}
 	fakeIWDPBin = filepath.Join(dir, "bin")
@@ -76,12 +76,12 @@ func setupCLISuite() (func(), error) {
 		cleanup()
 		return nil, err
 	}
-	cliBin = filepath.Join(dir, "iwdp-cli")
-	build := exec.Command("go", "build", "-o", cliBin, "../../cmd/iwdp-cli")
+	cliBin = filepath.Join(dir, "agent-ios")
+	build := exec.Command("go", "build", "-o", cliBin, "../../cmd/agent-ios")
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	if err := build.Run(); err != nil {
 		cleanup()
-		return nil, fmt.Errorf("building iwdp-cli: %w", err)
+		return nil, fmt.Errorf("building agent-ios: %w", err)
 	}
 	return cleanup, nil
 }
@@ -113,7 +113,7 @@ func cli(t *testing.T, args ...string) result {
 	if ee, ok := err.(*exec.ExitError); ok {
 		r.code = ee.ExitCode()
 	} else if err != nil {
-		t.Fatalf("running iwdp-cli %v: %v", args, err)
+		t.Fatalf("running agent-ios %v: %v", args, err)
 	}
 	return r
 }

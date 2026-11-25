@@ -24,7 +24,7 @@ import (
 
 // fakeServeEnv makes TestFakeIWDPProcess serve an iwdp device list on the
 // address it names.
-const fakeServeEnv = "IWDP_PROXY_TEST_FAKE_SERVE"
+const fakeServeEnv = "AGENT_IOS_PROXY_TEST_FAKE_SERVE"
 
 // fakeListingEnv names a file whose content TestFakeIWDPProcess serves as
 // its device list, read on every request; without it the list is empty.
@@ -32,24 +32,24 @@ const fakeServeEnv = "IWDP_PROXY_TEST_FAKE_SERVE"
 // the starts log that fakeStartsEnv names) serves the file, and earlier
 // ones serve an empty list, as an iwdp that lost usbmuxd does.
 const (
-	fakeListingEnv     = "IWDP_PROXY_TEST_FAKE_LISTING"
-	fakeListingFromEnv = "IWDP_PROXY_TEST_FAKE_LISTING_FROM"
-	fakeStartsEnv      = "IWDP_PROXY_TEST_FAKE_STARTS"
+	fakeListingEnv     = "AGENT_IOS_PROXY_TEST_FAKE_LISTING"
+	fakeListingFromEnv = "AGENT_IOS_PROXY_TEST_FAKE_LISTING_FROM"
+	fakeStartsEnv      = "AGENT_IOS_PROXY_TEST_FAKE_STARTS"
 	// fakeExitFromEnv=N makes the fake of the Nth start and later ones
 	// exit 1 before they listen, as an iwdp whose start fails.
-	fakeExitFromEnv = "IWDP_PROXY_TEST_FAKE_EXIT_FROM"
+	fakeExitFromEnv = "AGENT_IOS_PROXY_TEST_FAKE_EXIT_FROM"
 )
 
 // fakeNetworkEnv names the network of the serve fake's listener (net.Listen):
 // "tcp" without it, as before; "tcp4" for an IPv4-only socket, "tcp6" for
 // an IPV6_V6ONLY socket.
-const fakeNetworkEnv = "IWDP_PROXY_TEST_FAKE_NETWORK"
+const fakeNetworkEnv = "AGENT_IOS_PROXY_TEST_FAKE_NETWORK"
 
 // fakeReadyEnv names the file descriptor on which the serve fake reports
 // the result of its listen call, one line (reportListen): "listening
 // <local address>", or "listen error: <error>". Without it the fake
 // reports nothing.
-const fakeReadyEnv = "IWDP_PROXY_TEST_FAKE_READY_FD"
+const fakeReadyEnv = "AGENT_IOS_PROXY_TEST_FAKE_READY_FD"
 
 // Prefixes of the serve fake's listen report (fakeReadyEnv).
 const (
@@ -64,7 +64,7 @@ const (
 // fakeParentEnv is the pid of the test process that starts a fake that
 // runs the test binary (fakeParent); the fake ends when that process ends
 // (exitWithParent).
-const fakeParentEnv = "IWDP_PROXY_TEST_FAKE_PARENT"
+const fakeParentEnv = "AGENT_IOS_PROXY_TEST_FAKE_PARENT"
 
 // fakeParent is the fakeParentEnv entry of this test process.
 func fakeParent() string { return fakeParentEnv + "=" + strconv.Itoa(os.Getpid()) }

@@ -17,25 +17,25 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/direct"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/webkitgtk"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport/direct"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/transport/webkitgtk"
 )
 
 // Lifecycle defaults (design 2.3).
 const (
 	DefaultIdle    = 15 * time.Minute
 	ShutdownBudget = 5 * time.Second // cleanup of every page on shutdown
-	idleEnv        = "IWDP_DAEMON_IDLE"
+	idleEnv        = "AGENT_IOS_DAEMON_IDLE"
 	// dirEnv carries the socket directory from the client that starts a
 	// daemon to the daemon, so both use the same one.
-	dirEnv = "IWDP_DAEMON_DIR"
+	dirEnv = "AGENT_IOS_DAEMON_DIR"
 	// streamDrain bounds the wait for open streams at shutdown.
 	streamDrain = time.Second
 	// PauseOnStart is the daemon's pause-on-start setting for every page
@@ -57,9 +57,9 @@ const (
 
 // RunOptions configure Run.
 type RunOptions struct {
-	Dir     string        // socket directory; "" = IWDP_DAEMON_DIR, else SocketDir()
+	Dir     string        // socket directory; "" = AGENT_IOS_DAEMON_DIR, else SocketDir()
 	Version string        // reported by /v1/hello
-	Idle    time.Duration // idle exit; 0 = IWDP_DAEMON_IDLE, else DefaultIdle
+	Idle    time.Duration // idle exit; 0 = AGENT_IOS_DAEMON_IDLE, else DefaultIdle
 	// Transport answers requests for "auto": iwdp (the default), direct or
 	// webkitgtk. Addr is that transport's listing or inspector address
 	// ("" = its default; webkitgtk needs one).
@@ -71,7 +71,7 @@ type RunOptions struct {
 	// RecoverIWDP). nil: the daemon reports how to start it.
 	StartIWDP func(context.Context) error
 	// RecoverIWDP restarts the iwdp of the default listing address that
-	// iwdp-cli started and recorded when it lost its usbmuxd connection or
+	// agent-ios started and recorded when it lost its usbmuxd connection or
 	// its device, and reports whether it restarted it (proxy.Recover: an
 	// iwdp loses the devices for good when usbmuxd restarts, and a device
 	// when it fails to pass one message to a closing client). nil: no
@@ -94,7 +94,7 @@ type RunOptions struct {
 	// the daemon reports in its hello, read at its start; clients reuse
 	// the daemon only when they run the same content (Hello.Executable).
 	// "" is the daemon's own executable. A process that embeds the daemon
-	// for clients of another binary (a test harness that builds iwdp-cli)
+	// for clients of another binary (a test harness that builds agent-ios)
 	// names that binary.
 	Executable string
 }
@@ -147,6 +147,9 @@ func Run(ctx context.Context, o RunOptions) error {
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
 	}
+	if err := checkSocketPath(SocketPath(o.Dir)); err != nil {
+		return err
+	}
 	if err := EnsureDir(o.Dir); err != nil {
 		return err
 	}
@@ -189,7 +192,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
 	go func() { served <- hs.Serve(l) }()
-	logf("iwdp daemon %s (protocol %d) pid %d listening on %s (transport %s, idle exit %s)", logsafe.ID(o.Version), Protocol, os.Getpid(), logsafe.ID(sock), logsafe.ID(o.Transport), o.Idle)
+	logf("agent-ios daemon %s (protocol %d) pid %d listening on %s (transport %s, idle exit %s)", logsafe.ID(o.Version), Protocol, os.Getpid(), logsafe.ID(sock), logsafe.ID(o.Transport), o.Idle)
 
 	tick := min(o.Idle/4, time.Second)
 	t := time.NewTicker(tick)
@@ -247,7 +250,7 @@ loop:
 }
 
 // newCore builds the manager and the API server of o: the daemon's, or the
-// in-process core of IWDP_NO_DAEMON (design 2.1).
+// in-process core of AGENT_IOS_NO_DAEMON (design 2.1).
 func newCore(o RunOptions, logf func(string, ...any)) (*core.Manager, *Server, *transports) {
 	direct.SetLogger(slog.New(slog.NewTextHandler(o.Log, nil)))
 	tr := &transports{o: o, logf: logf}
@@ -271,7 +274,7 @@ func runLock(path string) (func(), error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("an iwdp daemon is already running for %s; use 'iwdp-cli daemon status' or 'iwdp-cli daemon stop'", filepath.Dir(path))
+			return nil, fmt.Errorf("an agent-ios daemon is already running for %s; use 'agent-ios daemon status' or 'agent-ios daemon stop'", filepath.Dir(path))
 		}
 		return nil, fmt.Errorf("daemon run lock %s: %w", path, err)
 	}

@@ -20,14 +20,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
+	"github.com/nnemirovsky/agent-ios/internal/logcause"
 )
 
 // tokenEnv carries the start token of an iwdp that Starter starts in that
 // process's environment. Only this program sets it, so a live process
 // with the recorded token is the iwdp this program started (decision L02,
 // review round 1, F3).
-const tokenEnv = "IWDP_CLI_START_TOKEN"
+const tokenEnv = "AGENT_IOS_START_TOKEN"
 
 // record is an ios_webkit_debug_proxy that a Starter started and saw serve
 // its listing address (decision L02). The started process leads its own
@@ -40,13 +40,13 @@ type record struct {
 	Start string `json:"start"` // identity.start of the started process
 	Token string `json:"token"` // the tokenEnv value it was started with
 	// Writer is recordWriter. A record without it was written by the
-	// removed iwdp-mcp server, or by an iwdp-cli older than the writer
+	// removed iwdp-mcp server, or by an agent-ios older than the writer
 	// field, and its iwdp counts as another program's (docs/migration.md).
 	Writer string `json:"writer"`
 }
 
-// recordWriter marks the records that iwdp-cli writes.
-const recordWriter = "iwdp-cli"
+// recordWriter marks the records that agent-ios writes.
+const recordWriter = "agent-ios"
 
 // identity tells one process incarnation from another process with the
 // same pid.
@@ -199,15 +199,15 @@ func procargsEnv(buf []byte) ([]string, error) {
 }
 
 // recordDir returns this user's private directory of iwdp records,
-// creating it: XDG_RUNTIME_DIR/iwdp-cli when XDG_RUNTIME_DIR is a
+// creating it: XDG_RUNTIME_DIR/agent-ios when XDG_RUNTIME_DIR is a
 // directory of this user that others cannot write, else
-// <temporary directory>/iwdp-cli-<uid>. The directory must be this user's,
+// <temporary directory>/agent-ios-<uid>. The directory must be this user's,
 // not a symlink, with mode 0700 (checkPrivate), on every use: another user
 // can create names in a shared temporary directory.
 func recordDir() (string, error) {
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("iwdp-cli-%d", os.Getuid()))
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("agent-ios-%d", os.Getuid()))
 	if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" && checkPrivate(x, true, 0o022) == nil {
-		dir = filepath.Join(x, "iwdp-cli")
+		dir = filepath.Join(x, "agent-ios")
 	}
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return "", fmt.Errorf("creating the iwdp record directory: %w", err)
@@ -336,13 +336,13 @@ func (rec *record) problem(addr string) string {
 	case rec.Start == "" || rec.Token == "":
 		return "it holds no process identity (start time and start token)"
 	case rec.Writer != recordWriter:
-		return "it was not written by iwdp-cli (an earlier iwdp-mcp, or an older iwdp-cli, wrote it)"
+		return "it was not written by agent-ios (an earlier iwdp-mcp, or an older agent-ios, wrote it)"
 	}
 	return ""
 }
 
 // Restart restarts ios_webkit_debug_proxy on the default listing address
-// when this program started it (Starter.Restart); 'iwdp-cli restart-iwdp'
+// when this program started it (Starter.Restart); 'agent-ios restart-iwdp'
 // uses it.
 func Restart(ctx context.Context) error { return std.Restart(ctx) }
 
@@ -398,7 +398,7 @@ func (s *Starter) stopOwn(ctx context.Context, ep netip.AddrPort) (bool, error) 
 	case err != nil:
 		return false, s.refuse(ctx, ep, err.Error())
 	case rec == nil:
-		return false, s.refuse(ctx, ep, "no iwdp that iwdp-cli started is recorded for it")
+		return false, s.refuse(ctx, ep, "no iwdp that agent-ios started is recorded for it")
 	}
 	if p := rec.problem(s.addr); p != "" {
 		return false, s.refuse(ctx, ep, "the record "+recordName(s.addr)+" is not valid: "+p)
@@ -460,7 +460,7 @@ func (s *Starter) refuse(ctx context.Context, ep netip.AddrPort, reason string) 
 		}
 		owner = "pid " + strings.Join(list, ", ")
 	}
-	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that iwdp-cli started and recorded (%s). It may be the iwdp of the user or another agent, so nothing was stopped. Ask whoever started it, or the user. Stop it yourself only if you started it and nobody else uses it, and only with 'scripts/iwdp-owner-check.sh --terminate <record>', then 'scripts/iwdp-owner-check.sh <record>' until it reports gone, as docs/device-runbook.md (Stopping an iwdp by hand) describes; then run '%s'",
+	return fmt.Errorf("restart refused: %s is held by %s, which is not an ios_webkit_debug_proxy that agent-ios started and recorded (%s). It may be the iwdp of the user or another agent, so nothing was stopped. Ask whoever started it, or the user. Stop it yourself only if you started it and nobody else uses it, and only with 'scripts/iwdp-owner-check.sh --terminate <record>', then 'scripts/iwdp-owner-check.sh <record>' until it reports gone, as docs/device-runbook.md (Stopping an iwdp by hand) describes; then run '%s'",
 		s.addr, owner, reason, ManualCommand())
 }
 

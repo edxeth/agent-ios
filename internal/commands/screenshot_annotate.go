@@ -17,25 +17,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/refs"
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logcause"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/refs"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // screenshot with --annotate and --if-changed (design
 // docs/design/agentic-parity.md, section 3.9; agent-browser "screenshot").
 // The capture itself is the W0 code (tools.CaptureScreenshot). The
-// command also takes the legacy iwdp-cli forms (-o file, --full-page,
+// command also takes the legacy agent-ios forms (-o file, --full-page,
 // --selector css).
 func init() {
 	Register(&Command{
 		Name:    "screenshot",
 		Summary: "Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture.",
-		Args:    []Arg{{Name: "path", Help: "PNG file to write (default $TMPDIR/iwdp-screenshot-<time>.png)"}},
+		Args:    []Arg{{Name: "path", Help: "PNG file to write (default $TMPDIR/agent-ios-screenshot-<time>.png)"}},
 		Flags: []Flag{
 			{Name: "output", Short: "o", Type: FlagPath, Help: "PNG file to write (same as path)"},
 			{Name: "full-page", Type: FlagBool, Help: "capture the whole scrollable document"},
@@ -60,7 +60,7 @@ func init() {
 // screenshotOptions returns the file (path or -o), --full-page (or
 // --full) and --selector of a screenshot, or the usage error of a
 // conflicting combination. A page URL as the file is a usage error that
-// names --page: earlier iwdp-cli versions took "screenshot <ws:// URL>"
+// names --page: earlier agent-ios versions took "screenshot <ws:// URL>"
 // as the page, and that line must not capture the session's page instead.
 func screenshotOptions(in Input) (out string, full bool, sel string, err error) {
 	out = arg(in, 0)
@@ -320,7 +320,7 @@ func writeCapture(path string, data []byte) (string, error) {
 		}
 		return path, nil
 	}
-	name := "iwdp-screenshot-" + time.Now().Format("20060102-150405.000")
+	name := "agent-ios-screenshot-" + time.Now().Format("20060102-150405.000")
 	path = filepath.Join(os.TempDir(), name+".png")
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {

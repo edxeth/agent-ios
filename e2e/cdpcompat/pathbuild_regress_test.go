@@ -477,7 +477,7 @@ func TestScenarioTimeoutStillClosesSession(t *testing.T) {
 	if !strings.Contains(out.String(), "did not end within 200ms; its process group was killed") {
 		t.Errorf("helper output lacks the timeout failure:\n%s", out)
 	}
-	// The helper builds iwdp-cli and starts a daemon; the fake would hang
+	// The helper builds agent-ios and starts a daemon; the fake would hang
 	// for fakeHang if the timeout did not end it.
 	if took := time.Since(start); took >= fakeHang/2 {
 		t.Errorf("the helper took %v, want less than %v", took, fakeHang/2)

@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // TestMain makes the test binary act as "<exe> daemon run", so the
@@ -59,7 +59,7 @@ func TestMain(m *testing.M) {
 	testRuntimeDir = dir
 	_ = os.Setenv("XDG_RUNTIME_DIR", dir)
 	_ = os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	_ = os.Unsetenv("IWDP_DAEMON_DIR")
+	_ = os.Unsetenv("AGENT_IOS_DAEMON_DIR")
 	// A start through proxy.Start (TestEnsureIWDPBacksOffAfterAFailedStart
 	// brings its own fakes) never runs the real iwdp or idevice_id.
 	fakeIWDPBin = filepath.Join(dir, "bin")
@@ -129,7 +129,7 @@ func spawnOptions(t *testing.T, env ...string) Options {
 	t.Helper()
 	base := shortDir(t)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
-	o := Options{Dir: filepath.Join(base, "iwdp"), Exe: os.Args[0], Env: env, Version: "test"}
+	o := Options{Dir: filepath.Join(base, "agent-ios"), Exe: os.Args[0], Env: env, Version: "test"}
 	t.Cleanup(func() { stopDaemon(t, o) })
 	return o
 }
@@ -183,7 +183,7 @@ func readLog(t *testing.T) string {
 // 7.3 item 11: ten clients that find no daemon at the same moment start
 // exactly one (flock on daemon.lock, design 2.3).
 func TestAutoStartConcurrentClientsStartOneDaemon(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	const n = 10
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -276,10 +276,10 @@ func startFakeDaemonOf(t *testing.T, dir string, protocol, leases int) *fakeOldD
 // daemon to exit and starts its own; with active leases it fails with the
 // documented message and leaves the daemon alone.
 func TestProtocolMismatch(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	f := startFakeOldDaemon(t, o.Dir, 2)
 	_, err := Connect(ctxFor(t, 5*time.Second), o)
-	want := fmt.Sprintf("daemon version 0.4.0 (protocol %d) is running with active sessions; run 'iwdp-cli daemon stop' when they finish", Protocol+1)
+	want := fmt.Sprintf("daemon version 0.4.0 (protocol %d) is running with active sessions; run 'agent-ios daemon stop' when they finish", Protocol+1)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Connect with a busy old daemon: %v; want %q", err, want)
 	}
@@ -306,14 +306,14 @@ func TestProtocolMismatch(t *testing.T) {
 // Review ws2a-r2-c F8 (WS2a round 4): a running daemon of this protocol
 // that runs another executable, which can lack commands (eval and the
 // cookie listing) and the page item of /v1/run, is not reused. A busy one
-// stays and the client fails with the advice to run 'iwdp-cli daemon
+// stays and the client fails with the advice to run 'agent-ios daemon
 // stop', which (NoStart) still reaches it; an idle one is asked to exit
 // and replaced by a daemon of this executable.
 func TestBuildMismatchReplacesAnIdleDaemon(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	f := startFakeDaemonOf(t, o.Dir, Protocol, 2)
 	_, err := Connect(ctxFor(t, 5*time.Second), o)
-	want := fmt.Sprintf("daemon version 0.4.0 (protocol %d, another executable) is running with active sessions; run 'iwdp-cli daemon stop' when they finish", Protocol)
+	want := fmt.Sprintf("daemon version 0.4.0 (protocol %d, another executable) is running with active sessions; run 'agent-ios daemon stop' when they finish", Protocol)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Connect with a busy daemon of an older build: %v; want %q", err, want)
 	}
@@ -344,10 +344,10 @@ func TestBuildMismatchReplacesAnIdleDaemon(t *testing.T) {
 	}
 }
 
-// 7.3 item 11 and design 2.3: the daemon exits after IWDP_DAEMON_IDLE with
+// 7.3 item 11 and design 2.3: the daemon exits after AGENT_IOS_DAEMON_IDLE with
 // no requests and no leases; an active lease keeps it running.
 func TestIdleExitWaitsForLeases(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=300ms")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=300ms")
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
 	c, err := Connect(ctxFor(t, 5*time.Second), o)
@@ -375,7 +375,7 @@ func TestIdleExitWaitsForLeases(t *testing.T) {
 // 7.3 item 11 and design 2.3: SIGTERM runs the cleanup of every page within
 // 5 s and removes the socket.
 func TestSIGTERMRunsCleanupWithin5s(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
 	c, err := Connect(ctxFor(t, 5*time.Second), o)

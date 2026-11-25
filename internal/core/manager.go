@@ -16,13 +16,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/refs"
-	"github.com/nnemirovsky/iwdp-cli/internal/runtime"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/wip"
+	"github.com/nnemirovsky/agent-ios/internal/logcause"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/refs"
+	"github.com/nnemirovsky/agent-ios/internal/runtime"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/wip"
 )
 
 // Defaults of ManagerOptions (design 2.3, 2.5 and 2.6).
@@ -784,7 +784,7 @@ func (m *Manager) openConn(ctx context.Context, pg *Page, t pageTarget, state *D
 // was wrong there. The caller holds attachMu.
 func (pg *Page) newConnLost(title, what string, lerr, cause error) error {
 	if pg.conn == nil {
-		return &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: ios_webkit_debug_proxy or the device closed the new connection during %s, and nothing was attached: run the command again. When it fails the same way again, another inspector (Safari Web Inspector on a Mac, another tool) may hold the page, or iwdp lost the device (run iwdp-cli devices): %w", title, what, cause)}
+		return &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: ios_webkit_debug_proxy or the device closed the new connection during %s, and nothing was attached: run the command again. When it fails the same way again, another inspector (Safari Web Inspector on a Mac, another tool) may hold the page, or iwdp lost the device (run agent-ios devices): %w", title, what, cause)}
 	}
 	err := &CodedError{Code: CodeBusy, Err: fmt.Errorf("connecting to page %q: the new connection ended during %s: %w", title, what, lerr)}
 	pg.conn.markLost(err)
@@ -1399,7 +1399,7 @@ func (pg *Page) grantLocked(ao AcquireOptions, now time.Time) *lease {
 }
 
 func (pg *Page) leaseErrLocked(l *lease) error {
-	return &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: page %q is leased by session %q since %s (last command %s ago); use --session %s, wait, or run 'iwdp-cli lease break %s'",
+	return &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: page %q is leased by session %q since %s (last command %s ago); use --session %s, wait, or run 'agent-ios lease break %s'",
 		ErrLeased, pg.target.title, l.session, l.since.Format(time.TimeOnly), time.Since(l.lastUsed).Round(time.Second), l.session, pg.Key)}
 }
 

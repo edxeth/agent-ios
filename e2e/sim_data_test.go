@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 // The data that the simulator tests create or delete. The test page's
 // query does not isolate example.com's storage, and a reused Simulator may
 // hold the origin's data, so every name derives from the run token, and
 // every destructive target (cookie URL and domain) from the checked
-// IWDP_SIM_PAGE_URL, never from page state read earlier.
+// AGENT_IOS_SIM_PAGE_URL, never from page state read earlier.
 
 // testName returns the name of this run's test data of the kind kind.
 func (s *simTarget) testName(kind string) string {
@@ -32,7 +32,7 @@ func (s *simTarget) testName(kind string) string {
 func (s *simTarget) pageOrigin() (origin, host string, err error) {
 	u, err := url.Parse(s.pageURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return "", "", fmt.Errorf("IWDP_SIM_PAGE_URL %q has no origin: %v", s.pageURL, err)
+		return "", "", fmt.Errorf("AGENT_IOS_SIM_PAGE_URL %q has no origin: %v", s.pageURL, err)
 	}
 	return u.Scheme + "://" + u.Host, u.Hostname(), nil
 }

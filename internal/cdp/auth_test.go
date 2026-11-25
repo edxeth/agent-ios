@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
 )
 
 func httpDo(t *testing.T, method, url string, mod func(*http.Request)) (int, string) {
@@ -47,8 +47,8 @@ func TestAuthorization(t *testing.T) {
 	puts := []string{"/json/new?about:blank", "/json/close/X", "/json/activate/X"}
 
 	// The right token and endpoint give discovery data; Browser is
-	// "Safari/<iOS version> (iwdp-cli <version>)" (design 5.1).
-	if code, body := httpDo(t, "GET", base+"/json/version", nil); code != 200 || !strings.Contains(body, ep.WS) || !strings.Contains(body, `"Browser":"Safari/16.7.10 (iwdp-cli test)"`) {
+	// "Safari/<iOS version> (agent-ios <version>)" (design 5.1).
+	if code, body := httpDo(t, "GET", base+"/json/version", nil); code != 200 || !strings.Contains(body, ep.WS) || !strings.Contains(body, `"Browser":"Safari/16.7.10 (agent-ios test)"`) {
 		t.Fatalf("GET /json/version with the token: %d %q", code, body)
 	}
 	// Missing token, wrong token, wrong endpoint: 404 with no discovery data.

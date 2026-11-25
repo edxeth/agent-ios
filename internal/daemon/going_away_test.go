@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
 )
 
 // closeMode is how a fake daemon that goes away ends a connection that it
@@ -156,7 +156,7 @@ func runLockHeld(t *testing.T, dir string) bool {
 func TestConnectTreatsAClosedHelloAsNoDaemon(t *testing.T) {
 	for _, m := range closeModes {
 		t.Run(m.name, func(t *testing.T) {
-			o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+			o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 			release := holdRunLock(t, o.Dir) // the exiting daemon still holds run.lock
 			stop := startGoingAwayDaemon(t, o.Dir, m)
 			waiting := runLockWaiter(t)
@@ -185,7 +185,7 @@ func TestConnectTreatsAClosedHelloAsNoDaemon(t *testing.T) {
 func TestNoStartTreatsAClosedHelloAsNotRunning(t *testing.T) {
 	for _, m := range closeModes {
 		t.Run(m.name, func(t *testing.T) {
-			dir := filepath.Join(shortDir(t), "iwdp")
+			dir := filepath.Join(shortDir(t), "agent-ios")
 			startGoingAwayDaemon(t, dir, m)
 			c, err := Connect(ctxFor(t, 5*time.Second), Options{Dir: dir, NoStart: true})
 			if c != nil {
@@ -210,8 +210,8 @@ func TestLifecycleCommandsTreatAClosedHelloAsNotRunning(t *testing.T) {
 				startGoingAwayDaemon(t, o.Dir, m)
 				spawns := probeSpawns(t)
 				res, err := runLifecycle(t, o, "daemon", cmd)
-				if err != nil || res.Text != "The iwdp daemon is not running." {
-					t.Fatalf("daemon %s with a daemon that closes the hello's connection (%s): %q, %v; want %q", cmd, m.name, res.Text, err, "The iwdp daemon is not running.")
+				if err != nil || res.Text != "The agent-ios daemon is not running." {
+					t.Fatalf("daemon %s with a daemon that closes the hello's connection (%s): %q, %v; want %q", cmd, m.name, res.Text, err, "The agent-ios daemon is not running.")
 				}
 				if cmd == "status" {
 					data, ok := res.Data.(map[string]bool)
@@ -237,7 +237,7 @@ func TestLifecycleCommandsTreatAClosedHelloAsNotRunning(t *testing.T) {
 func TestWaitGoneTreatsAClosedHelloAsNoAnswer(t *testing.T) {
 	for _, m := range closeModes {
 		t.Run(m.name, func(t *testing.T) {
-			dir := filepath.Join(shortDir(t), "iwdp")
+			dir := filepath.Join(shortDir(t), "agent-ios")
 			release := holdRunLock(t, dir)
 			startGoingAwayDaemon(t, dir, m)
 			c := newClient(dir)
@@ -301,7 +301,7 @@ func TestWaitGoneTreatsTransportClosesAsNoAnswer(t *testing.T) {
 		{"EPIPE", false, func(err error) bool { return errors.Is(err, syscall.EPIPE) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := filepath.Join(shortDir(t), "iwdp")
+			dir := filepath.Join(shortDir(t), "agent-ios")
 			if err := EnsureDir(dir); err != nil {
 				t.Fatal(err)
 			}
@@ -408,7 +408,7 @@ func TestConnectReturnsTheErrorOfAnAnsweredHello(t *testing.T) {
 	} {
 		for _, noStart := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/NoStart=%v", tc.name, noStart), func(t *testing.T) {
-				o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+				o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 				o.NoStart = noStart
 				if err := EnsureDir(o.Dir); err != nil {
 					t.Fatal(err)
@@ -434,7 +434,7 @@ func TestConnectReturnsTheErrorOfAnAnsweredHello(t *testing.T) {
 					c.Close()
 				}
 				release()
-				want := "connecting to the iwdp daemon at " + SocketPath(o.Dir) + ": " + tc.want
+				want := "connecting to the agent-ios daemon at " + SocketPath(o.Dir) + ": " + tc.want
 				if err == nil || !strings.HasPrefix(err.Error(), want) {
 					t.Fatalf("Connect (NoStart %v) to a daemon that answers the hello (%s): %v; want an error that starts with %q", noStart, tc.name, err, want)
 				}
@@ -605,7 +605,7 @@ func (f *afterHelloDaemon) redirectCount() int {
 func TestRetireWaitsForADaemonThatClosesTheShutdownRequest(t *testing.T) {
 	old := Hello{Version: "0.4.0", Protocol: previousProtocol, PID: 1}
 	t.Run("closed", func(t *testing.T) {
-		o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+		o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 		f := startAfterHelloDaemon(t, o.Dir, old, "POST /v1/shutdown", closeNext)
 		spawns := probeSpawns(t)
 		c, err := Connect(ctxFor(t, 8*time.Second), o)
@@ -629,7 +629,7 @@ func TestRetireWaitsForADaemonThatClosesTheShutdownRequest(t *testing.T) {
 		}
 	})
 	t.Run("503", func(t *testing.T) {
-		o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+		o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 		f := startAfterHelloDaemon(t, o.Dir, old, "POST /v1/shutdown", answer503)
 		spawns := probeSpawns(t)
 		c, err := Connect(ctxFor(t, 8*time.Second), o)
@@ -657,8 +657,8 @@ func TestDaemonStopWaitsForADaemonThatClosesTheStopRequest(t *testing.T) {
 		o := spawnOptions(t)
 		f := startAfterHelloDaemon(t, o.Dir, h, "POST /v1/shutdown", closeNext)
 		res, err := runLifecycle(t, o, "daemon", "stop")
-		if err != nil || res.Text != "Stopped the iwdp daemon (pid 4242)." {
-			t.Fatalf("daemon stop of a daemon that closes the stop request: %q, %v; want %q", res.Text, err, "Stopped the iwdp daemon (pid 4242).")
+		if err != nil || res.Text != "Stopped the agent-ios daemon (pid 4242)." {
+			t.Fatalf("daemon stop of a daemon that closes the stop request: %q, %v; want %q", res.Text, err, "Stopped the agent-ios daemon (pid 4242).")
 		}
 		select {
 		case <-f.exited:
@@ -675,7 +675,7 @@ func TestDaemonStopWaitsForADaemonThatClosesTheStopRequest(t *testing.T) {
 		// stopWait is the bound under test; runLifecycle's context (8 s)
 		// outlasts it.
 		_, err := runLifecycle(t, o, "daemon", "stop")
-		want := "the iwdp daemon at " + SocketPath(o.Dir) + " is still answering after " + stopWait.String()
+		want := "the agent-ios daemon at " + SocketPath(o.Dir) + " is still answering after " + stopWait.String()
 		if err == nil || err.Error() != want {
 			t.Fatalf("daemon stop of a daemon that closes the stop request and keeps answering: %v; want %q", err, want)
 		}
@@ -692,7 +692,7 @@ func TestDaemonStopWaitsForADaemonThatClosesTheStopRequest(t *testing.T) {
 }
 
 // 'daemon status': a daemon that closes the status request without an
-// answer is going away; the command reports "The iwdp daemon is not
+// answer is going away; the command reports "The agent-ios daemon is not
 // running.", as for a hello that finds no daemon. Before, it failed with
 // the request's EOF. A daemon that answers the request with an error
 // keeps that handling.
@@ -704,8 +704,8 @@ func TestDaemonStatusReportsADaemonThatClosesTheStatusRequestAsNotRunning(t *tes
 		res, err := runLifecycle(t, o, "daemon", "status")
 		data, _ := res.Data.(map[string]bool)
 		running, found := data["running"]
-		if err != nil || res.Text != "The iwdp daemon is not running." || len(data) != 1 || !found || running || f.nextCount() != 1 {
-			t.Fatalf("daemon status of a daemon that closes the status request: %q, %v, data %v (status requests %d); want %q and running false", res.Text, err, res.Data, f.nextCount(), "The iwdp daemon is not running.")
+		if err != nil || res.Text != "The agent-ios daemon is not running." || len(data) != 1 || !found || running || f.nextCount() != 1 {
+			t.Fatalf("daemon status of a daemon that closes the status request: %q, %v, data %v (status requests %d); want %q and running false", res.Text, err, res.Data, f.nextCount(), "The agent-ios daemon is not running.")
 		}
 	})
 	t.Run("200 with an empty body", func(t *testing.T) {
@@ -736,7 +736,7 @@ func TestDaemonStatusReportsADaemonThatClosesTheStatusRequestAsNotRunning(t *tes
 // (ErrNotRunning), although the daemon answered. The daemon client never
 // follows a redirect: the 302 is the answer, with an unexpected status.
 func TestRedirectAnswerToTheHelloIsAnAnswer(t *testing.T) {
-	dir := filepath.Join(shortDir(t), "iwdp")
+	dir := filepath.Join(shortDir(t), "agent-ios")
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -768,7 +768,7 @@ func TestRedirectAnswerToTheHelloIsAnAnswer(t *testing.T) {
 	if c != nil {
 		c.Close()
 	}
-	want := "connecting to the iwdp daemon at " + SocketPath(dir) + ": daemon GET /v1/hello: 302 Found: "
+	want := "connecting to the agent-ios daemon at " + SocketPath(dir) + ": daemon GET /v1/hello: 302 Found: "
 	if hellos.Load() == 0 || errors.Is(err, ErrNotRunning) || err == nil || err.Error() != want || redirected.Load() != 0 {
 		t.Fatalf("Connect with NoStart to a daemon that answers the hello with a redirect: %v (hellos %d, requests to the redirect target %d); want %q and no request to the target", err, hellos.Load(), redirected.Load(), want)
 	}
@@ -829,7 +829,7 @@ func TestRedirectAnswersAreAnswers(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+			o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 			f := startAfterHelloDaemon(t, o.Dir, tc.hello, tc.next, redirectNext)
 			spawns := probeSpawns(t)
 			err := tc.run(t, o)
@@ -849,7 +849,7 @@ func TestRedirectAnswersAreAnswers(t *testing.T) {
 // without an answer.
 func redirectingDaemon(t *testing.T, path string) string {
 	t.Helper()
-	dir := filepath.Join(shortDir(t), "iwdp")
+	dir := filepath.Join(shortDir(t), "agent-ios")
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -895,7 +895,7 @@ func TestRedirectAnswersInEveryNotRunningUse(t *testing.T) {
 		// The limit is the behavior under test.
 		const limit = 50 * time.Millisecond
 		err := c.WaitGone(ctxFor(t, 5*time.Second), limit)
-		want := "the iwdp daemon at " + SocketPath(dir) + " is still answering after " + limit.String()
+		want := "the agent-ios daemon at " + SocketPath(dir) + " is still answering after " + limit.String()
 		if err == nil || err.Error() != want {
 			t.Fatalf("WaitGone with a daemon that answers the hello with a redirect: %v; want %q", err, want)
 		}
@@ -934,7 +934,7 @@ func TestRedirectAnswersInEveryNotRunningUse(t *testing.T) {
 // whatever its Location: each request kind reports the unexpected status,
 // and the daemon gets no second request.
 func TestRedirectWithAnInvalidLocationIsAnAnswer(t *testing.T) {
-	dir := filepath.Join(shortDir(t), "iwdp")
+	dir := filepath.Join(shortDir(t), "agent-ios")
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}

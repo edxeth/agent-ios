@@ -72,7 +72,7 @@ func TestEmbeddedSkillsAreTheRepositorySkills(t *testing.T) {
 }
 
 // maxStubWords bounds a discovery stub. Its model, agent-browser's stub,
-// has about 450 words with a list of eight guides; an iwdp-cli stub points
+// has about 450 words with a list of eight guides; an agent-ios stub points
 // at one guide, so 350 words hold every required point, while a copied
 // guide section (the safety rules alone have more than 900 words) does not
 // fit. Guide text in a stub would drift from the binary's guide.
@@ -136,7 +136,7 @@ func TestSkillStubsPointAtTheirGuides(t *testing.T) {
 		if stub.Description != guide.Description {
 			t.Errorf("skills/%s/%s: description %q differs from the guide's %q", name, FileName, stub.Description, guide.Description)
 		}
-		if want := "iwdp-cli skills get " + name; !strings.Contains(stub.Content, want) {
+		if want := "agent-ios skills get " + name; !strings.Contains(stub.Content, want) {
 			t.Errorf("skills/%s/%s does not name %q", name, FileName, want)
 		}
 		for i, line := range strings.Split(stub.Content, "\n") {
@@ -167,26 +167,26 @@ func readRepo(t *testing.T, path string) string {
 	return string(data)
 }
 
-// The iwdp stub states each instruction that design 7.9 (skill layout)
+// The agent-ios stub states each instruction that design 7.9 (skill layout)
 // and the WS6 brief require of it, in this wording. The owner dropped the
 // install hint from the stub (2026-11-24): this local fork is installed
 // from its checkout. The owner dropped the advice to read the guide by
 // line range (2026-11-24): agents read the guide in one go.
 func TestIwdpStubStatesTheRequiredInstructions(t *testing.T) {
-	stub := readRepo(t, "skills/iwdp/SKILL.md")
+	stub := readRepo(t, "skills/agent-ios/SKILL.md")
 	for _, c := range []struct {
 		what string
 		want []string
 	}{
 		{"it is a discovery stub, not the guide", []string{"This file is a discovery stub, not the guide."}},
-		{"load the guide before any other iwdp-cli command", []string{"Before you run any other `iwdp-cli` command, load the guide that matches the installed binary", "Run `iwdp-cli skills get iwdp`."}},
-		{"--help prints one command's flags and never connects", []string{"`iwdp-cli <command> --help` prints the flags of one command and never connects to a page."}},
-		{"what iwdp-cli is", []string{"Safari speaks the WebKit Inspector Protocol", "CDP clients such as agent-browser", "`iwdp-cli get cdp-url`"}},
+		{"load the guide before any other agent-ios command", []string{"Before you run any other `agent-ios` command, load the guide that matches the installed binary", "Run `agent-ios skills get agent-ios`."}},
+		{"--help prints one command's flags and never connects", []string{"`agent-ios <command> --help` prints the flags of one command and never connects to a page."}},
+		{"what agent-ios is", []string{"Safari speaks the WebKit Inspector Protocol", "CDP clients such as agent-browser", "`agent-ios get cdp-url`"}},
 		{"why it only points at the CLI", []string{"The CLI serves the guide of its own version.", "so it only points at the CLI"}},
 	} {
 		for _, w := range c.want {
 			if !strings.Contains(stub, w) {
-				t.Errorf("skills/iwdp/SKILL.md does not state %s: no %q", c.what, w)
+				t.Errorf("skills/agent-ios/SKILL.md does not state %s: no %q", c.what, w)
 			}
 		}
 	}
@@ -194,7 +194,7 @@ func TestIwdpStubStatesTheRequiredInstructions(t *testing.T) {
 
 func TestGetUnknownSkillNamesTheKnownOnes(t *testing.T) {
 	_, err := Get("no-such-skill")
-	if err == nil || !strings.Contains(err.Error(), `unknown skill "no-such-skill"`) || !strings.Contains(err.Error(), "iwdp") {
+	if err == nil || !strings.Contains(err.Error(), `unknown skill "no-such-skill"`) || !strings.Contains(err.Error(), "agent-ios") {
 		t.Fatalf("Get(no-such-skill) = %v, want an error that names the known skills", err)
 	}
 }

@@ -71,22 +71,22 @@ jobs:
           # Check setup's exit status before its output is evaluated, and
           # require both URLs, never inherited ones: otherwise the
           # simulator tests skip and pass, or run against another page.
-          unset IWDP_SIM_WS_URL IWDP_SIM_PAGE_URL IWDP_SIM_RUN_TOKEN
+          unset AGENT_IOS_SIM_WS_URL AGENT_IOS_SIM_PAGE_URL AGENT_IOS_SIM_RUN_TOKEN
           out=$(./scripts/sim-setup.sh) || { rc=$?; echo "::error::sim-setup.sh failed (exit $rc)"; exit "$rc"; }
           eval "$out"
-          if [ -z "${IWDP_SIM_WS_URL:-}" ] || [ -z "${IWDP_SIM_PAGE_URL:-}" ]; then
-            echo "::error::sim-setup.sh set no IWDP_SIM_WS_URL or IWDP_SIM_PAGE_URL"
+          if [ -z "${AGENT_IOS_SIM_WS_URL:-}" ] || [ -z "${AGENT_IOS_SIM_PAGE_URL:-}" ]; then
+            echo "::error::sim-setup.sh set no AGENT_IOS_SIM_WS_URL or AGENT_IOS_SIM_PAGE_URL"
             # No step output names this setup's lease: release it here.
-            ./scripts/sim-setup.sh --teardown-run "${IWDP_SIM_RUN_TOKEN:-}"
+            ./scripts/sim-setup.sh --teardown-run "${AGENT_IOS_SIM_RUN_TOKEN:-}"
             exit 1
           fi
           # The Simulator tests name their test data after the run token.
-          echo "IWDP_SIM_RUN_TOKEN=${IWDP_SIM_RUN_TOKEN:-}" >> "$GITHUB_ENV"
-          echo "IWDP_SIM_WS_URL=$IWDP_SIM_WS_URL" >> "$GITHUB_ENV"
-          echo "IWDP_SIM_PAGE_URL=$IWDP_SIM_PAGE_URL" >> "$GITHUB_ENV"
+          echo "AGENT_IOS_SIM_RUN_TOKEN=${AGENT_IOS_SIM_RUN_TOKEN:-}" >> "$GITHUB_ENV"
+          echo "AGENT_IOS_SIM_WS_URL=$AGENT_IOS_SIM_WS_URL" >> "$GITHUB_ENV"
+          echo "AGENT_IOS_SIM_PAGE_URL=$AGENT_IOS_SIM_PAGE_URL" >> "$GITHUB_ENV"
           # The teardown step reads the token from this output only, never
           # from the job environment, which can hold an inherited token.
-          echo "run_token=${IWDP_SIM_RUN_TOKEN:-}" >> "$GITHUB_OUTPUT"
+          echo "run_token=${AGENT_IOS_SIM_RUN_TOKEN:-}" >> "$GITHUB_OUTPUT"
 
       - name: Run e2e tests with coverage
         run: go test -tags=simulator ./e2e/ -v -count=1 -timeout=300s -coverprofile=coverage-e2e.out
@@ -110,7 +110,7 @@ jobs:
       - name: Teardown simulator
         if: always()
         # Only this job's lease: the token is the setup step's output, and
-        # this step's env overrides an IWDP_SIM_RUN_TOKEN or
+        # this step's env overrides an AGENT_IOS_SIM_RUN_TOKEN or
         # SIM_SETUP_RUN_TOKEN that the job or the runner inherited. The
         # output is empty when setup was refused, failed or never ran,
         # and with no token the script tears nothing down.

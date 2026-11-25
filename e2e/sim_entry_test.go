@@ -24,7 +24,7 @@ const (
 
 // staleSimEnv are inherited URLs of an earlier setup: an entry point
 // must never run the tests with them.
-var staleSimEnv = []string{"IWDP_SIM_WS_URL=ws://stale.invalid/devtools/page/1", "IWDP_SIM_PAGE_URL=https://stale.invalid/", "IWDP_SIM_RUN_TOKEN=ffffffffffffffffffffffffffffffff"}
+var staleSimEnv = []string{"AGENT_IOS_SIM_WS_URL=ws://stale.invalid/devtools/page/1", "AGENT_IOS_SIM_PAGE_URL=https://stale.invalid/", "AGENT_IOS_SIM_RUN_TOKEN=ffffffffffffffffffffffffffffffff"}
 
 // fakeSetups are the setup outcomes that every entry point must handle:
 // the body of a fake scripts/sim-setup.sh for a setup run (its teardown
@@ -35,7 +35,7 @@ var fakeSetups = []struct {
 }{
 	{"setup fails", "echo 'setup error' >&2; exit 3", false},
 	{"setup prints nothing", "exit 0", false},
-	{"setup succeeds", "echo \"export IWDP_SIM_WS_URL='" + freshWSURL + "'\"; echo \"export IWDP_SIM_PAGE_URL='" + freshPageURL + "'\"; echo \"export IWDP_SIM_RUN_TOKEN='" + freshToken + "'\"", true},
+	{"setup succeeds", "echo \"export AGENT_IOS_SIM_WS_URL='" + freshWSURL + "'\"; echo \"export AGENT_IOS_SIM_PAGE_URL='" + freshPageURL + "'\"; echo \"export AGENT_IOS_SIM_RUN_TOKEN='" + freshToken + "'\"", true},
 }
 
 // simEntryDir makes a working directory with a fake scripts/sim-setup.sh
@@ -48,7 +48,7 @@ func simEntryDir(t *testing.T, setupBody string) (dir string, env []string, logP
 	logPath = filepath.Join(dir, "calls.log")
 	files := map[string]string{
 		"scripts/sim-setup.sh": "#!/bin/sh\ncase \"$1\" in --teardown*) echo \"teardown $*\" >> \"$CALLS_LOG\"; exit 0 ;; esac\necho setup >> \"$CALLS_LOG\"\n" + setupBody + "\n",
-		"bin/go":               "#!/bin/sh\necho \"go $* WS=$IWDP_SIM_WS_URL PAGE=$IWDP_SIM_PAGE_URL\" >> \"$CALLS_LOG\"\n",
+		"bin/go":               "#!/bin/sh\necho \"go $* WS=$AGENT_IOS_SIM_WS_URL PAGE=$AGENT_IOS_SIM_PAGE_URL\" >> \"$CALLS_LOG\"\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(dir, name)
@@ -222,7 +222,7 @@ func readGitHubFile(t *testing.T, path string) map[string]string {
 // which the teardown step uses (review F6, round 3; round 5).
 func TestCISimSetupStepChecksSetup(t *testing.T) {
 	step := ciWorkflowStep(t, ciSimSetupStepName)
-	tokenOnly := "echo \"export IWDP_SIM_RUN_TOKEN='" + freshToken + "'\""
+	tokenOnly := "echo \"export AGENT_IOS_SIM_RUN_TOKEN='" + freshToken + "'\""
 	cases := append(fakeSetups[:len(fakeSetups):len(fakeSetups)], struct {
 		name, body string
 		wantOK     bool
@@ -240,7 +240,7 @@ func TestCISimSetupStepChecksSetup(t *testing.T) {
 			}
 			wantEnv, wantOutputs := "", ""
 			if tc.wantOK {
-				wantEnv = "IWDP_SIM_RUN_TOKEN=" + freshToken + "\nIWDP_SIM_WS_URL=" + freshWSURL + "\nIWDP_SIM_PAGE_URL=" + freshPageURL + "\n"
+				wantEnv = "AGENT_IOS_SIM_RUN_TOKEN=" + freshToken + "\nAGENT_IOS_SIM_WS_URL=" + freshWSURL + "\nAGENT_IOS_SIM_PAGE_URL=" + freshPageURL + "\n"
 				wantOutputs = "run_token=" + freshToken + "\n"
 			}
 			if exported != wantEnv {
@@ -305,7 +305,7 @@ var stepOutputRE = regexp.MustCompile(`^\$\{\{ steps\.([A-Za-z0-9_-]+)\.outputs\
 // TestCITeardownStepActsOnlyOnItsOwnLease runs the real CI teardown step
 // with the real setup script and a fake simctl, in the environment that
 // GitHub gives it: the runner's environment, which holds an inherited
-// IWDP_SIM_RUN_TOKEN of an earlier run that is still active, then the
+// AGENT_IOS_SIM_RUN_TOKEN of an earlier run that is still active, then the
 // GITHUB_ENV entries of the earlier steps, then the step's own env:
 // lines with steps.<setup id>.outputs.* taken from the setup step's
 // GITHUB_OUTPUT. When this job's setup was refused, never ran or names
@@ -328,12 +328,12 @@ func TestCITeardownStepActsOnlyOnItsOwnLease(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("the earlier run's setup exited %d: %s", code, stderr)
 		}
-		earlier = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(stdout), "export IWDP_SIM_RUN_TOKEN='"), "'")
+		earlier = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(stdout), "export AGENT_IOS_SIM_RUN_TOKEN='"), "'")
 		if !runTokenRE.MatchString(earlier) {
 			t.Fatalf("setup printed %q; want the export of its run token", stdout)
 		}
 		lease = filepath.Join(sim.stateDir, "iwdp-sim-"+strconv.Itoa(os.Getuid()), "lease")
-		return append(env, "IWDP_SIM_RUN_TOKEN="+earlier), sim, earlier, lease
+		return append(env, "AGENT_IOS_SIM_RUN_TOKEN="+earlier), sim, earlier, lease
 	}
 	// githubFiles returns a GITHUB_ENV and a GITHUB_OUTPUT file with the
 	// given contents.
@@ -405,14 +405,14 @@ func TestCITeardownStepActsOnlyOnItsOwnLease(t *testing.T) {
 	t.Run("another run's token", func(t *testing.T) {
 		const other = "ffffffffffffffffffffffffffffffff"
 		env, sim, earlier, lease := earlierRun(t)
-		githubEnv, githubOutput := githubFiles(t, "IWDP_SIM_RUN_TOKEN="+other+"\n", "run_token="+other+"\n")
+		githubEnv, githubOutput := githubFiles(t, "AGENT_IOS_SIM_RUN_TOKEN="+other+"\n", "run_token="+other+"\n")
 		runTeardown(t, env, githubEnv, githubOutput)
 		wantEarlierRunKept(t, sim, earlier, lease)
 	})
 	t.Run("own token", func(t *testing.T) {
 		env, sim, earlier, lease := earlierRun(t)
 		// As a good setup of this job writes them (TestCISimSetupStepChecksSetup).
-		githubEnv, githubOutput := githubFiles(t, "IWDP_SIM_RUN_TOKEN="+earlier+"\n", "run_token="+earlier+"\n")
+		githubEnv, githubOutput := githubFiles(t, "AGENT_IOS_SIM_RUN_TOKEN="+earlier+"\n", "run_token="+earlier+"\n")
 		runTeardown(t, env, githubEnv, githubOutput)
 		if got := sim.simState(t); got != "Shutdown" {
 			t.Fatalf("the CI teardown with the run's own token left its Simulator %s; want Shutdown", got)

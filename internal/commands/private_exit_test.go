@@ -35,14 +35,14 @@ func TestPrivateHelpEndsWithOneStatusLine(t *testing.T) {
 	group, _ := GroupHelp([]string{"network"})
 	for _, tc := range []struct {
 		private, plain []string // the line with and without the mode
-		env            string   // IWDP_PRIVATE of the private line
+		env            string   // AGENT_IOS_PRIVATE of the private line
 		stdout, status string
 	}{
 		{[]string{"--private", "click", "--help"}, []string{"click", "--help"}, "", Help(click), "click exit 0\n"},
 		{[]string{"click", "-h"}, []string{"click", "-h"}, "1", Help(click), "click exit 0\n"},
 		{[]string{"--private", "network", "--help"}, []string{"network", "--help"}, "", group, "network exit 0\n"},
 		{[]string{"network", "--help"}, []string{"network", "--help"}, "1", group, "network exit 0\n"},
-		{[]string{"--help"}, []string{"--help"}, "1", Usage(), "iwdp-cli exit 0\n"},
+		{[]string{"--help"}, []string{"--help"}, "1", Usage(), "agent-ios exit 0\n"},
 	} {
 		t.Setenv(privateEnv, "")
 		code, out, errOut := runHelp(t, tc.plain...)
@@ -61,7 +61,7 @@ func TestPrivateHelpEndsWithOneStatusLine(t *testing.T) {
 // when the line has other arguments.
 func TestPrivateGroupHelpStatusNamesTheGroup(t *testing.T) {
 	code, out, errOut := runHelp(t, "--private", "--session", "s-"+privateMarker, "network", "har", "--help")
-	if code != ExitOK || !strings.HasPrefix(out, "Usage: iwdp-cli network har <command>") || errOut != "network har exit 0\n" {
+	if code != ExitOK || !strings.HasPrefix(out, "Usage: agent-ios network har <command>") || errOut != "network har exit 0\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q; want the group's help and \"network har exit 0\"", code, out, errOut)
 	}
 }
@@ -87,7 +87,7 @@ func TestOutcomeLineProperty(t *testing.T) {
 		t.Error(err)
 	}
 	// A line without a command names the program.
-	if got := (Outcome{Private: true}).Line(); got != "iwdp-cli exit 0" {
+	if got := (Outcome{Private: true}).Line(); got != "agent-ios exit 0" {
 		t.Errorf("private success without a command: %q", got)
 	}
 }

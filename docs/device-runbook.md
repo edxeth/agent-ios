@@ -5,7 +5,7 @@ How to work on a physical iPhone that other people or agents may also use. Read 
 ## Before you start
 
 - On the device: unlocked, trusted with this host, Settings > Safari > Advanced > Web Inspector on, and the page you work on open as the **visible** Safari tab. Safari answers only for the visible tab, and WIP cannot bring a tab to the front.
-- Check that iwdp runs: `iwdp-cli status`. When no iwdp runs, the daemon starts one (pinned to the first device on port 9224). When an iwdp runs, the daemon uses it and never starts a second one.
+- Check that iwdp runs: `agent-ios status`. When no iwdp runs, the daemon starts one (pinned to the first device on port 9224). When an iwdp runs, the daemon uses it and never starts a second one.
 - iwdp 1.9.2 or newer is needed for messages of 30 KB or more (the injected runtime is about 51 KB on the wire).
 
 ## Reserve and release
@@ -14,27 +14,27 @@ How to work on a physical iPhone that other people or agents may also use. Read 
 
    ```bash
    OWNER=agent-a                                           # your owner name
-   iwdp-cli device reserve --owner "$OWNER" --ttl 2h      # all devices; add --device UDID for one
-   export IWDP_DEVICE_RESERVATION="$OWNER"
-   export IWDP_SESSION="$OWNER-1"
+   agent-ios device reserve --owner "$OWNER" --ttl 2h      # all devices; add --device UDID for one
+   export AGENT_IOS_DEVICE_RESERVATION="$OWNER"
+   export AGENT_IOS_SESSION="$OWNER-1"
    ```
 
-   The command fails when another owner holds a live reservation. Do not break it; wait or ask the owner. An orchestrator reserves once and passes `IWDP_DEVICE_RESERVATION` to its workers; each worker uses its own `IWDP_SESSION`.
+   The command fails when another owner holds a live reservation. Do not break it; wait or ask the owner. An orchestrator reserves once and passes `AGENT_IOS_DEVICE_RESERVATION` to its workers; each worker uses its own `AGENT_IOS_SESSION`.
 2. Work. Without a reservation, every page command on the device fails with exit 6.
-3. End: `iwdp-cli close` for each session, then `iwdp-cli device release --owner "$OWNER"`. `device list` shows the reservations that remain.
+3. End: `agent-ios close` for each session, then `agent-ios device release --owner "$OWNER"`. `device list` shows the reservations that remain.
 
 ## Never stop another agent's iwdp
 
 One iwdp serves every client on the host. Stopping or restarting it ends every other user's and agent's device sessions.
 
-- Never run `pkill`, `killall` or `kill` on `ios_webkit_debug_proxy`, and never run any other script or command that stops or restarts it. Only three tools may stop an iwdp, and each proves the identity of that iwdp before it signals it: `iwdp-cli restart-iwdp`, only for an iwdp that iwdp-cli started and recorded; the Simulator teardown (`make sim-teardown` or `scripts/sim-setup.sh --teardown`), only for the iwdp that setup started, under the run lease; and `scripts/iwdp-owner-check.sh --terminate`, only for a stop by hand of an iwdp that you started yourself and nobody else uses, as [Stopping an iwdp by hand](#stopping-an-iwdp-by-hand) describes.
+- Never run `pkill`, `killall` or `kill` on `ios_webkit_debug_proxy`, and never run any other script or command that stops or restarts it. Only three tools may stop an iwdp, and each proves the identity of that iwdp before it signals it: `agent-ios restart-iwdp`, only for an iwdp that agent-ios started and recorded; the Simulator teardown (`make sim-teardown` or `scripts/sim-setup.sh --teardown`), only for the iwdp that setup started, under the run lease; and `scripts/iwdp-owner-check.sh --terminate`, only for a stop by hand of an iwdp that you started yourself and nobody else uses, as [Stopping an iwdp by hand](#stopping-an-iwdp-by-hand) describes.
 - Do not start a second iwdp on the same device (`direct` transport included): two inspectors on one device take pages from each other.
 
-### iwdp-cli restart-iwdp
+### agent-ios restart-iwdp
 
-`iwdp-cli restart-iwdp` restarts iwdp **only when iwdp-cli (or its daemon) started and recorded it**:
+`agent-ios restart-iwdp` restarts iwdp **only when agent-ios (or its daemon) started and recorded it**:
 
-- When iwdp-cli or its daemon starts iwdp, it records the process (pid, process group, listing address, start time and a random token in the process environment) in a private file under `$XDG_RUNTIME_DIR` (else the temporary directory), marked as written by iwdp-cli. A record without that mark (written by the removed iwdp-mcp server, or by an older iwdp-cli) counts as another program's iwdp, so the restart refuses it; whoever started that iwdp, and only when nobody else uses it, stops it once, as [Stopping an iwdp by hand](#stopping-an-iwdp-by-hand) describes ([migration.md](migration.md)).
+- When agent-ios or its daemon starts iwdp, it records the process (pid, process group, listing address, start time and a random token in the process environment) in a private file under `$XDG_RUNTIME_DIR` (else the temporary directory), marked as written by agent-ios. A record without that mark (written by the removed iwdp-mcp server, or by an older agent-ios) counts as another program's iwdp, so the restart refuses it; whoever started that iwdp, and only when nobody else uses it, stops it once, as [Stopping an iwdp by hand](#stopping-an-iwdp-by-hand) describes ([migration.md](migration.md)).
 - A restart stops the recorded process group only when the record is valid, the running process still has the recorded start time and token, and that process group owns the listening socket of port 9221. It sends SIGTERM, then SIGKILL after 2 s, checks the identity again before SIGKILL, and starts a new iwdp.
 - In every other case it **refuses** and signals nothing: the iwdp belongs to the user, another agent or another program. The refusal names the address, the owner pid when known, the manual start command and this runbook. Do not stop that iwdp yourself unless you started it and nobody else uses it, and then only as [Stopping an iwdp by hand](#stopping-an-iwdp-by-hand) describes; otherwise ask whoever started it, or the user.
 - When no iwdp runs, it starts one.
@@ -44,10 +44,10 @@ One iwdp serves every client on the host. Stopping or restarting it ends every o
 
 ### Stopping an iwdp by hand
 
-`iwdp-cli restart-iwdp` and the Simulator teardown prove the identity of an iwdp before they signal it; use them. Stop an iwdp by hand only when neither applies (for example an iwdp that a version before the rename to iwdp-cli started, [migration.md](migration.md#rename-to-iwdp-cli)), and only in this order. Identity is what makes a stop safe; who listens on the port is not checked here (that decides only whether `restart-iwdp` may restart an iwdp).
+`agent-ios restart-iwdp` and the Simulator teardown prove the identity of an iwdp before they signal it; use them. Stop an iwdp by hand only when neither applies (for example an iwdp that a version before the rename to agent-ios started, [migration.md](migration.md#rename-to-agent-ios)), and only in this order. Identity is what makes a stop safe; who listens on the port is not checked here (that decides only whether `restart-iwdp` may restart an iwdp).
 
 1. **You started this iwdp yourself, and nobody else uses it:** no other agent, session or tool works through it. If another agent or the user started it, or you do not know, send no signal: ask whoever started it, or the user.
-2. **Check and stop in one step:** run `scripts/iwdp-owner-check.sh --terminate <record>` from a checkout of this repository. The record of an iwdp that iwdp-cli started is `iwdp-cli-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/iwdp-cli/` (else `$TMPDIR/iwdp-cli-<uid>/`); its token variable is `IWDP_CLI_START_TOKEN`. The record of one that a version before the rename started is `iwdp-mcp-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/iwdp-mcp/` (else `$TMPDIR/iwdp-mcp-<uid>/`); its token variable is `IWDP_MCP_START_TOKEN`. Keep the file name: it decides the kind, the format and the variable, and a record with another name, or whose content does not match its name, cannot be checked. The check reads the record once and the token from it: never read, copy or type the token, and never send a signal yourself. It reads the environment of the process with exact boundaries between arguments and environment (Linux `/proc/<pid>/environ`, macOS the `KERN_PROCARGS2` buffer); when it cannot, the result is `cannot-check`. It checks the record before the process: a regular file of yours that group and others cannot write, with a valid pid, a start time and a start token. Any other record is `cannot-check`, also when no process has its pid, so it is never `gone` and never removed. It prints one result with a fixed reason, never a token or the command line of a process:
+2. **Check and stop in one step:** run `scripts/iwdp-owner-check.sh --terminate <record>` from a checkout of this repository. The record of an iwdp that agent-ios started is `agent-ios-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/agent-ios/` (else `$TMPDIR/agent-ios-<uid>/`); its token variable is `AGENT_IOS_START_TOKEN`. The record of one that a version before the rename started is `iwdp-mcp-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/iwdp-mcp/` (else `$TMPDIR/iwdp-mcp-<uid>/`); its token variable is `IWDP_MCP_START_TOKEN`. This script cannot check the records of iwdp-cli, the version between the two: `iwdp-cli-started-<uid>-<address>.json` in `$XDG_RUNTIME_DIR/iwdp-cli/` (else `$TMPDIR/iwdp-cli-<uid>/`; `cannot-check`) and the `iwdp.pid` that the iwdp-cli version of `scripts/sim-setup.sh` wrote (token in `IWDP_SIM_START_TOKEN`; `mismatch`). Check those only with the `scripts/iwdp-owner-check.sh` of a checkout of iwdp-cli, as [Switching one machine](migration.md#switching-one-machine) in migration.md describes. Keep the file name: it decides the kind, the format and the variable, and a record with another name, or whose content does not match its name, cannot be checked. The check reads the record once and the token from it: never read, copy or type the token, and never send a signal yourself. It reads the environment of the process with exact boundaries between arguments and environment (Linux `/proc/<pid>/environ`, macOS the `KERN_PROCARGS2` buffer); when it cannot, the result is `cannot-check`. It checks the record before the process: a regular file of yours that group and others cannot write, with a valid pid, a start time and a start token. Any other record is `cannot-check`, also when no process has its pid, so it is never `gone` and never removed. It prints one result with a fixed reason, never a token or the command line of a process:
    - `verified` (exit 0): the process with the recorded pid has the recorded start time, carries the recorded start token in its environment and runs ios_webkit_debug_proxy, and the check sent SIGTERM to that process (Linux: through a pidfd that it held during the checks).
    - `mismatch` (exit 1) or `cannot-check` (exit 2): nothing was signaled. Leave the process running, and ask whoever started it, or the user.
    - `gone` (exit 3): the record is valid, and no process has the recorded pid; there is nothing to stop. Remove the record as step 3 says.
@@ -59,7 +59,7 @@ A command fails with "connection to page was closed by someone else or by the de
 
 1. Stop. Do not retry in a loop: the daemon never reconnects a lost page by itself.
 2. Find out who uses the device (the reservation list, the people or orchestrator who share it).
-3. Only with the device owner's approval: `iwdp-cli lease takeover [page]` or the same command again with `--takeover`. The takeover needs your reservation, reattaches the page, re-applies your session's page state and gives a new lease epoch. Your old refs and dialog answers are gone: take a new snapshot and arm answers again.
+3. Only with the device owner's approval: `agent-ios lease takeover [page]` or the same command again with `--takeover`. The takeover needs your reservation, reattaches the page, re-applies your session's page state and gives a new lease epoch. Your old refs and dialog answers are gone: take a new snapshot and arm answers again.
 
 Other errors that look similar:
 
@@ -79,7 +79,7 @@ When Safari moves a page to a new process (a cross-site navigation), the daemon 
 
 These checks need the device owner's grant and a time when nobody else inspects the device. They are recorded here so that the next run follows one list. Record outputs and timings in the run report.
 
-1. Daemon: `iwdp-cli device reserve --owner "$OWNER"`, `IWDP_DEVICE_RESERVATION="$OWNER" iwdp-cli eval 1+1`; the busy hint with iwdp's frontend on; the reconnect gap after a close; that a second inspector moves the lease to lost; the log line of pause-on-start (on or off).
+1. Daemon: `agent-ios device reserve --owner "$OWNER"`, `AGENT_IOS_DEVICE_RESERVATION="$OWNER" agent-ios eval 1+1`; the busy hint with iwdp's frontend on; the reconnect gap after a close; that a second inspector moves the lease to lost; the log line of pause-on-start (on or off).
 2. Navigation: `open` across two sites, `wait --url` across the swap, `dialog accept` before an inline `confirm` of a new document, `reload`, `back` and `forward` across sites, `tab list` and a hidden tab, `tab new` (popup blocked or not), `screenshot --annotate` and `--if-changed`, `frame` on a cross-origin iframe, `hover --css` (expect exit 2 through iwdp), `tap` and `swipe` touch events, `click --new-tab`.
 3. Actions: `click` on a covered element (the error names the cover, exit 124 after about 4.75 s); a mousedown handler with `setTimeout 0` state; `fill --stdin` with a password from a pipe (`ps` shows no value).
 4. DevTools: a route and a netlog (`Network.requestIntercepted` arrives; a fulfilled fetch), credentials scoped to one origin (then enable them for the device), storage, cookies, `state save` and `state load`, `vitals`, `trace` and `profiler` files, `diff screenshot` with 0 differing pixels, `set media dark`, `emulate network slow-3g` (accepted on iOS 16.4 to 17.x and on 27.3 or later; on iOS 16.0 to 16.3 and 18.0 to 27.2 it fails with "Network.setEmulatedConditions is not in the iOS <version> command list").

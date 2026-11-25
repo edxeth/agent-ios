@@ -16,7 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
 )
 
 // statusRecorder keeps the status of a response for Options.Observe, and
@@ -107,7 +107,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, has := r.Header["Origin"]; has && !allowed {
 		s.o.Logf("cdp: refused %s %s: Origin header %s is not allowed (cdp start --allow-origin)", logsafe.ID(logMethod(r.Method)), logsafe.ID(logPath(r.URL.Path)), logsafe.ID(clientValue(r.Header.Get("Origin"))))
-		http.Error(rec, "Rejected an incoming request with an Origin header; allow the origin with 'iwdp-cli cdp start --allow-origin'", http.StatusForbidden)
+		http.Error(rec, "Rejected an incoming request with an Origin header; allow the origin with 'agent-ios cdp start --allow-origin'", http.StatusForbidden)
 		return
 	}
 	rest, ok := strings.CutPrefix(r.URL.Path, "/t/")
@@ -196,7 +196,7 @@ func (s *Server) version(w http.ResponseWriter, r *http.Request, rec *record) {
 	ws := s.wsBrowserLocked(rec)
 	s.mu.Unlock()
 	writeJSON(w, map[string]any{
-		"Browser":              rec.product() + " (iwdp-cli " + s.o.Version + ")",
+		"Browser":              rec.product() + " (agent-ios " + s.o.Version + ")",
 		"Protocol-Version":     "1.3",
 		"User-Agent":           "",
 		"V8-Version":           "",

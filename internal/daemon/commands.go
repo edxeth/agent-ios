@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
 )
 
 // Host is what a binary tells the daemon commands: how to reach and start
@@ -26,7 +26,7 @@ type Host interface {
 func hostOf(env commands.Env) (Host, error) {
 	h, ok := env.(Host)
 	if !ok {
-		return nil, errors.New("the daemon commands run in iwdp-cli")
+		return nil, errors.New("the daemon commands run in agent-ios")
 	}
 	return h, nil
 }
@@ -41,7 +41,7 @@ func init() {
 	// the transport for pages requested with --transport auto.
 	transportFlags := []commands.Flag{
 		{Name: "addr", Type: commands.FlagString, Help: "listing or inspector address of the --transport (webkitgtk: the WEBKIT_INSPECTOR_HTTP_SERVER address)"},
-		{Name: "idle", Type: commands.FlagDuration, Help: "exit after this long without requests and leases (default IWDP_DAEMON_IDLE, else 15m)"},
+		{Name: "idle", Type: commands.FlagDuration, Help: "exit after this long without requests and leases (default AGENT_IOS_DAEMON_IDLE, else 15m)"},
 		{Name: "cdp-port", Type: commands.FlagInt, Help: "start the CDP endpoint on 127.0.0.1:<port> with the daemon, and use the port for later starts (default: the endpoint starts only on 'cdp start' or 'get cdp-url', on port 9230)"},
 	}
 	commands.Register(&commands.Command{
@@ -95,7 +95,7 @@ func init() {
 		Run: func(ctx context.Context, env commands.Env, _ commands.Input) (commands.Result, error) {
 			c, err := connectRunning(ctx, env)
 			if errors.Is(err, ErrNotRunning) {
-				return commands.Result{Text: "The iwdp daemon is not running."}, nil
+				return commands.Result{Text: "The agent-ios daemon is not running."}, nil
 			}
 			if err != nil {
 				return commands.Result{}, err
@@ -110,7 +110,7 @@ func init() {
 			if err := c.WaitGone(ctx, stopWait); err != nil {
 				return commands.Result{}, err
 			}
-			return commands.Result{Text: fmt.Sprintf("Stopped the iwdp daemon (pid %d).", c.Hello.PID)}, nil
+			return commands.Result{Text: fmt.Sprintf("Stopped the agent-ios daemon (pid %d).", c.Hello.PID)}, nil
 		},
 	})
 	commands.Register(&commands.Command{
@@ -138,7 +138,7 @@ func init() {
 	commands.Register(&commands.Command{
 		Name: "daemon logs", Local: true,
 		Flags:   []commands.Flag{{Name: "lines", Short: "n", Type: commands.FlagInt, Default: logTail, Help: "number of lines from the end"}},
-		Summary: "Print the end of the daemon log ($XDG_STATE_HOME/iwdp/daemon.log).",
+		Summary: "Print the end of the daemon log ($XDG_STATE_HOME/agent-ios/daemon.log).",
 		Run: func(_ context.Context, _ commands.Env, in commands.Input) (commands.Result, error) {
 			p, err := LogPath()
 			if err != nil {
@@ -181,7 +181,7 @@ func runOptions(ro RunOptions, in commands.Input) RunOptions {
 
 // notRunningStatus is the result of 'daemon status' when no daemon answers.
 func notRunningStatus() commands.Result {
-	return commands.Result{Text: "The iwdp daemon is not running.", Data: map[string]bool{"running": false}}
+	return commands.Result{Text: "The agent-ios daemon is not running.", Data: map[string]bool{"running": false}}
 }
 
 func connectRunning(ctx context.Context, env commands.Env) (*Client, error) {
@@ -196,14 +196,14 @@ func connectRunning(ctx context.Context, env commands.Env) (*Client, error) {
 
 func helloText(c *Client) string {
 	h := c.Hello
-	return fmt.Sprintf("iwdp daemon %s (protocol %d) pid %d, started %s, socket %s", h.Version, h.Protocol, h.PID, h.StartedAt.Format(time.RFC3339), SocketPath(c.Dir()))
+	return fmt.Sprintf("agent-ios daemon %s (protocol %d) pid %d, started %s, socket %s", h.Version, h.Protocol, h.PID, h.StartedAt.Format(time.RFC3339), SocketPath(c.Dir()))
 }
 
 func statusText(c *Client, st Status) string {
 	var b strings.Builder
 	b.WriteString(helloText(c) + "\n")
 	if p := c.Hello.Protocol; p != Protocol {
-		fmt.Fprintf(&b, "This daemon is older: it speaks protocol %d, this iwdp-cli protocol %d. Other commands replace it when it has no leases; 'iwdp-cli daemon stop' stops it.\n", p, Protocol)
+		fmt.Fprintf(&b, "This daemon is older: it speaks protocol %d, this agent-ios protocol %d. Other commands replace it when it has no leases; 'agent-ios daemon stop' stops it.\n", p, Protocol)
 	}
 	fmt.Fprintf(&b, "Pages: %d\n", len(st.Pages))
 	for _, p := range st.Pages {

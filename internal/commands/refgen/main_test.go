@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
 )
 
 // referencePath is the checked-in reference, relative to this package.
@@ -90,14 +90,14 @@ func TestRenderCommandSection(t *testing.T) {
 	for _, want := range []string{
 		"| [`net work`](#net-work) | Route \\<url\\> with \\* and \\| in it. |\n",
 		"| [`zz local`](#zz-local) | Local thing. |\n",
-		"\n### `net work`\n\n```\niwdp-cli net work <target> [<rest>...] [flags]\n```\n\nRoute \\<url\\> with \\* and | in it.\n\n",
+		"\n### `net work`\n\n```\nagent-ios net work <target> [<rest>...] [flags]\n```\n\nRoute \\<url\\> with \\* and | in it.\n\n",
 		"in it.\n\n- Aliases: `nw`\n- Page: leases the session's page\n",
 		"| `<target>` | yes | a ref \\| selector |\n| `<rest>...` | no | more |\n",
 		"| `--mode` | `wip`, `js` | how (default `wip`) |\n",
 		"| `-d`, `--delay` | duration (40s, 1m30s) or seconds (40) | wait |\n",
 		"| `--pause` | duration with a unit (50ms, 1s) | pause |\n",
 		"| `--quiet` | none | less output |\n",
-		"\n### `zz local`\n\n```\niwdp-cli zz local\n```\n\nLocal thing.\n\n- Page: none; runs in the client process, not in the daemon\n",
+		"\n### `zz local`\n\n```\nagent-ios zz local\n```\n\nLocal thing.\n\n- Page: none; runs in the client process, not in the daemon\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render lacks %q\n--- render ---\n%s", want, out)

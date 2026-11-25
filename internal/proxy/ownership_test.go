@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil"
 )
 
 // guardBin holds the package-wide fakes of the iwdp and device commands
@@ -689,11 +689,11 @@ func TestLockStartFallsBackToAPerUserFileInTheTemporaryDirectory(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	t.Setenv("TMPDIR", tmp)
 	// Another user's file, as this user cannot open it.
-	other := filepath.Join(tmp, fmt.Sprintf("iwdp-cli-start-%d-127.0.0.1_1.lock", os.Getuid()+1))
+	other := filepath.Join(tmp, fmt.Sprintf("agent-ios-start-%d-127.0.0.1_1.lock", os.Getuid()+1))
 	if err := os.WriteFile(other, nil, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	shared := filepath.Join(tmp, "iwdp-cli-start-127.0.0.1_1.lock")
+	shared := filepath.Join(tmp, "agent-ios-start-127.0.0.1_1.lock")
 	if err := os.WriteFile(shared, nil, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -702,7 +702,7 @@ func TestLockStartFallsBackToAPerUserFileInTheTemporaryDirectory(t *testing.T) {
 		t.Fatalf("lockStart with other users' files in TMPDIR: %v", err)
 	}
 	defer unlock()
-	if _, err := os.Stat(filepath.Join(tmp, fmt.Sprintf("iwdp-cli-start-%d-127.0.0.1_1.lock", os.Getuid()))); err != nil {
+	if _, err := os.Stat(filepath.Join(tmp, fmt.Sprintf("agent-ios-start-%d-127.0.0.1_1.lock", os.Getuid()))); err != nil {
 		t.Fatalf("the start lock is not this user's file in TMPDIR: %v", err)
 	}
 }

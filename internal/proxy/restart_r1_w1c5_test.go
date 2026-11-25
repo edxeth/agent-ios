@@ -82,9 +82,9 @@ func TestRestartRefusesAForgedRecordOfAForeignListener(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "restart refused") {
 		t.Errorf("Restart with a forged record = %v, want a refusal", err)
 	}
-	// The refusal states the ownership rule: only an iwdp that iwdp-cli
+	// The refusal states the ownership rule: only an iwdp that agent-ios
 	// started and recorded can be stopped (review WS1 S2 F1).
-	const rule = "not an ios_webkit_debug_proxy that iwdp-cli started and recorded"
+	const rule = "not an ios_webkit_debug_proxy that agent-ios started and recorded"
 	if err != nil && !strings.Contains(err.Error(), rule) {
 		t.Errorf("the refusal %q does not state the ownership rule %q", err, rule)
 	}
@@ -94,8 +94,8 @@ func TestRestartRefusesAForgedRecordOfAForeignListener(t *testing.T) {
 // on the address it names while it ignores SIGTERM; fakeStubbornChildEnv
 // names the file where it writes the pid of its child.
 const (
-	fakeStubbornEnv      = "IWDP_PROXY_TEST_FAKE_STUBBORN"
-	fakeStubbornChildEnv = "IWDP_PROXY_TEST_FAKE_STUBBORN_CHILD"
+	fakeStubbornEnv      = "AGENT_IOS_PROXY_TEST_FAKE_STUBBORN"
+	fakeStubbornChildEnv = "AGENT_IOS_PROXY_TEST_FAKE_STUBBORN_CHILD"
 )
 
 // TestFakeStubbornIWDPProcess is the body of the stubborn fake iwdp: it
@@ -362,11 +362,11 @@ func TestRestartRefusesAnUnsafeRecordStore(t *testing.T) {
 func TestRecordDirIsPrivate(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	fallback := filepath.Join(tmp, fmt.Sprintf("iwdp-cli-%d", os.Getuid()))
+	fallback := filepath.Join(tmp, fmt.Sprintf("agent-ios-%d", os.Getuid()))
 	xdg := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", xdg)
-	if dir, err := recordDir(); err != nil || dir != filepath.Join(xdg, "iwdp-cli") {
-		t.Fatalf("recordDir with a private XDG_RUNTIME_DIR = %q, %v; want %s/iwdp-cli", dir, err, xdg)
+	if dir, err := recordDir(); err != nil || dir != filepath.Join(xdg, "agent-ios") {
+		t.Fatalf("recordDir with a private XDG_RUNTIME_DIR = %q, %v; want %s/agent-ios", dir, err, xdg)
 	}
 	if err := os.Chmod(xdg, 0o777); err != nil {
 		t.Fatal(err)
@@ -422,7 +422,7 @@ func TestStartFailsWithAnUnsafeRecordDirectory(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	if err := os.Mkdir(filepath.Join(tmp, fmt.Sprintf("iwdp-cli-%d", os.Getuid())), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(tmp, fmt.Sprintf("agent-ios-%d", os.Getuid())), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	err := testStarter(addr, 10*time.Second).Start(context.Background())

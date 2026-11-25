@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
 )
 
 // set media, useragent, headers, credentials, geo, offline, viewport and
@@ -166,7 +166,7 @@ func runSetHeaders(ctx context.Context, env Env, in Input) (Result, error) {
 	return Result{Text: text, Data: map[string]any{"headers": len(h), "networkReset": reset}}, nil
 }
 
-// credentialsStdin is the client step of "set credentials" (iwdp-cli
+// credentialsStdin is the client step of "set credentials" (agent-ios
 // only): it reads the password from the first line of stdin, under the
 // command deadline, into the password flag, which reaches the daemon in
 // the /v1/run request body. A --password given on the command line is
@@ -174,7 +174,7 @@ func runSetHeaders(ctx context.Context, env Env, in Input) (Result, error) {
 // never part of a result or an error.
 func credentialsStdin(ctx context.Context, in *Input, stdin io.Reader) error {
 	if _, given := in.Flags["password"]; given {
-		return usagef("set credentials: --password is refused on a command line, where other local users can read it; pipe the password to stdin, for example: printf '%%s\\n' \"$PASS\" | iwdp-cli set credentials --origin <origin> <user>")
+		return usagef("set credentials: --password is refused on a command line, where other local users can read it; pipe the password to stdin, for example: printf '%%s\\n' \"$PASS\" | agent-ios set credentials --origin <origin> <user>")
 	}
 	if flagBool(*in, "clear") {
 		if arg(*in, 0) != "" || flagString(*in, "origin") != "" {
@@ -197,7 +197,7 @@ func credentialsStdin(ctx context.Context, in *Input, stdin io.Reader) error {
 	}
 	password := strings.TrimRight(line, "\r\n")
 	if password == "" {
-		return usagef("set credentials: no password on stdin; pipe it in, for example: printf '%%s\\n' \"$PASS\" | iwdp-cli set credentials --origin <origin> <user>")
+		return usagef("set credentials: no password on stdin; pipe it in, for example: printf '%%s\\n' \"$PASS\" | agent-ios set credentials --origin <origin> <user>")
 	}
 	in.Flags["password"] = password // Parse always makes the map
 	return nil

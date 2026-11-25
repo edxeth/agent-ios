@@ -17,7 +17,7 @@ import (
 
 // Header is the first line of the bundle; it names the script in protocol
 // logs.
-const Header = "// iwdp-cli agent runtime bundle, generated from internal/runtime/js by go generate (design 3.1)\n"
+const Header = "// agent-ios agent runtime bundle, generated from internal/runtime/js by go generate (design 3.1)\n"
 
 // Build joins the files js/*.js of fsys in name order and minifies them
 // as one ES2017 script: whitespace, syntax and local identifiers. Property

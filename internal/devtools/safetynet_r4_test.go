@@ -18,10 +18,10 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // W4 repair round 4 (brief W4-R4): no intercepted request is ever left
@@ -711,10 +711,10 @@ func TestEveryPausedRequestGetsExactlyOneAnswerProperty(t *testing.T) {
 	t.Cleanup(func() { delete(credentialsVerified, transport.KindIWDP) })
 	var n safetyCounts
 	check := func(seed int64) bool { return runSafetyPlan(t, seed, safetyPlan(seed), &n, safetyHooks{}) }
-	if s := os.Getenv("IWDP_SAFETYNET_SEED"); s != "" {
+	if s := os.Getenv("AGENT_IOS_SAFETYNET_SEED"); s != "" {
 		seed, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
-			t.Fatalf("IWDP_SAFETYNET_SEED=%q: want an integer", s)
+			t.Fatalf("AGENT_IOS_SAFETYNET_SEED=%q: want an integer", s)
 		}
 		if !check(seed) {
 			t.Fatalf("seed %d fails", seed)
@@ -731,7 +731,7 @@ func TestEveryPausedRequestGetsExactlyOneAnswerProperty(t *testing.T) {
 		t.Fatalf("fixed plan: %d unchanged continues and %d answered requests of the live provisional target, want 1 and 1", n.continued.Load(), n.onProvisional.Load())
 	}
 	if err := quick.Check(check, &quick.Config{MaxCount: 50}); err != nil {
-		t.Fatalf("%v (the input is the case's seed; replay it with IWDP_SAFETYNET_SEED)", err)
+		t.Fatalf("%v (the input is the case's seed; replay it with AGENT_IOS_SAFETYNET_SEED)", err)
 	}
 	t.Logf("%d paused requests were answered with an unchanged continue; %d requests of a live provisional target were answered on it; a Network.disable continued %d", n.continued.Load(), n.onProvisional.Load(), n.byDisable.Load())
 	if n.onProvisional.Load() == 0 {

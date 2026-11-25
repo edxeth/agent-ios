@@ -21,13 +21,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // ErrNoDaemonState: the page session has no scheduler or desired state, so
 // state could neither be owned, re-applied nor released.
-var ErrNoDaemonState = errors.New("this page session has no desired state; DevTools commands run in the iwdp daemon")
+var ErrNoDaemonState = errors.New("this page session has no desired state; DevTools commands run in the agent-ios daemon")
 
 // Page is the DevTools state of one attached page. It lives as long as the
 // page session (core.PageSession) of the daemon.

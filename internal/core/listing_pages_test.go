@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // A device's page list that fails while the device list answers
@@ -95,7 +95,7 @@ func wantPageListAdvice(t *testing.T, what string, err error) {
 	if exitCode(err) != CodeNoPage {
 		t.Errorf("%s: exit code %d, want %d: %v", what, exitCode(err), CodeNoPage, err)
 	}
-	for _, want := range []string{"iwdp did not answer the page list while the daemon has 1 page connection open", "commands on an attached page still work", "iwdp-cli daemon stop", "iwdp-cli restart-iwdp", "only whoever started that iwdp, and only when nobody else uses it, may stop it", "Stopping an iwdp by hand", "listing the pages of iPhone X", "EOF"} {
+	for _, want := range []string{"iwdp did not answer the page list while the daemon has 1 page connection open", "commands on an attached page still work", "agent-ios daemon stop", "agent-ios restart-iwdp", "only whoever started that iwdp, and only when nobody else uses it, may stop it", "Stopping an iwdp by hand", "listing the pages of iPhone X", "EOF"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: error %q does not contain %q", what, err, want)
 		}

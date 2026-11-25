@@ -30,8 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
 )
 
 // DefaultPort is the default listener port (decision D3): 9221 to 9229
@@ -65,7 +65,7 @@ const (
 type Options struct {
 	Manager      *core.Manager
 	Reservations *core.Reservations // device scope; nil: no reserved devices
-	Version      string             // iwdp-cli version for /json/version
+	Version      string             // agent-ios version for /json/version
 	Logf         func(format string, args ...any)
 	// Enter marks a client connection as daemon activity (idle exit,
 	// design 2.3) until the returned function runs. nil: none.
@@ -171,10 +171,10 @@ func (s *Server) start(port int, allowOrigins []string) (string, error) {
 	defer s.mu.Unlock()
 	if s.l != nil {
 		if port > 0 && port != s.port {
-			return "", fmt.Errorf("the CDP endpoint already listens on 127.0.0.1:%d; run 'iwdp-cli cdp stop' first to move it to port %d", s.port, port)
+			return "", fmt.Errorf("the CDP endpoint already listens on 127.0.0.1:%d; run 'agent-ios cdp stop' first to move it to port %d", s.port, port)
 		}
 		if len(allow) > 0 && !maps.Equal(allow, s.allow) {
-			return "", fmt.Errorf("the CDP endpoint already runs on 127.0.0.1:%d with %d other allowed origin(s); run 'iwdp-cli cdp stop' first to change them", s.port, len(s.allow))
+			return "", fmt.Errorf("the CDP endpoint already runs on 127.0.0.1:%d with %d other allowed origin(s); run 'agent-ios cdp stop' first to change them", s.port, len(s.allow))
 		}
 		return s.addrLocked(), nil
 	}
@@ -338,7 +338,7 @@ func (s *Server) Issue(ctx context.Context, r IssueRequest) (Endpoint, error) {
 		return Endpoint{}, fmt.Errorf("scope %q: want page or device", r.Scope)
 	}
 	if !s.Running() {
-		return Endpoint{}, errors.New("the CDP endpoint is not running; run 'iwdp-cli cdp start'")
+		return Endpoint{}, errors.New("the CDP endpoint is not running; run 'agent-ios cdp start'")
 	}
 	lp, listing, err := s.o.Manager.ResolvePage(ctx, r.Session, r.Reservation, r.Page)
 	if err != nil {
@@ -347,7 +347,7 @@ func (s *Server) Issue(ctx context.Context, r IssueRequest) (Endpoint, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.l == nil {
-		return Endpoint{}, errors.New("the CDP endpoint stopped while the URL was issued; run 'iwdp-cli cdp start'")
+		return Endpoint{}, errors.New("the CDP endpoint stopped while the URL was issued; run 'agent-ios cdp start'")
 	}
 	var rec *record
 	for _, x := range s.records {

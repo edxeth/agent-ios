@@ -14,7 +14,7 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Tests of the file checks of --url-file (urlfile.go). The tests of the
@@ -22,7 +22,7 @@ import (
 // private_test.go.
 
 // urlFileCommandTimeout is the command deadline of the regression test of F27,
-// as in "iwdp-cli --timeout 10ms open --url-file <fifo>".
+// as in "agent-ios --timeout 10ms open --url-file <fifo>".
 const urlFileCommandTimeout = 10 * time.Millisecond
 
 // urlFileDeadlineMargin is the time that a wait of these tests leaves before the
@@ -381,7 +381,7 @@ func mustLookup(t *testing.T, name string) *Command {
 }
 
 // A request with --url-file and without the URL that the client read (a
-// caller other than iwdp-cli's client, which runs no ClientStep) is a
+// caller other than agent-ios's client, which runs no ClientStep) is a
 // usage error that says so: the flag names a file of the client.
 func TestURLFileWithoutItsURLIsAUsageErrorInTheDaemon(t *testing.T) {
 	for _, name := range []string{"open", "tab find"} {
@@ -391,7 +391,7 @@ func TestURLFileWithoutItsURLIsAUsageErrorInTheDaemon(t *testing.T) {
 		}
 		_, err = inv.Cmd.Run(context.Background(), nil, inv.Input)
 		var ue *UsageError
-		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "--url-file reads a file of iwdp-cli's caller") {
+		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "--url-file reads a file of agent-ios's caller") {
 			t.Errorf("%s --url-file without the URL: %v; want the usage error about the caller's file", name, err)
 		}
 	}

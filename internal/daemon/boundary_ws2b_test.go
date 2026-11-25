@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // WS2b-1b-a item 1 (review ws2a-r3-c F9): the operation's deadline is the
@@ -103,7 +103,7 @@ func TestRequestWithoutADeadlineRuns(t *testing.T) {
 // WS2b-1b-a item 3: a client that starts a daemon of other executable
 // content (Options.Exe) never uses it, and its error says why.
 func TestStartedDaemonOfAnotherExecutableIsNotUsed(t *testing.T) {
-	o := spawnOptions(t, "IWDP_DAEMON_IDLE=1m")
+	o := spawnOptions(t, "AGENT_IOS_DAEMON_IDLE=1m")
 	data, err := os.ReadFile(os.Args[0])
 	if err != nil {
 		t.Fatal(err)
@@ -206,11 +206,11 @@ func mustFileID(t *testing.T, path string) FileID {
 func TestRunRefusesAnUnreadableExecutable(t *testing.T) {
 	base := shortDir(t)
 	missing := filepath.Join(base, "missing")
-	err := Run(ctxFor(t, 5*time.Second), RunOptions{Dir: filepath.Join(base, "iwdp"), Version: "test", Executable: missing})
+	err := Run(ctxFor(t, 5*time.Second), RunOptions{Dir: filepath.Join(base, "agent-ios"), Version: "test", Executable: missing})
 	if err == nil || !strings.Contains(err.Error(), missing) {
 		t.Fatalf("Run with a missing executable: %v; want an error that names %s", err, missing)
 	}
-	if _, err := os.Lstat(SocketPath(filepath.Join(base, "iwdp"))); err == nil {
+	if _, err := os.Lstat(SocketPath(filepath.Join(base, "agent-ios"))); err == nil {
 		t.Fatalf("a socket was created")
 	}
 }

@@ -9,10 +9,10 @@ import (
 // The exports of this file let another owner of processes and ports (the
 // ssh forward of internal/sim) use the identity and listener checks that
 // restart-iwdp relies on, and let sim up tell whether the iwdp on the
-// listing address is the one that iwdp-cli started.
+// listing address is the one that agent-ios started.
 
 // StartTokenEnv is the environment variable whose value marks a process
-// that iwdp-cli started (ProcessIdentity).
+// that agent-ios started (ProcessIdentity).
 const StartTokenEnv = tokenEnv
 
 // NewStartToken returns a fresh random start token.
@@ -49,8 +49,8 @@ func EndpointOwner(ctx context.Context, pgid int, ep netip.AddrPort) (own, forei
 }
 
 // OwnsListing reports whether something listens on the default listing
-// address and it is the iwdp that iwdp-cli started and recorded: the
-// checks of a restart (stopOwn), without a stop. iwdp-cli starts iwdp with
+// address and it is the iwdp that agent-ios started and recorded: the
+// checks of a restart (stopOwn), without a stop. agent-ios starts iwdp with
 // the simulator address 127.0.0.1:27753 on Linux and iwdp's default
 // (localhost:27753) on macOS (simulatorArgs).
 func OwnsListing(ctx context.Context) (listening, own bool, err error) {

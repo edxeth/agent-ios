@@ -51,7 +51,7 @@ func TestCLI_LegacyListingCommandsOnAnEmptyReply(t *testing.T) {
 		if cmd != "status" && code != exitNoPage {
 			t.Errorf("%s: exit %d, want %d (a listing failure)", cmd, code, exitNoPage)
 		}
-		for _, want := range []string{deadCLIListing().Addr(), "closed the connection without an answer", "iwdp-cli daemon stop"} {
+		for _, want := range []string{deadCLIListing().Addr(), "closed the connection without an answer", "agent-ios daemon stop"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("%s: output %q does not contain %q", cmd, output, want)
 			}
@@ -84,7 +84,7 @@ func TestCLI_LegacyListingCommandsOnAHealthyListing(t *testing.T) {
 		want []string
 	}{
 		{[]string{"devices"}, []string{e2eDeviceName, e2eDeviceID, "(pages on " + device.Addr() + ")"}},
-		{[]string{"status"}, []string{"ios_webkit_debug_proxy is running", "iwdp log of an iwdp that iwdp-cli starts: "}},
+		{[]string{"status"}, []string{"ios_webkit_debug_proxy is running", "iwdp log of an iwdp that agent-ios starts: "}},
 	} {
 		before := listing.hits.Load()
 		output, code := runBin(t, bin, c.args...)
@@ -186,7 +186,7 @@ func TestStartHintNamesTheManualCommandOfThisSystem(t *testing.T) {
 	for args, want := range map[string]string{"status": "Start it with: " + manual + "\n", "devices": "run '" + manual + "' to see why"} {
 		_, stderr, code := runBinStreams(t, bin, args)
 		if code != 1 || !strings.Contains(stderr, want) {
-			t.Errorf("iwdp-cli %s without iwdp: exit %d, stderr %q; want exit 1 and %q", args, code, stderr, want)
+			t.Errorf("agent-ios %s without iwdp: exit %d, stderr %q; want exit 1 and %q", args, code, stderr, want)
 		}
 	}
 }
@@ -205,7 +205,7 @@ func TestReviewBrokenListingStatusLogPath(t *testing.T) {
 	if code == 0 {
 		t.Fatal("broken listing unexpectedly healthy")
 	}
-	if !strings.Contains(stdout+stderr, "iwdp log of an iwdp that iwdp-cli starts:") {
+	if !strings.Contains(stdout+stderr, "iwdp log of an iwdp that agent-ios starts:") {
 		t.Fatalf("status omits log path on the listing failure: stdout %q, stderr %q", stdout, stderr)
 	}
 	if !strings.Contains(stderr, addr) {
@@ -250,7 +250,7 @@ func wantListingAdvice(t *testing.T, what, output string, code int) {
 	if code != exitNoPage {
 		t.Errorf("%s: exit %d, want %d (a listing failure); output %q", what, code, exitNoPage, output)
 	}
-	for _, want := range []string{"closed the connection without an answer", "iwdp-cli daemon stop"} {
+	for _, want := range []string{"closed the connection without an answer", "agent-ios daemon stop"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("%s: output %q does not contain %q", what, output, want)
 		}
@@ -288,10 +288,10 @@ func TestCLI_LegacyDevicesWhenTheListingFailsAfterItsCheck(t *testing.T) {
 // process, every devices command started iwdp again at once). The fake
 // ios_webkit_debug_proxy of these tests exits at once and logs its calls.
 func TestDevicesProcessesShareTheStartBackoff(t *testing.T) {
-	// The shared daemon is the case under test: with IWDP_NO_DAEMON=1
+	// The shared daemon is the case under test: with AGENT_IOS_NO_DAEMON=1
 	// from the runner, each command would have its own back-off (an
 	// accepted limit, docs/known-limits.md).
-	t.Setenv("IWDP_NO_DAEMON", "")
+	t.Setenv("AGENT_IOS_NO_DAEMON", "")
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

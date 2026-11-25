@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp"
+	"github.com/nnemirovsky/agent-ios/internal/cdp"
 )
 
 // cdpEnv is the Env of a daemon with a CDP endpoint (runEnv.CDP).

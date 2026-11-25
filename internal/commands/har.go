@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
 )
 
 // network har start and stop: a HAR 1.2 file of the requests that the
@@ -66,7 +66,7 @@ func runHARStop(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, fmt.Errorf("no HAR recording runs; start one with 'network har start'")
 	}
 	show := flagBool(in, "show-secrets")
-	har, err := n.StopHAR(ctx, d.c, devtools.HAROptions{Creator: devtools.HARCreator{Name: "iwdp-cli", Version: "dev"}, ShowValues: show})
+	har, err := n.StopHAR(ctx, d.c, devtools.HAROptions{Creator: devtools.HARCreator{Name: "agent-ios", Version: "dev"}, ShowValues: show})
 	if err != nil {
 		return Result{}, err
 	}

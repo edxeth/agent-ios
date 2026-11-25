@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/logcause"
-	"github.com/nnemirovsky/iwdp-cli/internal/logsafe"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/logcause"
+	"github.com/nnemirovsky/agent-ios/internal/logsafe"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // Tabs (design docs/design/agentic-parity.md, sections 3.8 and 4.2;
@@ -121,7 +121,7 @@ func runTabList(ctx context.Context, env Env, in Input) (Result, error) {
 		if owner == "" {
 			owner = in.Global.Session
 		}
-		fmt.Fprintf(&b, "%d page(s) are not listed: those of physical devices without a reservation of owner %q (run 'iwdp-cli device reserve --owner %s' or pass --reservation <owner>), and the simulator's while another owner reserves it (iwdp-cli sim reserve waits for it)", hidden, owner, owner)
+		fmt.Fprintf(&b, "%d page(s) are not listed: those of physical devices without a reservation of owner %q (run 'agent-ios device reserve --owner %s' or pass --reservation <owner>), and the simulator's while another owner reserves it (agent-ios sim reserve waits for it)", hidden, owner, owner)
 	}
 	return Result{Text: strings.TrimRight(b.String(), "\n"), Data: map[string]any{"tabs": tabs, "hidden": hidden}}, nil
 }
@@ -470,7 +470,7 @@ func refuseUnselectedSimulatorTab(ctx context.Context, m *core.Manager, in Input
 	if mine, err := m.HoldsSimulator(ao); err != nil || !mine {
 		return err
 	}
-	return &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("%w: tab close: this session has selected no tab, and the simulator's tab that it would close may be another agent's: name your tab ('iwdp-cli tab close <id>'); when you opened none, run only 'iwdp-cli sim release'", core.ErrNoPage)}
+	return &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("%w: tab close: this session has selected no tab, and the simulator's tab that it would close may be another agent's: name your tab ('agent-ios tab close <id>'); when you opened none, run only 'agent-ios sim release'", core.ErrNoPage)}
 }
 
 // tabDevice marks a tab of the simulator, so that an agent with

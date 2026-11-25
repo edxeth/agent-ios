@@ -14,7 +14,7 @@ import (
 // IWDPState is the state of ios_webkit_debug_proxy on this host.
 type IWDPState struct {
 	Running bool // something listens on iwdp's listing address
-	Own     bool // it is the iwdp that iwdp-cli started and recorded, which looks for a simulator on InspectorAddr
+	Own     bool // it is the iwdp that agent-ios started and recorded, which looks for a simulator on InspectorAddr
 	Listed  bool // it lists the SIMULATOR device, which it does only while its connection to InspectorAddr works
 }
 
@@ -25,7 +25,7 @@ type IWDP interface {
 	// Start starts iwdp when none runs; a new iwdp connects to
 	// InspectorAddr at its start.
 	Start(ctx context.Context) error
-	// Restart restarts the iwdp that iwdp-cli started, so that it connects
+	// Restart restarts the iwdp that agent-ios started, so that it connects
 	// to InspectorAddr again: iwdp connects to a simulator only at its start.
 	Restart(ctx context.Context) error
 	// ActiveLeases counts the daemon's active page leases on every device,
@@ -85,19 +85,19 @@ type UpReport struct {
 }
 
 // ErrNotOwnIWDP is the error of Up when the iwdp on the listing address is
-// not the one that iwdp-cli started: sim cannot tell where that iwdp looks
+// not the one that agent-ios started: sim cannot tell where that iwdp looks
 // for a simulator, nor restart it.
 // ErrNoURLTab is Up's error when Safari shows no tab of its URL within
 // PageWait, mostly a server that does not answer the simulator.
 var ErrNoURLTab = errors.New("safari in the simulator shows no tab of the --url")
 
-var ErrNotOwnIWDP = errors.New("the ios_webkit_debug_proxy on its listing address was not started by iwdp-cli, so sim up cannot tell where it looks for a simulator or restart it: ask whoever started it to stop it, then run sim up again")
+var ErrNotOwnIWDP = errors.New("the ios_webkit_debug_proxy on its listing address was not started by agent-ios, so sim up cannot tell where it looks for a simulator or restart it: ask whoever started it to stop it, then run sim up again")
 
-// Up makes the simulator ready for iwdp-cli, doing only the steps still
+// Up makes the simulator ready for agent-ios, doing only the steps still
 // needed: start the Mac (the configuration's start command) when ssh gets
 // no answer, wait for the desktop login, boot the simulator, open its
 // window unless noWindow, start Safari, forward InspectorAddr to its Web
-// Inspector socket, and start iwdp, or restart the one that iwdp-cli
+// Inspector socket, and start iwdp, or restart the one that agent-ios
 // started when it does not use that forward. Then it opens openURL when
 // given (CheckURL), and waits up to PageWait for a tab. device overrides the
 // configuration's device.
@@ -393,7 +393,7 @@ type Status struct {
 	DeviceError  string  `json:"deviceError,omitempty"`
 	Window       bool    `json:"window"`
 	Forward      bool    `json:"forward"` // the forward serves the booted simulator's socket, and iwdp started after it
-	Listed       bool    `json:"listed"`  // the iwdp that iwdp-cli started lists the simulator
+	Listed       bool    `json:"listed"`  // the iwdp that agent-ios started lists the simulator
 	Ready        bool    `json:"ready"`
 	// The simulator's reservation (sim reserve), filled in by the caller:
 	// its owner and end, and whether the caller's owner holds it.
@@ -454,14 +454,14 @@ func (s *Sim) Booted(ctx context.Context, device string) (Device, error) {
 		return Device{}, err
 	}
 	if !reachable {
-		return Device{}, fmt.Errorf("the Mac %s does not answer over ssh: run iwdp-cli sim up", s.Cfg.SSH)
+		return Device{}, fmt.Errorf("the Mac %s does not answer over ssh: run agent-ios sim up", s.Cfg.SSH)
 	}
 	d, err := s.device(ctx, device)
 	if err != nil {
 		return Device{}, err
 	}
 	if d.State != "Booted" {
-		return d, fmt.Errorf("the simulator %s (%s) is not booted: run iwdp-cli sim up", d.Name, d.UDID)
+		return d, fmt.Errorf("the simulator %s (%s) is not booted: run agent-ios sim up", d.Name, d.UDID)
 	}
 	return d, nil
 }
@@ -512,7 +512,7 @@ func (s *Sim) Type(ctx context.Context, device, text string) (Device, error) {
 	if !hw {
 		for _, r := range text {
 			if !strings.ContainsRune(unshifted, r) {
-				return d, fmt.Errorf("sim type: %q needs Shift or another layout, which key presses lose while the on-screen keyboard is shown: run iwdp-cli sim keyboard hardware, or tap the keys (sim ui lists them)", string(r))
+				return d, fmt.Errorf("sim type: %q needs Shift or another layout, which key presses lose while the on-screen keyboard is shown: run agent-ios sim keyboard hardware, or tap the keys (sim ui lists them)", string(r))
 			}
 		}
 		us, layout, err := s.Mac.USKeyboard(ctx, d.UDID)
@@ -520,7 +520,7 @@ func (s *Sim) Type(ctx context.Context, device, text string) (Device, error) {
 			return d, err
 		}
 		if !us {
-			return d, fmt.Errorf("sim type: with the on-screen keyboard it types only on a US keyboard layout, and this one is not (%s): run iwdp-cli sim keyboard hardware, or tap the keys", layout)
+			return d, fmt.Errorf("sim type: with the on-screen keyboard it types only on a US keyboard layout, and this one is not (%s): run agent-ios sim keyboard hardware, or tap the keys", layout)
 		}
 		opts = []string{"--layout", "us"}
 	}
@@ -533,7 +533,7 @@ func (s *Sim) Type(ctx context.Context, device, text string) (Device, error) {
 // keys for but hides it. A change quits the Simulator app and shuts the
 // simulator down, so every refusal is checked first, before any change:
 // the simulator must exist, no other simulator may be booted (quitting the
-// app would shut it down too), the iwdp must be iwdp-cli's, and no page may
+// app would shut it down too), the iwdp must be agent-ios's, and no page may
 // have an active lease (unless RestartAnyway). Then it switches the
 // setting and runs Up for that same simulator. It reports whether the mode
 // changed; after a failed Up the mode is changed and sim up finishes it.
@@ -582,7 +582,7 @@ func (s *Sim) Keyboard(ctx context.Context, device string, onscreen bool) (bool,
 	}
 	r, err := s.Up(ctx, d.UDID, "", false)
 	if err != nil {
-		return true, r, fmt.Errorf("the keyboard is now %s, but bringing the simulator back failed (run iwdp-cli sim up --device %s): %w", map[bool]string{true: "onscreen", false: "hardware"}[onscreen], d.UDID, err)
+		return true, r, fmt.Errorf("the keyboard is now %s, but bringing the simulator back failed (run agent-ios sim up --device %s): %w", map[bool]string{true: "onscreen", false: "hardware"}[onscreen], d.UDID, err)
 	}
 	return true, r, nil
 }

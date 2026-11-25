@@ -12,12 +12,12 @@ import (
 
 // proxyListingVar is the link-time seam of internal/proxy: the iwdp
 // listing address of a binary, which its daemon's iwdp transport uses too.
-const proxyListingVar = "github.com/nnemirovsky/iwdp-cli/internal/proxy.listingAddr"
+const proxyListingVar = "github.com/nnemirovsky/agent-ios/internal/proxy.listingAddr"
 
 // proxyUSBMuxdVar is the link-time seam of internal/proxy for usbmuxd's
 // socket, and noUSBMuxd a path where no socket is.
 const (
-	proxyUSBMuxdVar = "github.com/nnemirovsky/iwdp-cli/internal/proxy.usbmuxdSubscriptionSocket"
+	proxyUSBMuxdVar = "github.com/nnemirovsky/agent-ios/internal/proxy.usbmuxdSubscriptionSocket"
 	noUSBMuxd       = "/nonexistent/iwdp-e2e-usbmuxd"
 )
 
@@ -106,7 +106,7 @@ var (
 	cliListing     *fakeListing
 )
 
-// deadCLIListing returns the listing that the iwdp-cli binary of these
+// deadCLIListing returns the listing that the agent-ios binary of these
 // tests reads: no iwdp runs there. It lives until the process exits.
 func deadCLIListing() *fakeListing {
 	cliListingOnce.Do(func() { cliListing = newFakeListing(nil) })

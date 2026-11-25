@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/cdp/cdptest"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/cdp/cdptest"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Behavior tests of the W5c-1b Profiler, Storage and cookie failure paths
@@ -329,7 +329,7 @@ func (r *rig) pageStatus(t *testing.T, title string) core.PageStatus {
 // s1's lease holds page title in its scheduler, so the command's operation
 // waits in the page's queue under the lease that the command took or
 // renewed, and then releases that lease (core.Manager.Release, as
-// "iwdp-cli release" does). The command has taken or renewed the lease
+// "agent-ios release" does). The command has taken or renewed the lease
 // when the lease's last use moves. The release closes admission, cancels
 // the holder, which then ends, and fails the queued operations
 // (core.Scheduler.Release). It returns send's error.

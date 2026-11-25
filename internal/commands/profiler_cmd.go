@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools"
+	"github.com/nnemirovsky/agent-ios/internal/devtools"
 )
 
 // profiler start and profiler stop (design docs/design/agentic-parity.md,
@@ -24,7 +24,7 @@ func init() {
 	Register(&Command{
 		Name:    "profiler stop",
 		Summary: "Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mode 0600) to path, or to a new file in the temp directory.",
-		Args:    []Arg{{Name: "path", Help: "the profile file to write (default: a new iwdp-profile-*.cpuprofile in the temp directory)"}},
+		Args:    []Arg{{Name: "path", Help: "the profile file to write (default: a new agent-ios-profile-*.cpuprofile in the temp directory)"}},
 		Page:    LeasedPage,
 		Mutates: true,
 		Output:  OutputText,
@@ -56,7 +56,7 @@ func runProfilerStop(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("encoding the profile: %w", err)
 	}
-	path, err := outputPath(env, arg(in, 0), "iwdp-profile-*.cpuprofile")
+	path, err := outputPath(env, arg(in, 0), "agent-ios-profile-*.cpuprofile")
 	if err != nil {
 		return Result{}, err
 	}

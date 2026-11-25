@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/nnemirovsky/iwdp-cli/e2e/internal/broadwayshm"
+	"github.com/nnemirovsky/agent-ios/e2e/internal/broadwayshm"
 )
 
 // broadwaySettle is how long after the end of a MiniBrowser the test

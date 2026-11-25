@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/proxy"
-	"github.com/nnemirovsky/iwdp-cli/internal/tools"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/proxy"
+	"github.com/nnemirovsky/agent-ios/internal/tools"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
 )
 
 // The iOS Simulator suite: the shared WebKit Inspector Protocol helpers
 // (internal/tools), the proxy listing helpers and the iwdp transport's
 // page lists against real Safari through iwdp. scripts/sim-setup.sh opens
-// a test page of its own on https://example.com (IWDP_SIM_PAGE_URL), and
+// a test page of its own on https://example.com (AGENT_IOS_SIM_PAGE_URL), and
 // getSimClient checks that page before any test runs. The tests that read
 // that page's DOM run before TestSim_QuerySelectorFindsInsertedElements,
 // which replaces the body.

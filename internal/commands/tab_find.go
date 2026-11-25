@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/browserurl"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/browserurl"
+	"github.com/nnemirovsky/agent-ios/internal/core"
 )
 
 // ExitNoMatch is the exit code of "tab find" when it read every tab that
@@ -69,7 +69,7 @@ func runTabFind(ctx context.Context, env Env, in Input) (_ Result, err error) {
 	// neither that no tab shows the target nor that a match is the only
 	// one. The message names no page (design 2.5 rule 4).
 	if hidden > 0 {
-		return Result{}, &core.CodedError{Code: core.CodeReservation, Err: fmt.Errorf("tab find: the listing hides %d page(s) of a device that your reservation owner has not reserved (a physical device without your reservation, or the simulator in another owner's turn), and any of them can show the target; search only your device with --device SIMULATOR or --device <UDID>, or reserve the device ('iwdp-cli device reserve', 'iwdp-cli sim reserve') and run tab find again", hidden)}
+		return Result{}, &core.CodedError{Code: core.CodeReservation, Err: fmt.Errorf("tab find: the listing hides %d page(s) of a device that your reservation owner has not reserved (a physical device without your reservation, or the simulator in another owner's turn), and any of them can show the target; search only your device with --device SIMULATOR or --device <UDID>, or reserve the device ('agent-ios device reserve', 'agent-ios sim reserve') and run tab find again", hidden)}
 	}
 	var candidates []core.Tab // the tabs that can show the target
 	for _, t := range tabs {

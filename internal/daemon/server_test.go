@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/commands"
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/commands"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // startInProcess runs a daemon in this process on a private socket
@@ -19,7 +19,7 @@ func startInProcess(t *testing.T, ro RunOptions) Options {
 	t.Helper()
 	base := shortDir(t)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
-	ro.Dir = filepath.Join(base, "iwdp")
+	ro.Dir = filepath.Join(base, "agent-ios")
 	if ro.Version == "" {
 		ro.Version = "test"
 	}

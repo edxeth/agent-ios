@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// Design 2.5: --reservation (IWDP_DEVICE_RESERVATION), --wait-lease and
+// Design 2.5: --reservation (AGENT_IOS_DEVICE_RESERVATION), --wait-lease and
 // --takeover are global flags of every command.
 func TestParseOwnershipGlobals(t *testing.T) {
 	withFixtures(t)
 	env := func(k string) string {
-		if k == "IWDP_DEVICE_RESERVATION" {
+		if k == "AGENT_IOS_DEVICE_RESERVATION" {
 			return "orchestrator"
 		}
 		return ""

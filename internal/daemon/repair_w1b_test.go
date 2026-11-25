@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Regression tests for the W1b review (docs/notes/w1b.md, "Review repairs").
@@ -93,14 +93,14 @@ func TestShutdownIfIdleRefusedWithALease(t *testing.T) {
 	}
 }
 
-// Design 2.1: IWDP_NO_DAEMON=1 runs the core in this process: no socket,
+// Design 2.1: AGENT_IOS_NO_DAEMON=1 runs the core in this process: no socket,
 // no socket directory and no daemon process.
 func TestNoDaemonModeRunsInProcess(t *testing.T) {
 	// The page outlives the core (cleanups run last-in first-out), so
 	// that the core's cleanup reaches it instead of racing its close.
 	f := newFake(t, fakewebkit.Options{})
 	noDaemonCore(t)
-	dir := filepath.Join(shortDir(t), "iwdp")
+	dir := filepath.Join(shortDir(t), "agent-ios")
 	c, err := Connect(ctxFor(t, 3*time.Second), Options{Dir: dir, Exe: "/bin/false", Version: "test"})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)

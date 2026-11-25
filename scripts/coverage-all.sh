@@ -8,7 +8,7 @@
 #
 # Coverage is collected with -coverpkg over the whole module. Binaries that
 # the tests start as subprocesses are covered too: the unit tests re-run
-# their own test binary, and the WebKitGTK suite builds iwdp-cli with go
+# their own test binary, and the WebKitGTK suite builds agent-ios with go
 # build, which takes -cover from GOFLAGS; both write to GOCOVERDIR. The
 # WebKitGTK suites need MiniBrowser, broadwayd, gcc and pkg-config gdk-3.0
 # (see e2e/webkitgtk); the script fails when any test fails.

@@ -13,13 +13,13 @@
 #
 # The file name of RECORD decides its kind, its format and the variable
 # that carries the token, and the content must have that format:
-# - iwdp-cli-started-*.json (iwdp-cli) and iwdp-mcp-started-*.json (a
-#   version before the rename to iwdp-cli): JSON with "pid", "start" and
-#   "token"; the token is in IWDP_CLI_START_TOKEN or IWDP_MCP_START_TOKEN.
+# - agent-ios-started-*.json (agent-ios) and iwdp-mcp-started-*.json (a
+#   version before the rename to agent-ios): JSON with "pid", "start" and
+#   "token"; the token is in AGENT_IOS_START_TOKEN or IWDP_MCP_START_TOKEN.
 #   The "writer" mark cannot tell them apart (both versions wrote
-#   "iwdp-cli");
+#   "agent-ios");
 # - iwdp.pid, the record of scripts/sim-setup.sh: a first line
-#   "<pid> <token> <start>"; the token is in IWDP_SIM_START_TOKEN.
+#   "<pid> <token> <start>"; the token is in AGENT_IOS_SIM_START_TOKEN.
 # Another file name, or content in the other format, is cannot-check.
 # The pid is a decimal of 1 to 10 digits, above 1 and below 2^31. A start
 # of digits only is the Linux start time (field 22 of /proc/<pid>/stat,
@@ -74,7 +74,7 @@
 # hand, step 3, says how to check it). --forget makes its own read: a
 # record that replaced the one of an earlier check before that read is
 # removed when the process that it names is gone. A writer that already
-# holds the record open can still change it after the comparison; scripts/sim-setup.sh and iwdp-cli
+# holds the record open can still change it after the comparison; scripts/sim-setup.sh and agent-ios
 # replace their records by rename and never write one in place.
 #
 # It prints one line on stdout, "<result>: <reason>", and exits with the
@@ -93,7 +93,7 @@
 # process: it is read from RECORD and never passed in an argument.
 #
 # Test seams, each of which can only keep a signal from being sent and
-# never supplies process data: IWDP_OWNER_CHECK_TEST_NOT_PERMITTED=1 makes
+# never supplies process data: AGENT_IOS_OWNER_CHECK_TEST_NOT_PERMITTED=1 makes
 # step 2 report a process that this user may not signal. The external
 # 'uname -s' selects only the readers of the process data, never the
 # process handle or the signal. When it says Darwin but the kernel
@@ -127,7 +127,7 @@ PROGRAM = b"ios_webkit_debug_proxy"
 MAX_RECORD = 64 * 1024
 PID_RE = re.compile(r"[0-9]{1,10}")  # ASCII digits only; bounded before int()
 PID_LIMIT = 2**31
-NOT_PERMITTED_TEST = "IWDP_OWNER_CHECK_TEST_NOT_PERMITTED"
+NOT_PERMITTED_TEST = "AGENT_IOS_OWNER_CHECK_TEST_NOT_PERMITTED"
 SIM_RECORD = "iwdp.pid"  # the file name that scripts/sim-setup.sh writes
 CTL_KERN, KERN_ARGMAX, KERN_PROCARGS2 = 1, 8, 49  # macOS <sys/sysctl.h>
 # The Linux system call numbers of pidfd_open and pidfd_send_signal, and
@@ -193,13 +193,13 @@ def parse(text, name):
     file name decides the kind and the format, and the text must have that
     format; pid is None and start or token "" when the record lacks them."""
     if name == SIM_RECORD:
-        var, is_json = "IWDP_SIM_START_TOKEN", False
-    elif name.startswith("iwdp-cli-started-") and name.endswith(".json"):
-        var, is_json = "IWDP_CLI_START_TOKEN", True
+        var, is_json = "AGENT_IOS_SIM_START_TOKEN", False
+    elif name.startswith("agent-ios-started-") and name.endswith(".json"):
+        var, is_json = "AGENT_IOS_START_TOKEN", True
     elif name.startswith("iwdp-mcp-started-") and name.endswith(".json"):
         var, is_json = "IWDP_MCP_START_TOKEN", True
     else:
-        raise Result(CANNOT, "the kind of the record is unclear (its file name is neither iwdp.pid nor iwdp-cli-started-*.json nor iwdp-mcp-started-*.json)")
+        raise Result(CANNOT, "the kind of the record is unclear (its file name is neither iwdp.pid nor agent-ios-started-*.json nor iwdp-mcp-started-*.json)")
     if text.lstrip().startswith("{") != is_json:
         raise Result(CANNOT, "the content of the record does not match the format of its file name")
     if is_json:

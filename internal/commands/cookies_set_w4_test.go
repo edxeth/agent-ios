@@ -12,10 +12,10 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/devtools/devtoolstest"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/devtools/devtoolstest"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // Design 4.2 row "cookies set": the registry command sets one cookie
@@ -48,7 +48,7 @@ func TestCookiesSetHelpAndFlags(t *testing.T) {
 	var out, errb bytes.Buffer
 	called := false
 	newEnv := func(context.Context, *Invocation) (Env, error) { called = true; return nil, fmt.Errorf("no env") }
-	if code := RunCLIStarted(context.Background(), []string{"cookies", "set", "--help"}, &out, &errb, nil, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: iwdp-cli cookies set") || called {
+	if code := RunCLIStarted(context.Background(), []string{"cookies", "set", "--help"}, &out, &errb, nil, newEnv); code != 0 || !strings.HasPrefix(out.String(), "Usage: agent-ios cookies set") || called {
 		t.Errorf("cookies set --help: exit %d, called %v, out %q", code, called, out.String())
 	}
 	errb.Reset()

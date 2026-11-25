@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nnemirovsky/iwdp-cli/internal/core"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport"
-	"github.com/nnemirovsky/iwdp-cli/internal/transport/iwdp"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit"
-	"github.com/nnemirovsky/iwdp-cli/internal/webkit/testutil/fakewebkit"
+	"github.com/nnemirovsky/agent-ios/internal/core"
+	"github.com/nnemirovsky/agent-ios/internal/transport"
+	"github.com/nnemirovsky/agent-ios/internal/transport/iwdp"
+	"github.com/nnemirovsky/agent-ios/internal/webkit"
+	"github.com/nnemirovsky/agent-ios/internal/webkit/testutil/fakewebkit"
 )
 
 // dtHarness runs registry command lines against a fake iPhone page through
@@ -168,7 +168,7 @@ func TestConsoleAndErrorsCommands(t *testing.T) {
 		t.Fatal("errors did not install the error hooks as a bootstrap part")
 	}
 	report, _ := json.Marshal(map[string]any{"kind": "unhandledrejection", "message": "boom", "stack": "f@https://fixture.example/a.js:1:2"})
-	h.f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{"source": "console-api", "level": "debug", "text": "[iwdp:error] " + string(report), "timestamp": 5.0}})
+	h.f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{"source": "console-api", "level": "debug", "text": "[agent-ios:error] " + string(report), "timestamp": 5.0}})
 	waitFor(t, "the rejection", func() bool { out = h.mustRun(t, "errors"); return strings.Contains(out, "boom") })
 	if !strings.Contains(out, "unhandledrejection: boom") || !strings.Contains(out, "    f@https://fixture.example/a.js:1:2") {
 		t.Fatalf("errors = %q, want the rejection and its stack", out)
@@ -393,7 +393,7 @@ func TestSetCommands(t *testing.T) {
 
 // Design 4.2 "set credentials", 7.7 test 7 and W4-2a decision 4: on a
 // command line the password comes from stdin, read by the client step in
-// the iwdp-cli process; the input that goes to the daemon carries it (in
+// the agent-ios process; the input that goes to the daemon carries it (in
 // the /v1/run body, never in argv). A transport without a verified origin
 // scope refuses; the password is in no output and no error. A --password
 // on a command line (where other local users can read argv) is refused
@@ -517,7 +517,7 @@ func TestHookErrorWithoutURLIsAnonymous(t *testing.T) {
 	h := newDTHarness(t)
 	h.mustRun(t, "errors")
 	h.f.Emit("Console.messageAdded", map[string]any{"message": map[string]any{
-		"source": "console-api", "level": "debug", "text": `[iwdp:error] {"kind":"error","message":"hook failure","url":"undefined","line":1,"column":9}`, "timestamp": 1.0,
+		"source": "console-api", "level": "debug", "text": `[agent-ios:error] {"kind":"error","message":"hook failure","url":"undefined","line":1,"column":9}`, "timestamp": 1.0,
 	}})
 	var out string
 	waitFor(t, "the hook's error", func() bool { out = h.mustRun(t, "errors"); return strings.Contains(out, "hook failure") })
