@@ -104,6 +104,70 @@ func TestStateSaveLoadNameOrPath(t *testing.T) {
 	if code, _, errOut := spRun(ps, cwd, "state", "load", "nosuch"); code != ExitError || !strings.Contains(errOut, filepath.Join(dir, "nosuch.json")) {
 		t.Fatalf("state load of a missing name: exit %d, %q", code, errOut)
 	}
+	// FIX-F F7: a missing state names the other reading that exists: the
+	// named state of a file name, the caller's file of a name (D7: a bare
+	// name was a path before).
+	if err := os.Rename(filepath.Join(cwd, "login"), filepath.Join(cwd, "old")); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{"load", "show"} {
+		if code, _, errOut := spRun(ps, t.TempDir(), "state", c, "login.json"); code != ExitError || !strings.Contains(errOut, "the named state login exists: pass login for it") {
+			t.Fatalf("state %s login.json (only the named state login exists): exit %d, %q", c, code, errOut)
+		}
+		if code, _, errOut := spRun(ps, cwd, "state", c, "old"); code != ExitError || !strings.Contains(errOut, "./old exists in the current directory: pass ./old for that file") {
+			t.Fatalf("state %s old (only ./old exists): exit %d, %q", c, code, errOut)
+		}
+	}
+}
+
+// FIX-F F8: state save of a name refuses a symlink at <name>.json (as
+// clear and rename do), never writes through it, and replaces an existing
+// state with a new 0600 file (temporary file and rename).
+func TestStateSaveNamedIsAtomicAndRefusesSymlinks(t *testing.T) {
+	dir := stateHome(t)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := devtoolstest.New(t, "https://app.test")
+	ps := &core.PageSession{Caller: p.Conn}
+	outside := filepath.Join(t.TempDir(), "target.json")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "evil.json")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := spRun(ps, t.TempDir(), "state", "save", "evil"); code != ExitError || !strings.Contains(errOut, "a symlink is refused") {
+		t.Fatalf("state save evil over a symlink: exit %d, %q", code, errOut)
+	}
+	if b, err := os.ReadFile(outside); err != nil || string(b) != "keep" {
+		t.Fatalf("the symlink target was written: %q, %v", b, err)
+	}
+	old := filepath.Join(dir, "old.json")
+	if err := os.WriteFile(old, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := spRun(ps, t.TempDir(), "state", "save", "old"); code != 0 {
+		t.Fatalf("state save old: exit %d, %q", code, errOut)
+	}
+	after, err := os.Stat(old)
+	if err != nil || after.Mode().Perm() != 0o600 || os.SameFile(before, after) {
+		t.Fatalf("old.json after save: %v, %v; want a new file (replaced by rename) with mode 0600", after, err)
+	}
+	if _, _, err := readStateFile(old); err != nil {
+		t.Fatalf("old.json after save: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("the state directory holds %v, want evil.json and old.json only (no temporary file)", entries)
+	}
 }
 
 // state list: the named states only, agent-browser's text and JSON
@@ -138,7 +202,8 @@ func TestStateList(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, errOut = spRun(nil, t.TempDir(), "state", "list")
-	want := "Saved states in " + dir + "\n  big.json (1.5KB, 1970-01-01)\n  demo-default.json (" + stateSize(fi.Size()) + ", 2025-11-24)"
+	// FIX-F F7: the text names the states as every state command takes them.
+	want := "Saved states in " + dir + "\n  big (1.5KB, 1970-01-01)\n  demo-default (" + stateSize(fi.Size()) + ", 2025-11-24)"
 	if code != 0 || out != want {
 		t.Fatalf("state list = exit %d,\n%s\n%s\nwant\n%s", code, out, errOut, want)
 	}
@@ -149,7 +214,7 @@ func TestStateList(t *testing.T) {
 		t.Fatalf("state list --json = %v", m)
 	}
 	f := files[1].(map[string]any)
-	if f["filename"] != "demo-default.json" || f["path"] != filepath.Join(dir, "demo-default.json") || f["size"] != float64(fi.Size()) ||
+	if f["name"] != "demo-default" || f["filename"] != "demo-default.json" || f["path"] != filepath.Join(dir, "demo-default.json") || f["size"] != float64(fi.Size()) ||
 		f["modified"] != 1764000000.0 || f["encrypted"] != false {
 		t.Fatalf("state list entry = %v", f)
 	}
@@ -179,16 +244,31 @@ func TestStateShow(t *testing.T) {
 	named := filepath.Join(dir, "two.json")
 	writeState(t, named, 2, 1764000000)
 	code, out, errOut := spRun(nil, t.TempDir(), "state", "show", "two")
-	if want := "State file summary:\n  Cookies: 2\n  Origins: 1"; code != 0 || out != want {
+	if want := "State file summary:\n  Cookies: 2\n  Origins with localStorage: 0"; code != 0 || out != want {
 		t.Fatalf("state show two: exit %d, %q, %q; want %q", code, out, errOut, want)
+	}
+	// FIX-F F10: the count is the contract's, origins with localStorage.
+	withLS := devtools.State{Version: devtools.StateVersion, Origins: []devtools.StateOrigin{
+		{Origin: "https://a.test", LocalStorage: []devtools.StorageEntry{{Name: "k", Value: "v"}}},
+		{Origin: "https://b.test", SessionStorage: []devtools.StorageEntry{{Name: "k", Value: "v"}}},
+	}}
+	data, err := devtools.EncodeState(withLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ls.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := spRun(nil, t.TempDir(), "state", "show", "ls"); code != 0 || out != "State file summary:\n  Cookies: 0\n  Origins with localStorage: 1" {
+		t.Fatalf("state show ls: exit %d, %q, %q", code, out, errOut)
 	}
 	cwd := t.TempDir()
 	writeState(t, filepath.Join(cwd, "one.json"), 1, 1764000000)
-	code, out, _ = spRun(nil, cwd, "--json", "state", "show", "one.json")
+	code, out, _ = spRun(nil, cwd, "--json", "state", "show", "./one.json")
 	m := jsonOf(t, out)
-	if code != 0 || m["filename"] != "one.json" || m["path"] != filepath.Join(cwd, "one.json") || m["summary"] != "1 cookies, 1 origins" ||
-		m["cookieCount"] != 1.0 || m["originCount"] != 1.0 || m["modified"] != 1764000000.0 || m["encrypted"] != false {
-		t.Fatalf("state show --json one.json = %v", m)
+	if code != 0 || m["filename"] != "one.json" || m["path"] != filepath.Join(cwd, "one.json") || m["summary"] != "1 cookies, 0 origins" ||
+		m["cookieCount"] != 1.0 || m["originCount"] != 0.0 || m["modified"] != 1764000000.0 || m["encrypted"] != false {
+		t.Fatalf("state show --json ./one.json = %v", m)
 	}
 	if strings.Contains(out, "\"v\"") || m["state"] != nil {
 		t.Fatalf("state show printed values: %s", out)
@@ -196,7 +276,7 @@ func TestStateShow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cwd, "bad.json"), []byte(`{"x":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := spRun(nil, cwd, "state", "show", "bad.json"); code != ExitError || !strings.Contains(errOut, "not an agent-ios state file") {
+	if code, _, errOut := spRun(nil, cwd, "state", "show", "./bad.json"); code != ExitError || !strings.Contains(errOut, "not an agent-ios state file") {
 		t.Fatalf("state show of another file: exit %d, %q", code, errOut)
 	}
 }
@@ -213,9 +293,13 @@ func TestStateRename(t *testing.T) {
 	}
 	writeState(t, filepath.Join(dir, "a.json"), 1, 1)
 	writeState(t, filepath.Join(dir, "b.json"), 2, 1)
-	code, out, _ := spRun(nil, t.TempDir(), "--json", "state", "rename", "a.json", "c")
+	// FIX-F F7: a.json is a file path, never a name.
+	if code, _, errOut := spRun(nil, t.TempDir(), "state", "rename", "a.json", "c"); code != ExitUsage || !strings.Contains(errOut, "that is a file path") || !strings.Contains(errOut, "(a)") {
+		t.Fatalf("rename a.json c: exit %d, %q; want a usage error naming the state a", code, errOut)
+	}
+	code, out, _ := spRun(nil, t.TempDir(), "--json", "state", "rename", "a", "c")
 	if m := jsonOf(t, out); code != 0 || m["renamed"] != true || m["from"] != "a" || m["to"] != "c" {
-		t.Fatalf("rename a.json c: exit %d, %v", code, m)
+		t.Fatalf("rename a c: exit %d, %v", code, m)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "a.json")); !os.IsNotExist(err) {
 		t.Fatalf("a.json still exists: %v", err)
@@ -261,14 +345,14 @@ func TestStateClear(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "link.json")); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{}, {"a", "--all"}, {"../a"}} {
+	for _, args := range [][]string{{}, {"a", "--all"}, {"../a"}, {"a.json"}} {
 		if code, _, errOut := spRun(nil, t.TempDir(), append([]string{"state", "clear"}, args...)...); code != ExitUsage {
 			t.Errorf("state clear %v: exit %d, %q; want a usage error", args, code, errOut)
 		}
 	}
-	code, out, _ := spRun(nil, t.TempDir(), "--json", "state", "clear", "a.json")
+	code, out, _ := spRun(nil, t.TempDir(), "--json", "state", "clear", "a")
 	if m := jsonOf(t, out); code != 0 || m["deleted"] != 1.0 {
-		t.Fatalf("state clear a.json: exit %d, %v", code, m)
+		t.Fatalf("state clear a: exit %d, %v", code, m)
 	}
 	if code, _, errOut := spRun(nil, t.TempDir(), "state", "clear", "a"); code != ExitError || !strings.Contains(errOut, "state a does not exist") {
 		t.Fatalf("clear of a missing state: exit %d, %q", code, errOut)

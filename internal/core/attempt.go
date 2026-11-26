@@ -63,6 +63,10 @@ type Action struct {
 	// refuse it: click --new-tab sends Fn with emulateUserGesture, which
 	// grants the page a user activation (W3b, design 3.5).
 	Probe string
+	// Done, when set, ends the action after a dispatched step whose value
+	// it accepts: the later steps are not sent (select on a native
+	// <select> needs one step, on an ARIA combobox two).
+	Done func(step int, value json.RawMessage) bool
 }
 
 // ProbeReady is the retry reason of a probe whose attempt would dispatch
@@ -247,6 +251,9 @@ func (op *Op) RunSteps(a Action) (StepsResult, error) {
 				res.Acked = step
 				res.Values = append(res.Values, rep.Value)
 				lastReason = ""
+				if a.Done != nil && step < a.Steps && a.Done(step, rep.Value) {
+					return res, nil
+				}
 			case StatusRetry, StatusExpired:
 				if rep.Reason != "" {
 					lastReason = rep.Reason

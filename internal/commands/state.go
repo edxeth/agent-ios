@@ -22,16 +22,18 @@ import (
 // credentials: it is written with mode 0600, and the output shows only
 // counts.
 //
-// A state is named or a path. A NAME is letters, digits, '_' and '-' only
-// (the file name without ".json", as state list shows it); it is the file
-// <name>.json in the state directory, $XDG_STATE_HOME/agent-ios/states
-// (else ~/.local/state/agent-ios/states), mode 0700. Any other argument,
-// such as ./login, login.json or /tmp/x.json, is a path relative to the
-// caller's directory. state save and state load take a name or a path,
-// state show too; state rename and state clear take names only and touch
-// only the state directory.
+// A state is named or a path, by one rule in every command (FIX-F F7): a
+// NAME is 1 to 128 letters, digits, '_' and '-' and nothing else, so it
+// never ends in ".json"; it is the file <name>.json in the state
+// directory, $XDG_STATE_HOME/agent-ios/states (else
+// ~/.local/state/agent-ios/states), mode 0700. Any other argument, such as
+// login.json, ./login or /tmp/x.json, is a file path relative to the
+// caller's directory (agent-browser's state save, load and show take
+// paths). state list prints the names. state save, state load and state
+// show take a name or a path; state rename and state clear take names only
+// and touch only the state directory.
 func init() {
-	nameOrPath := "a state name (letters, digits, _ and -: the file <name>.json in the state directory) or a file path (anything else, such as ./login or login.json)"
+	nameOrPath := "a state name as state list prints it (letters, digits, _ and -: the file <name>.json in the state directory) or a file path (anything else, such as login.json or ./login)"
 	Register(&Command{
 		Name:    "state save",
 		Summary: "Save the cookies, localStorage and sessionStorage of the page's current origin as a named state or to a JSON file (mode 0600; it holds live credentials).",
@@ -66,8 +68,8 @@ func init() {
 		Name:    "state rename",
 		Summary: "Rename a named state in the state directory; refuses to overwrite an existing state.",
 		Args: []Arg{
-			{Name: "old-name", Help: "the state to rename (a name; a trailing .json is ignored)", Required: true},
-			{Name: "new-name", Help: "its new name (letters, digits, _ and -; a trailing .json is ignored)", Required: true},
+			{Name: "old-name", Help: "the state to rename (a name, as state list prints it)", Required: true},
+			{Name: "new-name", Help: "its new name (letters, digits, _ and -)", Required: true},
 		},
 		Output: OutputText,
 		Run:    runStateRename,
@@ -76,7 +78,7 @@ func init() {
 		Name: "state clear",
 		Summary: "Delete the named state <name>, or with --all every named state (<name>.json) in the state directory. " +
 			"Nothing outside that directory is deleted: no path, no other file, no subdirectory, no symlink target.",
-		Args:   []Arg{{Name: "name", Help: "the state to delete (a name; a trailing .json is ignored); or --all"}},
+		Args:   []Arg{{Name: "name", Help: "the state to delete (a name, as state list prints it); or --all"}},
 		Flags:  []Flag{{Name: "all", Short: "a", Type: FlagBool, Help: "delete every named state in the state directory"}},
 		Output: OutputText,
 		Check: func(in Input) error {
@@ -149,14 +151,78 @@ func statePath(env Env, s string) (string, bool, error) {
 	return filepath.Join(dir, s+".json"), true, nil
 }
 
-// stateName checks a name argument of state rename and state clear; a
-// trailing ".json" is dropped.
+// stateName checks a name argument of state rename and state clear. A
+// file name such as login.json is a path, never a name: the error names
+// the state it stands for.
 func stateName(cmd, s string) (string, error) {
-	n := strings.TrimSuffix(s, ".json")
-	if !stateNameRE.MatchString(n) {
-		return "", usagef("%s %q: a state name has 1 to 128 letters, digits, _ and - (state list shows the names as <name>.json)", cmd, s)
+	if stateNameRE.MatchString(s) {
+		return s, nil
 	}
-	return n, nil
+	if n, ok := strings.CutSuffix(s, ".json"); ok && stateNameRE.MatchString(n) {
+		return "", usagef("%s %q: that is a file path; %s takes state names, as state list prints them (%s), and never touches other files", cmd, s, cmd, n)
+	}
+	return "", usagef("%s %q: a state name has 1 to 128 letters, digits, _ and - (state list prints the names)", cmd, s)
+}
+
+// readNamedOrPath reads the state file of a name-or-path argument. When it
+// is missing, the error names the other reading that exists: the named
+// state of a path such as login.json, or the file of a name in the
+// caller's directory (before D7, a bare name was such a path).
+func readNamedOrPath(env Env, s string) (string, devtools.State, os.FileInfo, error) {
+	path, named, err := statePath(env, s)
+	if err != nil {
+		return "", devtools.State{}, nil, err
+	}
+	st, fi, err := readStateFile(path)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return path, st, fi, err
+	}
+	if named {
+		if lf, lerr := os.Stat(env.ResolvePath(s)); lerr == nil && lf.Mode().IsRegular() {
+			err = fmt.Errorf("%w; ./%s exists in the current directory: pass ./%s for that file", err, s, s)
+		}
+	} else if n, ok := strings.CutSuffix(s, ".json"); ok && stateNameRE.MatchString(n) {
+		if np, _, nerr := statePath(env, n); nerr == nil {
+			if lf, lerr := os.Lstat(np); lerr == nil && lf.Mode().IsRegular() {
+				err = fmt.Errorf("%w; the named state %s exists: pass %s for it (a name has no .json)", err, n, n)
+			}
+		}
+	}
+	return path, st, fi, err
+}
+
+// writeNamedState writes data as the named state at path, in the state
+// directory: through a temporary file that replaces it, so a reader never
+// sees half a state and a symlink there is never followed (a symlink or
+// another non-regular file at path is refused, as state clear and state
+// rename refuse it).
+func writeNamedState(path string, data []byte) error {
+	dir, err := makeStateDir()
+	if err != nil {
+		return err
+	}
+	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
+		return fmt.Errorf("state save: %s is not a regular file (a symlink is refused); nothing was written", path)
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("state save: %w", err)
+	}
+	f, err := os.CreateTemp(dir, ".save-*.tmp") // mode 0600; state list ignores it
+	if err != nil {
+		return fmt.Errorf("state save: %w", err)
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	err = errors.Join(err, f.Close())
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		return fmt.Errorf("state save: writing %s: %w", path, errors.Join(err, os.Remove(tmp)))
+	}
+	return nil
 }
 
 func runStateSave(ctx context.Context, env Env, in Input) (Result, error) {
@@ -177,11 +243,11 @@ func runStateSave(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	if named {
-		if _, err := makeStateDir(); err != nil {
-			return Result{}, err
-		}
+		err = writeNamedState(path, data)
+	} else {
+		err = devtools.WritePrivateFile(path, data)
 	}
-	if err := devtools.WritePrivateFile(path, data); err != nil {
+	if err != nil {
 		return Result{}, err
 	}
 	o := st.Origins[0]
@@ -219,11 +285,7 @@ func readStateFile(path string) (devtools.State, os.FileInfo, error) {
 }
 
 func runStateLoad(ctx context.Context, env Env, in Input) (Result, error) {
-	path, _, err := statePath(env, arg(in, 0))
-	if err != nil {
-		return Result{}, err
-	}
-	st, _, err := readStateFile(path)
+	path, st, _, err := readNamedOrPath(env, arg(in, 0))
 	if err != nil {
 		return Result{}, err
 	}
@@ -245,6 +307,7 @@ func runStateLoad(ctx context.Context, env Env, in Input) (Result, error) {
 // stateFileInfo is one file of state list (agent-browser's JSON members;
 // agent-ios never encrypts a state file).
 type stateFileInfo struct {
+	Name      string `json:"name"` // the state's name (agent-ios)
 	Filename  string `json:"filename"`
 	Path      string `json:"path"`
 	Size      int64  `json:"size"`
@@ -253,7 +316,7 @@ type stateFileInfo struct {
 }
 
 func fileInfoOf(path string, fi os.FileInfo) stateFileInfo {
-	return stateFileInfo{Filename: filepath.Base(path), Path: path, Size: fi.Size(), Modified: fi.ModTime().Unix()}
+	return stateFileInfo{Name: strings.TrimSuffix(filepath.Base(path), ".json"), Filename: filepath.Base(path), Path: path, Size: fi.Size(), Modified: fi.ModTime().Unix()}
 }
 
 // namedStates returns the named states in dir: the regular files
@@ -300,7 +363,8 @@ func runStateList(context.Context, Env, Input) (Result, error) {
 	return Result{Text: stateListText(dir, files), Data: map[string]any{"files": files, "directory": dir}}, nil
 }
 
-// stateListText is the text of state list (agent-browser's form).
+// stateListText is the text of state list: agent-browser's form, with the
+// state names (which every state command takes) instead of the file names.
 func stateListText(dir string, files []stateFileInfo) string {
 	var b strings.Builder
 	b.WriteString("Saved states in " + dir)
@@ -308,7 +372,7 @@ func stateListText(dir string, files []stateFileInfo) string {
 		b.WriteString("\n  No state files found")
 	}
 	for _, f := range files {
-		fmt.Fprintf(&b, "\n  %s (%s, %s)", f.Filename, stateSize(f.Size), stateDate(f.Modified))
+		fmt.Fprintf(&b, "\n  %s (%s, %s)", f.Name, stateSize(f.Size), stateDate(f.Modified))
 	}
 	return b.String()
 }
@@ -325,22 +389,25 @@ func stateSize(n int64) string {
 func stateDate(sec int64) string { return time.Unix(sec, 0).UTC().Format("2006-01-02") }
 
 func runStateShow(_ context.Context, env Env, in Input) (Result, error) {
-	path, _, err := statePath(env, arg(in, 0))
-	if err != nil {
-		return Result{}, err
-	}
-	st, fi, err := readStateFile(path)
+	path, st, fi, err := readNamedOrPath(env, arg(in, 0))
 	if err != nil {
 		return Result{}, err
 	}
 	info := fileInfoOf(path, fi)
-	cookies, origins := len(st.Cookies), len(st.Origins)
+	// agent-browser counts the origins with localStorage; an agent-ios
+	// state also holds sessionStorage, so an origin can have none.
+	cookies, origins := len(st.Cookies), 0
+	for _, o := range st.Origins {
+		if len(o.LocalStorage) > 0 {
+			origins++
+		}
+	}
 	data := map[string]any{
 		"filename": info.Filename, "path": info.Path, "size": info.Size, "modified": info.Modified, "encrypted": false,
 		"summary":     fmt.Sprintf("%d cookies, %d origins", cookies, origins),
 		"cookieCount": cookies, "originCount": origins,
 	}
-	text := fmt.Sprintf("State file summary:\n  Cookies: %d\n  Origins: %d", cookies, origins)
+	text := fmt.Sprintf("State file summary:\n  Cookies: %d\n  Origins with localStorage: %d", cookies, origins)
 	return Result{Text: text, Data: data}, nil
 }
 

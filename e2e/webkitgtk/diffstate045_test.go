@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -96,6 +97,17 @@ func TestDiffURLGTK(t *testing.T) {
 	}
 	if href := string(eval(t, "location.href")); href != `"`+b+`"` {
 		t.Fatalf("the page is at %s after diff url, want %s", href, b)
+	}
+	// FIX-F F10: the refs and the session's last snapshot are url2's.
+	m := regexp.MustCompile(`button "Undo" \[ref=(e\d+)\]`).FindStringSubmatch(data.Snapshot2)
+	if m == nil {
+		t.Fatalf("snapshot2 has no ref for the Undo button: %s", data.Snapshot2)
+	}
+	if got := mustRun(t, ps, "get", "text", "@"+m[1]); got != "Undo" {
+		t.Fatalf("get text @%s after diff url = %q, want Undo (a ref of url2)", m[1], got)
+	}
+	if got := mustRun(t, ps, "diff", "snapshot"); got != "No changes detected" {
+		t.Fatalf("diff snapshot after diff url = %q; want url2's snapshot as the baseline", got)
 	}
 	// The same URL twice: no change, and the text form.
 	got := mustRun(t, ps, "diff", "url", b, b, "--screenshot", "--wait-until", "domcontentloaded")

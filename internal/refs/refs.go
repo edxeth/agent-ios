@@ -1,8 +1,8 @@
 // Package refs holds element refs such as @e7 (design
 // docs/design/agentic-parity.md, section 3.3): the serialized ref
 // allocator of one logical session and page, the table that resolves a ref
-// to the snapshot that produced it, and the snapshot history of
-// "diff snapshot".
+// to the snapshot that produced it, and the last snapshot of each logical
+// session, the baseline of "diff snapshot".
 package refs
 
 import (
@@ -61,17 +61,18 @@ type Table struct {
 	// Refs up to these numbers were handed out by an earlier owner of the
 	// page and were dropped by a reset (design 3.1).
 	daemonBelow, epochBelow int
-	// history holds the last two rendered snapshots of each logical
-	// session. The daemon keeps one table per page record, used by every
-	// lease owner of the page in turn, and "diff snapshot" compares only
-	// the snapshots of its own session. It grows with the sessions that took
-	// a snapshot on the page and goes away with the table.
-	history map[string][]string
+	// last holds the last snapshot of each logical session
+	// (lastsnapshot.go). The daemon keeps one table per page record, used
+	// by every lease owner of the page in turn, and "diff snapshot"
+	// compares only with the snapshot of its own session. It grows with the
+	// sessions that took a snapshot on the page and goes away with the
+	// table (a closed tab, a daemon restart).
+	last map[string]LastSnapshot
 }
 
 // NewTable returns a table whose first ref is e1.
 func NewTable() *Table {
-	return &Table{alloc: make(chan struct{}, 1), next: 1, entries: map[int]Entry{}, history: map[string][]string{}}
+	return &Table{alloc: make(chan struct{}, 1), next: 1, entries: map[int]Entry{}, last: map[string]LastSnapshot{}}
 }
 
 // ParseRef parses "@e5", "e5" or "ref=e5" (agent-browser forms) and returns 5.
@@ -177,30 +178,4 @@ func (t *Table) NoteReset(reason string, maxRef int) {
 	case ResetEpoch:
 		t.epochBelow = max(t.epochBelow, maxRef)
 	}
-}
-
-// RecordSnapshot keeps text as the latest snapshot of session.
-func (t *Table) RecordSnapshot(session, text string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	h := append(t.history[session], text)
-	if len(h) > 2 {
-		h = h[len(h)-2:]
-	}
-	t.history[session] = h
-}
-
-// Snapshots returns the previous and the latest snapshot of session and
-// how many of the two exist. Other sessions' snapshots are never returned.
-func (t *Table) Snapshots(session string) (prev, cur string, n int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	h := t.history[session]
-	switch len(h) {
-	case 0:
-		return "", "", 0
-	case 1:
-		return "", h[0], 1
-	}
-	return h[0], h[1], 2
 }

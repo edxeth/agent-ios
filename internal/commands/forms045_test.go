@@ -2,6 +2,7 @@ package commands
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -65,5 +66,30 @@ func TestFormWarnings(t *testing.T) {
 	un := action{Kind: "check", Form: &formCtx{Verb: "unchecked"}}
 	if got := un.formWarning(`{"k":"still","t":"input","y":"checkbox"}`); !strings.Contains(got, "is still checked after clicking") {
 		t.Fatalf("uncheck warning %q, want 'still checked'", got)
+	}
+}
+
+// FIX-F F4: option_not_found lists the first 50 options, each value and
+// label cut to 100 characters, then how many more there are.
+func TestOptionNotFoundListIsBounded(t *testing.T) {
+	a := action{Kind: "select", Target: "#s", Form: &formCtx{Values: []string{"nope"}}}
+	var o [][2]string
+	for i := range 500 {
+		o = append(o, [2]string{fmt.Sprint("v", i), strings.Repeat("é", 150)})
+	}
+	f := formFacts{K: "sel", N: 500, O: o}
+	lines := strings.Split(a.optionNotFound(f), "\n")
+	want := `{"value":"v0","label":"` + strings.Repeat("é", 100) + "\u2026\"}"
+	if len(lines) != 53 || lines[1] != "Available options:" || lines[2] != want || lines[52] != "... and 450 more" {
+		t.Fatalf("option_not_found with 500 options: %d lines, line 2 %q, last %q", len(lines), lines[2], lines[len(lines)-1])
+	}
+	// The page sends only the first 50 options; N still counts all.
+	f.O = o[:50]
+	if lines := strings.Split(a.optionNotFound(f), "\n"); len(lines) != 53 || lines[52] != "... and 450 more" {
+		t.Fatalf("option_not_found with 50 of 500 options sent: last line %q", lines[len(lines)-1])
+	}
+	f = formFacts{K: "sel", N: 3, O: o[:3]}
+	if lines := strings.Split(a.optionNotFound(f), "\n"); len(lines) != 5 {
+		t.Fatalf("option_not_found with 3 options: %d lines, want 5", len(lines))
 	}
 }

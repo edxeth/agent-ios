@@ -232,7 +232,7 @@ func (w *w3bPage) run(ctx context.Context, a action) (*actResult, error) {
 	if a.Gesture {
 		fn, probe = runtime.With("actGesture", a.Needs...), runtime.With("actProbe", a.Needs...)
 	}
-	res, err := w.op.RunSteps(core.Action{Name: a.Name, Fn: fn, Probe: probe, Steps: a.Steps, Delay: a.Delay, Reserve: reserveFor(ctx), Args: func(step int) any {
+	res, err := w.op.RunSteps(core.Action{Name: a.Name, Fn: fn, Probe: probe, Steps: a.Steps, Delay: a.Delay, Reserve: reserveFor(ctx), Done: stepFinished, Args: func(step int) any {
 		m := map[string]any{"k": a.Kind, "dp": policy}
 		if t1 != nil {
 			m["t"] = t1
@@ -251,6 +251,9 @@ func (w *w3bPage) run(ctx context.Context, a action) (*actResult, error) {
 		return m
 	}})
 	out := &actResult{Trusted: false, Steps: a.Steps, Acked: res.Acked, Emulated: []string{}}
+	if err == nil {
+		out.Steps = res.Acked // a step that finished the action (stepFinished) leaves the rest unsent
+	}
 	var failure string
 	for _, raw := range res.Values {
 		var v actValue
@@ -296,6 +299,17 @@ func (w *w3bPage) run(ctx context.Context, a action) (*actResult, error) {
 		return out, fmt.Errorf("%s: %s", a.Name, failure)
 	}
 	return out, nil
+}
+
+// stepFinished reports whether a dispatched step finished its action
+// ("fin" in its value): a native <select> is selected and read back in
+// step 1 of select, so no second step can fail an action that already
+// ran when its change handler navigates or removes the element.
+func stepFinished(_ int, raw json.RawMessage) bool {
+	var v struct {
+		Fin bool `json:"fin"`
+	}
+	return json.Unmarshal(raw, &v) == nil && v.Fin
 }
 
 // actionError turns the page's refusal of a target (ambiguous, stale or

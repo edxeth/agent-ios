@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -199,5 +200,38 @@ func TestInterruptedStepStopsSequence(t *testing.T) {
 	}
 	if res.Acked != 1 || len(steps) != 2 {
 		t.Fatalf("acked %d, attempts for steps %v; want step 1 acknowledged and no attempt for step 3", res.Acked, steps)
+	}
+}
+
+// FIX-F F1: Action.Done ends the action after a dispatched step whose
+// value it accepts; no later step is sent (select on a native <select>).
+func TestDoneEndsTheActionEarly(t *testing.T) {
+	var steps []int
+	rt := func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
+		if _, err := c.Send(ctx, "Runtime.evaluate", nil); err != nil {
+			return nil, err
+		}
+		if fn == ClockFn {
+			return json.RawMessage(`{"now":1,"doc":"d1"}`), nil
+		}
+		a := args.(AttemptArgs)
+		steps = append(steps, a.Step)
+		return json.Marshal(AttemptReply{Status: StatusDispatched, Now: 2, Doc: a.Doc, Value: json.RawMessage(`{"fin":true}`)})
+	}
+	s := NewScheduler(nopCaller{}, SchedulerOptions{Clock: NewManualClock(0), Runtime: rt})
+	defer s.Close()
+	s.SetLease(testSession, 1)
+	op, err := s.Begin(context.Background(), OpSpec{Class: ClassMutate, Session: testSession, Epoch: 1, Deadline: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer op.End()
+	var seen []string
+	res, err := op.RunSteps(Action{Name: "select", Fn: "act", Steps: 2, Done: func(step int, v json.RawMessage) bool {
+		seen = append(seen, fmt.Sprintf("%d %s", step, v))
+		return true
+	}})
+	if err != nil || res.Acked != 1 || len(res.Values) != 1 || len(steps) != 1 || len(seen) != 1 || seen[0] != `1 {"fin":true}` {
+		t.Fatalf("err %v, acked %d, values %d, attempts for steps %v, Done saw %v; want step 1 only", err, res.Acked, len(res.Values), steps, seen)
 	}
 }

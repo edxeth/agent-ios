@@ -263,6 +263,15 @@ func TestCDPDomainsOnWebKitGTK(t *testing.T) {
 		}
 	})
 
+	// FIX-F F2: on an element that is not a file input the bridge keeps its
+	// own error, not the upload command's not_file_input refusal.
+	t.Run("setFileInputFiles on a text input", func(t *testing.T) {
+		msg := p.failCall(t, "DOM.setFileInputFiles", map[string]any{"nodeId": p.nodeID(t, "#name"), "files": []string{}})
+		if !strings.Contains(msg, "the element is not a file input") || strings.Contains(msg, "not_file_input") {
+			t.Fatalf("DOM.setFileInputFiles on #name: %q; want \"the element is not a file input\"", msg)
+		}
+	})
+
 	t.Run("dialog policy answers a CDP click", func(t *testing.T) {
 		ask := p.nodeID(t, "#ask")
 		p.click(t, ask)

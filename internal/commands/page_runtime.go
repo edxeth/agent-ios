@@ -18,7 +18,7 @@ import (
 type pageRuntime struct {
 	rt      *runtime.Runtime
 	refs    *refs.Table
-	session string // whose snapshot history this command adds to (historySession)
+	session string // whose last snapshot this command replaces (historySession)
 }
 
 // errNoRuntime: the daemon handed out a page session without the W3a parts.
@@ -55,12 +55,12 @@ func openRuntime(ctx context.Context, env Env) (*pageRuntime, error) {
 	return &pageRuntime{rt: rt, refs: t, session: historySession(ps)}, nil
 }
 
-// historySession is the logical session whose snapshot history a command
-// of ps reads and adds to: the lease holder, which runs the command. The
-// ref table belongs to the page and serves every lease owner in turn, but
-// "diff snapshot" compares the last two snapshots of this session, so the
-// table keeps the history per session. Without a scheduler (a page
-// session made outside the daemon) it is "".
+// historySession is the logical session whose last snapshot a command of
+// ps reads and replaces: the lease holder, which runs the command. The ref
+// table belongs to the page and serves every lease owner in turn, but
+// "diff snapshot" compares with the last snapshot of this session, so the
+// table keeps it per session. Without a scheduler (a page session made
+// outside the daemon) it is "".
 func historySession(ps *core.PageSession) string {
 	if ps.Sched == nil {
 		return ""

@@ -48,6 +48,12 @@
   // later task as a portal at the end of the body (aria-controls names it
   // before it exists); a click on an option selects it and closes the list.
   var combo = document.getElementById("combo");
+  // Escape closes the list (WAI-ARIA combobox pattern).
+  combo.addEventListener("keydown", function (e) {
+    var lb = document.getElementById("combo-list");
+    if (e.key !== "Escape" || !lb) { return; }
+    combo.setAttribute("aria-expanded", "false"); lb.remove();
+  });
   combo.addEventListener("click", function () {
     if (combo.getAttribute("aria-expanded") === "true") { return; }
     combo.setAttribute("aria-expanded", "true");

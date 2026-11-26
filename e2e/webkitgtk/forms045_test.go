@@ -6,8 +6,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/edxeth/agent-ios/internal/commands"
 	"github.com/edxeth/agent-ios/internal/core"
@@ -244,6 +246,105 @@ func TestForms045Combobox(t *testing.T) {
 	}
 	if got := pageString(t, "T.combo.join(',')"); got != "banana,cherry" {
 		t.Fatalf("the refused selects picked %q", got)
+	}
+}
+
+// FIX-F F1: a native select is selected and read back in one step, so a
+// change handler that navigates (a jump menu, onchange submit) leaves a
+// successful select (it was before the read-back became a second step).
+func TestForms045SelectThatNavigates(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		loadActions(t)
+		ps, _ := actionSession(t, hooks{})
+		q := "?nav=" + strconv.Itoa(i)
+		eval(t, "document.getElementById('pick').addEventListener('change', function () { location.href = location.pathname + '"+q+"'; }); true")
+		code, out, errOut := act(context.Background(), ps, "--timeout", "10s", "select", "#pick", "Banana")
+		if code != 0 {
+			t.Fatalf("run %d: select on a select whose change navigates: exit %d, out %q, stderr %q; want exit 0", i, code, out, errOut)
+		}
+		waitLocation(t, q)
+	}
+}
+
+// waitLocation waits until the page's location.search is q.
+func waitLocation(t *testing.T, q string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if string(eval(t, "location.search + '|' + document.readyState")) == strconv.Quote(q+"|complete") {
+			return
+		}
+	}
+	t.Fatalf("the page did not reach %s within 10 s", q)
+}
+
+// FIX-F F1: a select whose change handler removes it (a wizard that moves
+// on) is selected, and the command succeeds at once instead of waiting
+// for the element until the timeout.
+func TestForms045SelectThatGoesAway(t *testing.T) {
+	loadActions(t)
+	ps, _ := actionSession(t, hooks{})
+	eval(t, "document.getElementById('pick').addEventListener('change', function (e) { var s = e.target; setTimeout(function () { s.remove(); }, 0); }); true")
+	start := time.Now()
+	code, out, errOut := act(context.Background(), ps, "--timeout", "5s", "select", "#pick", "Banana")
+	if code != 0 || time.Since(start) > 3*time.Second {
+		t.Fatalf("select on a select that its change handler removes: exit %d after %v, out %q, stderr %q; want exit 0 promptly", code, time.Since(start), out, errOut)
+	}
+}
+
+// FIX-F F5: options that share the matched value are one choice: the
+// select picks one of them, and the read-back does not warn.
+func TestForms045SelectSharedValue(t *testing.T) {
+	ps := loadForms(t)
+	eval(t, "var s = document.createElement('select'); s.id = 'sdup'; s.innerHTML = '<option value=\"z\">Zero</option><option value=\"a\">A1</option><option value=\"a\">A2</option>'; document.body.appendChild(s); true")
+	out := mustAct(t, ps, "select", "#sdup", "a")
+	if v := pageString(t, "document.getElementById('sdup').value"); v != "a" || strings.Contains(out, "warning:") {
+		t.Fatalf("select #sdup a: value %q, output %q; want a without a warning", v, out)
+	}
+}
+
+// FIX-F F4: the option list of option_not_found is bounded: the first 50
+// options, then how many more there are.
+func TestForms045OptionListBounded(t *testing.T) {
+	ps := loadForms(t)
+	eval(t, "var s = document.createElement('select'); s.id = 'sbig'; for (var i = 0; i < 500; i++) { var o = document.createElement('option'); o.value = 'v' + i; o.textContent = 'Option ' + i + ' ' + 'x'.repeat(300); s.appendChild(o); } document.body.appendChild(s); true")
+	code, _, errOut := act(context.Background(), ps, "--timeout", "10s", "select", "#sbig", "nope")
+	lines := strings.Split(strings.TrimRight(errOut, "\n"), "\n")
+	if code != 1 || len(lines) != 53 || !strings.HasPrefix(lines[0], "Error: select: option_not_found: No option matched [\"nope\"]. The select has 500 options") ||
+		lines[1] != "Available options:" || !strings.HasPrefix(lines[2], `{"value":"v0","label":"Option 0 xxx`) || lines[52] != "... and 450 more" {
+		t.Fatalf("select #sbig nope: exit %d, %d lines, stderr %.600q", code, len(lines), errOut)
+	}
+	for _, l := range lines[2:52] {
+		if len(l) > 300 {
+			t.Fatalf("an option line has %d bytes: %.80q", len(l), l)
+		}
+	}
+}
+
+// FIX-F F6: a combobox refusal leaves the page as it was: the list that
+// the select opened is closed again.
+func TestForms045ComboboxRefusalCloses(t *testing.T) {
+	ps := loadForms(t)
+	code, _, errOut := act(context.Background(), ps, "--timeout", "10s", "select", "#combo", "Durian")
+	if code != 1 || !strings.Contains(errOut, "option_not_found") {
+		t.Fatalf("select #combo Durian: exit %d, stderr %q", code, errOut)
+	}
+	if got := pageString(t, "document.getElementById('combo').getAttribute('aria-expanded') + ' ' + !!document.getElementById('combo-list') + ' ' + T.combo.join(',')"); got != "false false " {
+		t.Fatalf("after the refused select: expanded, list present, picked = %q; want the list closed and nothing picked", got)
+	}
+}
+
+// FIX-F F3: type --delay into a field that the page disables after two
+// characters refuses, and says how many characters were typed before.
+func TestForms045TypeRefusedMidway(t *testing.T) {
+	ps := loadForms(t)
+	eval(t, "var n = document.getElementById('name'); n.value = ''; n.addEventListener('input', function () { if (n.value.length >= 2) { n.disabled = true; } }); true")
+	code, _, errOut := act(context.Background(), ps, "--timeout", "10s", "type", "#name", "abcde", "--delay", "20ms")
+	want := "Error: type: disabled: Element #name (<input type=\"text\">) is disabled and cannot be typed into; 2 of 5 characters were typed before the refusal\n"
+	if code != 1 || errOut != want {
+		t.Fatalf("type --delay into a field disabled midway: exit %d, stderr %q; want %q", code, errOut, want)
+	}
+	if v := pageString(t, "document.getElementById('name').value"); v != "ab" {
+		t.Fatalf("the field holds %q, want ab", v)
 	}
 }
 

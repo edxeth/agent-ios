@@ -216,15 +216,23 @@
     }
     var d = _.A[g.k];
     if (!d) { return failed(_.fail("unsupported", "the agent runtime has no action " + g.k)); }
-    // chk: the form preconditions (55-actions.js); a refusal changes nothing.
-    if (el && d.chk) {
-      try { el = d.chk(el, g, a) || el; } catch (e) { return failed(e); }
+    // chk: the form preconditions (mod-forms/), inside the fence: a refusal
+    // answers only for the next step of a live operation, and changes nothing.
+    var no = null;
+    try {
+      return await I.attempt(a, function () {
+        if (why) { return why; }
+        if (el && d.chk) {
+          try { el = d.chk(el, g, a) || el; } catch (e) { no = e; throw e; }
+        }
+        var r = el && !g.f && !(d.pre && a.step > 1) ? check(d.as || g.k, d.on ? d.on(el) : el, a.opId + "/" + a.step) : "";
+        return r || (probe ? READY : "");
+      }, dispatch);
+    } catch (e) {
+      if (e === no) { return failed(e); }
+      throw e;
     }
-    return I.attempt(a, function () {
-      if (why) { return why; }
-      var r = el && !g.f && !(d.pre && a.step > 1) ? check(d.as || g.k, d.on ? d.on(el) : el, a.opId + "/" + a.step) : "";
-      return r || (probe ? READY : "");
-    }, async function (x) {
+    async function dispatch(x) {
       _.dlgOn(g.dp);
       var r = { trusted: false, d: [] };
       try {
@@ -234,7 +242,7 @@
       }
       r.dlg = _.dlgUsed();
       return r;
-    });
+    }
   }
   // click --new-tab (actGesture, with emulateUserGesture): the runtime
   // first calls actProbe without the gesture and calls actGesture only when

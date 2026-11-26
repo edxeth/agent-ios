@@ -1829,7 +1829,7 @@ Delete the named state \<name\>, or with --all every named state (\<name\>.json)
 
 | Argument | Required | Description |
 |---|---|---|
-| `<name>` | no | the state to delete (a name; a trailing .json is ignored); or --all |
+| `<name>` | no | the state to delete (a name, as state list prints it); or --all |
 
 | Flag | Value | Description |
 |---|---|---|
@@ -1857,7 +1857,7 @@ Restore a state written by state save (a name or a path): the page must be at th
 
 | Argument | Required | Description |
 |---|---|---|
-| `<name-or-path>` | yes | a state name (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as ./login or login.json) |
+| `<name-or-path>` | yes | a state name as state list prints it (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as login.json or ./login) |
 
 ### `state rename`
 
@@ -1871,8 +1871,8 @@ Rename a named state in the state directory; refuses to overwrite an existing st
 
 | Argument | Required | Description |
 |---|---|---|
-| `<old-name>` | yes | the state to rename (a name; a trailing .json is ignored) |
-| `<new-name>` | yes | its new name (letters, digits, _ and -; a trailing .json is ignored) |
+| `<old-name>` | yes | the state to rename (a name, as state list prints it) |
+| `<new-name>` | yes | its new name (letters, digits, _ and -) |
 
 ### `state save`
 
@@ -1886,7 +1886,7 @@ Save the cookies, localStorage and sessionStorage of the page's current origin a
 
 | Argument | Required | Description |
 |---|---|---|
-| `<name-or-path>` | yes | a state name (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as ./login or login.json); an existing file is overwritten |
+| `<name-or-path>` | yes | a state name as state list prints it (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as login.json or ./login); an existing file is overwritten |
 
 ### `state show`
 
@@ -1900,7 +1900,7 @@ Show what a state holds without its values: the number of cookies and origins, s
 
 | Argument | Required | Description |
 |---|---|---|
-| `<name-or-path>` | yes | a state name (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as ./login or login.json) |
+| `<name-or-path>` | yes | a state name as state list prints it (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as login.json or ./login) |
 
 ### `status`
 

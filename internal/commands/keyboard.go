@@ -2,8 +2,10 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -406,13 +408,31 @@ func typeInto(ctx context.Context, env Env, name, target, text string, delay tim
 		},
 	})
 	if err != nil {
-		return Result{}, err
+		return Result{}, typedBefore(err, r, steps)
 	}
 	into := ""
 	if target != "" {
 		into = " into " + target
 	}
 	return w.result(fmt.Sprintf("typed %d characters%s in %d step(s)", utf8.RuneCountInString(text), into, len(steps)), r), nil
+}
+
+// typedBefore adds to a form refusal of a later step of type (the page
+// disabled the field while it was typed into) how many characters the
+// acknowledged steps typed before it.
+func typedBefore(err error, r *actResult, steps [][]keyDesc) error {
+	var re *runtime.Error
+	if r == nil || r.Acked == 0 || !errors.As(err, &re) || !slices.Contains(formCodes, re.Code) {
+		return err
+	}
+	typed, all := 0, 0
+	for i, s := range steps {
+		if i < r.Acked {
+			typed += len(s)
+		}
+		all += len(s)
+	}
+	return &runtime.Error{Code: re.Code, Message: fmt.Sprintf("%s; %d of %d characters were typed before the refusal", re.Message, typed, all), Details: re.Details}
 }
 
 // runType: "type <target> <text>", or "type <text>" into the focused

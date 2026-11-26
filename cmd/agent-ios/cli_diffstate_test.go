@@ -35,7 +35,7 @@ func TestCLIStateGroup(t *testing.T) {
 		t.Fatalf("state list --json: exit %d, %q, %q", r.code, r.stdout, r.stderr)
 	}
 	r = runCLI(t, "", env, "state", "show", "login")
-	if r.code != 0 || r.stdout != "State file summary:\n  Cookies: 1\n  Origins: 1\n" || strings.Contains(r.stdout+r.stderr, "s3cret") {
+	if r.code != 0 || r.stdout != "State file summary:\n  Cookies: 1\n  Origins with localStorage: 0\n" || strings.Contains(r.stdout+r.stderr, "s3cret") {
 		t.Fatalf("state show login: exit %d, %q, %q", r.code, r.stdout, r.stderr)
 	}
 	if r = runCLI(t, "", env, "state", "rename", "login", "old"); r.code != 0 || r.stdout != "Renamed login -> old\n" {

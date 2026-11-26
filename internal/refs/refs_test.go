@@ -218,35 +218,34 @@ func TestRefIDsNeverRepeatProperty(t *testing.T) {
 	}
 }
 
-// diff snapshot (4.2) compares the last two snapshots of the session.
-func TestSnapshotHistoryKeepsLastTwo(t *testing.T) {
+// diff snapshot without --baseline compares with the session's last
+// snapshot (agent-browser 0.45 implicit baseline): a new table has none,
+// and each snapshot replaces the one before.
+func TestLastSnapshotReplacesTheOneBefore(t *testing.T) {
 	tb := NewTable()
-	if _, _, n := tb.Snapshots("s1"); n != 0 {
-		t.Fatalf("history of a new table has %d entries", n)
+	if _, ok := tb.LastSnapshot("s1"); ok {
+		t.Fatal("a new table has a last snapshot")
 	}
-	tb.RecordSnapshot("s1", "a")
-	tb.RecordSnapshot("s1", "b")
-	tb.RecordSnapshot("s1", "c")
-	if prev, cur, n := tb.Snapshots("s1"); prev != "b" || cur != "c" || n != 2 {
-		t.Fatalf("Snapshots = %q, %q, %d", prev, cur, n)
+	tb.RememberSnapshot("s1", LastSnapshot{Text: "a"})
+	tb.RememberSnapshot("s1", LastSnapshot{Text: "b", Options: SnapshotOptions{Compact: true}, FrameID: "f1"})
+	if got, ok := tb.LastSnapshot("s1"); !ok || got.Text != "b" || !got.Options.Compact || got.FrameID != "f1" {
+		t.Fatalf("LastSnapshot(s1) = %+v, %v; want b with its options and frame", got, ok)
 	}
 }
 
-// The daemon keeps one table per page for every lease owner in turn;
-// "diff snapshot" compares the last two snapshots of this session (4.2),
-// so each session sees only its own history.
-func TestSnapshotHistoryIsPerSession(t *testing.T) {
+// The daemon keeps one table per page for every lease owner in turn; each
+// session sees only its own last snapshot.
+func TestLastSnapshotIsPerSession(t *testing.T) {
 	tb := NewTable()
-	tb.RecordSnapshot("a", "a1")
-	tb.RecordSnapshot("a", "a2")
-	if prev, cur, n := tb.Snapshots("b"); n != 0 || prev != "" || cur != "" {
-		t.Fatalf("Snapshots(b) after two snapshots of a = %q, %q, %d; want none", prev, cur, n)
+	tb.RememberSnapshot("a", LastSnapshot{Text: "a1"})
+	if got, ok := tb.LastSnapshot("b"); ok {
+		t.Fatalf("LastSnapshot(b) after a's snapshot = %+v; want none", got)
 	}
-	tb.RecordSnapshot("b", "b1")
-	if prev, cur, n := tb.Snapshots("b"); prev != "" || cur != "b1" || n != 1 {
-		t.Fatalf("Snapshots(b) = %q, %q, %d; want only b1", prev, cur, n)
+	tb.RememberSnapshot("b", LastSnapshot{Text: "b1"})
+	if got, _ := tb.LastSnapshot("a"); got.Text != "a1" {
+		t.Fatalf("LastSnapshot(a) after b's snapshot = %+v; want a1", got)
 	}
-	if prev, cur, n := tb.Snapshots("a"); prev != "a1" || cur != "a2" || n != 2 {
-		t.Fatalf("Snapshots(a) after b's snapshot = %q, %q, %d; want a1, a2", prev, cur, n)
+	if got, _ := tb.LastSnapshot("b"); got.Text != "b1" {
+		t.Fatalf("LastSnapshot(b) = %+v; want b1", got)
 	}
 }

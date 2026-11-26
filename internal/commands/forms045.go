@@ -192,14 +192,35 @@ func (a action) optionNotFound(f formFacts) string {
 		fmt.Fprintf(&b, "No option matched %s%s. The select has %d options", asked, by, f.N)
 	}
 	b.WriteString("\nAvailable options:")
-	for _, o := range f.O {
+	for _, o := range f.O[:min(len(f.O), maxListedOptions)] {
 		line, _ := json.Marshal(struct {
 			Value string `json:"value"`
 			Label string `json:"label"`
-		}{o[0], o[1]})
+		}{cutOption(o[0]), cutOption(o[1])})
 		b.WriteString("\n" + string(line))
 	}
+	if n := max(f.N, len(f.O)); n > maxListedOptions {
+		fmt.Fprintf(&b, "\n... and %d more", n-maxListedOptions)
+	}
 	return b.String()
+}
+
+// maxListedOptions and maxOptionText bound the option list of
+// option_not_found (agent-browser prints every option in full): a list of
+// thousands of options or a very long label would flood the caller's
+// transcript. The page sends at most this many (mod-forms OPTS, OLEN).
+const (
+	maxListedOptions = 50
+	maxOptionText    = 100
+)
+
+// cutOption cuts an option's value or label to maxOptionText characters
+// and marks the cut with "…".
+func cutOption(s string) string {
+	if r := []rune(s); len(r) > maxOptionText {
+		return string(r[:maxOptionText]) + "\u2026"
+	}
+	return s
 }
 
 func (a action) ambiguousOption(f formFacts) string {

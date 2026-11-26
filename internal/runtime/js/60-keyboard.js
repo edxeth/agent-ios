@@ -227,4 +227,5 @@
   };
   // For the forms module: built-ins captured at the core's install.
   _.VS = VS; _.ie = ie; _.hclick = click;
+  _.kev = kev; // Escape closes a combobox that a refused select opened
 })(window.__iwdpBuilding);

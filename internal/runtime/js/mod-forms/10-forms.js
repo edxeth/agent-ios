@@ -11,7 +11,7 @@
   if (!I) { return; } // installed (internal/runtime module wrapper)
   var _ = I._, B = _.B, w = window, A = _.A, center = _.center, ev = _.ev, gap = _.gap, disp = _.disp, bub = _.bub;
   // Built-ins captured at the core's install (design 3.1), not at this one.
-  var over = _.over, press = _.press, ie = _.ie, VS = _.VS, Ev = _.Ev, sT = _.sT, hclick = _.hclick;
+  var over = _.over, press = _.press, ie = _.ie, VS = _.VS, Ev = _.Ev, sT = _.sT, hclick = _.hclick, kev = _.kev;
   // Form preconditions of agent-browser 0.45 (cli/src/native/forms.rs). A
   // refusal changes nothing; its code is the error code and its message the
   // JSON of fixed facts (fd) that internal/commands/forms045.go turns into
@@ -82,13 +82,19 @@
     if (nat(b) && !(_.visible(b) && _.css(b, "opacity") > 0 && _.css(b, "pointer-events") !== "none")) { g.f = g.dom = true; }
     return b;
   };
-  // select: a native <select> (step 1 selects, step 2 reads back) or an
-  // ARIA combobox or listbox (step 1 opens a collapsed combobox, step 2
-  // clicks the matching role=option elements).
+  // select: a native <select> (one step: select, then read back after the
+  // change handlers ran; "fin" ends the action) or an ARIA combobox or
+  // listbox (step 1 opens a collapsed combobox, step 2 clicks the matching
+  // role=option elements, or closes the list it opened when it refuses).
   // match: the indexes of the options ([value, label] pairs) that the
   // values g.vals pick (--by g.by). Native (s, e the <select>): exact label
   // or value, then the normalized label; options sharing a value are one
-  // choice. ARIA lists compare normalized texts and count every match.
+  // choice, so only the first of them is picked. ARIA lists compare
+  // normalized texts and count every match. option_not_found carries the
+  // first OPTS options, each text cut to OLEN + 1 characters (Go,
+  // forms045.go cutOption, cuts it to OLEN and marks the cut).
+  var OPTS = 50, OLEN = 100;
+  function cut(s) { return s.slice(0, OLEN + 1); }
   function match(ps, g, s, e) {
     var by = g.by, out = [];
     g.vals.forEach(function (v, i) {
@@ -102,34 +108,43 @@
       var m = f(!s), d = m;
       if (!m.length && s && by !== "value") { m = f(1); }
       if (s) { d = m.filter(function (j, k) { return m.map(function (q) { return ps[q][0]; }).indexOf(ps[j][0]) === k; }); }
-      if (!m.length) { throw ff("option_not_found", e, { k: s ? "sel" : "list", n: ps.length, o: ps.map(function (p) { return [p[0], nrm(p[1])]; }) }); }
+      if (!m.length) { throw ff("option_not_found", e, { k: s ? "sel" : "list", n: ps.length, o: ps.slice(0, OPTS).map(function (p) { return [cut(p[0]), cut(nrm(p[1]))]; }) }); }
       if (d.length > 1) { throw ff("ambiguous", e, { k: s ? "sel" : "list", i: i, d: d.length }); }
-      out = out.concat(m);
+      out = out.concat(d);
     });
     return out;
   }
-  var SEL = {};
-  I.onReset(function () { SEL = {}; });
+  var OPENED = {}; // the combobox that step 1 opened, by operation
+  I.onReset(function () { OPENED = {}; });
   A.select = async function (e, g, a, r, x) {
-    var j, ga = B.getAttr, role = ga(e, "role");
+    var j, ga = B.getAttr, role = ga(e, "role"), op = OPENED[a.opId];
+    delete OPENED[a.opId];
     if (e.localName === "select") {
-      var os = e.options, p = a.step === 1 ? g.pick : SEL[a.opId];
-      delete SEL[a.opId];
-      if (a.step === 1) {
-        SEL[a.opId] = p;
-        await ev(x, function () {
-          for (j = 0; j < os.length; j++) { os[j].selected = p.indexOf(j) >= 0; }
-          disp(e, bub("input"));
-        });
-        await ev(x, function () { disp(e, bub("change")); });
-      }
-      for (j = 0; a.step > 1 && p && j < os.length; j++) { if (os[j].selected !== p.indexOf(j) >= 0) { r.fw = fd(e, { k: "sel" }); } }
-      r.v = p && p.map(function (i) { return os[i] && os[i].value; });
+      var os = e.options, p = g.pick;
+      await ev(x, function () {
+        for (j = 0; j < os.length; j++) { os[j].selected = p.indexOf(j) >= 0; }
+        disp(e, bub("input"));
+      });
+      await ev(x, function () { disp(e, bub("change")); });
+      await gap(x);
+      for (j = 0; j < os.length; j++) { if (os[j].selected !== p.indexOf(j) >= 0) { r.fw = fd(e, { k: "sel" }); } }
+      r.v = p.map(function (i) { return os[i] && os[i].value; });
+      r.fin = true;
       return;
     }
     if (a.step === 1) {
-      if (role === "combobox" && ga(e, "aria-expanded") !== "true") { await pressOn(x, e, g); }
+      if (role === "combobox" && ga(e, "aria-expanded") !== "true") { OPENED[a.opId] = e; await pressOn(x, e, g); }
       return;
+    }
+    // shut: a refusal closes the list that step 1 opened (Escape, then a
+    // second click when the list is still expanded).
+    async function shut(why) {
+      r.err = why;
+      if (op !== e) { return; }
+      await kev(x, e, "keydown", { key: "Escape", code: "Escape", kc: 27 }, {});
+      await kev(x, e, "keyup", { key: "Escape", code: "Escape", kc: 27 }, {});
+      await gap(x);
+      if (ga(e, "aria-expanded") === "true") { await pressOn(x, e, g); }
     }
     var ac = ga(e, "aria-controls"), opts = [], want = [];
     function collect() {
@@ -137,7 +152,7 @@
       return s ? [].filter.call(s.querySelectorAll("[role=option]"), function (o) { return B.gcr(o).length; }) : [];
     }
     for (j = 0; j < 5 && !(opts = collect()).length; j++) { await new Promise(function (f) { sT.call(w, f, 20); }); }
-    if (!opts.length) { r.err = "combobox opened but no visible role=option elements were found"; return; }
+    if (!opts.length) { await shut("combobox opened but no visible role=option elements were found"); return; }
     var pv = opts.map(function (o) { return [nrm(ga(o, "data-value")) || nrm(ga(o, "value")), nrm(_.name(o))]; });
     try {
       match(pv, g, 0, e).forEach(function (i) {
@@ -146,7 +161,7 @@
       });
     } catch (y) {
       if (!y.__iwdpError) { throw y; }
-      r.err = y.code + ": " + y.message;
+      await shut(y.code + ": " + y.message);
       return;
     }
     for (j = 0; j < want.length; j++) {
@@ -184,7 +199,7 @@
   };
   // The upload command (g.fi) refuses with agent-browser's not_file_input.
   A.upload.chk = function (e, g) {
-    if (g.fi && e.localName !== "input" || e.type !== "file") { throw ff("not_file_input", e, { a: B.getAttr(e, "type") }); }
+    if (g.fi && (e.localName !== "input" || e.type !== "file")) { throw ff("not_file_input", e, { a: B.getAttr(e, "type") }); }
   };
   // Form preconditions of fill and type (agent-browser 0.45 forms.rs): g.fk
   // from Go maps a tag, "input:<type>" or "v:<type>" (value inputs) to the
