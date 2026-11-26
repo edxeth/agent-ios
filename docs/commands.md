@@ -2047,6 +2047,7 @@ Open a new tab with window.open (emulated user gesture) from the current page an
 | Flag | Value | Description |
 |---|---|---|
 | `--label` | text | label for the new tab, usable instead of its tN id |
+| `--device` | text | open the tab on this device: SIMULATOR (the iOS Simulator) or a UDID; window.open runs in the session's tab only when it is on this device, else in a tab of this device |
 
 ### `tap`
 

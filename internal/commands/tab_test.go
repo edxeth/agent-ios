@@ -83,7 +83,7 @@ func (f *tabFake) Open(ctx context.Context, p transport.Page) (transport.Message
 func (f *tabFake) Close() error { return nil }
 
 // add lists a new page served by a new fake endpoint. A page answers
-// window.open(url) by listing a new page at url, and window.close() by
+// window.open(url) by listing a new page at url on its own device, and window.close() by
 // leaving the list, as a browser that lists script-opened windows does.
 func (f *tabFake) add(title, url string) *fakewebkit.Server {
 	return f.addOn(f.deviceID(), title, url)
@@ -109,7 +109,7 @@ func (f *tabFake) addOn(device, title, url string) *fakewebkit.Server {
 		case strings.HasPrefix(p.Expression, "!!window.open("):
 			var u string
 			_ = json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(p.Expression, "!!window.open("), ")")), &u)
-			f.add("Opened", u)
+			f.addOn(device, "Opened", u)
 			return map[string]any{"result": map[string]any{"type": "boolean", "value": true}}, nil
 		case p.Expression == "window.close()":
 			f.mu.Lock()

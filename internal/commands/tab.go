@@ -39,7 +39,10 @@ func init() {
 		Name: "tab new", Aliases: []string{"window new"},
 		Summary: "Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end.",
 		Args:    []Arg{{Name: "url", Help: "URL to open (default about:blank)"}},
-		Flags:   []Flag{{Name: "label", Type: FlagString, Help: "label for the new tab, usable instead of its tN id"}},
+		Flags: []Flag{
+			{Name: "label", Type: FlagString, Help: "label for the new tab, usable instead of its tN id"},
+			{Name: tabDeviceFlag.Name, Type: tabDeviceFlag.Type, Help: "open the tab on this device: SIMULATOR (the iOS Simulator) or a UDID; window.open runs in the session's tab only when it is on this device, else in a tab of this device"},
+		},
 		// No page of the command: runTabNew leases the current page for
 		// window.open in its own operation, so that it can end that lease
 		// after the operation. It runs window.open in the --page page.
@@ -308,6 +311,11 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	// session does not keep it as its page.
 	req := tabRequest(in, in.Global.Page)
 	req.Opener = true
+	// --device: the opener, and so the new tab, come only from that
+	// device (decision D22); without it, a session without a tab gets an
+	// opener of the devices that its owner reserves, or of the only
+	// device with tabs (core: openerScope).
+	req.Device = flagString(in, "device")
 	err = m.Do(ctx, req, ao, "tab new", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
 		device, byOrder = mo.Page.PS.Device.ID, mo.ByOrder
 		known, listErr = listBeforeOpen(ctx, m, in, device)

@@ -82,8 +82,15 @@ type PageRequest struct {
 	// has no page and the listing has several tabs, it resolves, only as
 	// the opener, the first debuggable tab in listing order that no other
 	// session leases and that answers a liveness probe (sessionTarget,
-	// touch; decision D21).
+	// touch; decision D21), among the tabs of one device (Device, or
+	// openerScope; decision D22).
 	Opener bool
+	// Device, with Opener, is the device (SIMULATOR or a UDID) that the
+	// opener, and so the new tab, must come from (tab new --device;
+	// decision D22): the session's page or a default page of another
+	// device is not used, the opener is picked among that device's tabs,
+	// and an explicit Page of another device is an error (CodeNoPage).
+	Device string
 	// prefer is the session's default page for a request without a page
 	// (sessionPage): its record key, used while its connection is open
 	// (attachedTarget).

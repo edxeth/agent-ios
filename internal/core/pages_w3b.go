@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -332,19 +333,32 @@ func (m *Manager) sessionPage(session string, req PageRequest) PageRequest {
 // tab, except for req.Opener (tab new's window.open), which then gets the
 // first debuggable tab in listing order that no other session leases and
 // that touch has not skipped (openerOf; touch probes it, decision D21).
+// An opener request with a Device (tab new --device, decision D22) uses
+// the session's current or default page only when it is a page of that
+// device; otherwise the opener is picked among that device's tabs.
 // implicit reports that the page came from no choice of the session
 // (sreq.Page is ""), and is to become its default page; never for an
 // opener picked by order.
 func (m *Manager) sessionTarget(ctx context.Context, req PageRequest, ao AcquireOptions) (sreq PageRequest, t pageTarget, implicit bool, err error) {
 	sreq = m.sessionPage(ao.Session, req)
 	implicit = sreq.Page == ""
-	switch {
-	case sreq.Page != "":
+	if sreq.Page != "" {
 		t, err = m.resolve(ctx, sreq)
-	default:
+		if err == nil && !onOpenerDevice(req, t) {
+			if req.Page != "" {
+				err = &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: --page %q is a page of device %s, not of --device %s", ErrNoPage, req.Page, t.device.ID, req.Device)}
+			} else {
+				// The session's tab is on another device: the opener
+				// comes from the tabs of req.Device, as for a session
+				// without a tab.
+				sreq, implicit = req, true
+			}
+		}
+	}
+	if err == nil && sreq.Page == "" {
 		var ok bool
-		if t, ok = m.attachedTarget(sreq); !ok {
-			if t, ok, err = m.lostDefaultTarget(ctx, sreq, ao.Session); err == nil && !ok {
+		if t, ok = m.attachedTarget(sreq); !ok || !onOpenerDevice(req, t) {
+			if t, ok, err = m.lostDefaultTarget(ctx, sreq, ao.Session); err == nil && (!ok || !onOpenerDevice(req, t)) {
 				t, implicit, err = m.soleTarget(ctx, sreq, ao)
 			}
 		}
@@ -391,6 +405,12 @@ func (m *Manager) lostDefaultTarget(ctx context.Context, sreq PageRequest, sessi
 	return t, t.key != "", nil
 }
 
+// onOpenerDevice reports whether t may serve req: always, except for an
+// opener request with a Device (tab new --device) and t of another device.
+func onOpenerDevice(req PageRequest, t pageTarget) bool {
+	return !req.Opener || req.Device == "" || t.device.ID == req.Device
+}
+
 // soleTarget is the page of sreq (no page, no open default page) when the
 // listing that ao's reservation owner sees has a single tab (soleTab). A
 // listing of several tabs is an error (CodeNoPage), except for an opener
@@ -399,14 +419,37 @@ func (m *Manager) lostDefaultTarget(ctx context.Context, sreq PageRequest, sessi
 // (CodeBusy) says why for each. When every page is hidden, the error is
 // the admission error of the listing's first debuggable page (its device's reservation), which names
 // what to reserve; that page is only refused, never used.
+// An opener's candidates are the tabs of one device (decision D22): of
+// sreq.Device when set (then the opener is always picked by order), else
+// of the devices that ao's owner reserves when it reserves any, and they
+// must be the tabs of one device (openerScope).
 func (m *Manager) soleTarget(ctx context.Context, sreq PageRequest, ao AcquireOptions) (t pageTarget, implicit bool, err error) {
 	listing := PageRequest{Transport: sreq.Transport, Addr: sreq.Addr}
-	tabs, hidden, err := m.Tabs(ctx, listing, ao)
+	scoped := sreq.Opener && sreq.Device != ""
+	var tabs []Tab
+	var hidden int
+	if scoped {
+		tabs, hidden, err = m.DeviceTabs(ctx, listing, ao, sreq.Device)
+	} else {
+		tabs, hidden, err = m.Tabs(ctx, listing, ao)
+	}
 	if err != nil {
 		return pageTarget{}, false, err
 	}
 	if len(tabs) == 0 && hidden > 0 {
-		t, err := m.resolve(ctx, listing)
+		var t pageTarget
+		if scoped {
+			t, _, err = m.findListed(ctx, listing, func(k string, p transport.Page) bool {
+				_, rest, _ := strings.Cut(k, "|") // "<kind>|<device id>|<page id>"
+				device, _, _ := strings.Cut(rest, "|")
+				return p.Debuggable && device == sreq.Device
+			})
+			if err == nil && t.key == "" {
+				err = &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: device %s lists no debuggable page", ErrNoPage, sreq.Device)}
+			}
+		} else {
+			t, err = m.resolve(ctx, listing)
+		}
 		if err == nil {
 			err = m.admitTarget(ctx, sreq, t, ao.Reservation)
 		}
@@ -417,7 +460,7 @@ func (m *Manager) soleTarget(ctx context.Context, sreq PageRequest, ao AcquireOp
 	}
 	key := ""
 	switch {
-	case soleTab(tabs, hidden):
+	case !scoped && soleTab(tabs, hidden):
 		implicit = true
 		if tabs[0].Debuggable {
 			key = tabs[0].Key
@@ -425,6 +468,11 @@ func (m *Manager) soleTarget(ctx context.Context, sreq PageRequest, ao AcquireOp
 	case len(tabs) > 0 && !sreq.Opener:
 		return pageTarget{}, false, m.noSessionTab(tabs, hidden, ao)
 	default:
+		if !scoped {
+			if tabs, err = m.openerScope(tabs, ao); err != nil {
+				return pageTarget{}, false, err
+			}
+		}
 		var skipped []string
 		key, skipped = openerOf(tabs, sreq.skipped, ao.normalized().Session)
 		if key == "" && len(skipped) > 0 {
@@ -463,6 +511,68 @@ func openerOf(tabs []Tab, tried *openerSkips, session string) (key string, skipp
 		}
 	}
 	return "", skipped
+}
+
+// openerScope narrows tabs, a listing with several tabs, to the
+// candidates of tab new's opener without --device (decision D22): when
+// ao's reservation owner holds live reservations, only the tabs of the
+// devices that they cover (a physical device, or the simulator in the
+// owner's turn); otherwise every tab. Debuggable candidates of more than
+// one device are an error (CodeNoPage) that names the devices and
+// --device, and so are reservations that cover no debuggable tab: the new
+// tab must not open on a device that the caller did not mean.
+func (m *Manager) openerScope(tabs []Tab, ao AcquireOptions) ([]Tab, error) {
+	owner := ao.normalized().Reservation
+	var mine []Reservation
+	if m.o.Reservations != nil {
+		live, err := m.o.Reservations.List()
+		if err != nil {
+			return nil, &CodedError{Code: CodeReservation, Err: fmt.Errorf("tab new: reading the device reservations: %w", err)}
+		}
+		for _, r := range live {
+			if r.Owner == owner {
+				mine = append(mine, r)
+			}
+		}
+	}
+	reserved := func(t Tab) bool {
+		kind, _, _ := strings.Cut(t.Key, "|")
+		simulator := t.DeviceID == SimulatorDevice && transport.Kind(kind) == transport.KindIWDP
+		if !simulator && !physicalDevice(transport.Kind(kind), t.DeviceID) {
+			return false
+		}
+		for _, r := range mine {
+			if r.Covers(t.DeviceID) {
+				return true
+			}
+		}
+		return false
+	}
+	var out []Tab
+	var devices []string
+	debuggable := false
+	for _, t := range tabs {
+		if !t.Debuggable {
+			continue
+		}
+		debuggable = true
+		if len(mine) > 0 && !reserved(t) {
+			continue
+		}
+		out = append(out, t)
+		if !slices.Contains(devices, t.DeviceID) {
+			devices = append(devices, t.DeviceID)
+		}
+	}
+	switch {
+	case !debuggable:
+		return tabs, nil
+	case len(devices) > 1:
+		return nil, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: this session has no tab, and tabs of %d devices could run window.open (%s); agent-ios does not pick a device by order: run 'agent-ios tab new --device <id>' with one of them, or select a tab with 'agent-ios tab list' and 'agent-ios tab <id>'", ErrNoPage, len(devices), strings.Join(devices, ", "))}
+	case len(out) == 0:
+		return nil, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: this session has no tab, and the devices that %q reserves list no debuggable tab, so tab new does not open the tab on another device: open a page in Safari on the reserved device, or run 'agent-ios tab new --device <id>' (SIMULATOR or a UDID) for another device", ErrNoPage, owner)}
+	}
+	return out, nil
 }
 
 // openerSkips are the openers that touch tried for one request of tab new
