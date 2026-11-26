@@ -3,6 +3,7 @@
 package webkitgtk
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"testing"
@@ -180,5 +181,36 @@ func TestSnapshot045ReplacedDocumentRef(t *testing.T) {
 		if code == 0 || !strings.Contains(errOut, want) {
 			t.Errorf("@%s after the reload: exit %d, %q", ref, code, errOut)
 		}
+	}
+}
+
+// level4 is an expression for the document of the fourth nested frame of
+// snapshot045.html.
+const level4 = "(function () { var d = document; for (var k = 1; k <= 4; k++) { d = d.querySelector('iframe[name=\"level' + k + '\"]').contentDocument; } return d; })()"
+
+// Review F1 (runtime-input): a detached ref inside a nested frame is found
+// again by role and name only in the ref's own document: a replacement in
+// that frame resolves and takes the click, a top-document button of the
+// same role and name is never taken, and once the frame is gone the ref is
+// stale.
+func TestSnapshot045NestedRefRecoversInItsOwnDocument(t *testing.T) {
+	navigate(t, "snapshot045.html", snapshot045Ready)
+	ps, _ := actionSession(t, hooks{})
+	ref := refNamed(t, mustRun(t, ps, "snapshot", "-i", "-s", "#frames"), `button "Level 4"`)
+	replace := level4 + ".querySelector('button').outerHTML = '<button onclick=\"top.frameClicks++\">Level 4</button>'; "
+	eval(t, "window.frameClicks = 0; window.wrongClicks = 0; "+replace+"var a = document.createElement('button'); a.textContent = 'Level 4'; a.style.cssText = 'position:fixed;left:0;top:0;z-index:1000'; "+
+		"a.onclick = function () { window.wrongClicks++; }; document.body.appendChild(a); true")
+	code, _, errOut := act(context.Background(), ps, "--timeout", "3s", "click", "@"+ref)
+	if wrong, right := pageString(t, "String(window.wrongClicks)"), pageString(t, "String(window.frameClicks)"); code != 0 || wrong != "0" || right != "1" {
+		t.Fatalf("click @%s after a replacement in its frame and a same-named top button: exit %d, err %q, top clicks %s, frame clicks %s; want the frame's button once", ref, code, errOut, wrong, right)
+	}
+	eval(t, replace+"true")
+	if code, out, errOut := run(t, ps, "get", "text", "@"+ref); code != 0 || strings.Split(out, "\n")[0] != "Level 4" {
+		t.Fatalf("get text @%s after its button was replaced in its frame again: exit %d, out %q, err %q", ref, code, out, errOut)
+	}
+	eval(t, "document.getElementById('nest').remove(); true")
+	code, _, errOut = run(t, ps, "get", "text", "@"+ref)
+	if want := "stale_ref: Ref @" + ref + " is from a document that is no longer loaded"; code == 0 || !strings.Contains(errOut, want) {
+		t.Fatalf("get text @%s after its frame was removed: exit %d, err %q; want %q", ref, code, errOut, want)
 	}
 }

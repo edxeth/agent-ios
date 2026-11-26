@@ -20,7 +20,8 @@
     if (t === "input") { return !e.readOnly && !!TXT[(B.getAttr(e, "type") || "").toLowerCase()]; }
     return !!e.isContentEditable;
   }
-  // center is the point that actions aim at, in client coordinates: the
+  // center is the point that actions aim at, in the client coordinates of
+  // e's own window (a frame's for an element inside a frame): the
   // center of e's bounding box, or for an element in several boxes (an
   // inline element that wraps across lines) the center of its first box
   // with an area whose center is in the viewport, else of its first box
@@ -28,12 +29,12 @@
   // and its center can lie on another element (Playwright's clickable
   // point likewise takes the first content quad).
   function center(e) {
-    var rs = B.gcr(e), f = null;
+    var rs = B.gcr(e), f = null, v = view(e);
     if (rs.length > 1) {
       for (var i = 0; i < rs.length; i++) {
         var q = rs[i], c = { x: q.left + q.width / 2, y: q.top + q.height / 2 };
         if (q.width * q.height < 1) { continue; }
-        if (c.x >= 0 && c.y >= 0 && c.x < w.innerWidth && c.y < w.innerHeight) { return c; }
+        if (inView(c, v)) { return c; }
         f = f || c;
       }
       if (f) { return f; }
@@ -56,15 +57,48 @@
     for (var p = h; p; p = _.flatParent(p)) { if (p === e) { return true; } }
     return false;
   }
-  function inView(c) { return c.x >= 0 && c.y >= 0 && c.x < w.innerWidth && c.y < w.innerHeight; }
+  function view(e) { return B.defaultView(B.ownerDoc(e)) || w; }
+  function inView(c, v) { return c.x >= 0 && c.y >= 0 && c.x < v.innerWidth && c.y < v.innerHeight; }
+  // lift maps point (x, y) of the viewport of the document that frame
+  // element f shows into the viewport of f's own window, through f's box,
+  // border, padding and CSS scale (sx, sy).
+  function lift(f, x, y) {
+    var r = B.gbcr(f), sx = f.offsetWidth ? r.width / f.offsetWidth : 1, sy = f.offsetHeight ? r.height / f.offsetHeight : 1;
+    return { x: r.left + (f.clientLeft + (parseFloat(_.css(f, "padding-left")) || 0) + x) * sx,
+      y: r.top + (f.clientTop + (parseFloat(_.css(f, "padding-top")) || 0) + y) * sy, sx: sx, sy: sy };
+  }
+  function frameOf(d) {
+    var v = B.defaultView(d);
+    try { return v && v.frameElement; } catch (err) { return null; } // cross-origin parent
+  }
   // reaches: the hit h takes e's press: h is e or inside it, or h is in a
-  // label that activates e (its control, or a label around e) and is no
-  // other interactive element inside that label (agent-browser BLOCKER_AT_JS).
-  var IA = "a[href],button,input,select,textarea,summary,iframe,[role],[onclick],[tabindex]";
+  // label that activates e (its control, or a label around e) and neither h
+  // nor an element between h and that label is interactive (agent-browser
+  // 0.45.0 BLOCKER_AT_JS, element.rs: its selector or an onclick function).
+  var IA = 'button,a[href],area[href],input,select,textarea,summary,details,iframe,embed,object,[role],[onclick],' +
+    '[tabindex]:not([tabindex="-1"]),[contenteditable=""],[contenteditable="true"]';
   function reaches(h, e) {
     if (within(h, e)) { return true; }
-    var l = B.closest(h, "label"), i = l && B.closest(h, IA);
-    return !!l && !(i && i !== l && within(i, l)) && (l.control === e || within(e, l));
+    var l = B.closest(h, "label");
+    if (!l) { return false; }
+    for (var n = h; n && n !== l; n = _.flatParent(n)) {
+      if (B.matches(n, IA) || typeof n.onclick === "function") { return false; }
+    }
+    return l.control === e || within(e, l);
+  }
+  // framed: "" when point c of document d shows through every frame that
+  // encloses d: each frame element is visible, c is inside its viewport,
+  // and the element at c's place in the parent document is that frame.
+  function framed(d, c) {
+    for (var x = c.x, y = c.y, f; d !== document; d = B.ownerDoc(f)) {
+      var v = B.defaultView(d);
+      f = frameOf(d);
+      if (!f || !_.visible(f)) { return "the element's frame is not visible"; }
+      if (!inView({ x: x, y: y }, v)) { return "the element center is outside its frame's viewport"; }
+      var p = lift(f, x, y), h = at(x = p.x, y = p.y, B.ownerDoc(f));
+      if (h !== f) { return h ? "covered by " + desc(h) : "the element center is outside the viewport"; }
+    }
+    return "";
   }
   // hits: the receives-events check. It first scrolls e into view (out of a
   // clipping scroll container too, and fully when it straddles the
@@ -72,14 +106,16 @@
   // attempt checks again after scroll listeners, frames and reflow ran
   // (stable waits for the new rect) and scrolls again when reflow moved e
   // back out (agent-browser #2587: press the settled point).
+  // An element inside a frame is hit-tested in its own document, then
+  // through every enclosing frame (framed).
   function hits(e) {
-    var k = rk(e);
+    var k = rk(e), d = B.ownerDoc(e), v = view(e);
     if (scrollIVN) { scrollIVN.call(e, true); }
-    if (!inView(center(e))) { scrollIV.call(e, { block: "center", inline: "center" }); }
+    if (!inView(center(e), v)) { scrollIV.call(e, { block: "center", inline: "center" }); }
     if (rk(e) !== k) { return "waiting for the element to settle after scrolling"; }
-    var c = center(e), h = inView(c) && at(c.x, c.y);
+    var c = center(e), h = inView(c, v) && at(c.x, c.y, d);
     if (!h) { return "the element center (" + Math.round(c.x) + ", " + Math.round(c.y) + ") is outside the viewport"; }
-    return reaches(h, e) ? "" : "covered by " + desc(h);
+    return reaches(h, e) ? framed(d, c) : "covered by " + desc(h);
   }
   function rk(e) {
     var r = B.gbcr(e);
@@ -112,7 +148,7 @@
     if (HIT[k]) { return stable(e, key) || hits(e); }
     return "";
   }
-  _.desc = desc; _.editable = editable; _.center = center; _.at = at; _.check = check;
+  _.desc = desc; _.editable = editable; _.center = center; _.at = at; _.check = check; _.lift = lift; _.frameOf = frameOf;
   // Event tasks (design 3.5, W3b decision "one task per event"). The events
   // of one native input event (a mouse move, a mouse down, a key down) run
   // in one task, each after a microtask turn, so microtasks that the page

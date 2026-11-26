@@ -5,12 +5,14 @@
 // One host element with a closed shadow root, maximum z-index and no
 // pointer events, drawn in document coordinates (it also works for a
 // full-page capture); "overlayClear", release and an owner reset remove
-// it. With a target (a.t) the capture area is that element's box, and the
-// result names it, so that the capture uses the same area. A ref inside a
-// same-origin frame (the snapshot walks those) is placed through each
-// frame element's box, border, padding and scale, and only while it is in
-// that frame's viewport; "boxes" gives each drawn ref's box in document
-// coordinates.
+// it. The result names the capture area in document coordinates: the
+// viewport, the whole document, or with a target (a.t) that element's box
+// (also for a target inside a same-origin frame), so that the capture
+// uses the same area. A ref inside a same-origin frame (the snapshot walks
+// those) is placed through each frame element's box, border, padding and
+// scale, and only while it is in that frame's viewport; "boxes" gives each
+// drawn ref's box in document coordinates (Go makes them relative to the
+// area, the captured image).
 (function (I) {
   "use strict";
   if (!I) { return; } // installed (internal/runtime module wrapper)
@@ -24,19 +26,15 @@
   I.onRelease(clear);
   I.onReset(clear);
   function css(e, s) { e.setAttribute("style", s); }
-  function px(e, p) { return parseFloat(_.css(e, p)) || 0; }
   // place: e's box in this window's viewport, or null when a frame's
   // viewport cuts it off.
   function place(e) {
     var r = B.gbcr(e), x = r.left, y = r.top, wd = r.width, ht = r.height, d = B.ownerDoc(e);
     while (d !== document) {
-      var v = B.defaultView(d), f = null;
-      try { f = v && v.frameElement; } catch (err) { f = null; }
+      var v = B.defaultView(d), f = _.frameOf(d);
       if (!f || x + wd <= 0 || y + ht <= 0 || x >= v.innerWidth || y >= v.innerHeight) { return null; }
-      var fr = B.gbcr(f), sx = f.offsetWidth ? fr.width / f.offsetWidth : 1, sy = f.offsetHeight ? fr.height / f.offsetHeight : 1;
-      x = fr.left + (f.clientLeft + px(f, "padding-left") + x) * sx;
-      y = fr.top + (f.clientTop + px(f, "padding-top") + y) * sy;
-      wd *= sx; ht *= sy; d = B.ownerDoc(f);
+      var p = _.lift(f, x, y);
+      x = p.x; y = p.y; wd *= p.sx; ht *= p.sy; d = B.ownerDoc(f);
     }
     return { x: x, y: y, width: wd, height: ht };
   }
@@ -48,8 +46,9 @@
     if (a.t) {
       var te = _.all(a.t, call)[0];
       if (!te) { throw _.fail("not_found", "no element matches " + JSON.stringify(a.t.selector || "@" + a.t.ref)); }
-      var tr = B.gbcr(te);
-      ax = tr.left + w.scrollX; ay = tr.top + w.scrollY; aw = tr.width; ah = tr.height;
+      var tr = place(te);
+      if (!tr) { throw _.fail("unsupported", "the element of " + JSON.stringify(a.t.selector || "@" + a.t.ref) + " is outside its frame's viewport; scroll it into view first"); }
+      ax = tr.x + w.scrollX; ay = tr.y + w.scrollY; aw = tr.width; ah = tr.height;
     }
     host = document.createElement("div");
     css(host, "position:absolute;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none");

@@ -266,3 +266,39 @@ func TestAnnotate045BoxesInsideScrolledAndScaledFrames(t *testing.T) {
 		t.Fatalf("with #scrolled at the top its button is outside the frame's viewport; labels %v, want only the scaled frame's", d["labels"])
 	}
 }
+
+// Review F1 and F2 (frames-heap): annotation boxes are in the coordinates
+// of the captured image, as agent-browser 0.45 (e2e_tests.rs: after a
+// 120 px scroll the viewport boxes shift by -120, full-page boxes stay in
+// document coordinates); an element capture of a ref inside a same-origin
+// frame captures that element where the top page shows it, so its own
+// label is at 0, 0 of the image.
+func TestAnnotate045BoxesInImageCoordinates(t *testing.T) {
+	e := newFrames045(t)
+	e.js(agentA, "document.body.style.height = '3000px'; document.getElementById('scrolled').contentWindow.scrollTo(0, 350); window.scrollTo(0, 120); 1")
+	inside := func(d map[string]any) map[string]any {
+		for _, l := range d["labels"].([]any) {
+			if m := l.(map[string]any); m["name"] == "Inside" {
+				b, _ := m["box"].(map[string]any)
+				return b
+			}
+		}
+		t.Fatalf("no Inside label: %v", d["labels"])
+		return nil
+	}
+	// #scrolled's Inside button is at 69, 315 of the document (TestAnnotate045BoxesInsideScrolledAndScaledFrames).
+	if b := inside(e.data(agentA, "screenshot", "--annotate", filepath.Join(t.TempDir(), "v.png"))); b["x"] != 69.0 || b["y"] != 195.0 {
+		t.Fatalf("viewport capture scrolled by 120: Inside box %v, want x 69, y 195", b)
+	}
+	if b := inside(e.data(agentA, "screenshot", "--annotate", "--full", filepath.Join(t.TempDir(), "f.png"))); b["x"] != 69.0 || b["y"] != 315.0 {
+		t.Fatalf("full-page capture scrolled by 120: Inside box %v, want x 69, y 315", b)
+	}
+	m := regexp.MustCompile(`button "Inside" \[ref=(e\d+)\]`).FindStringSubmatch(e.must(agentA, "snapshot"))
+	if m == nil {
+		t.Fatal("no Inside ref in the snapshot")
+	}
+	b := inside(e.data(agentA, "screenshot", "--annotate", "--selector", "@"+m[1], filepath.Join(t.TempDir(), "el.png")))
+	if b["x"] != 0.0 || b["y"] != 0.0 || b["width"] != 100.0 || b["height"] != 30.0 {
+		t.Fatalf("element capture of @%s inside a frame: Inside box %v, want 0, 0, 100x30", m[1], b)
+	}
+}

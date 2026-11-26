@@ -5,9 +5,10 @@
   if (!I) { return; }
   var _ = I._, B = _.B, fail = _.fail;
 
-  // allElements lists the elements of the document, its open shadow roots
-  // and its same-origin iframes (one level), in tree order per root.
-  function allElements(frames) {
+  // allElements lists the elements of the document (or of document d), its
+  // open shadow roots and its same-origin iframes (one level), in tree order
+  // per root.
+  function allElements(frames, d) {
     var out = [];
     function add(root, depth) {
       var list = root.nodeType === 9 ? B.qsaDoc(root, "*") : B.qsaFrag(root, "*");
@@ -23,7 +24,7 @@
         }
       }
     }
-    add(document, 0);
+    add(d || document, 0);
     return out;
   }
 
@@ -72,7 +73,7 @@
       return deepQuery(value);
     case "role":
       var nm = opts.name !== undefined && opts.name !== null && opts.name !== "" ? matcher(opts.name, opts.exact) : null;
-      els = allElements(false);
+      els = allElements(false, opts.doc);
       for (var i = 0; i < els.length; i++) {
         if (_.role(els[i]) === value && (!nm || nm(_.name(els[i])))) { out.push(els[i]); }
       }
@@ -148,6 +149,8 @@
   // reset of the page maps dropped belongs to an earlier owner: it is
   // unknown, never found again by role and name (design 3.1). A ref into a
   // frame that shows another document now, or that was removed, is stale.
+  // A detached element is found again by role and name only in its own
+  // document (a frame's, at any depth), never in another one.
   function resolveRef(spec, call) {
     var at = "@" + spec.ref;
     if (spec.doc && spec.doc !== _.doc()) {
@@ -162,7 +165,7 @@
     }
     if (el && B.connected(el)) { return el; }
     if (spec.unique && spec.role) {
-      var same = locate("role", spec.role, { name: spec.name || "", exact: true }).filter(function (c) {
+      var same = locate("role", spec.role, { name: spec.name || "", exact: true, doc: el ? B.ownerDoc(el) : document }).filter(function (c) {
         return (_.name(c) || "") === (spec.name || "");
       });
       if (same.length === 1) {

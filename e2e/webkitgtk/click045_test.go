@@ -131,3 +131,65 @@ func TestClick045LabelActivatesControl(t *testing.T) {
 		t.Fatalf("click on a checkbox covered by a link in its label: exit %d, stderr %q; want covered by the link and no change", code, errOut)
 	}
 }
+
+// Review F2 (runtime-input): a ref four frames deep is hit-tested in its
+// own document and through every enclosing frame: the click lands on it at
+// a point inside it; an element of the top document that covers the frame
+// chain, or a hidden enclosing frame, refuses the click.
+func TestClick045NestedFrameRef(t *testing.T) {
+	navigate(t, "snapshot045.html", snapshot045Ready)
+	ps, _ := actionSession(t, hooks{})
+	ref := refNamed(t, mustRun(t, ps, "snapshot", "-i", "-s", "#frames"), `button "Level 4"`)
+	eval(t, "window.hits = []; var b = "+level4+".querySelector('button'); "+
+		"b.onclick = function (e) { top.hits.push(b.ownerDocument.elementFromPoint(e.clientX, e.clientY) === b); }; "+
+		"document.body.style.paddingBottom = '3000px'; scrollTo(0, 1e6); true") // the frame chain starts above the viewport
+	mustAct(t, ps, "click", "@"+ref)
+	if got := pageString(t, "JSON.stringify(window.hits)"); got != "[true]" {
+		t.Fatalf("click @%s (iframe depth 4): clicks with their point on the button %s, want [true]", ref, got)
+	}
+	eval(t, "var c = document.createElement('div'); c.id = 'cover'; c.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;z-index:1000'; document.body.appendChild(c); true")
+	code, _, errOut := act(context.Background(), ps, "--timeout", "1500ms", "click", "@"+ref)
+	if code == 0 || !strings.Contains(errOut, `covered by <div id="cover">`) || pageString(t, "JSON.stringify(window.hits)") != "[true]" {
+		t.Fatalf("click @%s under a top-document cover: exit %d, err %q, hits %s; want covered by the cover and no click", ref, code, errOut, pageString(t, "JSON.stringify(window.hits)"))
+	}
+	eval(t, "document.getElementById('cover').remove(); document.getElementById('nest').contentDocument.querySelector('iframe').style.visibility = 'hidden'; true")
+	code, _, errOut = act(context.Background(), ps, "--timeout", "1500ms", "click", "@"+ref)
+	if code == 0 || pageString(t, "JSON.stringify(window.hits)") != "[true]" {
+		t.Fatalf("click @%s inside a hidden frame: exit %d, err %q; want refused", ref, code, errOut)
+	}
+}
+
+// Review F3 (runtime-input): inside a label that activates the target, a
+// covering descendant that is interactive by agent-browser 0.45.0's
+// BLOCKER_AT_JS (element.rs) takes the press, so the click is refused and
+// the checkbox stays unchanged: a property-assigned onclick, details,
+// embed, object, contenteditable, tabindex 0. tabindex -1 is not
+// interactive there: the label still activates the checkbox.
+func TestClick045LabelInteractiveDescendants(t *testing.T) {
+	loadClick045(t, "")
+	ps, _ := actionSession(t, hooks{})
+	cover := func(js string) {
+		eval(t, "var o = document.getElementById('cover'); if (o) { o.remove(); } document.getElementById('cb').checked = false; "+
+			"var s = "+js+"; s.id = 'cover'; s.style.cssText = 'position:absolute;left:0;top:0;width:40px;height:24px;display:block;margin:0;padding:0'; "+
+			"document.getElementById('cbl').appendChild(s); true")
+	}
+	for _, c := range []struct{ name, js string }{
+		{"onclick property", "document.createElement('span'); s.onclick = function () {}"},
+		{"details", "document.createElement('details')"},
+		{"embed", "document.createElement('embed'); s.src = 'data:text/html,x'"}, // without a source an embed has no box
+		{"object", "document.createElement('object')"},
+		{"contenteditable", "document.createElement('span'); s.contentEditable = 'true'"},
+		{"tabindex 0", "document.createElement('span'); s.tabIndex = 0"},
+	} {
+		cover(c.js)
+		code, _, errOut := act(context.Background(), ps, "--timeout", "1s", "click", "#cb")
+		if code == 0 || !strings.Contains(errOut, "covered by <") || string(eval(t, "document.getElementById('cb').checked")) != "false" {
+			t.Fatalf("checkbox covered by a %s inside its label: exit %d, err %q, checked %s; want refused and unchanged", c.name, code, errOut, eval(t, "document.getElementById('cb').checked"))
+		}
+	}
+	cover("document.createElement('span'); s.tabIndex = -1")
+	mustAct(t, ps, "click", "#cb")
+	if string(eval(t, "document.getElementById('cb').checked")) != "true" {
+		t.Fatalf("checkbox under a tabindex -1 span inside its label was not checked")
+	}
+}

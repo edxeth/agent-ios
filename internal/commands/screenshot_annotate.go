@@ -96,10 +96,11 @@ type captureArea struct {
 }
 
 // shotLabel is one label of an annotated capture. Box is the ref's box
-// in whole CSS pixels, as agent-browser's annotation box: in document
-// coordinates, or relative to the element of a --selector capture. A ref
-// inside a same-origin frame has its box in the top document's
-// coordinates too (mod-overlay/90-overlay.js).
+// in whole CSS pixels in the coordinates of the captured image, as
+// agent-browser 0.45's annotation box: relative to the viewport, to the
+// document with --full, or to the element with --selector. A ref inside a
+// same-origin frame is placed through its frames the same way
+// (mod-overlay/90-overlay.js).
 type shotLabel struct {
 	N    int       `json:"n"`
 	Ref  string    `json:"ref"`
@@ -243,9 +244,7 @@ func (w *w3bPage) drawOverlay(ctx context.Context, full bool, sel string) ([]sho
 		l := byRef[r]
 		if i < len(drawn.Boxes) {
 			b := drawn.Boxes[i]
-			if sel != "" {
-				b.X, b.Y = b.X-drawn.Area.X, b.Y-drawn.Area.Y
-			}
+			b.X, b.Y = b.X-drawn.Area.X, b.Y-drawn.Area.Y // image coordinates; the area is (0, 0) for --full
 			l.Box = &labelBox{X: int64(math.Round(b.X)), Y: int64(math.Round(b.Y)), Width: int64(math.Round(b.Width)), Height: int64(math.Round(b.Height))}
 		}
 		out = append(out, l)
