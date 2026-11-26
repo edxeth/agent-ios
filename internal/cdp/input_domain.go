@@ -414,8 +414,10 @@ const failedPrefix = "page answered \"failed\" "
 // actionability checks (f): CDP input goes where the client sends it. The
 // session's dialog bridge (Options.Dialogs) is prepared first, each step
 // carries its policy, and the dialogs that the steps answered go back to
-// it, as for a W3b action (internal/commands w3bPage.run).
-func (p *pageCall) act(name string, steps int, args func(step int) map[string]any) ([]actStep, error) {
+// it, as for a W3b action (internal/commands w3bPage.run). needs are the
+// runtime modules of the dispatcher (internal/runtime With), installed
+// first where the document lacks them.
+func (p *pageCall) act(name string, steps int, args func(step int) map[string]any, needs ...runtime.Module) ([]actStep, error) {
 	reserve := actReplyReserve
 	if d, ok := p.ctx.Deadline(); ok {
 		reserve = min(reserve, time.Until(d)/4)
@@ -429,7 +431,7 @@ func (p *pageCall) act(name string, steps int, args func(step int) map[string]an
 			return nil, err
 		}
 	}
-	res, err := p.mo.Op.RunSteps(core.Action{Name: name, Fn: "act", Steps: steps, Reserve: reserve, Args: func(step int) any {
+	res, err := p.mo.Op.RunSteps(core.Action{Name: name, Fn: runtime.With("act", needs...), Steps: steps, Reserve: reserve, Args: func(step int) any {
 		m := args(step)
 		m["f"] = true
 		if policy != "" {

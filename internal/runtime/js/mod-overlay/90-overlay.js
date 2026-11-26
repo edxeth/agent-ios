@@ -1,4 +1,7 @@
-// 90-overlay.js (W3b): the annotated screenshot overlay of design 3.9.
+// mod-overlay/90-overlay.js (W3b): the annotated screenshot overlay of
+// design 3.9, the overlay module of the runtime (parity-045 decision D5:
+// installed on demand before screenshot --annotate draws or removes it,
+// internal/runtime ModOverlay).
 // One host element with a closed shadow root, maximum z-index and no
 // pointer events, drawn in document coordinates (it also works for a
 // full-page capture); "overlayClear", release and an owner reset remove
@@ -10,7 +13,7 @@
 // coordinates.
 (function (I) {
   "use strict";
-  if (!I) { return; } // already installed (10-core.js)
+  if (!I) { return; } // installed (internal/runtime module wrapper)
   var _ = I._, B = _.B, w = window, host = null;
   function clear() {
     var had = !!host;

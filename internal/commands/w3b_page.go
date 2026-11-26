@@ -170,6 +170,10 @@ type action struct {
 	Delay   time.Duration
 	Args    func(step int) map[string]any // kind-specific fields per step
 	Form    *formCtx                      // fill, type, check, select and upload: the words of their refusals (forms045.go)
+	// Needs are the runtime modules that hold Kind's dispatcher or its
+	// checks (internal/runtime With, parity-045 decision D5): each attempt
+	// first makes sure they are installed in the document it runs in.
+	Needs []runtime.Module
 }
 
 // actValue is the value of one dispatched step (50-actionability.js act).
@@ -224,9 +228,9 @@ func (w *w3bPage) run(ctx context.Context, a action) (*actResult, error) {
 	if a.Steps < 1 {
 		a.Steps = 1
 	}
-	fn, probe := "act", ""
+	fn, probe := runtime.With("act", a.Needs...), ""
 	if a.Gesture {
-		fn, probe = "actGesture", "actProbe"
+		fn, probe = runtime.With("actGesture", a.Needs...), runtime.With("actProbe", a.Needs...)
 	}
 	res, err := w.op.RunSteps(core.Action{Name: a.Name, Fn: fn, Probe: probe, Steps: a.Steps, Delay: a.Delay, Reserve: reserveFor(ctx), Args: func(step int) any {
 		m := map[string]any{"k": a.Kind, "dp": policy}

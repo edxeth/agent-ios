@@ -11,7 +11,7 @@ import (
 
 // Form preconditions and read-back warnings of agent-browser 0.45
 // (cli/src/native/forms.rs, browser.rs ensure_file_input_shape). The page
-// (55-actions.js, 60-keyboard.js) refuses before it changes anything and
+// (runtime module forms, js/mod-forms/) refuses before it changes anything and
 // answers with a stable code and the JSON of fixed facts (formFacts); the
 // text is built here, so nothing the page controls reaches a message
 // except the element's tag and type, which only name it when they are in

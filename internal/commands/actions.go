@@ -130,14 +130,14 @@ func init() {
 		Summary: "Scroll the window or an element up, down, left or right (default 300 px).",
 		Args:    []Arg{{Name: "direction", Help: "up, down, left or right", Required: true}, {Name: "px", Help: "pixels (default 300)"}},
 		Flags:   []Flag{{Name: "selector", Type: FlagString, Help: "scroll this element instead of the window"}},
-		Run:     runScroll("scroll", "scroll", "scrolled"),
+		Run:     runScroll("scroll", "scroll", "scrolled", nil),
 	})
 	registerAction(&Command{
 		Name:    "swipe",
 		Summary: "Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down).",
 		Args:    []Arg{{Name: "direction", Help: "up, down, left or right (the finger's direction)", Required: true}, {Name: "px", Help: "pixels (default 300)"}},
 		Flags:   []Flag{{Name: "selector", Type: FlagString, Help: "swipe on this element instead of the page"}},
-		Run:     runScroll("swipe", "swipe", "swiped"),
+		Run:     runScroll("swipe", "swipe", "swiped", []runtime.Module{runtime.ModGestures}),
 	})
 	registerAction(&Command{
 		Name:    "scrollintoview",
@@ -531,7 +531,7 @@ func runCheck(want bool) func(context.Context, Env, Input) (Result, error) {
 			done = "unchecked"
 		}
 		r, err := w.run(ctx, action{
-			Name: "check", Kind: "check", Target: t, Force: flagBool(in, "force"), Form: &formCtx{Verb: done},
+			Name: "check", Kind: "check", Target: t, Force: flagBool(in, "force"), Form: &formCtx{Verb: done}, Needs: []runtime.Module{runtime.ModForms},
 			Args: func(int) map[string]any { return map[string]any{"v": v, "cb": checkBox} },
 		})
 		if err != nil {
@@ -560,7 +560,7 @@ func runSelect(ctx context.Context, env Env, in Input) (Result, error) {
 	// reads the <select> back, or clicks the combobox's options.
 	r, err := w.run(ctx, action{
 		Name: "select", Kind: "select", Target: arg(in, 0), Force: flagBool(in, "force"),
-		Steps: 2, Delay: selectSettle, Form: &formCtx{Values: vals, By: by},
+		Steps: 2, Delay: selectSettle, Form: &formCtx{Values: vals, By: by}, Needs: []runtime.Module{runtime.ModForms},
 		Args: func(int) map[string]any { return map[string]any{"vals": vals, "by": by} },
 	})
 	if err != nil {
@@ -591,7 +591,7 @@ func direction(dir, px string) (dx, dy int, err error) {
 	return 0, 0, usagef("direction %q: want up, down, left or right", dir)
 }
 
-func runScroll(name, kind, done string) func(context.Context, Env, Input) (Result, error) {
+func runScroll(name, kind, done string, needs []runtime.Module) func(context.Context, Env, Input) (Result, error) {
 	return func(ctx context.Context, env Env, in Input) (Result, error) {
 		dx, dy, err := direction(arg(in, 0), arg(in, 1))
 		if err != nil {
@@ -607,7 +607,7 @@ func runScroll(name, kind, done string) func(context.Context, Env, Input) (Resul
 		}
 		defer w.close()
 		r, err := w.run(ctx, action{
-			Name: name, Kind: kind, Target: flagString(in, "selector"),
+			Name: name, Kind: kind, Target: flagString(in, "selector"), Needs: needs,
 			Args: func(int) map[string]any { return map[string]any{"dx": dx, "dy": dy} },
 		})
 		if err != nil {
@@ -623,7 +623,7 @@ func runDrag(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	defer w.close()
-	r, err := w.run(ctx, action{Name: "drag", Kind: "drag", Target: arg(in, 0), Target2: arg(in, 1), Steps: dragSteps, Force: flagBool(in, "force")})
+	r, err := w.run(ctx, action{Name: "drag", Kind: "drag", Target: arg(in, 0), Target2: arg(in, 1), Steps: dragSteps, Force: flagBool(in, "force"), Needs: []runtime.Module{runtime.ModGestures}})
 	if err != nil {
 		return Result{}, err
 	}
@@ -673,7 +673,7 @@ func runUpload(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	defer w.close()
 	r, err := w.run(ctx, action{
-		Name: "upload", Kind: "upload", Target: arg(in, 0), Form: &formCtx{},
+		Name: "upload", Kind: "upload", Target: arg(in, 0), Form: &formCtx{}, Needs: []runtime.Module{runtime.ModForms},
 		Args: func(int) map[string]any { return map[string]any{"files": files, "fi": true} },
 	})
 	if err != nil {
@@ -777,7 +777,7 @@ func runMouse(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	defer w.close()
-	r, err := w.run(ctx, action{Name: "mouse " + op, Kind: "mouse", Steps: steps, Args: func(int) map[string]any { return fields }})
+	r, err := w.run(ctx, action{Name: "mouse " + op, Kind: "mouse", Steps: steps, Args: func(int) map[string]any { return fields }, Needs: []runtime.Module{runtime.ModGestures}})
 	if err != nil {
 		return Result{}, err
 	}

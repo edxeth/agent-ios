@@ -812,7 +812,7 @@ func domSetFileInputFiles(ctx context.Context, call *Call) (any, Later, error) {
 		}
 		_, err = pc.act(call.Method, 1, func(int) map[string]any {
 			return map[string]any{"k": "upload", "t": map[string]any{"doc": k.doc, "h": k.h}, "files": files}
-		})
+		}, runtime.ModForms) // upload is in the forms module
 		return err
 	})
 	if err != nil {

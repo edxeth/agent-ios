@@ -8,6 +8,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/edxeth/agent-ios/internal/runtime"
 )
 
 // Keyboard and text commands of design 3.5 (W3b): fill, type, keyboard,
@@ -339,7 +341,7 @@ func runFill(ctx context.Context, env Env, in Input) (Result, error) {
 	defer w.close()
 	text := arg(in, 1)
 	r, err := w.run(ctx, action{
-		Name: "fill", Kind: "fill", Target: arg(in, 0), Force: flagBool(in, "force"), Form: &formCtx{Verb: "filled"},
+		Name: "fill", Kind: "fill", Target: arg(in, 0), Force: flagBool(in, "force"), Form: &formCtx{Verb: "filled"}, Needs: []runtime.Module{runtime.ModForms},
 		Args: func(int) map[string]any { return map[string]any{"text": text, "fk": formKinds} },
 	})
 	if err != nil {
@@ -365,8 +367,12 @@ func typeInto(ctx context.Context, env Env, name, target, text string, delay tim
 	// Text of only newlines and tabs is keys: the form checks do not apply
 	// (agent-browser 0.45 type).
 	keysOnly := strings.Trim(text, "\n\r\t") == ""
+	var needs []runtime.Module
+	if target != "" && !keysOnly {
+		needs = []runtime.Module{runtime.ModForms} // the form checks of a target (60-keyboard.js A.type.chk)
+	}
 	r, err := w.run(ctx, action{
-		Name: name, Kind: "type", Target: target, Force: force, Steps: len(steps), Delay: delay, Form: &formCtx{Verb: "typed into"},
+		Name: name, Kind: "type", Target: target, Force: force, Steps: len(steps), Delay: delay, Form: &formCtx{Verb: "typed into"}, Needs: needs,
 		Args: func(step int) map[string]any {
 			return map[string]any{"keys": steps[step-1], "fk": formKinds, "ko": keysOnly}
 		},

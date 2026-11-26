@@ -9,12 +9,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	_ "embed" // bundle.js
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -30,9 +32,38 @@ import (
 //go:embed bundle.js
 var bundle string
 
+// moduleFS holds the feature modules, mod-<name>.js, each generated from
+// js/mod-<name>/ (package bundlegen; parity-045 decision D5). The core
+// (bundle.js) is installed as before; a module is installed only when a
+// call needs it (With), on a core of the same Version.
+//
+//go:embed mod-*.js
+var moduleFS embed.FS
+
 // MissingSentinel is what a call expression returns when the runtime of
 // this Version is not installed in the document.
 const MissingSentinel = "__IWDP_MISSING__"
+
+// ModuleMissingSentinel is what a call expression of a function that
+// needs modules (With) returns when the core of this Version is installed
+// but one of the modules is not; nothing ran.
+const ModuleMissingSentinel = "__IWDP_MODULE_MISSING__"
+
+// Module is a feature module of the runtime: the sources in
+// js/mod-<name>/, installed on demand (parity-045 decision D5).
+type Module string
+
+// The modules. TestModulesMatchGenerated checks that each has a generated
+// file and that no generated file lacks a constant.
+const (
+	// ModForms: fill, the form preconditions of type, check and uncheck,
+	// select (native and ARIA) and upload (mod-forms/).
+	ModForms Module = "forms"
+	// ModGestures: swipe, drag and mouse (mod-gestures/).
+	ModGestures Module = "gestures"
+	// ModOverlay: the annotated screenshot overlay (mod-overlay/).
+	ModOverlay Module = "overlay"
+)
 
 // versionPlaceholder is the string in js/10-core.js that the install
 // replaces with Version: the bundle cannot contain its own hash.
@@ -43,7 +74,8 @@ const MaxSourceBytes = 64 << 10
 
 var (
 	source  string
-	Version string // first 12 hex digits of the SHA-256 of the bundle
+	modules = map[Module]string{} // installed sources, with Version
+	Version string                // first 12 hex digits of the SHA-256 of the core and the modules
 	// DaemonID identifies this process as a page owner (design 3.1). A
 	// daemon that keeps its id across restarts may set it before the first
 	// call; the default is random per process.
@@ -57,8 +89,30 @@ func randomID() string {
 }
 
 func init() {
-	sum := sha256.Sum256([]byte(bundle))
-	Version = hex.EncodeToString(sum[:])[:12]
+	// One version covers the core and every module, so a module never
+	// runs on a core of another build (design 3.1 version).
+	h := sha256.New()
+	h.Write([]byte(bundle))
+	files, err := fs.Glob(moduleFS, "mod-*.js")
+	if err != nil {
+		panic(err)
+	}
+	slices.Sort(files)
+	raw := map[Module]string{}
+	for _, f := range files {
+		b, err := moduleFS.ReadFile(f)
+		if err != nil {
+			panic(err)
+		}
+		m := Module(strings.TrimSuffix(strings.TrimPrefix(f, "mod-"), ".js"))
+		raw[m] = string(b)
+		h.Write([]byte("\x00" + string(m) + "\x00"))
+		h.Write(b)
+	}
+	Version = hex.EncodeToString(h.Sum(nil))[:12]
+	for m, s := range raw {
+		modules[m] = strings.ReplaceAll(s, versionPlaceholder, Version)
+	}
 	// The bundle's files run in name order; 10-core.js exposes the runtime
 	// under construction to the later files as window.__iwdpBuilding, and
 	// this last statement removes it.
@@ -70,23 +124,105 @@ func init() {
 // runtime part of the bootstrap script (design 3.1 install paths).
 func Source() string { return source }
 
+// Modules returns the names of the feature modules, sorted.
+func Modules() []Module {
+	out := make([]Module, 0, len(modules))
+	for m := range modules {
+		out = append(out, m)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// ModuleSource returns module m as it is installed: its install script
+// with this Version. The script installs the module only on the core of
+// this Version and answers MissingSentinel on another or no core; on a
+// core that has the module it changes nothing.
+func ModuleSource(m Module) (string, error) {
+	s, ok := modules[m]
+	if !ok {
+		return "", fmt.Errorf("the agent runtime has no module %q", m)
+	}
+	return s, nil
+}
+
+// With returns the name under which a call of runtime function fn first
+// makes sure that mods are installed in the document it runs in (the top
+// document or the selected frame's context): "fn@mod1+mod2". It is the
+// declaration of a call site: Call, CallAsync, RuntimeCaller and the
+// attempt loop (core.Action.Fn) take the returned name. A call whose page
+// lacks a module answers ModuleMissingSentinel without running anything;
+// the call then installs the modules by Runtime.evaluate and retries once.
+func With(fn string, mods ...Module) string {
+	if len(mods) == 0 {
+		return fn
+	}
+	names := make([]string, len(mods))
+	for i, m := range mods {
+		names[i] = string(m)
+	}
+	return fn + "@" + strings.Join(names, "+")
+}
+
 var fnName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+
+// splitFn splits a name of With into the runtime function and its modules.
+func splitFn(fn string) (string, []Module, error) {
+	name, list, qualified := strings.Cut(fn, "@")
+	if !fnName.MatchString(name) {
+		return "", nil, fmt.Errorf("runtime function name %q is not an identifier", fn)
+	}
+	if !qualified {
+		return name, nil, nil
+	}
+	var mods []Module
+	for _, s := range strings.Split(list, "+") {
+		m := Module(s)
+		if _, ok := modules[m]; !ok {
+			return "", nil, fmt.Errorf("runtime function %q needs module %q, which the agent runtime does not have", fn, s)
+		}
+		if !slices.Contains(mods, m) {
+			mods = append(mods, m)
+		}
+	}
+	return name, mods, nil
+}
+
+// baseName is fn without the modules of With, for messages and the
+// function tables.
+func baseName(fn string) string {
+	name, _, _ := strings.Cut(fn, "@")
+	return name
+}
 
 // Expression returns the call expression of design 3.1:
 //
 //	(window.__iwdp && window.__iwdp.v === "<ver>") ? window.__iwdp.call("<fn>", <json args>) : "__IWDP_MISSING__"
+//
+// For a name of With, the call runs only when the modules are installed:
+//
+//	(...) ? (window.__iwdp.has("<mod>", ...) ? 0 : "__IWDP_MODULE_MISSING__") || window.__iwdp.call(...) : "__IWDP_MISSING__"
 func Expression(fn string, args any) (string, error) {
-	if !fnName.MatchString(fn) {
-		return "", fmt.Errorf("runtime function name %q is not an identifier", fn)
+	name, mods, err := splitFn(fn)
+	if err != nil {
+		return "", err
 	}
 	if args == nil {
 		args = map[string]any{}
 	}
 	a, err := json.Marshal(args) // escapes <, >, &, U+2028 and U+2029: valid JS
 	if err != nil {
-		return "", fmt.Errorf("runtime call %s: marshaling args: %w", fn, err)
+		return "", fmt.Errorf("runtime call %s: marshaling args: %w", name, err)
 	}
-	return fmt.Sprintf(`(window.__iwdp && window.__iwdp.v === %q) ? window.__iwdp.call(%q, %s) : %q`, Version, fn, a, MissingSentinel), nil
+	guard := ""
+	if len(mods) > 0 {
+		q := make([]string, len(mods))
+		for i, m := range mods {
+			q[i] = fmt.Sprintf("%q", string(m))
+		}
+		guard = fmt.Sprintf("(window.__iwdp.has(%s) ? 0 : %q) || ", strings.Join(q, ", "), ModuleMissingSentinel)
+	}
+	return fmt.Sprintf(`(window.__iwdp && window.__iwdp.v === %q) ? %swindow.__iwdp.call(%q, %s) : %q`, Version, guard, name, a, MissingSentinel), nil
 }
 
 // Error is a runtime result with ok=false.
@@ -257,7 +393,7 @@ var gestureFns = map[string]bool{"actGesture": true}
 func (r *Runtime) RuntimeCaller() func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
 	return func(ctx context.Context, c webkit.Caller, fn string, args any) (json.RawMessage, error) {
 		var v json.RawMessage
-		if _, err := r.callVia(ctx, c, fn, args, asyncFns[fn], &v); err != nil {
+		if _, err := r.callVia(ctx, c, fn, args, asyncFns[baseName(fn)], &v); err != nil {
 			return nil, err
 		}
 		return v, nil
@@ -323,7 +459,7 @@ func (r *Runtime) callVia(ctx context.Context, c webkit.Caller, fn string, args 
 	if err != nil {
 		return nil, err
 	}
-	warnings, err := r.decodeEnvelope(fn, env, out)
+	warnings, err := r.decodeEnvelope(baseName(fn), env, out)
 	var re *Error
 	if owner != nil && (err == nil || (errors.As(err, &re) && re.Code != CodeStaleOwner)) {
 		r.mu.Lock()
@@ -333,31 +469,81 @@ func (r *Runtime) callVia(ctx context.Context, c webkit.Caller, fn string, args 
 	return warnings, err
 }
 
+// call runs the call expression of fn through c. When the page lacks the
+// core, it installs the core together with fn's modules in one
+// Runtime.evaluate and retries; when it has the core but lacks a module
+// (ModuleMissingSentinel), it installs the modules and retries. Each
+// install is sent at most once per call, so a call costs two extra round
+// trips when something was missing and none when everything is there. The
+// page answers a sentinel before it runs anything (no own refusal is
+// consumed, no attempt step counted), so the retry is safe for every
+// function, also an attempt of the fenced loop of design 2.6.
 func (r *Runtime) call(ctx context.Context, c webkit.Caller, fn string, args any, async bool, owner *Owner) (json.RawMessage, error) {
 	expr, err := ownedExpression(fn, args, owner)
 	if err != nil {
 		return nil, err
 	}
-	for attempt := 0; attempt < 2; attempt++ {
-		v, err := r.eval(ctx, c, fn, expr, async)
+	name, mods, _ := splitFn(fn) // ownedExpression checked fn
+	coreSent, modsSent := false, false
+	for {
+		v, err := r.eval(ctx, c, name, expr, async)
 		if err != nil {
 			return nil, err
 		}
 		var s string
-		if json.Unmarshal(v, &s) != nil || s != MissingSentinel {
+		if json.Unmarshal(v, &s) != nil || (s != MissingSentinel && s != ModuleMissingSentinel) {
 			return v, nil
 		}
-		if attempt == 0 {
-			if err := install(ctx, c); err != nil {
+		switch {
+		case s == MissingSentinel && !coreSent:
+			coreSent, modsSent = true, true
+			if err := install(ctx, c, true, mods); err != nil {
 				return nil, err
 			}
+		case s == ModuleMissingSentinel && !modsSent:
+			modsSent = true
+			if err := install(ctx, c, false, mods); err != nil {
+				return nil, err
+			}
+		case s == MissingSentinel:
+			return nil, fmt.Errorf("runtime call %s: %w", name, ErrNotInstalled)
+		default:
+			return nil, fmt.Errorf("runtime call %s: modules %v: %w", name, mods, ErrNotInstalled)
 		}
 	}
-	return nil, fmt.Errorf("runtime call %s: %w", fn, ErrNotInstalled)
 }
 
-func install(ctx context.Context, c webkit.Caller) error {
-	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": Source(), "returnByValue": true})
+// installSource is the script that install sends: the core (withCore)
+// followed by the modules' install scripts, each of which installs its
+// module only on the core of this Version.
+func installSource(withCore bool, mods []Module) (string, error) {
+	var b strings.Builder
+	if withCore {
+		b.WriteString(Source())
+	}
+	for _, m := range mods {
+		s, err := ModuleSource(m)
+		if err != nil {
+			return "", err
+		}
+		if b.Len() > 0 {
+			b.WriteString(";\n")
+		}
+		b.WriteString(s)
+	}
+	return b.String(), nil
+}
+
+// install installs the core (withCore) and mods in the document of c by
+// Runtime.evaluate, never by page-side eval, which page CSP can forbid
+// (design 3.1). The script's value is not read: the retried call checks
+// what is installed.
+func install(ctx context.Context, c webkit.Caller, withCore bool, mods []Module) error {
+	src, err := installSource(withCore, mods)
+	if err != nil {
+		return fmt.Errorf("installing the agent runtime: %w", err)
+	}
+	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": src, "returnByValue": true})
 	if err != nil {
 		return fmt.Errorf("installing the agent runtime: %w", err)
 	}

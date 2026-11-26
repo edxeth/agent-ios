@@ -99,7 +99,7 @@ type captureArea struct {
 // in whole CSS pixels, as agent-browser's annotation box: in document
 // coordinates, or relative to the element of a --selector capture. A ref
 // inside a same-origin frame has its box in the top document's
-// coordinates too (90-overlay.js).
+// coordinates too (mod-overlay/90-overlay.js).
 type shotLabel struct {
 	N    int       `json:"n"`
 	Ref  string    `json:"ref"`
@@ -196,6 +196,14 @@ func runScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
 	return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"path": path, "sha256": hash, "labels": labels}}, nil
 }
 
+// overlayFn and overlayClearFn are the runtime functions of the overlay,
+// which lives in the overlay module (parity-045 decision D5): each call
+// installs the module first where the document lacks it.
+var (
+	overlayFn      = runtime.With("overlay", runtime.ModOverlay)
+	overlayClearFn = runtime.With("overlayClear", runtime.ModOverlay)
+)
+
 // drawOverlay takes a snapshot (new refs for the current document) and
 // draws the overlay for the refs whose boxes intersect the capture area:
 // the viewport, the full page, or the box of the element sel (a CSS
@@ -226,7 +234,7 @@ func (w *w3bPage) drawOverlay(ctx context.Context, full bool, sel string) ([]sho
 		Boxes []captureArea `json:"boxes"`
 		Area  captureArea   `json:"area"`
 	}
-	if err := w.rt.Call(ctx, "overlay", args, &drawn); err != nil {
+	if err := w.rt.Call(ctx, overlayFn, args, &drawn); err != nil {
 		// A failed draw can leave a partial overlay.
 		return nil, nil, errors.Join(fmt.Errorf("screenshot --annotate: drawing the overlay: %w", err), w.removeOverlay(ctx, nil))
 	}
@@ -278,11 +286,11 @@ func snapshotArea(ctx context.Context, c webkit.Caller, a captureArea) (string, 
 // no queued successor sees the overlay (design 2.10). It is fenced to the
 // same lease epoch: a later epoch refuses it, and that owner's first
 // runtime call resets the page, which also removes the overlay
-// (90-overlay.js). env, when set, gives the daemon log for the cleanup's
+// (mod-overlay/90-overlay.js). env, when set, gives the daemon log for the cleanup's
 // outcome.
 func (w *w3bPage) removeOverlay(ctx context.Context, env Env) error {
 	if w.ended(ctx) == nil || w.ps.Sched == nil {
-		return w.rt.Call(ctx, "overlayClear", nil, nil)
+		return w.rt.Call(ctx, overlayClearFn, nil, nil)
 	}
 	logf := func(string, ...any) {}
 	if m, err := managerOf(env); err == nil {
@@ -311,7 +319,7 @@ func (w *w3bPage) ended(ctx context.Context) error {
 // clearOverlay is the cleanup of removeOverlay after the command's
 // operation ended; rt sends through the operation's lease-fenced caller.
 func clearOverlay(ctx context.Context, rt *runtime.Runtime, logf func(string, ...any)) {
-	if err := rt.Call(ctx, "overlayClear", nil, nil); err != nil {
+	if err := rt.Call(ctx, overlayClearFn, nil, nil); err != nil {
 		logf("screenshot --annotate: removing the overlay after the command ended: %v", logsafe.Error(err))
 	}
 }

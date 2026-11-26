@@ -1,4 +1,5 @@
-// 55-actions.js (W3b): pointer, touch, form and scroll actions (design 3.5).
+// 55-actions.js (W3b): pointer, touch and scroll actions (design 3.5; the
+// form actions are in the forms module, mod-forms/).
 // Every event is synthetic (isTrusted false). A dispatcher is an async
 // function of the element, the step arguments g, the attempt a, the result
 // r (r.d names emulated default actions, r.err a failure after dispatch,
@@ -8,7 +9,7 @@
   "use strict";
   if (!I) { return; } // already installed (10-core.js)
   var _ = I._, B = _.B, w = window, A = _.A, center = _.center, at = _.at, ev = _.ev, gap = _.gap;
-  var disp = Function.prototype.call.bind(EventTarget.prototype.dispatchEvent), sT = w.setTimeout;
+  var disp = Function.prototype.call.bind(EventTarget.prototype.dispatchEvent);
   var PE = w.PointerEvent || w.MouseEvent, ME = w.MouseEvent, DE = w.DragEvent || w.MouseEvent, Ev = w.Event;
   // BTN: the buttons mask of MouseEvent.button left, middle, right, back, forward.
   var BTN = [1, 4, 2, 8, 16];
@@ -132,267 +133,15 @@
       if (f && f.blur) { f.blur(); }
     });
   };
-  // Form preconditions of agent-browser 0.45 (cli/src/native/forms.rs). A
-  // refusal changes nothing; its code is the error code and its message the
-  // JSON of fixed facts (fd) that internal/commands/forms045.go turns into
-  // text. Tables come from Go in the step args (g.cb, g.fk).
-  var own = Object.prototype.hasOwnProperty, hclick = HTMLElement.prototype.click;
-  function fd(e, o) { o = o || {}; o.t = e.localName; o.y = String(e.type); return JSON.stringify(o); }
-  function ff(c, e, o) { return _.fail(c, fd(e, o)); }
-  function fe(r, c, e, o) { r.err = c + ": " + fd(e, o); }
-  // isEd: an editing host other than a text control (select, option,
-  // optgroup and button keep their type unless they are hosts themselves).
-  function isEd(n) {
-    var t = n.localName;
-    return !/^(input|textarea)$/.test(t) && !(/^(select|option|optgroup|button)$/.test(t) && !/^(true|plaintext-only)$/.test(n.contentEditable)) && !!n.isContentEditable;
-  }
-  // ctl: the control a target stands for: a label's control, the input of
-  // a part of a date or time input.
-  function ctl(e) {
-    var h = e.getRootNode && e.getRootNode().host;
-    return e.localName === "label" && e.control && !isEd(e) ? e.control : h && h.localName === "input" ? h : e;
-  }
-  function nrm(s) { return String(s == null ? "" : s).replace(/[\u200B-\u200D\u2060\uFEFF]/g, "").replace(/\s+/g, " ").trim(); }
-  function has(l, x) { return !!x && (" " + l + " ").indexOf(" " + x + " ") >= 0; }
-  function roles(n, l) { return (B.getAttr(n, "role") || "").split(/\s+/).filter(function (x) { return has(l, x); }); }
-  // boxOf: the element check toggles (c = g.cb: box roles r, other roles n
-  // and tags t, selectors i of interactive and o of other elements).
-  function nat(n) { return n.localName === "input" && (n.type === "checkbox" || n.type === "radio"); }
-  function qa(r, s) { return r.nodeType === 11 ? B.qsaFrag(r, s) : B.qsaEl(r, s); }
-  function only(r, c) {
-    var ins = qa(r, "input[type=checkbox],input[type=radio]"), all = qa(r, "*");
-    for (var i = 0; i < all.length; i++) { if (all[i] !== ins[0] && typeof all[i].onclick === "function") { return null; } }
-    return ins.length === 1 && !qa(r, c.o).length ? ins[0] : null;
-  }
-  function boxOf(n, c) {
-    if (nat(n) || roles(n, c.r).length) { return n; }
-    if (has(c.t, n.localName) || roles(n, c.n).length) { return null; }
-    var l = n.localName === "label" ? n : B.closest(n, "label");
-    if (l && l.control) {
-      for (var p = n; p && p !== l; p = p.parentElement) { if (B.matches(p, c.i) || typeof p.onclick === "function") { return null; } }
-      return nat(l.control) ? l.control : null;
-    }
-    return only(n, c) || (B.shadowRoot(n) && only(B.shadowRoot(n), c)) || null;
-  }
-  function cstate(b) {
-    var a = B.getAttr, ro = roles(b, "option treeitem").length;
-    return nat(b) ? b.checked : ro && !B.hasAttr(b, "aria-checked") ? a(b, "aria-selected") === "true" : a(b, "aria-checked") === "true";
-  }
-  // check and uncheck press the box itself; a native box without a visible
-  // box gets a DOM click; a state that already matches is left alone.
-  async function pressOn(x, e, g) {
-    var c = center(e);
-    await over(x, e, c, g);
-    await press(x, e, c, g);
-  }
-  function dclick(x, e) { return ev(x, function () { hclick.call(e); }); }
-  A.check = async function (e, g, a, r, x) {
-    if (!g.noop) {
-      await (g.dom ? dclick(x, e) : pressOn(x, e, g));
-      if (cstate(e) !== g.v && nat(e)) { await dclick(x, e); } // one DOM-click retry
-    }
-    r.v = cstate(e);
-    if (r.v !== g.v) { r.fw = fd(e, { k: "still" }); }
-  };
-  A.check.chk = function (e, g) {
-    var t = ctl(e), b = boxOf(t, g.cb);
-    if (!b) { throw ff("not_checkable", t, { k: "box" }); }
-    if (cstate(b) === g.v) { g.f = g.noop = true; return b; }
-    if (B.matches(t, ":disabled") || B.matches(b, ":disabled")) { throw ff("disabled", t); }
-    if (!g.v && (roles(b, "radio menuitemradio").length || b.type === "radio")) { throw ff("not_checkable", t, { k: "radio" }); }
-    if (nat(b) && !(_.visible(b) && _.css(b, "opacity") > 0 && _.css(b, "pointer-events") !== "none")) { g.f = g.dom = true; }
-    return b;
-  };
-  // select: a native <select> (step 1 selects, step 2 reads back) or an
-  // ARIA combobox or listbox (step 1 opens a collapsed combobox, step 2
-  // clicks the matching role=option elements).
-  // match: the indexes of the options ([value, label] pairs) that the
-  // values g.vals pick (--by g.by). Native (s, e the <select>): exact label
-  // or value, then the normalized label; options sharing a value are one
-  // choice. ARIA lists compare normalized texts and count every match.
-  function match(ps, g, s, e) {
-    var by = g.by, out = [];
-    g.vals.forEach(function (v, i) {
-      function f(n) {
-        return ps.reduce(function (a, p, j) {
-          var l = n ? nrm(p[1]) : s ? p[1].trim() : p[1], x = n ? nrm(v) : v;
-          if (by !== "value" && l === x || by !== "label" && p[0] && p[0] === x) { a.push(j); }
-          return a;
-        }, []);
-      }
-      var m = f(!s), d = m;
-      if (!m.length && s && by !== "value") { m = f(1); }
-      if (s) { d = m.filter(function (j, k) { return m.map(function (q) { return ps[q][0]; }).indexOf(ps[j][0]) === k; }); }
-      if (!m.length) { throw ff("option_not_found", e, { k: s ? "sel" : "list", n: ps.length, o: ps.map(function (p) { return [p[0], nrm(p[1])]; }) }); }
-      if (d.length > 1) { throw ff("ambiguous", e, { k: s ? "sel" : "list", i: i, d: d.length }); }
-      out = out.concat(m);
-    });
-    return out;
-  }
-  var SEL = {};
-  I.onReset(function () { SEL = {}; });
-  A.select = async function (e, g, a, r, x) {
-    var j, ga = B.getAttr, role = ga(e, "role");
-    if (e.localName === "select") {
-      var os = e.options, p = a.step === 1 ? g.pick : SEL[a.opId];
-      delete SEL[a.opId];
-      if (a.step === 1) {
-        SEL[a.opId] = p;
-        await ev(x, function () {
-          for (j = 0; j < os.length; j++) { os[j].selected = p.indexOf(j) >= 0; }
-          disp(e, bub("input"));
-        });
-        await ev(x, function () { disp(e, bub("change")); });
-      }
-      for (j = 0; a.step > 1 && p && j < os.length; j++) { if (os[j].selected !== p.indexOf(j) >= 0) { r.fw = fd(e, { k: "sel" }); } }
-      r.v = p && p.map(function (i) { return os[i] && os[i].value; });
-      return;
-    }
-    if (a.step === 1) {
-      if (role === "combobox" && ga(e, "aria-expanded") !== "true") { await pressOn(x, e, g); }
-      return;
-    }
-    var ac = ga(e, "aria-controls"), opts = [], want = [];
-    function collect() {
-      var s = role === "listbox" ? e : ac ? B.byId(document, ac) : document;
-      return s ? [].filter.call(s.querySelectorAll("[role=option]"), function (o) { return B.gcr(o).length; }) : [];
-    }
-    for (j = 0; j < 5 && !(opts = collect()).length; j++) { await new Promise(function (f) { sT.call(w, f, 20); }); }
-    if (!opts.length) { r.err = "combobox opened but no visible role=option elements were found"; return; }
-    var pv = opts.map(function (o) { return [nrm(ga(o, "data-value")) || nrm(ga(o, "value")), nrm(_.name(o))]; });
-    try {
-      match(pv, g, 0, e).forEach(function (i) {
-        if (ga(opts[i], "aria-disabled") === "true") { throw ff("disabled", e, { k: "opt" }); }
-        if (want.indexOf(opts[i]) < 0) { want.push(opts[i]); }
-      });
-    } catch (y) {
-      if (!y.__iwdpError) { throw y; }
-      r.err = y.code + ": " + y.message;
-      return;
-    }
-    for (j = 0; j < want.length; j++) {
-      var o = want[j];
-      if (role === "listbox" && ga(e, "aria-multiselectable") === "true" && ga(o, "aria-selected") === "true") { continue; }
-      await ev(x, function () { o.scrollIntoView({ block: "nearest" }); });
-      await pressOn(x, o, g);
-    }
-    r.v = want.map(function (o) { o = pv[opts.indexOf(o)]; return o[0] || o[1]; });
-  };
-  A.select.pre = true;
-  A.select.chk = function (e, g, a) {
-    if (e.localName !== "select") {
-      if (!/^(combobox|listbox)$/.test(B.getAttr(e, "role"))) { throw ff("not_editable", e, { k: "role" }); }
-      return e;
-    }
-    if (a.step > 1) { return e; }
-    if (B.matches(e, ":disabled")) { throw ff("disabled", e, { k: "sel" }); }
-    if (g.vals.length > 1 && !e.multiple) { throw ff("not_multiple", e); }
-    g.pick = match([].map.call(e.options, function (o) { return [o.value, o.label]; }), g, 1, e);
-    return e;
-  };
   function scroller(e) { return e || w; }
   A.scroll = async function (e, g, a, r, x) {
     await ev(x, function () { scroller(e).scrollBy(g.dx, g.dy); });
     r.v = e ? { x: e.scrollLeft, y: e.scrollTop } : { x: w.scrollX, y: w.scrollY };
   };
   A.scrollintoview = function (e, g, a, r, x) { return ev(x, function () { e.scrollIntoView({ block: "center", inline: "center" }); }); };
-  // swipe: touch events along the gesture, then the scroll fallback when
-  // the page canceled none of them.
-  A.swipe = async function (e, g, a, r, x) {
-    var t = e || document.documentElement, c = e ? center(e) : { x: w.innerWidth / 2, y: w.innerHeight / 2 };
-    var d = { x: c.x - g.dx, y: c.y - g.dy };
-    var s = await touch(x, t, c, "touchstart"), m = await touch(x, t, d, "touchmove"), en = await touch(x, t, d, "touchend");
-    if (s === null) { noTouch(r); }
-    if (s !== false && m !== false && en !== false) {
-      await ev(x, function () { scroller(e).scrollBy(g.dx, g.dy); });
-      r.d.push("scroll");
-    }
-  };
-  A.swipe.as = "scroll";
-  // drag: step 1 presses on the source and sends dragstart; each later step
-  // moves toward the target; the last one drops (only when the last
-  // dragover was canceled, as in HTML drag and drop) and releases.
-  var DR = {};
-  function dinit(c, dt) {
-    var o = pi(c, {}, 1);
-    o.dataTransfer = dt;
-    return o;
-  }
-  A.drag = async function (e, g, a, r, x) {
-    var S = DR[a.opId];
-    if (a.step === 1) {
-      var dt = null;
-      try { dt = new w.DataTransfer(); } catch (y) { /* no DataTransfer constructor */ }
-      S = DR[a.opId] = { s: center(e), t: center(g.el2), src: e, dt: dt };
-      r.v = { step: 1 };
-      await over(x, e, S.s, g);
-      await gap(x);
-      await fire(x, e, PE, "pointerdown", pi(S.s, g, 1)); await fire(x, e, ME, "mousedown", pi(S.s, g, 1));
-      S.ok = await fire(x, e, DE, "dragstart", dinit(S.s, S.dt));
-      return;
-    }
-    if (!S) { r.err = "the page lost the drag state (it navigated or reset)"; return; }
-    var k = (a.step - 1) / (a.steps - 1), c = { x: S.s.x + (S.t.x - S.s.x) * k, y: S.s.y + (S.t.y - S.s.y) * k };
-    var h = at(c.x, c.y) || document.documentElement;
-    r.v = { step: a.step };
-    await fire(x, h, PE, "pointermove", pi(c, g, 1)); await fire(x, h, ME, "mousemove", pi(c, g, 1));
-    if (S.ok) {
-      if (h !== S.over) { await fire(x, h, DE, "dragenter", dinit(c, S.dt)); S.over = h; }
-      S.can = !await fire(x, h, DE, "dragover", dinit(c, S.dt));
-    }
-    if (a.step === a.steps) {
-      r.v.dropped = !!(S.ok && S.can);
-      delete DR[a.opId];
-      await gap(x);
-      if (r.v.dropped) { await fire(x, h, DE, "drop", dinit(c, S.dt)); }
-      if (S.ok) { await fire(x, S.src, DE, "dragend", dinit(c, S.dt)); }
-      await fire(x, h, PE, "pointerup", pi(c, g, 0)); await fire(x, h, ME, "mouseup", pi(c, g, 0));
-    }
-  };
-  A.drag.pre = true;
-  A.upload = async function (e, g, a, r, x) {
-    if (e.localName !== "input" || e.type !== "file") { r.err = "the element is not a file input"; return; } // CDP DOM.setFileInputFiles
-    if (g.files.length > 1 && !e.multiple) { r.err = "the file input takes one file"; return; }
-    var dt = new w.DataTransfer();
-    g.files.forEach(function (f) {
-      var s = w.atob(f.b64), u = new Uint8Array(s.length);
-      for (var i = 0; i < s.length; i++) { u[i] = s.charCodeAt(i); }
-      dt.items.add(new w.File([u], f.name, { type: f.type }));
-    });
-    await ev(x, function () { e.files = dt.files; disp(e, bub("input")); });
-    await ev(x, function () { disp(e, bub("change")); });
-    r.v = e.files.length;
-  };
-  // The upload command (g.fi) refuses with agent-browser's not_file_input.
-  A.upload.chk = function (e, g) {
-    if (g.fi && e.localName !== "input" || e.type !== "file") { throw ff("not_file_input", e, { a: B.getAttr(e, "type") }); }
-  };
-  // mouse: the pointer position and buttons belong to the page session.
-  var M = { x: 0, y: 0, b: 0 };
-  I.onReset(function () { M = { x: 0, y: 0, b: 0 }; });
-  A.mouse = async function (e, g, a, r, x) {
-    if (g.op === "move") {
-      if (a.step === 1) { M.f = { x: M.x, y: M.y }; }
-      var f = M.f || M, k = a.step / a.steps;
-      M.x = f.x + (g.x - f.x) * k; M.y = f.y + (g.y - f.y) * k;
-    }
-    var c = { x: M.x, y: M.y }, h = at(c.x, c.y) || document.documentElement, b = g.b || 0;
-    if (g.op === "down") { M.b |= BTN[b]; }
-    if (g.op === "up") { M.b &= ~BTN[b]; }
-    g.mod = _.held(); // the modifiers that keydown holds (60-keyboard.js)
-    var o = pi(c, g, M.b), t = { move: "move", down: "down", up: "up" }[g.op];
-    r.v = { x: M.x, y: M.y, buttons: M.b };
-    if (t) {
-      await fire(x, h, PE, "pointer" + t, o); await fire(x, h, ME, "mouse" + t, o);
-    } else {
-      o.deltaX = g.dx; o.deltaY = g.dy; o.deltaMode = 0;
-      if (await fire(x, h, w.WheelEvent, "wheel", o)) {
-        await ev(x, function () { w.scrollBy(g.dx, g.dy); });
-        r.d.push("scroll");
-      }
-    }
-  };
-  _.disp = disp; _.bub = bub; _.deepActive = deepActive; _.ctl = ctl; _.isEd = isEd; _.fd = fd; _.ff = ff;
+  _.disp = disp; _.bub = bub; _.deepActive = deepActive; _.Ev = Ev;
+  // For the gestures module (mod-gestures/): swipe, drag and mouse.
+  _.touch = touch; _.noTouch = noTouch; _.scroller = scroller; _.BTN = BTN; _.PE = PE; _.ME = ME; _.DE = DE;
   // The event primitives that the CDP Input dispatchers (65-cdp.js) build on.
   _.pi = pi; _.ne = ne; _.fire = fire; _.over = over; _.press = press; _.focusDown = focusDown;
   // pick returns the element of a target (highlight and hover --css get its node through it).

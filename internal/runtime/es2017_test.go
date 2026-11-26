@@ -44,6 +44,19 @@ func TestRuntimeBundleIsES2017Syntax(t *testing.T) {
 	}
 }
 
+// The module scripts are ES2017 like the core (parity-045 decision D5).
+func TestRuntimeModulesAreES2017Syntax(t *testing.T) {
+	for _, m := range Modules() {
+		s, err := ModuleSource(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := checkES2017(s); err != nil {
+			t.Errorf("runtime module %s: %v", m, err)
+		}
+	}
+}
+
 func TestES2017GuardDetectsNewerSyntax(t *testing.T) {
 	for _, src := range []string{
 		"var a = b?.c;",

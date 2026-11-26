@@ -79,6 +79,7 @@
   var resetReason = "";    // why: daemon, session, epoch, release or reset
   var canceled = {}, lastStep = {};
   var resetHooks = [], releaseHooks = [];
+  var mods = Object.create(null); // the feature modules installed in this document
 
   function fail(code, message, details) {
     return { __iwdpError: true, code: code, message: message, details: details };
@@ -271,7 +272,13 @@
     release: release,
     attempt: attempt,
     onReset: function (f) { resetHooks.push(f); },
-    onRelease: function (f) { releaseHooks.push(f); }
+    onRelease: function (f) { releaseHooks.push(f); },
+    // has(names...): every named module of this version is installed
+    // (internal/runtime With); a module marks itself with _.mod.
+    has: function () {
+      for (var i = 0; i < arguments.length; i++) { if (!mods[arguments[i]]) { return false; } }
+      return true;
+    }
   };
   for (var k in api) {
     if (Object.prototype.hasOwnProperty.call(api, k)) { defProp(I, k, { value: api[k], enumerable: false }); }
@@ -283,6 +290,7 @@
     refGet: function (ref) { return B.mapGet(refs, ref); },
     rebind: function (ref, el, role, name) { B.mapSet(refs, ref, el); B.wmSet(refInfo, el, { ref: ref, role: role, name: name }); },
     maxRef: function () { return maxRef; },
+    mod: function (n) { mods[n] = true; },
     // resetFrom(n): why the last reset dropped ref e<n>, or "" when it did not.
     resetFrom: function (n) { return n <= resetBelow ? resetReason : ""; }
   };

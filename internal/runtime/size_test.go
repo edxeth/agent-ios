@@ -25,6 +25,30 @@ func TestBundleWithinSourceBudget(t *testing.T) {
 	}
 }
 
+// Each module, and the core with every module (the largest install
+// message: a new document whose first call needs all modules), stay
+// within the 64 KiB source budget (parity-045 decision D5).
+func TestModulesWithinSourceBudget(t *testing.T) {
+	all, err := runtime.InstallSource(true, runtime.Modules())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range runtime.Modules() {
+		s, err := runtime.ModuleSource(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("module %s: %d bytes", m, len(s))
+		if len(s) > runtime.MaxSourceBytes {
+			t.Errorf("module %s is %d bytes; the budget is %d", m, len(s), runtime.MaxSourceBytes)
+		}
+	}
+	t.Logf("core %d bytes, core and all modules %d bytes", len(runtime.Source()), len(all))
+	if len(all) > runtime.MaxSourceBytes {
+		t.Fatalf("the core with all modules is %d bytes; the budget is %d (design 3.1)", len(all), runtime.MaxSourceBytes)
+	}
+}
+
 // escapeHeavy returns n bytes of init-script text made of the characters
 // that JSON escaping grows: quotes, backslashes and control characters
 // (one byte becomes up to 7 on the wire after the second escaping of
@@ -99,10 +123,32 @@ func TestInstallAndBootstrapAgainstEachTransportLimit(t *testing.T) {
 			defer cancel()
 			install := map[string]any{"expression": runtime.Source(), "returnByValue": true}
 			bootstrap := map[string]any{"source": fits}
-			for _, m := range []struct {
+			msgs := []struct {
 				method string
 				params any
-			}{{"Runtime.evaluate", install}, {"Page.setBootstrapScript", bootstrap}} {
+			}{{"Runtime.evaluate", install}, {"Page.setBootstrapScript", bootstrap}}
+			// Every module install message (parity-045 decision D5): each
+			// module alone, with the core, and the core with all modules.
+			scripts := [][]runtime.Module{runtime.Modules()}
+			for _, mod := range runtime.Modules() {
+				scripts = append(scripts, []runtime.Module{mod})
+			}
+			for i, mods := range scripts {
+				for _, withCore := range []bool{false, true} {
+					if i == 0 && !withCore {
+						continue
+					}
+					src, err := runtime.InstallSource(withCore, mods)
+					if err != nil {
+						t.Fatal(err)
+					}
+					msgs = append(msgs, struct {
+						method string
+						params any
+					}{"Runtime.evaluate", map[string]any{"expression": src, "returnByValue": true}})
+				}
+			}
+			for _, m := range msgs {
 				n := wireBytes(t, m.method, m.params)
 				t.Logf("%s: %d bytes on the wire, limit %d", m.method, n, c.limit)
 				if n > c.limit {

@@ -155,8 +155,8 @@
     x.n = (x.n || 0) + 1;
     return fn();
   }
-  _.ev = ev; _.gap = gap;
-  _.A = {}; // dispatchers of 55-actions.js and 60-keyboard.js by action kind
+  _.ev = ev; _.gap = gap; _.sT = sT;
+  _.A = {}; // dispatchers by action kind: 55-actions.js, 60-keyboard.js and the modules mod-*/
   function failed(e) {
     if (!e || !e.__iwdpError) { throw e; }
     return { status: "failed", reason: e.code + ": " + e.message, now: B.now(), doc: _.doc() };
