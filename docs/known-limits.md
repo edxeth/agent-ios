@@ -106,7 +106,7 @@ Heap:
 CSS rules:
 
 - `css matched`: WIP gives no style sheet headers without `CSS.enable` (which hangs through iwdp), so rules of the document's own `<style>` elements show the line inside the style element, not the document line; var() is resolved only in the element's own rules; keyframes, `@property`, `@position-try`, animation and transition styles are not shown. The inherited-property and shorthand lists are built in, so `--computed` and `css computed` with a shorthand can show a few more properties than DevTools. Checked on the iOS 26.5 Simulator and WebKitGTK 2.54 only; older iOS versions list the three methods but were not run.
-- The CDP endpoint serves no CSS method, so chrome-devtools-mcp's `get_css_styles` fails ([cdp.md](cdp.md#client-notes)); use `agent-ios css matched`.
+- chrome-devtools-mcp's `get_css_styles` through the CDP endpoint ([cdp.md](cdp.md#client-notes)): source lines of a document's own `<style>` rules are counted inside the element; no keyframes, `@property`, `@position-try`, animation or transition styles; `env()` values are not reported (`CSS.getEnvironmentVariables` is not translated: WebKit has no command that lists them); `@container` rules show no container node.
 
 Logpoints:
 

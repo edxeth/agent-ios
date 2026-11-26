@@ -297,6 +297,30 @@ func devtoolsMCPFeatures(t *testing.T) {
 	if !logpoint.Bound || logpoint.Logged != "logpoint 21" {
 		t.Errorf("set_logpoints: %+v, want the logpoint bound and \"logpoint 21\" logged", logpoint)
 	}
+	// get_css_styles on css.html's button: the cascade of the fixture's
+	// CSS, as chrome-devtools-mcp prints it from the endpoint's CSS domain
+	// (the script checks every declaration; here the decisive ones).
+	var css struct {
+		Rules []struct {
+			Selector, Source, In string
+			Decls                []string
+		}
+	}
+	stepValue(t, run.result, "get_css_styles", &css)
+	cssHas := func(selector, in, source, decl string) {
+		t.Helper()
+		for _, r := range css.Rules {
+			if r.Selector == selector && r.In == in && r.Source == source && slices.Contains(r.Decls, decl) {
+				return
+			}
+		}
+		t.Errorf("get_css_styles has no %q in %s %s (%s); rules %+v", decl, in, selector, source, css.Rules)
+	}
+	cssHas("#target", "", "<style>:4", "color: var(--brand); /* rgb(255, 0, 0) */")
+	cssHas(".box", "", "<style>:3", "[overloaded] color: blue;")
+	cssHas(".box", "", "<style>:3", "text-decoration: underline !important;")
+	cssHas("#target", "", "<style>:4", "[overloaded] text-decoration: none;")
+	cssHas("#target", "@media (min-width: 1px)", "<style>:5", "padding: 3px;")
 	var url string
 	if err := json.Unmarshal([]byte(cli(t, "--session", "chrome-devtools-mcp", "eval", "JSON.stringify(location.href)")), &url); err != nil || url != g.site.origin+"/console.html" {
 		t.Errorf("the page after the scenario is %q (%v), want console.html", url, err)

@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CDP css</title>
+<style>
+:root { --brand: rgb(255, 0, 0); }
+.box { color: blue; padding: 1px; text-decoration: underline !important; }
+#target { color: var(--brand); text-decoration: none; }
+@media (min-width: 1px) { #target { padding: 3px; } }
+</style>
+</head>
+<body>
+<button id="target" class="box">Styled</button>
+</body>
+</html>

@@ -1,0 +1,1098 @@
+{
+ "CSS.getMatchedStylesForNode": {
+  "matchedCSSRules": [
+   {
+    "rule": {
+     "selectorList": {
+      "selectors": [
+       {
+        "text": "p",
+        "specificity": [
+         0,
+         0,
+         1
+        ]
+       }
+      ],
+      "text": "p"
+     },
+     "sourceLine": 0,
+     "origin": "user-agent",
+     "style": {
+      "cssProperties": [
+       {
+        "name": "display",
+        "value": "block"
+       },
+       {
+        "name": "margin-block-start",
+        "value": "1em"
+       },
+       {
+        "name": "margin-block-end",
+        "value": "1em",
+        "implicit": true
+       },
+       {
+        "name": "margin-inline-start",
+        "value": "0px"
+       },
+       {
+        "name": "margin-inline-end",
+        "value": "0px",
+        "implicit": true
+       }
+      ],
+      "shorthandEntries": [
+       {
+        "name": "margin-block",
+        "value": "1em"
+       },
+       {
+        "name": "margin-inline",
+        "value": "0px"
+       }
+      ],
+      "styleId": {
+       "styleSheetId": "6",
+       "ordinal": 3
+      },
+      "width": "",
+      "height": ""
+     }
+    },
+    "matchingSelectors": [
+     0
+    ]
+   },
+   {
+    "rule": {
+     "selectorList": {
+      "selectors": [
+       {
+        "text": "p",
+        "specificity": [
+         0,
+         0,
+         1
+        ]
+       }
+      ],
+      "text": "p",
+      "range": {
+       "startLine": 7,
+       "startColumn": 0,
+       "endLine": 7,
+       "endColumn": 1
+      }
+     },
+     "sourceLine": 7,
+     "origin": "author",
+     "style": {
+      "cssProperties": [
+       {
+        "name": "margin",
+        "value": "0",
+        "text": "margin: 0;",
+        "range": {
+         "startLine": 7,
+         "startColumn": 4,
+         "endLine": 7,
+         "endColumn": 14
+        },
+        "implicit": false,
+        "status": "active"
+       },
+       {
+        "name": "margin-top",
+        "value": "0px"
+       },
+       {
+        "name": "margin-right",
+        "value": "0px",
+        "implicit": true
+       },
+       {
+        "name": "margin-bottom",
+        "value": "0px",
+        "implicit": true
+       },
+       {
+        "name": "margin-left",
+        "value": "0px",
+        "implicit": true
+       }
+      ],
+      "shorthandEntries": [
+       {
+        "name": "margin",
+        "value": "0px"
+       }
+      ],
+      "styleId": {
+       "styleSheetId": "7",
+       "ordinal": 7
+      },
+      "width": "",
+      "height": "",
+      "range": {
+       "startLine": 7,
+       "startColumn": 3,
+       "endLine": 7,
+       "endColumn": 15
+      },
+      "cssText": " margin: 0; "
+     },
+     "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html",
+     "ruleId": {
+      "styleSheetId": "7",
+      "ordinal": 7
+     },
+     "isImplicitlyNested": false
+    },
+    "matchingSelectors": [
+     0
+    ]
+   },
+   {
+    "rule": {
+     "selectorList": {
+      "selectors": [
+       {
+        "text": ".box",
+        "specificity": [
+         0,
+         1,
+         0
+        ]
+       }
+      ],
+      "text": ".box",
+      "range": {
+       "startLine": 3,
+       "startColumn": 0,
+       "endLine": 3,
+       "endColumn": 4
+      }
+     },
+     "sourceLine": 3,
+     "origin": "author",
+     "style": {
+      "cssProperties": [
+       {
+        "name": "color",
+        "value": "blue",
+        "text": "color: blue;",
+        "range": {
+         "startLine": 3,
+         "startColumn": 7,
+         "endLine": 3,
+         "endColumn": 19
+        },
+        "implicit": false,
+        "status": "active"
+       },
+       {
+        "name": "padding",
+        "value": "1px",
+        "text": "padding: 1px;",
+        "range": {
+         "startLine": 3,
+         "startColumn": 20,
+         "endLine": 3,
+         "endColumn": 33
+        },
+        "implicit": false,
+        "status": "active"
+       },
+       {
+        "name": "padding-top",
+        "value": "1px"
+       },
+       {
+        "name": "padding-right",
+        "value": "1px",
+        "implicit": true
+       },
+       {
+        "name": "padding-bottom",
+        "value": "1px",
+        "implicit": true
+       },
+       {
+        "name": "padding-left",
+        "value": "1px",
+        "implicit": true
+       }
+      ],
+      "shorthandEntries": [
+       {
+        "name": "padding",
+        "value": "1px"
+       }
+      ],
+      "styleId": {
+       "styleSheetId": "7",
+       "ordinal": 2
+      },
+      "width": "",
+      "height": "",
+      "range": {
+       "startLine": 3,
+       "startColumn": 6,
+       "endLine": 3,
+       "endColumn": 34
+      },
+      "cssText": " color: blue; padding: 1px; "
+     },
+     "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html",
+     "ruleId": {
+      "styleSheetId": "7",
+      "ordinal": 2
+     },
+     "isImplicitlyNested": false
+    },
+    "matchingSelectors": [
+     0
+    ]
+   },
+   {
+    "rule": {
+     "selectorList": {
+      "selectors": [
+       {
+        "text": "#target",
+        "specificity": [
+         1,
+         0,
+         0
+        ]
+       }
+      ],
+      "text": "#target",
+      "range": {
+       "startLine": 4,
+       "startColumn": 0,
+       "endLine": 4,
+       "endColumn": 7
+      }
+     },
+     "sourceLine": 4,
+     "origin": "author",
+     "style": {
+      "cssProperties": [
+       {
+        "name": "color",
+        "value": "var(--brand)",
+        "text": "color: var(--brand);",
+        "range": {
+         "startLine": 4,
+         "startColumn": 10,
+         "endLine": 4,
+         "endColumn": 30
+        },
+        "implicit": false,
+        "status": "active"
+       },
+       {
+        "name": "border",
+        "value": "2px solid var(--missing, rgb(0, 0, 255))",
+        "text": "border: 2px solid var(--missing, rgb(0, 0, 255));",
+        "range": {
+         "startLine": 4,
+         "startColumn": 31,
+         "endLine": 4,
+         "endColumn": 80
+        },
+        "implicit": false,
+        "status": "active"
+       },
+       {
+        "name": "border-top-width",
+        "value": ""
+       },
+       {
+        "name": "border-right-width",
+        "value": ""
+       },
+       {
+        "name": "border-bottom-width",
+        "value": ""
+       },
+       {
+        "name": "border-left-width",
+        "value": ""
+       },
+       {
+        "name": "border-top-style",
+        "value": ""
+       },
+       {
+        "name": "border-right-style",
+        "value": ""
+       },
+       {
+        "name": "border-bottom-style",
+        "value": ""
+       },
+       {
+        "name": "border-left-style",
+        "value": ""
+       },
+       {
+        "name": "border-top-color",
+        "value": ""
+       },
+       {
+        "name": "border-right-color",
+        "value": ""
+       },
+       {
+        "name": "border-bottom-color",
+        "value": ""
+       },
+       {
+        "name": "border-left-color",
+        "value": ""
+       },
+       {
+        "name": "border-image-source",
+        "value": ""
+       },
+       {
+        "name": "border-image-slice",
+        "value": ""
+       },
+       {
+        "name": "border-image-width",
+        "value": ""
+       },
+       {
+        "name": "border-image-outset",
+        "value": ""
+       },
+       {
+        "name": "border-image-repeat",
+        "value": ""
+       }
+      ],
+      "shorthandEntries": [
+       {
+        "name": "border",
+        "value": "2px solid var(--missing, rgb(0, 0, 255))"
+       }
+      ],
+      "styleId": {
+       "styleSheetId": "7",
+       "ordinal": 3
+      },
+      "width": "",
+      "height": "",
+      "range": {
+       "startLine": 4,
+       "startColumn": 9,
+       "endLine": 4,
+       "endColumn": 81
+      },
+      "cssText": " color: var(--brand); border: 2px solid var(--missing, rgb(0, 0, 255)); "
+     },
+     "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html",
+     "ruleId": {
+      "styleSheetId": "7",
+      "ordinal": 3
+     },
+     "isImplicitlyNested": false
+    },
+    "matchingSelectors": [
+     0
+    ]
+   },
+   {
+    "rule": {
+     "selectorList": {
+      "selectors": [
+       {
+        "text": "#target",
+        "specificity": [
+         1,
+         0,
+         0
+        ]
+       }
+      ],
+      "text": "#target",
+      "range": {
+       "startLine": 5,
+       "startColumn": 26,
+       "endLine": 5,
+       "endColumn": 33
+      }
+     },
+     "sourceLine": 5,
+     "origin": "author",
+     "style": {
+      "cssProperties": [
+       {
+        "name": "padding",
+        "value": "3px",
+        "text": "padding: 3px;",
+        "range": {
+         "startLine": 5,
+         "startColumn": 36,
+         "endLine": 5,
+         "endColumn": 49
+        },
+        "implicit": false,
+        "status": "active"
+       },
+       {
+        "name": "padding-top",
+        "value": "3px"
+       },
+       {
+        "name": "padding-right",
+        "value": "3px",
+        "implicit": true
+       },
+       {
+        "name": "padding-bottom",
+        "value": "3px",
+        "implicit": true
+       },
+       {
+        "name": "padding-left",
+        "value": "3px",
+        "implicit": true
+       }
+      ],
+      "shorthandEntries": [
+       {
+        "name": "padding",
+        "value": "3px"
+       }
+      ],
+      "styleId": {
+       "styleSheetId": "7",
+       "ordinal": 5
+      },
+      "width": "",
+      "height": "",
+      "range": {
+       "startLine": 5,
+       "startColumn": 35,
+       "endLine": 5,
+       "endColumn": 50
+      },
+      "cssText": " padding: 3px; "
+     },
+     "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html",
+     "ruleId": {
+      "styleSheetId": "7",
+      "ordinal": 5
+     },
+     "groupings": [
+      {
+       "type": "media-rule",
+       "ruleId": {
+        "styleSheetId": "7",
+        "ordinal": 4
+       },
+       "text": "(min-width: 1px)",
+       "range": {
+        "startLine": 5,
+        "startColumn": 7,
+        "endLine": 5,
+        "endColumn": 23
+       },
+       "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html"
+      }
+     ],
+     "isImplicitlyNested": false
+    },
+    "matchingSelectors": [
+     0
+    ]
+   },
+   {
+    "rule": {
+     "selectorList": {
+      "selectors": [
+       {
+        "text": "#target.box",
+        "specificity": [
+         1,
+         1,
+         0
+        ]
+       }
+      ],
+      "text": "#target.box",
+      "range": {
+       "startLine": 6,
+       "startColumn": 0,
+       "endLine": 6,
+       "endColumn": 11
+      }
+     },
+     "sourceLine": 6,
+     "origin": "author",
+     "style": {
+      "cssProperties": [
+       {
+        "name": "margin-top",
+        "value": "4px",
+        "text": "margin-top: 4px;",
+        "range": {
+         "startLine": 6,
+         "startColumn": 14,
+         "endLine": 6,
+         "endColumn": 30
+        },
+        "implicit": false,
+        "status": "active"
+       }
+      ],
+      "shorthandEntries": [],
+      "styleId": {
+       "styleSheetId": "7",
+       "ordinal": 6
+      },
+      "width": "",
+      "height": "",
+      "range": {
+       "startLine": 6,
+       "startColumn": 13,
+       "endLine": 6,
+       "endColumn": 31
+      },
+      "cssText": " margin-top: 4px; "
+     },
+     "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html",
+     "ruleId": {
+      "styleSheetId": "7",
+      "ordinal": 6
+     },
+     "isImplicitlyNested": false
+    },
+    "matchingSelectors": [
+     0
+    ]
+   }
+  ],
+  "pseudoElements": [],
+  "inherited": [
+   {
+    "matchedCSSRules": [
+     {
+      "rule": {
+       "selectorList": {
+        "selectors": [
+         {
+          "text": "address",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "article",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "aside",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "div",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "footer",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "header",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "hgroup",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "main",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "nav",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "search",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         },
+         {
+          "text": "section",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         }
+        ],
+        "text": "address, article, aside, div, footer, header, hgroup, main, nav, search, section"
+       },
+       "sourceLine": 0,
+       "origin": "user-agent",
+       "style": {
+        "cssProperties": [
+         {
+          "name": "display",
+          "value": "block"
+         }
+        ],
+        "shorthandEntries": [],
+        "styleId": {
+         "styleSheetId": "6",
+         "ordinal": 4
+        },
+        "width": "",
+        "height": ""
+       }
+      },
+      "matchingSelectors": [
+       3
+      ]
+     }
+    ],
+    "inlineStyle": {
+     "cssProperties": [
+      {
+       "name": "letter-spacing",
+       "value": "1px",
+       "text": "letter-spacing: 1px",
+       "range": {
+        "startLine": 0,
+        "startColumn": 0,
+        "endLine": 1,
+        "endColumn": 0
+       },
+       "implicit": false,
+       "status": "active"
+      }
+     ],
+     "shorthandEntries": [],
+     "styleId": {
+      "styleSheetId": "8",
+      "ordinal": 0
+     },
+     "width": "",
+     "height": "",
+     "range": {
+      "startLine": 0,
+      "startColumn": 0,
+      "endLine": 1,
+      "endColumn": 0
+     },
+     "cssText": "letter-spacing: 1px"
+    }
+   },
+   {
+    "matchedCSSRules": [
+     {
+      "rule": {
+       "selectorList": {
+        "selectors": [
+         {
+          "text": "body",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         }
+        ],
+        "text": "body"
+       },
+       "sourceLine": 0,
+       "origin": "user-agent",
+       "style": {
+        "cssProperties": [
+         {
+          "name": "display",
+          "value": "block"
+         },
+         {
+          "name": "margin-top",
+          "value": "8px"
+         },
+         {
+          "name": "margin-right",
+          "value": "8px",
+          "implicit": true
+         },
+         {
+          "name": "margin-bottom",
+          "value": "8px",
+          "implicit": true
+         },
+         {
+          "name": "margin-left",
+          "value": "8px",
+          "implicit": true
+         }
+        ],
+        "shorthandEntries": [
+         {
+          "name": "margin",
+          "value": "8px"
+         }
+        ],
+        "styleId": {
+         "styleSheetId": "6",
+         "ordinal": 2
+        },
+        "width": "",
+        "height": ""
+       }
+      },
+      "matchingSelectors": [
+       0
+      ]
+     },
+     {
+      "rule": {
+       "selectorList": {
+        "selectors": [
+         {
+          "text": "body",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         }
+        ],
+        "text": "body",
+        "range": {
+         "startLine": 2,
+         "startColumn": 0,
+         "endLine": 2,
+         "endColumn": 4
+        }
+       },
+       "sourceLine": 2,
+       "origin": "author",
+       "style": {
+        "cssProperties": [
+         {
+          "name": "font-size",
+          "value": "20px",
+          "text": "font-size: 20px;",
+          "range": {
+           "startLine": 2,
+           "startColumn": 7,
+           "endLine": 2,
+           "endColumn": 23
+          },
+          "implicit": false,
+          "status": "active"
+         },
+         {
+          "name": "color",
+          "value": "green",
+          "text": "color: green;",
+          "range": {
+           "startLine": 2,
+           "startColumn": 24,
+           "endLine": 2,
+           "endColumn": 37
+          },
+          "implicit": false,
+          "status": "active"
+         },
+         {
+          "name": "margin",
+          "value": "0",
+          "text": "margin: 0;",
+          "range": {
+           "startLine": 2,
+           "startColumn": 38,
+           "endLine": 2,
+           "endColumn": 48
+          },
+          "implicit": false,
+          "status": "active"
+         },
+         {
+          "name": "margin-top",
+          "value": "0px"
+         },
+         {
+          "name": "margin-right",
+          "value": "0px",
+          "implicit": true
+         },
+         {
+          "name": "margin-bottom",
+          "value": "0px",
+          "implicit": true
+         },
+         {
+          "name": "margin-left",
+          "value": "0px",
+          "implicit": true
+         }
+        ],
+        "shorthandEntries": [
+         {
+          "name": "margin",
+          "value": "0px"
+         }
+        ],
+        "styleId": {
+         "styleSheetId": "7",
+         "ordinal": 1
+        },
+        "width": "",
+        "height": "",
+        "range": {
+         "startLine": 2,
+         "startColumn": 6,
+         "endLine": 2,
+         "endColumn": 49
+        },
+        "cssText": " font-size: 20px; color: green; margin: 0; "
+       },
+       "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html",
+       "ruleId": {
+        "styleSheetId": "7",
+        "ordinal": 1
+       },
+       "isImplicitlyNested": false
+      },
+      "matchingSelectors": [
+       0
+      ]
+     }
+    ]
+   },
+   {
+    "matchedCSSRules": [
+     {
+      "rule": {
+       "selectorList": {
+        "selectors": [
+         {
+          "text": "html",
+          "specificity": [
+           0,
+           0,
+           1
+          ]
+         }
+        ],
+        "text": "html"
+       },
+       "sourceLine": 0,
+       "origin": "user-agent",
+       "style": {
+        "cssProperties": [
+         {
+          "name": "display",
+          "value": "block"
+         },
+         {
+          "name": "color",
+          "value": "canvastext"
+         }
+        ],
+        "shorthandEntries": [],
+        "styleId": {
+         "styleSheetId": "6",
+         "ordinal": 0
+        },
+        "width": "",
+        "height": ""
+       }
+      },
+      "matchingSelectors": [
+       0
+      ]
+     },
+     {
+      "rule": {
+       "selectorList": {
+        "selectors": [
+         {
+          "text": ":root",
+          "specificity": [
+           0,
+           1,
+           0
+          ]
+         }
+        ],
+        "text": ":root"
+       },
+       "sourceLine": 0,
+       "origin": "user-agent",
+       "style": {
+        "cssProperties": [
+         {
+          "name": "view-transition-name",
+          "value": "root"
+         }
+        ],
+        "shorthandEntries": [],
+        "styleId": {
+         "styleSheetId": "9",
+         "ordinal": 0
+        },
+        "width": "",
+        "height": ""
+       }
+      },
+      "matchingSelectors": [
+       0
+      ]
+     },
+     {
+      "rule": {
+       "selectorList": {
+        "selectors": [
+         {
+          "text": ":root",
+          "specificity": [
+           0,
+           1,
+           0
+          ]
+         }
+        ],
+        "text": ":root",
+        "range": {
+         "startLine": 1,
+         "startColumn": 0,
+         "endLine": 1,
+         "endColumn": 5
+        }
+       },
+       "sourceLine": 1,
+       "origin": "author",
+       "style": {
+        "cssProperties": [
+         {
+          "name": "--brand",
+          "value": "rgb(255, 0, 0)",
+          "text": "--brand: rgb(255, 0, 0);",
+          "range": {
+           "startLine": 1,
+           "startColumn": 8,
+           "endLine": 1,
+           "endColumn": 32
+          },
+          "implicit": false,
+          "status": "active"
+         }
+        ],
+        "shorthandEntries": [],
+        "styleId": {
+         "styleSheetId": "7",
+         "ordinal": 0
+        },
+        "width": "",
+        "height": "",
+        "range": {
+         "startLine": 1,
+         "startColumn": 7,
+         "endLine": 1,
+         "endColumn": 33
+        },
+        "cssText": " --brand: rgb(255, 0, 0); "
+       },
+       "sourceURL": "http://10.0.2.2:18745/wpcss-probe.html",
+       "ruleId": {
+        "styleSheetId": "7",
+        "ordinal": 0
+       },
+       "isImplicitlyNested": false
+      },
+      "matchingSelectors": [
+       0
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "CSS.getInlineStylesForNode": {
+  "inlineStyle": {
+   "cssProperties": [
+    {
+     "name": "font-weight",
+     "value": "700",
+     "text": "font-weight: 700",
+     "range": {
+      "startLine": 0,
+      "startColumn": 0,
+      "endLine": 1,
+      "endColumn": 0
+     },
+     "implicit": false,
+     "status": "active"
+    }
+   ],
+   "shorthandEntries": [],
+   "styleId": {
+    "styleSheetId": "10",
+    "ordinal": 0
+   },
+   "width": "",
+   "height": "",
+   "range": {
+    "startLine": 0,
+    "startColumn": 0,
+    "endLine": 1,
+    "endColumn": 0
+   },
+   "cssText": "font-weight: 700"
+  }
+ }
+}

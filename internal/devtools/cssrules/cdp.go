@@ -72,26 +72,37 @@ func cdpProperty(p *Property) map[string]any {
 }
 
 // cdpStyle translates a style; sheet is the styleSheetId it gets ("" for
-// none). In a style with source ranges, WebKit lists a shorthand's
-// longhands right after it without a range: they become the shorthand's
-// longhandProperties too, which DevTools' cascade needs (it reads only
-// the declarations with a range of such a style).
+// none). In a style with source ranges, WebKit lists every declaration
+// with its range first and then, without a range, the longhands of all
+// its shorthands, without saying which longhand is whose. When the style
+// has a single shorthand, those longhands are all its own and become its
+// longhandProperties (with their values). With several shorthands they
+// stay unassigned: DevTools then takes a shorthand's longhands from its
+// own CSS metadata, which its cascade reads just as well (DevTools reads
+// only the declarations with a range of such a style), while a longhand
+// given to the wrong shorthand would carry that shorthand's !important
+// into the cascade.
 func cdpStyle(s *Style, sheet string) map[string]any {
 	props := make([]any, 0, len(s.CSSProperties))
-	var last map[string]any
+	var owner map[string]any // the single shorthand's declaration
 	for i := range s.CSSProperties {
 		p := &s.CSSProperties[i]
 		cp := cdpProperty(p)
 		props = append(props, cp)
-		if len(s.Range) == 0 {
-			continue
+		if len(s.Range) != 0 && len(p.Range) != 0 && len(s.ShorthandEntries) == 1 && p.Name == s.ShorthandEntries[0].Name {
+			owner = cp // its last declaration, when it is declared twice
 		}
-		if len(p.Range) != 0 {
-			last = cp
-		} else if last != nil {
-			l := map[string]any{"name": cp["name"], "value": cp["value"], "important": cp["important"]}
-			lh, _ := last["longhandProperties"].([]any)
-			last["longhandProperties"] = append(lh, l)
+	}
+	if owner != nil {
+		var lh []any
+		for i := range s.CSSProperties {
+			if p := &s.CSSProperties[i]; len(p.Range) == 0 {
+				cp := props[i].(map[string]any)
+				lh = append(lh, map[string]any{"name": cp["name"], "value": cp["value"], "important": cp["important"]})
+			}
+		}
+		if len(lh) > 0 {
+			owner["longhandProperties"] = lh
 		}
 	}
 	shorts := make([]any, 0, len(s.ShorthandEntries))

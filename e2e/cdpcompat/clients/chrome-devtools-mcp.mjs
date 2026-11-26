@@ -12,8 +12,10 @@
 //     take_screenshot.
 //   features <origin> (the tools that chrome-devtools-mcp 1.14.0 added or
 //     changed; the server runs with --categoryNetworkMocks):
-//     navigate_page to console.html, list_console_messages with
-//     includeStackTraces (the message of console.js has its frame),
+//     navigate_page to css.html, take_snapshot and get_css_styles on its
+//     button (the winning and the overloaded declarations, the <style>
+//     source lines, a var() value), navigate_page to console.html,
+//     list_console_messages with includeStackTraces (the message of console.js has its frame),
 //     get_console_message, emulate (colorScheme dark, geolocation,
 //     cpuThrottlingRate 1; the page sees dark and the position), emulate
 //     with networkConditions Slow 3G (the step records the endpoint's
@@ -198,7 +200,7 @@ function pagesOf(text) {
 const toolsUsed = ['list_pages', 'navigate_page', 'take_snapshot', 'click', 'list_network_requests', 'take_screenshot'];
 
 // featureTools are the tools of the features scenario.
-const featureTools = ['list_pages', 'navigate_page', 'list_console_messages', 'get_console_message', 'emulate', 'evaluate_script', 'mock_network', 'remove_network_mock', 'set_logpoints'];
+const featureTools = ['list_pages', 'navigate_page', 'take_snapshot', 'get_css_styles', 'list_console_messages', 'get_console_message', 'emulate', 'evaluate_script', 'mock_network', 'remove_network_mock', 'set_logpoints'];
 
 // start runs initialize and tools/list on server, checks that it lists
 // tools, and returns the id of its one page, the start page; undefined
@@ -256,6 +258,38 @@ async function evaluate(server, pageId, fn) {
     throw new Error(`evaluate_script answered without a JSON block:\n${text}`);
   }
   return JSON.parse(m[1]);
+}
+
+// cssRules returns the rules of a get_css_styles answer: for each rule
+// line such as `  #target (<style>:4) {`, its selector, its source and
+// the declaration lines up to its closing brace, trimmed. A rule inside a
+// wrapper (`@media ... {`) gets the wrapper's text in `in`.
+function cssRules(text) {
+  const lines = text.split('\n');
+  const rules = [];
+  const wrappers = [];
+  for (let i = 0; i < lines.length; i++) {
+    const wrapper = /^(\s*)(@\S.*) \{$/.exec(lines[i]);
+    if (wrapper) {
+      wrappers.push({ indent: wrapper[1], text: wrapper[2] });
+      continue;
+    }
+    if (wrappers.length && lines[i] === `${wrappers.at(-1).indent}}`) {
+      wrappers.pop();
+      continue;
+    }
+    const rule = /^(\s*)(\S.*) \(([^()]+)\) \{$/.exec(lines[i]);
+    if (rule) {
+      const decls = [];
+      let j = i + 1;
+      for (; j < lines.length && lines[j] !== `${rule[1]}}`; j++) {
+        decls.push(lines[j].trim());
+      }
+      rules.push({ selector: rule[2], source: rule[3], in: wrappers.at(-1)?.text, decls });
+      i = j;
+    }
+  }
+  return rules;
 }
 
 // refusal calls a tool that the endpoint must refuse and returns the
@@ -340,7 +374,44 @@ scenarios.features = async function features() {
   const server = new McpServer(['--categoryNetworkMocks']);
   try {
     const pageId = await start(server, featureTools);
-    if (pageId === undefined || !(await navigate(server, pageId, consolePage))) {
+    if (pageId === undefined) {
+      return false;
+    }
+    // get_css_styles through the endpoint's CSS domain on css.html, whose
+    // cascade is known from its CSS: #target's color wins over .box's,
+    // .box's text-decoration wins by !important, the @media #target
+    // padding wins over .box's. Lines count inside the <style> element
+    // (docs/cdp.md): .box is its line 2, printed 1-based as 3.
+    if (await navigate(server, pageId, origin() + '/css.html')) {
+      await observe(out, 'get_css_styles', async () => {
+        const { text: snap } = await server.callTool('take_snapshot', { pageId });
+        const uid = uidOf(snap, 'button', 'Styled');
+        const { text } = await server.callTool('get_css_styles', { pageId, uid });
+        if (!text.includes('Styles for ')) {
+          throw new Error(`get_css_styles answered without "Styles for":\n${text}`);
+        }
+        const rules = cssRules(text);
+        const find = (selector, within) => {
+          const r = rules.find((x) => x.selector === selector && x.in === within);
+          if (!r) {
+            throw new Error(`get_css_styles has no rule ${selector}${within ? ' in ' + within : ''}:\n${text}`);
+          }
+          return r;
+        };
+        const want = [
+          ['.box', undefined, '<style>:3', ['[overloaded] color: blue;', '[overloaded] padding: 1px;', 'text-decoration: underline !important;']],
+          ['#target', undefined, '<style>:4', ['color: var(--brand); /* rgb(255, 0, 0) */', '[overloaded] text-decoration: none;']],
+          ['#target', '@media (min-width: 1px)', '<style>:5', ['padding: 3px;']],
+        ];
+        for (const [selector, within, source, decls] of want) {
+          const r = find(selector, within);
+          expect(`source of ${selector}`, r.source, source);
+          expect(`declarations of ${selector}${within ? ' in ' + within : ''}`, r.decls, decls);
+        }
+        return { uid, rules: rules.filter((r) => r.source.startsWith('<style>')) };
+      });
+    }
+    if (!(await navigate(server, pageId, consolePage))) {
       return false;
     }
     // console.js logged "fixture log 1" from logFromFixture (line 3).
