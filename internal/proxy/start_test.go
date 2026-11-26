@@ -38,6 +38,15 @@ const (
 	// fakeExitFromEnv=N makes the fake of the Nth start and later ones
 	// exit 1 before they listen, as an iwdp whose start fails.
 	fakeExitFromEnv = "AGENT_IOS_PROXY_TEST_FAKE_EXIT_FROM"
+	// fakeAnswerAfterEnv makes the serve fake listen at once but answer a
+	// request only this long (a Go duration) after its start, or never
+	// ("never"), as ios_webkit_debug_proxy 1.9.2 does: it listens on its
+	// listing port first and answers only after it connected the USB
+	// devices inside its one event loop.
+	fakeAnswerAfterEnv = "AGENT_IOS_PROXY_TEST_FAKE_ANSWER_AFTER"
+	// fakeRequestsEnv names a file to which the serve fake appends one
+	// line per request it receives, before it answers.
+	fakeRequestsEnv = "AGENT_IOS_PROXY_TEST_FAKE_REQUESTS"
 )
 
 // fakeNetworkEnv names the network of the serve fake's listener (net.Listen):
@@ -130,7 +139,26 @@ func TestFakeIWDPProcess(t *testing.T) {
 		data, _ := os.ReadFile(os.Getenv(fakeStartsEnv))
 		serves = strings.Count(string(data), "\n") >= from
 	}
+	began := time.Now()
 	err = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if path := os.Getenv(fakeRequestsEnv); path != "" {
+			if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+				_, _ = f.WriteString("GET /json\n")
+				_ = f.Close()
+			}
+		}
+		switch after := os.Getenv(fakeAnswerAfterEnv); after {
+		case "":
+		case "never":
+			select {} // the process ends with its test (exitWithParent) or a signal
+		default:
+			d, err := time.ParseDuration(after)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "fake iwdp: %s=%q: %v\n", fakeAnswerAfterEnv, after, err)
+				os.Exit(3)
+			}
+			time.Sleep(time.Until(began.Add(d)))
+		}
 		body := []byte("[]")
 		if path := os.Getenv(fakeListingEnv); path != "" && serves {
 			if data, err := os.ReadFile(path); err == nil {
@@ -187,7 +215,25 @@ const (
 	// device whose inspector closed the connection (a locked device) and,
 	// like fakeHang, never serves.
 	fakeLocked = "locked"
+	// fakeConnecting serves as fakeServe, but answers only
+	// fakeConnectingAnswer after its start, as an iwdp that connects a USB
+	// device; each request is logged to requests.log first.
+	fakeConnecting = "connecting"
+	// fakeStuck listens like fakeConnecting but never answers, as an iwdp
+	// whose device connection does not end.
+	fakeStuck = "stuck"
+	// fakeShutdownLines never listens; on SIGTERM it prints the lines that
+	// ios_webkit_debug_proxy 1.9.2 prints when it quits while a device's
+	// inspector connection has not answered yet (sm_cleanup closes it, and
+	// iwdp_log_disconnect logs "Unable to connect to ..."), then exits.
+	fakeShutdownLines = "shutdown-lines"
 )
+
+// fakeConnectingAnswer is how long after its start fakeConnecting
+// answers: past the 5 s that a start waited for an answer before
+// (startReadyWait), as the iwdp of the restart of 2026-11-26 with an
+// iPhone X attached.
+const fakeConnectingAnswer = 7 * time.Second
 
 // shellExitWithParent is exitWithParent for a shell fake whose child's pid
 // is in $c: instead of waiting for the child, the shell polls its parent
@@ -233,6 +279,19 @@ func installFakeIWDP(t *testing.T, mode, addr string) *fakeIWDP {
 		body = "printf 'fake-stderr-line\\n' >&2\nme=$$\n" +
 			"(printf 'fake-stdout-line\\n'; while kill -0 $me 2>/dev/null; do sleep 0.2; done) | sed -n p &\n" +
 			"exec env " + fakeParent() + " " + fakeServeEnv + "=" + q(addr) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
+	case fakeConnecting, fakeStuck:
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		after := fakeConnectingAnswer.String()
+		if mode == fakeStuck {
+			after = "never"
+		}
+		body = "exec env " + fakeParent() + " " + fakeServeEnv + "=" + q(addr) + " " + fakeAnswerAfterEnv + "=" + after + " " + fakeRequestsEnv + "=" + q(filepath.Join(dir, "requests.log")) + " " + q(exe) + " -test.run='^TestFakeIWDPProcess$'\n"
+	case fakeShutdownLines:
+		body = "trap 'echo \"Unable to connect to iPhone X (00008020-0000000000000001)\"; echo \"  Please verify that Settings > Safari > Advanced > Web Inspector = ON\"; kill -9 $c 2>/dev/null; exit 0' TERM\n" +
+			"sleep 300 &\nc=$!\necho $c > " + q(filepath.Join(dir, "child.pid")) + "\n" + shellExitWithParent()
 	case fakeFail:
 		body = "exit 1\n"
 	case fakeHang:

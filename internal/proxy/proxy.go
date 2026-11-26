@@ -65,8 +65,19 @@ const readTimeout = 5 * time.Second
 const StartBackoff = 30 * time.Second
 
 const (
-	// startReadyWait bounds the wait for a started iwdp's listing.
+	// startReadyWait bounds the wait for a started iwdp's listing while
+	// the started process group does not listen on it.
 	startReadyWait = 5 * time.Second
+	// startConnectWait bounds the wait, from the spawn, for the listing of
+	// a started iwdp whose process group listens on it. ios_webkit_debug_proxy
+	// 1.9.2 listens on its listing port before anything else and answers
+	// only after it connected each USB device (lockdownd handshake, the
+	// Web Inspector service and its TLS session) inside its one event
+	// loop; with an iPhone X that took about 4.5 s, and over 5 s right
+	// after a restart (2026-11-26). libimobiledevice waits up to 30 s for
+	// one lockdownd answer; this wait leaves a restart within the default
+	// command deadline of 30 s.
+	startConnectWait = 20 * time.Second
 	// startPoll is the interval of the readiness checks.
 	startPoll = 200 * time.Millisecond
 	// stopGrace is how long a started iwdp that failed its start gets to
@@ -203,8 +214,9 @@ func getListing(ctx context.Context, addr string) error {
 // records each iwdp it started (saveRecord), and Restart stops only a
 // recorded iwdp.
 type Starter struct {
-	addr      string        // listing address, host:port
-	readyWait time.Duration // startReadyWait; shorter in tests
+	addr        string        // listing address, host:port
+	readyWait   time.Duration // startReadyWait; shorter in tests
+	connectWait time.Duration // startConnectWait; tests choose it
 	// listens tells who receives a connection to an endpoint
 	// (groupListens; tests choose an implementation or a failure).
 	listens func(ctx context.Context, pgid int, ep netip.AddrPort) (listener, error)
@@ -232,7 +244,7 @@ type Starter struct {
 
 // NewStarter returns a Starter for the listing address addr (host:port).
 func NewStarter(addr string) *Starter {
-	return &Starter{addr: addr, readyWait: startReadyWait, listens: groupListens, identify: readIdentity, kill: syscall.Kill, attached: DeviceUDIDs, usbmuxdLive: usbmuxdLive, unixSockets: unixSockets, listeners: listenerPIDs}
+	return &Starter{addr: addr, readyWait: startReadyWait, connectWait: startConnectWait, listens: groupListens, identify: readIdentity, kill: syscall.Kill, attached: DeviceUDIDs, usbmuxdLive: usbmuxdLive, unixSockets: unixSockets, listeners: listenerPIDs}
 }
 
 // std is the Starter of iwdp's default listing address, used by Start.
@@ -246,13 +258,19 @@ func Start(ctx context.Context) error { return std.Start(ctx) }
 // process group, so it outlives the caller, and waits until its listing
 // answers. It returns nil at once when iwdp already answers, and the
 // CheckListing error, without a start, when another process owns the port.
-// When the started process does not answer within the readiness wait,
-// another process takes the port, or ctx ends first, Start stops its
-// process group and waits for it to exit before it returns the error. A
-// failed start (not a cancelled one, nor one that lost the port to another
-// process) is returned again, without an attempt, for StartBackoff. A
-// started iwdp that answers is recorded for Restart (saveRecord); when
-// the record cannot be written, Start stops it and fails.
+// When the started process does not listen within the readiness wait,
+// another process takes the port, or ctx ends before it listens, Start
+// stops its process group and waits for it to exit before it returns the
+// error. A started process that listens is still connecting its devices:
+// Start waits for its answer up to the connection wait (startConnectWait),
+// and when that wait or ctx ends first, it keeps the process running and
+// recorded and returns an errStillConnecting error (wrapping ctx's error
+// when ctx ended), since a stop in the middle of a device connection only
+// makes the next start connect again. A failed start (not a cancelled one,
+// nor a kept one, nor one that lost the port to another process) is
+// returned again, without an attempt, for StartBackoff. A started iwdp
+// that answers or is kept is recorded for Restart (saveRecord); when the
+// record cannot be written, Start stops it and fails.
 func (s *Starter) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -280,7 +298,7 @@ func (s *Starter) startLocked(ctx context.Context, fresh bool) error {
 		return err
 	}
 	err = s.launch(ctx)
-	if err != nil && ctx.Err() == nil && !errors.Is(err, errPortTaken) {
+	if err != nil && ctx.Err() == nil && !errors.Is(err, errPortTaken) && !errors.Is(err, errStillConnecting) {
 		s.failErr, s.failedAt = err, time.Now()
 	} else {
 		s.failErr = nil
@@ -443,53 +461,105 @@ func (s *Starter) launch(ctx context.Context) error {
 		waitErr = cmd.Wait()
 		close(exited)
 	}()
-	readyBy := time.Now().Add(s.readyWait)
-	deadline := time.NewTimer(s.readyWait)
-	defer deadline.Stop()
+	pid := cmd.Process.Pid
+	spawned := time.Now()
+	readyBy := spawned.Add(s.readyWait)
+	// listens: the last readiness check found the group's own listener.
+	listens := false
+	// keep records the listening iwdp and returns errStillConnecting with
+	// why it is not ready; when the record fails, the iwdp is stopped.
+	keep := func(why string, cause error) error {
+		if err := s.saveRecord(pid, token); err != nil {
+			stopGroup(pid, exited)
+			return err
+		}
+		msg := fmt.Sprintf("the started ios_webkit_debug_proxy (pid %d) listens on %s but %s. It answers only after it has connected the USB devices (it does that inside its one event loop), so it was kept running and recorded instead of stopped in the middle of a device connection: run the command again in a moment; if it still does not answer, keep the device unlocked and run 'agent-ios restart-iwdp'; its output is in %s",
+			pid, s.addr, why, log.Name())
+		if cause != nil {
+			return fmt.Errorf("%w: %s (%w)", errStillConnecting, msg, cause)
+		}
+		return fmt.Errorf("%w: %s", errStillConnecting, msg)
+	}
 	poll := time.NewTicker(startPoll)
 	defer poll.Stop()
 	for {
 		select {
 		case <-exited:
-			stopGroup(cmd.Process.Pid, exited)
+			stopGroup(pid, exited)
 			return logcause.Errorf("ios_webkit_debug_proxy exited during its start (%v)%s; run '%s' to see why", waitErr, s.startAdvice(ctx, log.Name(), logStart, true), ManualCommand())
 		case <-ctx.Done():
-			stopGroup(cmd.Process.Pid, exited)
+			if listens {
+				return keep("did not answer before the command ended", ctx.Err())
+			}
+			stopGroup(pid, exited)
 			return fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
-		case <-deadline.C:
-			stopGroup(cmd.Process.Pid, exited)
-			return fmt.Errorf("the started ios_webkit_debug_proxy did not answer on %s within %s, so it was stopped%s; run '%s' to see why", s.addr, s.readyWait, s.startAdvice(ctx, log.Name(), logStart, false), ManualCommand())
 		case <-poll.C:
-			ok, err := s.ready(ctx, readyBy, cmd.Process.Pid)
+			st, err := s.ready(ctx, readyBy, pid)
 			if err != nil {
-				stopGroup(cmd.Process.Pid, exited)
+				if listens && ctx.Err() != nil {
+					return keep("did not answer before the command ended", ctx.Err())
+				}
+				stopGroup(pid, exited)
 				return err
 			}
-			if !ok {
+			switch st {
+			case startAnswers:
+				if err := s.saveRecord(pid, token); err != nil {
+					stopGroup(pid, exited)
+					return err
+				}
+				return nil
+			case startListens:
+				if !listens {
+					readyBy = spawned.Add(max(s.readyWait, s.connectWait))
+				}
+				listens = true
+			default:
+				listens = false
+			}
+			if time.Now().Before(readyBy) {
 				continue
 			}
-			if err := s.saveRecord(cmd.Process.Pid, token); err != nil {
-				stopGroup(cmd.Process.Pid, exited)
-				return err
+			if listens {
+				return keep("did not answer GET /json within "+time.Since(spawned).Round(time.Second).String()+" of its start", nil)
 			}
-			return nil
+			// The advice reads what the iwdp logged while it ran, before
+			// the stop: on SIGTERM iwdp logs "Unable to connect to ..." for
+			// every device whose inspector has not answered yet.
+			advice := s.startAdvice(ctx, log.Name(), logStart, false)
+			stopGroup(pid, exited)
+			return fmt.Errorf("the started ios_webkit_debug_proxy did not answer on %s within %s: it did not listen there, so it was stopped%s; run '%s' to see why", s.addr, s.readyWait, advice, ManualCommand())
 		}
 	}
 }
 
-// ready reports whether the started process group pgid serves the listing.
+// errStillConnecting marks a start whose iwdp listens but has not answered
+// yet, and runs on, recorded (launch).
+var errStillConnecting = errors.New("ios_webkit_debug_proxy is still connecting its devices")
+
+// startState is what one readiness check found (ready).
+type startState int
+
+const (
+	startNotListening startState = iota // no listener of the started group (yet)
+	startListens                        // the group's listener, no answer (yet)
+	startAnswers                        // the group serves the listing
+)
+
+// ready reports what the started process group pgid does on the listing.
 // The group must own the listening socket that receives a connection to
 // the listing endpoint (address and port; classify). A listener of another
 // process is never the started iwdp: then ready returns an errPortTaken
 // error. A failed ownership check is an error too, and when ctx ends
-// during the check, ready returns ctx's error.
-func (s *Starter) ready(ctx context.Context, readyBy time.Time, pgid int) (bool, error) {
+// during the check, ready returns ctx's error. A GET /json of the group's
+// listener waits until readyBy.
+func (s *Starter) ready(ctx context.Context, readyBy time.Time, pgid int) (startState, error) {
 	pctx, cancel := context.WithDeadline(ctx, readyBy)
 	defer cancel()
 	var d net.Dialer
 	conn, err := d.DialContext(pctx, "tcp", s.addr)
 	if err != nil {
-		return false, nil // nothing listens yet; the wait goes on
+		return startNotListening, nil // nothing listens yet; the wait goes on
 	}
 	remote := conn.RemoteAddr().(*net.TCPAddr).AddrPort()
 	_ = conn.Close()
@@ -497,19 +567,22 @@ func (s *Starter) ready(ctx context.Context, readyBy time.Time, pgid int) (bool,
 	owner, err := s.listens(pctx, pgid, ep)
 	switch {
 	case err != nil && ctx.Err() != nil:
-		return false, fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
+		return startNotListening, fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
 	case err != nil && pctx.Err() != nil:
-		return false, nil // the readiness wait ended; launch reports it
+		return startNotListening, nil // the readiness wait ended; launch reports it
 	case err != nil:
-		return false, fmt.Errorf("checking which process listens on %s: %w; the started ios_webkit_debug_proxy was stopped", ep, err)
+		return startNotListening, fmt.Errorf("checking which process listens on %s: %w; the started ios_webkit_debug_proxy was stopped", ep, err)
 	}
 	switch owner {
 	case listenerForeign:
-		return false, fmt.Errorf("%w: another process took port %d (%s) during the start of ios_webkit_debug_proxy; the started process was stopped and no other is started", errPortTaken, ep.Port(), ep)
+		return startNotListening, fmt.Errorf("%w: another process took port %d (%s) during the start of ios_webkit_debug_proxy; the started process was stopped and no other is started", errPortTaken, ep.Port(), ep)
 	case listenerOwn:
-		return getListing(pctx, s.addr) == nil, nil
+		if getListing(pctx, s.addr) == nil {
+			return startAnswers, nil
+		}
+		return startListens, nil
 	}
-	return false, nil // the listener went away; the wait goes on
+	return startNotListening, nil // the listener went away; the wait goes on
 }
 
 // stopGroup stops the process group pgid of a started iwdp: SIGTERM, then

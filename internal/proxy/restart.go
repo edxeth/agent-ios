@@ -30,7 +30,8 @@ import (
 const tokenEnv = "AGENT_IOS_START_TOKEN"
 
 // record is an ios_webkit_debug_proxy that a Starter started and saw serve
-// its listing address (decision L02). The started process leads its own
+// its listing address, or listen on it while it connects its devices
+// (launch; decision L02). The started process leads its own
 // process group, so PID and PGID are equal. Start and Token identify the
 // process incarnation (identity), so a reused pid never matches.
 type record struct {

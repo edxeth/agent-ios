@@ -86,9 +86,9 @@ func TestReadinessMatchesTheAddress(t *testing.T) {
 	for name, f := range inspectors() {
 		s := testStarter(addr, time.Second)
 		s.listens = f
-		ok, err := s.ready(context.Background(), time.Now().Add(5*time.Second), child)
-		if ok || err == nil || !errors.Is(err, errPortTaken) {
-			t.Errorf("%s: ready with the group on 127.0.0.2 and another process on %s = %v, %v; want errPortTaken", name, addr, ok, err)
+		st, err := s.ready(context.Background(), time.Now().Add(5*time.Second), child)
+		if st != startNotListening || err == nil || !errors.Is(err, errPortTaken) {
+			t.Errorf("%s: ready with the group on 127.0.0.2 and another process on %s = %v, %v; want errPortTaken", name, addr, st, err)
 		}
 	}
 }
