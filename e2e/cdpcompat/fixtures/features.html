@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CDP features</title>
+</head>
+<body>
+<h1>Features</h1>
+<!-- click --modifiers: #modlog shows the last click as
+     click:b<button>:d<detail>:c<ctrl>s<shift>a<alt>m<meta>, the format of
+     agent-browser's own e2e fixture (test_fixtures/click_probe.html). -->
+<button id="mod" type="button">Modifier probe</button>
+<p id="modlog">none</p>
+<!-- select --by: "m" is the value of Medium and the label of the third
+     option, so only --by tells them apart. -->
+<label for="size">Size</label>
+<select id="size">
+  <option value="s">Small</option>
+  <option value="m">Medium</option>
+  <option value="x">m</option>
+</select>
+<p id="sizelog">s</p>
+<!-- snapshot hints: two buttons share the label Delete, so each gets a
+     hint (name, then its row). Delete removes its row (diff snapshot). -->
+<ul>
+  <li>Blue mug <button type="button" name="del-blue">Delete</button></li>
+  <li>Red mug <button type="button" name="del-red">Delete</button></li>
+</ul>
+<!-- the iframe commands: a same-origin child with a title label. -->
+<iframe id="child" src="frame.html" title="Child frame"></iframe>
+<script>
+  document.getElementById('mod').addEventListener('click', (e) => {
+    document.getElementById('modlog').textContent = 'click:b' + e.button + ':d' + e.detail +
+      ':c' + (+e.ctrlKey) + 's' + (+e.shiftKey) + 'a' + (+e.altKey) + 'm' + (+e.metaKey);
+  });
+  document.getElementById('size').addEventListener('change', (e) => {
+    document.getElementById('sizelog').textContent = e.target.value;
+  });
+  for (const b of document.querySelectorAll('li button')) {
+    b.addEventListener('click', () => b.closest('li').remove());
+  }
+</script>
+</body>
+</html>

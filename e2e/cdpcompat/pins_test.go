@@ -24,9 +24,9 @@ import (
 // the clients; TestNodeProjectPins checks that they agree with these.
 const (
 	playwrightPin   = "1.65.0"
-	puppeteerPin    = "25.16.0"
-	devtoolsMCPPin  = "1.12.0"
-	agentBrowserPin = "0.41.2"
+	puppeteerPin    = "25.18.1"
+	devtoolsMCPPin  = "1.14.0"
+	agentBrowserPin = "0.45.0"
 	// c8Pin is the coverage reporter of the Node client scripts
 	// (devDependencies; README.md, "Pins").
 	c8Pin = "12.0.0"
@@ -34,25 +34,29 @@ const (
 	npmRegistry = "https://registry.npmjs.org/"
 )
 
-// agentBrowserRelease maps a platform to the file name of the agent-browser
-// release binary in the npm package (node_modules/agent-browser/bin) and
-// its SHA-256. The lockfile pins the package by its integrity hash; the
-// checksum also pins the binary that runs. A build of another commit,
-// also one that reports 0.41.2, does not match.
-var agentBrowserRelease = map[string]struct{ file, sha256 string }{
-	"linux/amd64": {"agent-browser-linux-x64", "c4351f3802ffa5254d8c69f20a52e2fcf56925c6016fcf4203db25a07d811379"},
+// agentBrowserRelease maps a platform to the agent-browser release binary
+// and its SHA-256. Since 0.43 the agent-browser package ships no binary:
+// each platform's binary is in its own package, an optional dependency of
+// agent-browser (node_modules/@agent-browser/cli-<platform>/bin), which
+// npm ci installs for the host's platform only. The lockfile pins every
+// platform package by its integrity hash; the checksum also pins the
+// binary that runs. A build of another commit, also one that reports
+// 0.45.0, does not match.
+var agentBrowserRelease = map[string]struct{ pkg, sha256 string }{
+	"linux/amd64": {"@agent-browser/cli-linux-x64-gnu", "5eff2baaabb337ec728e4571ccfb228ad1fb6babce529fcaf7a6062fcdec6087"},
 }
 
 // pinnedAgentBrowser returns the pinned agent-browser binary: the release
-// binary of the agent-browser@0.41.2 package that npm ci installed, with
-// the recorded SHA-256, executable, and reporting version 0.41.2.
+// binary of the agent-browser@0.45.0 platform package that npm ci
+// installed, with the recorded SHA-256, executable, and reporting version
+// 0.45.0.
 func pinnedAgentBrowser(t *testing.T) agentBrowserBuild {
 	t.Helper()
 	rel, ok := agentBrowserRelease[runtime.GOOS+"/"+runtime.GOARCH]
 	if !ok {
 		t.Fatalf("no agent-browser %s binary is recorded for %s/%s; add its file name and SHA-256 to agentBrowserRelease (e2e/cdpcompat/pins_test.go)", agentBrowserPin, runtime.GOOS, runtime.GOARCH)
 	}
-	bin := filepath.Join(nodeDir, "node_modules", "agent-browser", "bin", rel.file)
+	bin := filepath.Join(nodeDir, "node_modules", filepath.FromSlash(rel.pkg), "bin", "agent-browser")
 	b, err := describeBuild("pinned", bin, bin)
 	if err != nil {
 		t.Fatalf("agent-browser %s: %v; run 'make test-cdpcompat', which runs npm ci --ignore-scripts and makes the binaries executable", agentBrowserPin, err)
@@ -84,7 +88,7 @@ func requireNode(t *testing.T) {
 		}
 	}
 	bundled := map[string]string{}
-	data, err := os.ReadFile(filepath.Join(nodeDir, "node_modules", "chrome-devtools-mcp", "build", "src", "third_party", "bundled-packages.json"))
+	data, err := os.ReadFile(filepath.Join(nodeDir, "node_modules", "chrome-devtools-mcp", "out", "Default", "gen", "src", "third_party", "bundled-packages.json"))
 	if err == nil {
 		err = json.Unmarshal(data, &bundled)
 	}
@@ -333,7 +337,13 @@ func judgeNodeRun(code int, data []byte, client, scenario, url string) (clientRe
 	case r.URL != url:
 		return r, fmt.Errorf("%s received the URL %q, want the printed URL %q unchanged", client, r.URL, url)
 	case code != 0 || !r.OK || r.Error != "":
-		return r, fmt.Errorf("%s %s failed: exit %d, ok %v, error %q", client, scenario, code, r.OK, r.Error)
+		var failed []string
+		for _, s := range r.Steps {
+			if !s.OK {
+				failed = append(failed, s.Name+": "+s.Error)
+			}
+		}
+		return r, fmt.Errorf("%s %s failed: exit %d, ok %v, error %q, failed steps %q", client, scenario, code, r.OK, r.Error, failed)
 	}
 	return r, nil
 }

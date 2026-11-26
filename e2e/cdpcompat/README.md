@@ -4,7 +4,7 @@ Design: docs/design/agentic-parity.md, sections 5.1, 5.2 ("Pins"), 5.4, 5.5, 7.8
 
 The suite runs the pinned CDP clients against the daemon's CDP endpoint and checks what they do. A Go driver (the `_test.go` files, build tag `cdpcompat`) starts the endpoint, runs the real `agent-ios` to get the URLs, runs one client script per client and form, and checks the JSON result of each script and the requests that the endpoint saw.
 
-Built: the Node project, the pins, the driver, the result and expected-missing formats, test 10 (endpoint resolution; W5c-2a), and the client scenarios on WebKitGTK: test 8 for agent-browser (both builds), Puppeteer, Playwright and chrome-devtools-mcp, test 11 (a) and (d) with Puppeteer, and test 12 with Puppeteer and Playwright (W5c-2b part 2; "Scenarios" below).
+Built: the Node project, the pins, the driver, the result and expected-missing formats, test 10 (endpoint resolution; W5c-2a), and the client scenarios on WebKitGTK: test 8 for agent-browser (both builds), Puppeteer, Playwright and chrome-devtools-mcp, test 11 (a) and (d) with Puppeteer, and test 12 with Puppeteer and Playwright (W5c-2b part 2; "Scenarios" below); the features scenarios of agent-browser 0.45.0 (both builds) and chrome-devtools-mcp 1.14.0 (wp-compat, 2026-11-26).
 
 ## How to run
 
@@ -14,7 +14,7 @@ make test-cdpcompat
 
 - The target runs `npm ci` in this directory when `package.json` or `package-lock.json` is newer than `node_modules` (with `PUPPETEER_SKIP_DOWNLOAD=1`: no browser download is needed), then runs `AGENT_IOS_CDP_COMPAT=1 go test -tags=cdpcompat ./e2e/cdpcompat/ -v -count=1`.
 - Requirements: Node.js 24 or later with npm. The lockfile pins every client, agent-browser included. The scenario tests also need the WebKitGTK MiniBrowser (/usr/lib/webkit2gtk-4.1/MiniBrowser), broadwayd, gcc and pkg-config gdk-3.0 (for the DPI shim of e2e/webkitgtk), as the WebKitGTK suite does. A missing requirement fails the suite with a message that says what to install; the suite never skips.
-- npm ci runs with --ignore-scripts: agent-browser's postinstall would download a missing binary and patches global bin links. The package ships its binaries; the Makefile sets their execute bit.
+- npm ci runs with --ignore-scripts: agent-browser's postinstall would download a missing binary and patches global bin links. Since 0.43 the binary comes in a platform package, an optional dependency of agent-browser (`@agent-browser/cli-linux-x64-gnu` on this host), which npm ci installs for the host's platform only; the Makefile sets its execute bit.
 - `CDPCOMPAT_LOG_DIR=<dir>` keeps the logs of a run: the daemon log, the output of every client run and every result file. Tokens and endpoint ids in them are replaced with `<secretN>`.
 - `CDPCOMPAT_V8_COVERAGE=<absolute dir>` turns on V8 coverage of the client scripts: the driver gives every Node client `NODE_V8_COVERAGE=<dir>`. An inherited `NODE_V8_COVERAGE` never reaches a client (see "Client isolation"). scripts/js-coverage.sh uses it and reports the coverage of clients/playwright.mjs with c8 (see "Pins").
 
@@ -36,16 +36,17 @@ The design gates the suite with `AGENT_IOS_CDP_COMPAT=1` (8.4). Here the gate ha
 | Client | Version | Pinned by |
 |---|---|---|
 | playwright-core | 1.65.0 | package.json, package-lock.json |
-| puppeteer-core | 25.16.0 | package.json, package-lock.json |
-| chrome-devtools-mcp | 1.12.0 | package.json, package-lock.json |
-| agent-browser | 0.41.2 | package.json, package-lock.json, and the SHA-256 of the binary (pins_test.go) |
+| puppeteer-core | 25.18.1 | package.json, package-lock.json |
+| chrome-devtools-mcp | 1.14.0 | package.json, package-lock.json |
+| agent-browser | 0.45.0 | package.json, package-lock.json (with its platform packages), and the SHA-256 of the binary (pins_test.go) |
 
 - c8 12.0.0, the coverage reporter of the client scripts, is the only development dependency (package.json `devDependencies`, package-lock.json). No client loads it.
 - Every locked package resolves from `https://registry.npmjs.org/` with an integrity hash (`TestNodeProjectPins`).
-- chrome-devtools-mcp 1.12.0 bundles its Puppeteer: its package.json has `puppeteer 25.16.0` as a development dependency, and `build/src/third_party/bundled-packages.json` names `puppeteer-core 25.16.0`. The package has no runtime dependencies, so the lockfile shows no Puppeteer below it; the driver checks the bundled version on every run.
-- agent-browser: the pinned run uses the release binary that npm ci installs, `node_modules/agent-browser/bin/agent-browser-linux-x64`. It must have this SHA-256 and must print `agent-browser 0.41.2`:
-  - linux/amd64: `c4351f3802ffa5254d8c69f20a52e2fcf56925c6016fcf4203db25a07d811379`.
-  - A build of another commit fails the check even when it reports 0.41.2.
+- chrome-devtools-mcp 1.14.0 bundles its Puppeteer: its package.json has `puppeteer 25.18.1` as a development dependency, and `out/Default/gen/src/third_party/bundled-packages.json` names `puppeteer-core 25.18.1` (1.14.0 moved the build from `build/src` to `out/Default/gen/src`). The package has no runtime dependencies, so the lockfile shows no Puppeteer below it; the driver checks the bundled version on every run.
+- agent-browser: the pinned run uses the release binary that npm ci installs from the platform package, `node_modules/@agent-browser/cli-linux-x64-gnu/bin/agent-browser`. It must have this SHA-256 and must print `agent-browser 0.45.0`:
+  - linux/amd64: `5eff2baaabb337ec728e4571ccfb228ad1fb6babce529fcaf7a6062fcdec6087`.
+  - A build of another commit fails the check even when it reports 0.45.0.
+  - The npm launcher `node_modules/agent-browser/bin/agent-browser.js` is never run: it would repoint package-manager bin links.
   - The agent-browser on PATH runs too, without a checksum pin (below, "agent-browser: pinned run and PATH run").
 
 ## Result format
@@ -55,7 +56,7 @@ Each client script (`clients/<client>.mjs <scenario> <url> <result-file>`) write
 ```json
 {
   "client": "puppeteer-core",
-  "version": "25.16.0",
+  "version": "25.18.1",
   "scenario": "resolve",
   "form": "http",
   "url": "http://127.0.0.1:<port>/t/<token>/e/<endpoint>",
@@ -104,13 +105,15 @@ For every client run, the driver also reads `agent-ios cdp log --json` before an
 
 Each test starts broadwayd, MiniBrowser (with the DPI shim of e2e/webkitgtk) on fixtures/second.html, a fixture server and the in-process daemon on the webkitgtk transport (`startGTK`, gtk_test.go). Every client gets a fresh browser and its own logical session; the driver issues its URLs with `agent-ios --session <s> get cdp-url` and closes the session afterwards, which releases the lease. Every step is checked by its effect on the page, by the script and, after the run, by `agent-ios --session <s> eval` in the same logical session (an oracle that does not depend on the client).
 
-Fixtures (fixtures/): form.html (a heading, the fields Name and Email, a button "Press me" that becomes "Clicked N" and adds #late 300 ms later, #status that shows every input of Name), second.html (the start page), form-no-checkvisibility.html (form.html with a head script that removes WebKitGTK's native `Element.prototype.checkVisibility`, as Safari 16.6 lacks it; it never removes the endpoint's shim). The fixture server also answers /resource with "from the server" and counts the requests.
+Fixtures (fixtures/): form.html (a heading, the fields Name and Email, a button "Press me" that becomes "Clicked N" and adds #late 300 ms later, #status that shows every input of Name), second.html (the start page), form-no-checkvisibility.html (form.html with a head script that removes WebKitGTK's native `Element.prototype.checkVisibility`, as Safari 16.6 lacks it; it never removes the endpoint's shim), features.html (the agent-browser features scenario: a button "Modifier probe" whose click writes `click:b<button>:d<detail>:c<ctrl>s<shift>a<alt>m<meta>` into #modlog, a select Size whose option values s, m, x have the labels Small, Medium, m, two rows "Blue mug" and "Red mug" with a button Delete each (names del-blue, del-red) that removes its row, and the same-origin iframe #child titled "Child frame" on frame.html, which has a button #inner that writes "inner clicked"), console.html with console.js (logFromFixture logs "fixture log 1" at console.js line 3 on load; doubled(n) returns n * 2 at line 6). The fixture server also answers /resource with "from the server" and counts the requests.
 
 | Test | Client | Steps and assertions |
 |---|---|---|
 | 8 | agent-browser --cdp (pinned and PATH build) | open form.html (the page shows it), snapshot -i (refs of the button and the Name textbox), click @ref (button says Clicked 1), fill @ref Linus (value and the page's input handler), get title (CDP form), screenshot (a PNG of the viewport size); the endpoint saw only upgrades of the printed ws URL |
+| features | agent-browser --cdp (pinned and PATH build) | open features.html; click #mod --modifiers meta,shift (the page saw click:b0:d1:c0s1a0m1); select #size m --by label (value x) and --by value (value m), each with the page's change event; snapshot -i (the two Delete buttons have hint="name:del-blue; in:Blue mug" and hint="name:del-red; in:Red mug", the unique "Modifier probe" none, the iframe line is labelled "Child frame"); click on the red Delete's ref (one row left); --json diff snapshot -i (changed, with removed lines of the red row); frame #child, click #inner (the iframe says "inner clicked"), eval document.title (CDP child frame), frame main, eval document.title (CDP features). Every effect is read through the eval oracle |
 | 8 | puppeteer-core, ws and http forms | connect, one page, goto (status 200, title), $eval (h1), click (Clicked 1), waitForSelector('#late') with a main-world read of the handle, type (value and #status), screenshot (PNG of innerWidth x innerHeight), accessibility.snapshot (root RootWebArea named by the title, the button "Clicked 1", the textbox Name with Ada) |
 | 8 | chrome-devtools-mcp, ws form | the script starts the server with `--wsEndpoint <printed ws URL>` and drives it through MCP stdio (newline-delimited JSON-RPC: initialize, tools/list, tools/call); list_pages (one page, the start page; its id goes with every page tool, because the server routes by page id by default), navigate_page to form.html ("Successfully navigated to"), take_snapshot (RootWebArea "CDP form", heading, the uids of the button and the Name textbox), click by the button's uid with includeSnapshot (the new snapshot has the button "Clicked 1"), list_network_requests (GET form.html [200]), take_screenshot (one image/png of the viewport size), and the server exits 0 when its stdin closes; the eval oracle sees the form with the button "Clicked 1"; every unknown method that the endpoint counted is in the script's record |
+| features | chrome-devtools-mcp, ws form | the server runs with `--categoryNetworkMocks`; list_pages, navigate_page to console.html; list_console_messages with includeStackTraces (the message "fixture log 1" has the frame `at logFromFixture (…/console.js:3:…)`); get_console_message of that msgid (ID, message and the frame); emulate colorScheme dark, geolocation 52.52,13.405 and cpuThrottlingRate 1 ("Emulation configured successfully"; evaluate_script sees prefers-color-scheme: dark and the position); emulate networkConditions Slow 3G (recorded: applied, or refused with an error that names Network.overrideNetworkState or Network.emulateNetworkConditionsByRule); mock_network on <origin>/resource with a body file (a fetch gets the file's text), remove_network_mock ("Removed 1 network mock."; a fetch gets "from the server"; the fixture server counted exactly 1 request); set_logpoints at console.js:6 (recorded: bound, then doubled(21) logs "logpoint 21", or the server's refusal); the eval oracle sees console.html |
 | 8 | playwright-core, ws and http forms | connectOverCDP (one context, one page), goto, evaluate, getByRole('button').click(), getByLabel('Name').fill (value and #status), locator('#late').textContent() in the utility world (the endpoint announced an isolated context named `__playwright_utility_world_*`), screenshot, ariaSnapshot (heading, button, textbox lines) |
 | shims | playwright-core, ws form | MiniBrowser starts on form-no-checkvisibility.html (the CLI eval sees no checkVisibility); connectOverCDP, no navigation: the page's checkVisibility is the endpoint's shim (docs/cdp.md "Page compatibility shims"), getByRole('button').click(), getByLabel('Name').fill, ariaSnapshot (heading, button, textbox, #late lines); the eval oracle sees the form state and, after the client's detach, the shim still in the document (`TestPlaywrightLocatorsWithoutNativeCheckVisibility`). Without the shim the click and fill fail with the device's `TypeError: element.checkVisibility is not a function` |
 | 12 | puppeteer-core | setRequestInterception(true) with a handler that answers /resource with respond({body: 'ok'}); page.evaluate(() => fetch('/resource').then(r => r.text())) returns ok within 2 s of a 10 s deadline; the fixture server got no /resource request |
@@ -125,8 +128,8 @@ Checkpoints: a script that needs the driver in the middle of a run writes `@chec
 
 | Run | Requests (raw request target, status) |
 |---|---|
-| agent-browser, ws form | upgrade `/t/<token>/e/<endpoint>/devtools/browser/<endpoint>` 101 |
-| agent-browser, http form | `/json/version` 404, `/json/list` 404, upgrade `/devtools/browser` 404 |
+| agent-browser, ws form | upgrade `/t/<token>/e/<endpoint>/devtools/browser/<endpoint>` 101, twice: 0.45.0 probes an attach target (a WebSocket with Browser.getVersion) before it attaches (cli/src/native/actions.rs lines 6870-6880, browser.rs lines 1068-1099) |
+| agent-browser, http form | `/json/version` 404, `/json/list` 404, upgrade `/devtools/browser` 404, upgrade `/session` 404 (0.45.0's Firefox WebDriver BiDi probe, cli/src/native/bidi/attach.rs lines 129-134) |
 | playwright-core, ws form | upgrade `/t/<token>/e/<endpoint>/devtools/browser/<endpoint>` 101 |
 | playwright-core, http form | `/t/<token>/e/<endpoint>/json/version/` 200, then the advertised upgrade 101 |
 | puppeteer-core, ws form | upgrade `/t/<token>/e/<endpoint>/devtools/browser/<endpoint>` 101 |
@@ -137,7 +140,7 @@ Every request has the Host `127.0.0.1:<port>` of the printed URL. `/json/version
 ## agent-browser: pinned run and PATH run
 
 The user chose: upstream pinned, and the build on PATH also run.
-- **Pinned:** node_modules/agent-browser/bin/agent-browser-linux-x64 from agent-browser@0.41.2 (lockfile), SHA-256 c4351f3802ffa5254d8c69f20a52e2fcf56925c6016fcf4203db25a07d811379, version 0.41.2.
+- **Pinned:** node_modules/@agent-browser/cli-linux-x64-gnu/bin/agent-browser from agent-browser@0.45.0 and its platform package @agent-browser/cli-linux-x64-gnu@0.45.0 (lockfile), SHA-256 5eff2baaabb337ec728e4571ccfb228ad1fb6babce529fcaf7a6062fcdec6087, version 0.45.0.
 - **PATH:** the agent-browser that PATH names, which the user's agents run. The build is recorded, not pinned. See "agent-browser on PATH" for how the driver chooses the binary.
 - Both builds run the same scenarios (test 10: ws and http forms), and both must pass. agent-browser-builds.json in the log directory records each build: version, SHA-256 and mtime, and for the PATH build the source checkout's HEAD and git describe (a build can be older than its checkout). For a script on PATH it also records the script and the mapping.
 - The PATH runs are skipped only when the binary that would run has the pinned SHA-256 (the record says so), or when PATH has no agent-browser (recorded; the pinned build runs once).

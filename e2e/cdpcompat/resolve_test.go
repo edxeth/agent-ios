@@ -30,12 +30,13 @@ func fakePage(t *testing.T) *fakewebkit.Server {
 // Design 7.8 test 10, endpoint resolution (no browser; the in-process
 // daemon records every request through RunOptions.CDPObserve):
 //   - each pinned client receives the exact output of "get cdp-url";
-//   - agent-browser 0.41.2 with the ws form opens exactly that WebSocket
-//     URL, token and endpoint path included, and makes no discovery
-//     request; with the http form it requests the unprefixed /json/version
-//     and gets 404 (then the unprefixed /json/list and /devtools/browser,
-//     each 404);
-//   - playwright-core 1.65.0 and puppeteer-core 25.16.0 with the http form
+//   - agent-browser 0.45.0 with the ws form opens exactly that WebSocket
+//     URL, token and endpoint path included, twice (its attach probe, then
+//     the attach), and makes no discovery request; with the http form it
+//     requests the unprefixed /json/version and gets 404 (then the
+//     unprefixed /json/list, /devtools/browser and its WebDriver BiDi
+//     probe /session, each 404);
+//   - playwright-core 1.65.0 and puppeteer-core 25.18.1 with the http form
 //     request /t/<token>/e/<endpoint>/json/version (Playwright with a
 //     trailing slash) and then open the advertised WebSocket URL; with the
 //     ws form they open exactly that URL and make no discovery request;
@@ -84,10 +85,17 @@ func TestEndpointResolution(t *testing.T) {
 		return code != 0 && strings.Contains(out, "All CDP discovery methods failed")
 	}
 	var cases []tcase
+	// agent-browser 0.45.0 probes an attach target before it attaches
+	// (cli/src/native/actions.rs lines 6870-6880, detect_attach_connection):
+	// resolve_cdp_target (cli/src/native/browser.rs lines 1068-1099) opens
+	// the WebSocket, sends Browser.getVersion and closes it; the attach then
+	// opens it again. When the CDP probe fails, it also probes the target as
+	// a Firefox WebDriver BiDi agent (cli/src/native/bidi/attach.rs lines
+	// 129-134), an upgrade of /session.
 	abCases := func(prefix, bin string) {
 		cases = append(cases,
 			tcase{
-				name: prefix + "-ws", client: "agent-browser", url: u.WS, bin: bin, want: []request{upgrade},
+				name: prefix + "-ws", client: "agent-browser", url: u.WS, bin: bin, want: []request{upgrade, upgrade},
 				abOutcome: attached, abWant: "exit 0 or a CDP error after the connection",
 			},
 			// agent-browser keeps only host and port of an http URL and
@@ -96,6 +104,7 @@ func TestEndpointResolution(t *testing.T) {
 			tcase{name: prefix + "-http", client: "agent-browser", url: u.HTTP, bin: bin, want: []request{
 				discovery("/json/version", http.StatusNotFound), discovery("/json/list", http.StatusNotFound),
 				{Method: http.MethodGet, URI: "/devtools/browser", Host: u.Host, Upgrade: true, Status: http.StatusNotFound},
+				{Method: http.MethodGet, URI: "/session", Host: u.Host, Upgrade: true, Status: http.StatusNotFound},
 			}, abOutcome: discoveryFailed, abWant: `a failed exit with "All CDP discovery methods failed"`})
 	}
 	abCases("agent-browser", pinned.Binary)

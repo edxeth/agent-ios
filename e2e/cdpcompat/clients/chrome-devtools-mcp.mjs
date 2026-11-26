@@ -10,12 +10,24 @@
 //     navigate_page to the form, take_snapshot, click by uid (with the
 //     snapshot that click returns), list_network_requests,
 //     take_screenshot.
+//   features <origin> (the tools that chrome-devtools-mcp 1.14.0 added or
+//     changed; the server runs with --categoryNetworkMocks):
+//     navigate_page to console.html, list_console_messages with
+//     includeStackTraces (the message of console.js has its frame),
+//     get_console_message, emulate (colorScheme dark, geolocation,
+//     cpuThrottlingRate 1; the page sees dark and the position), emulate
+//     with networkConditions (the step records whether the endpoint applied
+//     or refused it), mock_network on /resource with a body file (a fetch
+//     gets the file), remove_network_mock (a fetch reaches the server), and
+//     set_logpoints (the step records whether the logpoint was bound and
+//     logged, or refused).
 // Method recording: the server's bundled Puppeteer logs every CDP command
 // it sends ("puppeteer:protocol:SEND ►", enabled by NODE_DEBUG) to the
 // server's --logFile; the script reads the commands from that file when
 // the server has ended.
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -47,11 +59,12 @@ class McpServer {
   #pending = new Map();
   #exited;
 
-  constructor() {
+  // args are server flags after --wsEndpoint and --logFile.
+  constructor(args = []) {
     // The server's stderr goes to the script's stderr, which the driver
     // keeps in the run's log. NODE_DEBUG only selects debug logs: it loads
     // no code (the driver drops every inherited NODE_* variable).
-    this.#child = spawn(process.execPath, [serverBin, '--wsEndpoint', url, '--logFile', logFile], {
+    this.#child = spawn(process.execPath, [serverBin, '--wsEndpoint', url, '--logFile', logFile, ...args], {
       stdio: ['pipe', 'pipe', 'inherit'],
       env: { ...process.env, NODE_DEBUG: 'puppeteer:protocol:SEND*' },
     });
@@ -182,52 +195,86 @@ function pagesOf(text) {
 // toolsUsed are the tools of the scenario; the server must list them.
 const toolsUsed = ['list_pages', 'navigate_page', 'take_snapshot', 'click', 'list_network_requests', 'take_screenshot'];
 
+// featureTools are the tools of the features scenario.
+const featureTools = ['list_pages', 'navigate_page', 'list_console_messages', 'get_console_message', 'emulate', 'evaluate_script', 'mock_network', 'remove_network_mock', 'set_logpoints'];
+
+// start runs initialize and tools/list on server, checks that it lists
+// tools, and returns the id of its one page, the start page; undefined
+// when a step failed.
+async function start(server, tools) {
+  const init = await observe(out, 'initialize', async () => {
+    const r = await server.request('initialize', { protocolVersion, capabilities: {}, clientInfo: { name: 'agent-ios-cdpcompat', version: '1' } });
+    server.notify('notifications/initialized', {});
+    return { protocolVersion: r.protocolVersion, server: r.serverInfo };
+  });
+  if (!init) {
+    return undefined;
+  }
+  await observe(out, 'tools/list', async () => {
+    const { tools: listed } = await server.request('tools/list', {});
+    const names = listed.map((t) => t.name);
+    const missing = tools.filter((n) => !names.includes(n));
+    if (missing.length) {
+      throw new Error(`the server does not list ${missing.join(', ')}; it lists ${names.join(', ')}`);
+    }
+    return tools;
+  });
+  // The first tool call connects the server's Puppeteer to the URL. An
+  // endpoint record's scope is one page (design 5.2): MiniBrowser's
+  // start page.
+  return await observe(out, 'list_pages', async () => {
+    const { text } = await server.callTool('list_pages', {});
+    const pages = pagesOf(text);
+    expect('pages', pages.length, 1);
+    if (!pages[0].label.includes(`(${origin()}/second.html)`)) {
+      throw new Error(`the page is ${pages[0].label}, want the start page ${origin()}/second.html`);
+    }
+    return pages[0].id;
+  });
+}
+
+// navigate opens target in the page and checks the server's answer.
+async function navigate(server, pageId, target) {
+  return await observe(out, 'navigate_page', async () => {
+    const { text } = await server.callTool('navigate_page', { pageId, type: 'url', url: target });
+    const line = `Successfully navigated to ${target}.`;
+    if (!text.includes(line)) {
+      throw new Error(`navigate_page answered without "${line}":\n${text}`);
+    }
+    return line;
+  });
+}
+
+// evaluate runs fn (a function declaration) in the page with
+// evaluate_script and returns the JSON value it answered.
+async function evaluate(server, pageId, fn) {
+  const { text } = await server.callTool('evaluate_script', { pageId, function: fn });
+  const m = /```json\n([\s\S]*?)\n```/.exec(text);
+  if (!m) {
+    throw new Error(`evaluate_script answered without a JSON block:\n${text}`);
+  }
+  return JSON.parse(m[1]);
+}
+
+// outcome calls a tool whose result depends on the endpoint (a feature
+// that a translation may not have reached yet) and returns which way it
+// went: {applied: true, text} or {applied: false, error}.
+async function outcome(server, name, args) {
+  try {
+    const { text } = await server.callTool(name, args);
+    return { applied: true, text };
+  } catch (e) {
+    return { applied: false, error: String(e.message || e) };
+  }
+}
+
 const scenarios = {
   async scenario() {
     const form = origin() + '/form.html';
     const server = new McpServer();
     try {
-      const init = await observe(out, 'initialize', async () => {
-        const r = await server.request('initialize', { protocolVersion, capabilities: {}, clientInfo: { name: 'agent-ios-cdpcompat', version: '1' } });
-        server.notify('notifications/initialized', {});
-        return { protocolVersion: r.protocolVersion, server: r.serverInfo };
-      });
-      if (!init) {
-        return false;
-      }
-      await observe(out, 'tools/list', async () => {
-        const { tools } = await server.request('tools/list', {});
-        const names = tools.map((t) => t.name);
-        const missing = toolsUsed.filter((n) => !names.includes(n));
-        if (missing.length) {
-          throw new Error(`the server does not list ${missing.join(', ')}; it lists ${names.join(', ')}`);
-        }
-        return toolsUsed;
-      });
-      // The first tool call connects the server's Puppeteer to the URL. An
-      // endpoint record's scope is one page (design 5.2): MiniBrowser's
-      // start page.
-      const pageId = await observe(out, 'list_pages', async () => {
-        const { text } = await server.callTool('list_pages', {});
-        const pages = pagesOf(text);
-        expect('pages', pages.length, 1);
-        if (!pages[0].label.includes(`(${origin()}/second.html)`)) {
-          throw new Error(`the page is ${pages[0].label}, want the start page ${origin()}/second.html`);
-        }
-        return pages[0].id;
-      });
-      if (pageId === undefined) {
-        return false;
-      }
-      const navigated = await observe(out, 'navigate_page', async () => {
-        const { text } = await server.callTool('navigate_page', { pageId, type: 'url', url: form });
-        const line = `Successfully navigated to ${form}.`;
-        if (!text.includes(line)) {
-          throw new Error(`navigate_page answered without "${line}":\n${text}`);
-        }
-        return line;
-      });
-      if (!navigated) {
+      const pageId = await start(server, toolsUsed);
+      if (pageId === undefined || !(await navigate(server, pageId, form))) {
         return false;
       }
       const uids = await observe(out, 'take_snapshot', async () => {
@@ -277,6 +324,121 @@ const scenarios = {
     }
     return allPassed(out);
   },
+};
+
+scenarios.features = async function features() {
+  const consolePage = origin() + '/console.html';
+  const resource = origin() + '/resource';
+  // mock_network reads the body from a file below a root the server
+  // allows; without MCP roots that is the temporary directory.
+  const bodyDir = mkdtempSync(join(tmpdir(), 'cdpcompat-mock-'));
+  const bodyFile = join(bodyDir, 'mocked.txt');
+  writeFileSync(bodyFile, 'mocked by chrome-devtools-mcp');
+  const server = new McpServer(['--categoryNetworkMocks']);
+  try {
+    const pageId = await start(server, featureTools);
+    if (pageId === undefined || !(await navigate(server, pageId, consolePage))) {
+      return false;
+    }
+    // console.js logged "fixture log 1" from logFromFixture (line 3).
+    const msgid = await observe(out, 'list_console_messages', async () => {
+      const { text } = await server.callTool('list_console_messages', { pageId, includeStackTraces: true });
+      const lines = text.split('\n');
+      const at = lines.findIndex((l) => /^msgid=\d+ \[log\] fixture log 1 /.test(l));
+      if (at < 0) {
+        throw new Error(`list_console_messages has no "fixture log 1":\n${text}`);
+      }
+      const frame = lines.slice(at + 1).find((l) => l.includes('at logFromFixture'));
+      if (!frame || !frame.includes('console.js:3')) {
+        throw new Error(`the stack trace of "fixture log 1" has no frame logFromFixture at console.js:3:\n${text}`);
+      }
+      return { msgid: Number(/^msgid=(\d+)/.exec(lines[at])[1]), frame: frame.trim() };
+    });
+    if (msgid) {
+      await observe(out, 'get_console_message', async () => {
+        const { text } = await server.callTool('get_console_message', { pageId, msgid: msgid.msgid });
+        for (const want of [`ID: ${msgid.msgid}`, 'Message: log> fixture log 1', 'at logFromFixture']) {
+          if (!text.includes(want)) {
+            throw new Error(`get_console_message has no "${want}":\n${text}`);
+          }
+        }
+        return text.split('\n').filter((l) => l.startsWith('ID:') || l.startsWith('Message:'));
+      });
+    }
+    // emulate replaces every setting on each call: color scheme,
+    // geolocation and a CPU rate of 1 (no throttling) in one call.
+    await observe(out, 'emulate', async () => {
+      const { text } = await server.callTool('emulate', { pageId, colorScheme: 'dark', geolocation: '52.52,13.405', cpuThrottlingRate: 1 });
+      if (!text.includes('Emulation configured successfully')) {
+        throw new Error(`emulate answered without "Emulation configured successfully":\n${text}`);
+      }
+      const seen = await evaluate(server, pageId, `async () => ({
+        dark: matchMedia('(prefers-color-scheme: dark)').matches,
+        position: await new Promise((resolve) => navigator.geolocation.getCurrentPosition(
+          (p) => resolve([p.coords.latitude, p.coords.longitude]),
+          (e) => resolve('error ' + e.code + ': ' + e.message),
+          { timeout: 5000 })),
+      })`);
+      expect('prefers-color-scheme: dark', seen.dark, true);
+      expect('the position', seen.position, [52.52, 13.405]);
+      return seen;
+    });
+    // Network throttling: the endpoint either applies the conditions or
+    // refuses them; the driver checks which (README.md, "Scenarios").
+    await observe(out, 'emulate networkConditions', async () => {
+      const r = await outcome(server, 'emulate', { pageId, networkConditions: 'Slow 3G' });
+      if (r.applied && !r.text.includes('Emulation configured successfully')) {
+        throw new Error(`emulate answered without "Emulation configured successfully":\n${r.text}`);
+      }
+      return r;
+    });
+    await observe(out, 'mock_network', async () => {
+      const { text } = await server.callTool('mock_network', { pageId, route: resource, body: bodyFile });
+      if (!text.includes('Network mock configured.')) {
+        throw new Error(`mock_network answered without "Network mock configured.":\n${text}`);
+      }
+      const body = await evaluate(server, pageId, `async () => (await fetch('/resource')).text()`);
+      expect('the mocked /resource', body, 'mocked by chrome-devtools-mcp');
+      return body;
+    });
+    await observe(out, 'remove_network_mock', async () => {
+      const { text } = await server.callTool('remove_network_mock', { pageId, route: resource });
+      if (!text.includes('Removed 1 network mock.')) {
+        throw new Error(`remove_network_mock answered without "Removed 1 network mock.":\n${text}`);
+      }
+      const body = await evaluate(server, pageId, `async () => (await fetch('/resource')).text()`);
+      expect('/resource without the mock', body, 'from the server');
+      return body;
+    });
+    // set_logpoints needs the endpoint's Debugger domain: the step records
+    // whether the logpoint was bound and logged, or how the server refused
+    // it.
+    await observe(out, 'set_logpoints', async () => {
+      const r = await outcome(server, 'set_logpoints', { pageId, logpoints: [`${origin()}/console.js:6 'logpoint', n`] });
+      if (!r.applied) {
+        return { bound: false, error: r.error };
+      }
+      if (!r.text.includes('[bound]')) {
+        return { bound: false, text: r.text };
+      }
+      expect('doubled(21)', await evaluate(server, pageId, '() => doubled(21)'), 42);
+      const { text } = await server.callTool('list_console_messages', { pageId });
+      if (!/\] logpoint 21 /.test(text)) {
+        throw new Error(`the bound logpoint logged nothing:\n${text}`);
+      }
+      return { bound: true, logged: 'logpoint 21' };
+    });
+  } finally {
+    await step(out, 'close', async () => {
+      const exit = await server.close();
+      if (exit.code !== 0) {
+        throw new Error(`the MCP server exited with ${exit.code} (signal ${exit.signal})`);
+      }
+    });
+    await step(out, 'record sent commands', async () => recordSent());
+    rmSync(bodyDir, { recursive: true, force: true });
+  }
+  return allPassed(out);
 };
 
 try {

@@ -36,7 +36,8 @@ func TestNodeRunFailureIsReported(t *testing.T) {
 		}
 	}
 
-	ok := []byte(`{"client":"puppeteer-core","version":"25.16.0","scenario":"resolve","form":"ws","url":"ws://x","ok":true,"steps":[{"name":"connect","ok":false,"ms":1,"error":"refused"}],"sent":[]}`)
+	// The result names the pinned version: judgeNodeRun checks it.
+	ok := []byte(`{"client":"puppeteer-core","version":"` + puppeteerPin + `","scenario":"resolve","form":"ws","url":"ws://x","ok":true,"steps":[{"name":"connect","ok":false,"ms":1,"error":"refused"}],"sent":[]}`)
 	if _, err := judgeNodeRun(0, ok, "puppeteer-core", "resolve", "ws://x"); err != nil {
 		t.Fatalf("a run whose failed connect step the scenario tolerates: %v", err)
 	}
@@ -49,7 +50,7 @@ func TestNodeRunFailureIsReported(t *testing.T) {
 		{"ok false", 0, strings.Replace(string(ok), `"ok":true`, `"ok":false`, 1)},
 		{"script error", 0, strings.Replace(string(ok), `"ok":true`, `"ok":true,"error":"boom"`, 1)},
 		{"other URL", 0, strings.Replace(string(ok), "ws://x", "ws://y", 1)},
-		{"other version", 0, strings.Replace(string(ok), "25.16.0", "25.15.0", 1)},
+		{"other version", 0, strings.Replace(string(ok), puppeteerPin, "0.0.0", 1)},
 		{"malformed", 0, "{"},
 	} {
 		if _, err := judgeNodeRun(c.code, []byte(c.data), "puppeteer-core", "resolve", "ws://x"); err == nil {
@@ -101,8 +102,14 @@ func TestClientsIgnoreUserSettings(t *testing.T) {
 	mark := e.rec.mark()
 	code, out, _ := e.runAgentBrowser(t, pinned.Binary, "isolation-agent-browser-ws", u.WS, "get", "url")
 	got := e.rec.since(mark)
-	if strings.Contains(out, "auto-connect") || len(got) != 1 || got[0].URI != wsPath || got[0].Status != 101 {
-		t.Errorf("agent-browser with a hostile user configuration: exit %d, output %q, requests %s; want one upgrade of the printed ws path", code, e.redact(out), e.redact(lines(got)))
+	// agent-browser 0.45.0 opens the URL twice: its attach probe, then the
+	// attach (TestEndpointResolution).
+	onlyPrinted := len(got) == 2
+	for _, r := range got {
+		onlyPrinted = onlyPrinted && r.URI == wsPath && r.Upgrade && r.Status == 101
+	}
+	if strings.Contains(out, "auto-connect") || !onlyPrinted {
+		t.Errorf("agent-browser with a hostile user configuration: exit %d, output %q, requests %s; want two upgrades of the printed ws path (probe and attach)", code, e.redact(out), e.redact(lines(got)))
 	}
 	// runNode fails the test when a client run fails, as the hostile
 	// preload would make it.

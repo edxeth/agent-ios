@@ -117,8 +117,10 @@ func TestClientScenarios(t *testing.T) {
 	fromPath, runPath := pathAgentBrowser(t, pinned)
 	writeBuilds(t, []agentBrowserBuild{pinned, fromPath})
 	t.Run("agent-browser", func(t *testing.T) { agentBrowserScenario(t, pinned.Binary) })
+	t.Run("agent-browser-features", func(t *testing.T) { agentBrowserFeatures(t, pinned.Binary) })
 	if runPath {
 		t.Run("agent-browser-path", func(t *testing.T) { agentBrowserScenario(t, fromPath.Binary) })
+		t.Run("agent-browser-path-features", func(t *testing.T) { agentBrowserFeatures(t, fromPath.Binary) })
 	}
 	t.Run("playwright", func(t *testing.T) {
 		g := startGTK(t, startPage)
@@ -157,6 +159,7 @@ func TestClientScenarios(t *testing.T) {
 			t.Errorf("take_screenshot returned a %dx%d PNG, want the viewport %dx%d", shot.Width, shot.Height, w, h)
 		}
 	})
+	t.Run("chrome-devtools-mcp-features", devtoolsMCPFeatures)
 	t.Run("puppeteer", func(t *testing.T) {
 		g := startGTK(t, startPage)
 		u := g.clientSession(t, "puppeteer")
@@ -245,6 +248,196 @@ func agentBrowserScenario(t *testing.T, bin string) {
 	must("screenshot", "screenshot", shot)
 	w, h := viewport(t, session)
 	checkPNG(t, shot, w, h)
+	checkUnknown(t, "agent-browser", newUnknown(before, unknownCounts(t)))
+}
+
+// devtoolsMCPFeatures runs the features scenario of chrome-devtools-mcp
+// (clients/chrome-devtools-mcp.mjs): the tools that 1.14.0 added or
+// changed, through the printed ws URL. The script checks each tool's
+// answer and its effect in the page; the driver checks that the mock kept
+// the first fetch of /resource from the fixture server and the second one
+// reached it, and reports whether the endpoint applied or refused network
+// throttling and logpoints.
+func devtoolsMCPFeatures(t *testing.T) {
+	g := startGTK(t, startPage)
+	u := g.clientSession(t, "chrome-devtools-mcp")
+	run := g.runNode(t, "devtools-mcp-features", "chrome-devtools-mcp", "features", u.WS, g.site.origin)
+	checkUnknown(t, "chrome-devtools-mcp", run.unknown)
+	for m := range run.unknown {
+		if !slices.Contains(run.result.methods(), m) {
+			t.Errorf("the endpoint counted the unknown method %s, which chrome-devtools-mcp's protocol log did not record", m)
+		}
+	}
+	if n := g.site.resourceRequests(); n != 1 {
+		t.Errorf("the fixture server got %d requests for /resource, want 1 (the mock answered the first fetch, the second came after remove_network_mock)", n)
+	}
+	// Network throttling: applied, or refused by the endpoint with an error
+	// that names the CDP method (Puppeteer's "Protocol error (<method>)").
+	var network struct {
+		Applied     bool
+		Text, Error string
+	}
+	stepValue(t, run.result, "emulate networkConditions", &network)
+	switch {
+	case network.Applied:
+		t.Logf("emulate networkConditions: applied")
+	case strings.Contains(network.Error, "Network.overrideNetworkState") || strings.Contains(network.Error, "Network.emulateNetworkConditionsByRule"):
+		t.Logf("emulate networkConditions: refused: %s", network.Error)
+	default:
+		t.Errorf("emulate networkConditions failed without naming the refused method: %s", network.Error)
+	}
+	// Logpoints need the endpoint's Debugger domain: bound and logged, or
+	// refused with the server's reason.
+	var logpoint struct {
+		Bound               bool
+		Logged, Text, Error string
+	}
+	stepValue(t, run.result, "set_logpoints", &logpoint)
+	switch {
+	case logpoint.Bound:
+		t.Logf("set_logpoints: bound, logged %q", logpoint.Logged)
+	case logpoint.Error != "" || strings.Contains(logpoint.Text, "not bound"):
+		t.Logf("set_logpoints: refused: %s%s", logpoint.Error, logpoint.Text)
+	default:
+		t.Errorf("set_logpoints: neither bound nor refused: %+v", logpoint)
+	}
+	var url string
+	if err := json.Unmarshal([]byte(cli(t, "--session", "chrome-devtools-mcp", "eval", "JSON.stringify(location.href)")), &url); err != nil || url != g.site.origin+"/console.html" {
+		t.Errorf("the page after the scenario is %q (%v), want console.html", url, err)
+	}
+}
+
+// featureState is the state of the features fixture
+// (fixtures/features.html) as featuresState reads it.
+type featureState struct {
+	Title    string `json:"title"`
+	ModLog   string `json:"modlog"`
+	SizeLog  string `json:"sizelog"`
+	Size     string `json:"size"`
+	Rows     int    `json:"rows"`
+	InnerLog string `json:"innerlog"`
+}
+
+// featuresState reads the features fixture through "agent-ios eval" in
+// session: an oracle that does not depend on the client under test.
+func featuresState(t *testing.T, session string) featureState {
+	t.Helper()
+	const expr = "JSON.stringify({title: document.title, modlog: document.getElementById('modlog').textContent, " +
+		"sizelog: document.getElementById('sizelog').textContent, size: document.getElementById('size').value, " +
+		"rows: document.querySelectorAll('li').length, " +
+		"innerlog: document.getElementById('child').contentDocument.getElementById('innerlog').textContent})"
+	var s featureState
+	out := cli(t, "--session", session, "eval", expr)
+	if err := json.Unmarshal([]byte(out), &s); err != nil {
+		t.Fatalf("eval of the features state in session %s printed %q: %v", session, out, err)
+	}
+	return s
+}
+
+// agentBrowserFeatures runs commands that agent-browser 0.42 to 0.45 added
+// or changed, through --cdp with the binary bin, on the features fixture:
+// click --modifiers, select --by, snapshot hints and the iframe label,
+// diff snapshot, and frame with click and eval in the iframe. agent-ios
+// eval in the same logical session checks each effect on the page.
+func agentBrowserFeatures(t *testing.T, bin string) {
+	g := startGTK(t, startPage)
+	const session = "agent-browser"
+	u := g.clientSession(t, session)
+	name := strings.ReplaceAll(t.Name(), "/", "_")
+	ab := g.agentBrowserSession(t, bin, name, u.WS)
+	before := unknownCounts(t)
+	run := func(step string, args ...string) (int, string) {
+		t.Helper()
+		return ab.run(t, name+"-"+step, args...)
+	}
+	must := func(step string, args ...string) string {
+		t.Helper()
+		code, out := run(step, args...)
+		if code != 0 {
+			t.Errorf("agent-browser %s: exit %d: %s", strings.Join(args, " "), code, out)
+		}
+		return out
+	}
+	features := g.site.origin + "/features.html"
+	must("open", "open", features)
+	if got := featuresState(t, session); got.Title != "CDP features" {
+		t.Fatalf("after open: %+v, want the features page", got)
+	}
+
+	// click --modifiers (#2594): the modifiers reach the page's click
+	// event, as in agent-browser's own e2e test (meta+shift).
+	must("click-modifiers", "click", "#mod", "--modifiers", "meta,shift")
+	if got := featuresState(t, session).ModLog; got != "click:b0:d1:c0s1a0m1" {
+		t.Errorf("click #mod --modifiers meta,shift: the page saw %q, want click:b0:d1:c0s1a0m1", got)
+	}
+
+	// select --by (#2592): "m" is the value of one option and the label of
+	// another; --by picks which.
+	must("select-by-label", "select", "#size", "m", "--by", "label")
+	if got := featuresState(t, session); got.Size != "x" || got.SizeLog != "x" {
+		t.Errorf("select #size m --by label: value %q, change event %q; want x (the option labelled m)", got.Size, got.SizeLog)
+	}
+	must("select-by-value", "select", "#size", "m", "--by", "value")
+	if got := featuresState(t, session); got.Size != "m" || got.SizeLog != "m" {
+		t.Errorf("select #size m --by value: value %q, change event %q; want m (Medium)", got.Size, got.SizeLog)
+	}
+
+	// snapshot hints (#2578): the two Delete buttons share their label, so
+	// each line gets a hint from its name and its row; the button with a
+	// unique label gets none; the iframe line shows its title (#2739).
+	snap := must("snapshot", "snapshot", "-i")
+	for _, want := range []string{`hint="name:del-blue; in:Blue mug"`, `hint="name:del-red; in:Red mug"`} {
+		if !strings.Contains(snap, want) {
+			t.Errorf("agent-browser snapshot -i has no %s:\n%s", want, snap)
+		}
+	}
+	if m := regexp.MustCompile(`button "Modifier probe" [^\n]*`).FindString(snap); m == "" || strings.Contains(m, "hint=") {
+		t.Errorf("agent-browser snapshot -i: the button Modifier probe (a unique label) is %q, want a line without a hint:\n%s", m, snap)
+	}
+	if !regexp.MustCompile(`(?i)iframe "Child frame"`).MatchString(snap) {
+		t.Errorf("agent-browser snapshot -i has no iframe labelled by its title \"Child frame\":\n%s", snap)
+	}
+
+	// diff snapshot (#2689): after Delete removed the red row, the diff
+	// against the last snapshot (same options) shows the change.
+	if m := regexp.MustCompile(`button "Delete" \[ref=(e\d+)\][^\n]*del-red`).FindStringSubmatch(snap); m == nil {
+		t.Errorf("agent-browser snapshot -i has no red Delete button with a ref:\n%s", snap)
+	} else {
+		must("click-delete", "click", "@"+m[1])
+	}
+	if got := featuresState(t, session).Rows; got != 1 {
+		t.Errorf("after the click on the red Delete the page has %d rows, want 1", got)
+	}
+	_, diffOut := run("diff-snapshot", "--json", "diff", "snapshot", "-i")
+	var diff struct {
+		Success bool
+		Error   string
+		Data    struct {
+			Diff                string
+			Additions, Removals int
+			Changed             bool
+		}
+	}
+	if err := json.Unmarshal([]byte(diffOut), &diff); err != nil {
+		t.Errorf("agent-browser --json diff snapshot -i printed %q: %v", diffOut, err)
+	} else if !diff.Success || !diff.Data.Changed || diff.Data.Removals == 0 || !strings.Contains(diff.Data.Diff, "- ") || !strings.Contains(diff.Data.Diff, "Red mug") {
+		t.Errorf("agent-browser diff snapshot -i after the red row was removed: %+v, want a change that removes the red row's line", diff)
+	}
+
+	// The iframe commands (#2737, #2738): frame selects the iframe; click
+	// and eval act in it; frame main returns to the page.
+	must("frame", "frame", "#child")
+	must("frame-click", "click", "#inner")
+	if got := featuresState(t, session).InnerLog; got != "inner clicked" {
+		t.Errorf("click #inner after frame #child: the iframe says %q, want inner clicked", got)
+	}
+	if out := strings.Trim(strings.TrimSpace(must("frame-eval", "eval", "document.title")), `"`); out != "CDP child frame" {
+		t.Errorf("eval document.title after frame #child printed %q, want CDP child frame", out)
+	}
+	must("frame-main", "frame", "main")
+	if out := strings.Trim(strings.TrimSpace(must("main-eval", "eval", "document.title")), `"`); out != "CDP features" {
+		t.Errorf("eval document.title after frame main printed %q, want CDP features", out)
+	}
 	checkUnknown(t, "agent-browser", newUnknown(before, unknownCounts(t)))
 }
 

@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CDP child frame</title>
+</head>
+<body>
+<button id="inner" type="button">Inner button</button>
+<p id="innerlog">idle</p>
+<script>
+  document.getElementById('inner').addEventListener('click', () => {
+    document.getElementById('innerlog').textContent = 'inner clicked';
+  });
+</script>
+</body>
+</html>

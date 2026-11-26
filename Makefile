@@ -31,7 +31,8 @@ coverage-all:
 # Node.js 24+ and npm; the lockfile pins every client, agent-browser
 # included. npm ci runs when the lockfile changed, without install scripts
 # (agent-browser's postinstall can download a binary and patch global bin
-# links); the package ships its binaries, which get their execute bit here.
+# links); the binary comes in the platform package (an optional dependency,
+# @agent-browser/cli-<platform>), and gets its execute bit here.
 CDPCOMPAT := e2e/cdpcompat
 test-cdpcompat: $(CDPCOMPAT)/node_modules/.package-lock.json
 	AGENT_IOS_CDP_COMPAT=1 go test -tags=cdpcompat ./$(CDPCOMPAT)/ -v -count=1 -timeout=900s
@@ -40,7 +41,7 @@ $(CDPCOMPAT)/node_modules/.package-lock.json: $(CDPCOMPAT)/package.json $(CDPCOM
 	@command -v node >/dev/null && command -v npm >/dev/null || \
 		{ echo "test-cdpcompat needs Node.js 24 or later with npm on PATH (see $(CDPCOMPAT)/README.md)" >&2; exit 1; }
 	cd $(CDPCOMPAT) && PUPPETEER_SKIP_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund
-	chmod +x $(CDPCOMPAT)/node_modules/agent-browser/bin/agent-browser-*
+	chmod +x $(CDPCOMPAT)/node_modules/@agent-browser/cli-*/bin/agent-browser
 
 # iOS Simulator tests (macOS only) — boots an iOS Simulator and starts iwdp,
 # then runs the e2e suite with the simulator tests (the shared helpers of
