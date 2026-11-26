@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -238,7 +239,8 @@ func (y yieldingConn) Write(b []byte) (int, error) {
 // FIX-V: the pongs and the close reply that the read side writes (the ping
 // and close handlers) never land inside a message frame, and concurrent
 // writers stay serialized: on the wire every frame is whole, every message
-// is one intact text frame, and the control frames come between them.
+// is one intact text frame, and the control frames come between them. No
+// frame follows the close; the messages after it fail as not written.
 func TestControlFramesAndWritersDoNotInterleave(t *testing.T) {
 	checkNoInterleave(t, 10, []byte{0x88, 2, 0x03, 0xe8}, 1000) // the server closes
 }
@@ -252,7 +254,9 @@ func TestProtocolErrorCloseDoesNotInterleave(t *testing.T) {
 
 // checkNoInterleave runs concurrent large writes while the server sends
 // pings and then last, raw, and checks the client's frame stream; the
-// client must answer last with one close frame with code wantClose. The
+// client must answer last with one close frame with code wantClose, and
+// send nothing after it: every message is either on the wire whole or
+// refused as not written with websocket.ErrCloseSent (RFC 6455 5.5.1). The
 // client reads the frames one by one and each pong waits for the data
 // frame in progress, so few pings keep last inside the writes.
 func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
@@ -286,10 +290,16 @@ func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 		}()
 		res := result{messages: map[int]int{}}
 		br := bufio.NewReaderSize(slowConn{c}, 4096)
-		for total := 0; total < writers*perWriter || len(res.closes) == 0; {
+		for total := 0; ; {
 			f, err := readRawFrame(br)
 			if err != nil {
-				res.err = fmt.Errorf("after %d messages, %d pongs: %w", total, len(res.pongs), err)
+				if len(res.closes) == 0 {
+					res.err = fmt.Errorf("after %d messages, %d pongs: %w", total, len(res.pongs), err)
+				}
+				break // the client closed the connection after the close frame
+			}
+			if len(res.closes) > 0 {
+				res.err = fmt.Errorf("frame with first byte %#02x after the close frame", f.b0)
 				break
 			}
 			if !f.masked {
@@ -338,24 +348,29 @@ func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 			}
 		}
 	}()
-	want := map[int]int{}
+	want := map[int]int{} // the messages written
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for w := range writers {
-		for m := range perWriter {
-			n := 150_000 + (w*perWriter+m)*1000
-			want[n] = 1
-		}
 		wg.Go(func() {
 			for m := range perWriter {
 				n := 150_000 + (w*perWriter+m)*1000
-				if err := conn.Write(ctx, bytes.Repeat([]byte{byte('a' + w*perWriter + m)}, n)); err != nil {
-					t.Errorf("writer %d message %d: %v", w, m, err)
+				err := conn.Write(ctx, bytes.Repeat([]byte{byte('a' + w*perWriter + m)}, n))
+				if err == nil {
+					mu.Lock()
+					want[n] = 1
+					mu.Unlock()
+					continue
+				}
+				if !errors.Is(err, websocket.ErrCloseSent) || !errors.Is(err, transport.ErrNotWritten) {
+					t.Errorf("writer %d message %d: %v, want nil or not written after the close", w, m, err)
 					return
 				}
 			}
 		})
 	}
 	wg.Wait()
+	_ = conn.Close() // ends the server's read after the close frame
 	var res result
 	select {
 	case res = <-done:

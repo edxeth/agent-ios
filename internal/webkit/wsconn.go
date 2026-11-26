@@ -2,10 +2,12 @@ package webkit
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -203,15 +205,30 @@ func retiredBy(err error) error {
 // and then the page's reply in Target.dispatchMessageFromTarget, on a
 // socket with Nagle's algorithm on, so the reply waited until the daemon
 // acknowledged the first frame, 40 ms later on Linux (FIX-R).
+//
+// closeSent is set once a close frame went out: no frame follows it
+// (RFC 6455 5.5.1; gorilla's ErrCloseSent). It is set and read under the
+// frame lock.
+//
+// writeDeadline holds the deadline that gorilla's SetWriteDeadline asked
+// for; gorilla's Write that follows applies it under the frame lock.
 type cutConn struct {
 	net.Conn
-	cut      atomic.Bool
-	ackNow   func() // nil: not a TCP connection, or not Linux
-	frameSem chan struct{}
+	cut           atomic.Bool
+	closeSent     atomic.Bool
+	ackNow        func() // nil: not a TCP connection, or not Linux
+	frameSem      chan struct{}
+	writeDeadline atomic.Pointer[time.Time]
 }
 
+// newCutConn wraps c; a TLS connection acknowledges reads on the TCP
+// connection under it.
 func newCutConn(c net.Conn) *cutConn {
-	return &cutConn{Conn: c, ackNow: quickAcker(c), frameSem: make(chan struct{}, 1)}
+	tcp := c
+	if tc, ok := c.(*tls.Conn); ok {
+		tcp = tc.NetConn()
+	}
+	return &cutConn{Conn: c, ackNow: quickAcker(tcp), frameSem: make(chan struct{}, 1)}
 }
 
 func (c *cutConn) Read(b []byte) (int, error) {
@@ -225,31 +242,55 @@ func (c *cutConn) Read(b []byte) (int, error) {
 // pastDeadline is a write deadline that has already passed.
 var pastDeadline = time.Unix(1, 0)
 
-// Write is gorilla's own write: since FIX-V only the close frame that
-// answers a protocol error, one Write call per frame. It waits for the
-// frame lock.
+// Write is gorilla's own write: the handshake request, and since FIX-V
+// only the close frame that answers a protocol error or a message above
+// the read limit, one Write call per frame. It waits for the frame lock at
+// most until the deadline that gorilla set before it (SetWriteDeadline;
+// controlWriteWait when none), as gorilla's WriteControl waited for its
+// own lock: a large data frame in progress never holds up the read side
+// that writes the close. The close frame then waits for nothing else.
 func (c *cutConn) Write(b []byte) (int, error) {
-	c.frameSem <- struct{}{}
+	d := c.writeDeadline.Swap(nil)
+	wait := time.Now().Add(controlWriteWait)
+	if d != nil && !d.IsZero() {
+		wait = *d
+	}
+	if err := c.lockFrames(context.Background(), wait); err != nil {
+		return 0, err
+	}
 	defer func() { <-c.frameSem }()
 	if c.cut.Load() {
 		return 0, errWritesCut
 	}
+	if c.closeSent.Load() {
+		return 0, websocket.ErrCloseSent
+	}
+	if d != nil {
+		if err := c.Conn.SetWriteDeadline(*d); err != nil {
+			return 0, err
+		}
+		// interrupt sets cut before its passed deadline: when it ran
+		// between the check above and this deadline, cut is set now.
+		if c.cut.Load() {
+			return 0, errWritesCut
+		}
+	}
+	// A frame of gorilla's always follows its SetWriteDeadline; the
+	// handshake request does not.
+	if d != nil && len(b) > 0 && b[0]&0x0f == opClose {
+		c.closeSent.Store(true)
+	}
 	return c.Conn.Write(b)
 }
 
-// SetWriteDeadline keeps the passed deadline once the writes were
-// interrupted. cut is checked before the deadline is set, and interrupt
-// sets cut before its own deadline, so a deadline that a frame sets after
-// interrupt is followed by a Write that sees cut. It is gorilla's call
-// (writeFrame sets its deadline itself) and waits for the frame lock, so it
-// cannot change the deadline of a frame in progress.
+// SetWriteDeadline is gorilla's call before its Write (writeFrame sets its
+// deadline itself). It only records t for that Write, which applies it
+// under the frame lock, so it neither waits for the lock nor changes the
+// deadline of a frame in progress, and it never replaces the passed
+// deadline of interrupted writes.
 func (c *cutConn) SetWriteDeadline(t time.Time) error {
-	c.frameSem <- struct{}{}
-	defer func() { <-c.frameSem }()
-	if c.cut.Load() {
-		t = pastDeadline
-	}
-	return c.Conn.SetWriteDeadline(t)
+	c.writeDeadline.Store(&t)
+	return nil
 }
 
 // failed handles err, the error of a WebSocket write on c. gorilla/websocket
@@ -278,7 +319,9 @@ func (c *cutConn) interrupt() {
 // dialCuttable dials wsURL with a copy of d whose network connection is a
 // cutConn, and returns both. d's NetDialContext and NetDialTLSContext are
 // wrapped; the deprecated NetDial is not used in this repository and is
-// replaced by a net.Dialer when NetDialContext is unset.
+// replaced by a net.Dialer when NetDialContext is unset. For a wss:// URL
+// without a NetDialTLSContext, tlsDial does the proxy step and the TLS
+// handshake, so that the cutConn sits above TLS (wsstls.go).
 func dialCuttable(ctx context.Context, d *websocket.Dialer, wsURL string) (*websocket.Conn, *cutConn, *http.Response, error) {
 	var wire *cutConn
 	wrap := func(dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
@@ -294,6 +337,13 @@ func dialCuttable(ctx context.Context, d *websocket.Dialer, wsURL string) (*webs
 	dc := *d
 	if dc.NetDialContext == nil {
 		dc.NetDialContext = (&net.Dialer{}).DialContext
+	}
+	if dc.NetDialTLSContext == nil && strings.HasPrefix(strings.ToLower(wsURL), "wss://") {
+		dial, err := tlsDial(wsURL, dc.NetDialContext, dc.Proxy, dc.TLSClientConfig)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		dc.NetDialTLSContext, dc.Proxy = dial, nil
 	}
 	dc.NetDialContext = wrap(dc.NetDialContext)
 	if dc.NetDialTLSContext != nil {

@@ -65,7 +65,8 @@ func (c *cutConn) lockFrames(ctx context.Context, deadline time.Time) error {
 // started is false when the frame was refused before any socket write (the
 // peer never saw it); after a failed socket write started is true, as it
 // was for gorilla's writes: it may have written part of the frame, and the
-// stream is broken.
+// stream is broken. After a close frame no frame goes out: the error is
+// gorilla's websocket.ErrCloseSent (cutConn.closeSent).
 func (c *cutConn) writeFrame(ctx context.Context, op byte, payload []byte, deadline time.Time) (started bool, err error) {
 	if err := c.lockFrames(ctx, deadline); err != nil {
 		return false, err
@@ -74,6 +75,9 @@ func (c *cutConn) writeFrame(ctx context.Context, op byte, payload []byte, deadl
 	if c.cut.Load() {
 		return false, errWritesCut
 	}
+	if c.closeSent.Load() {
+		return false, websocket.ErrCloseSent
+	}
 	if err := c.Conn.SetWriteDeadline(deadline); err != nil {
 		return false, fmt.Errorf("setting the write deadline: %w", err)
 	}
@@ -81,6 +85,9 @@ func (c *cutConn) writeFrame(ctx context.Context, op byte, payload []byte, deadl
 	// the check above and this deadline, cut is set now.
 	if c.cut.Load() {
 		return false, errWritesCut
+	}
+	if op == opClose {
+		c.closeSent.Store(true)
 	}
 	var key [4]byte
 	_, _ = rand.Read(key[:]) // crypto/rand.Read never fails (Go 1.24+)
@@ -153,8 +160,10 @@ func (c *cutConn) writeControl(op byte, data []byte) error {
 
 // installControlHandlers routes conn's pong and close replies through
 // wire's frame lock (writeControl), so that no control frame lands inside
-// a data frame. Only a reply to a protocol error is still written by
-// gorilla itself; it goes through cutConn.Write, which takes the lock too.
+// a data frame. Only the close after a protocol error or a message above
+// the read limit is still written by gorilla itself; it goes through
+// cutConn.Write, which takes the lock too. After a close frame a reply is
+// dropped, as gorilla's handlers dropped it on ErrCloseSent.
 func installControlHandlers(conn *websocket.Conn, wire *cutConn) {
 	conn.SetPingHandler(func(data string) error { return wire.writeControl(opPong, []byte(data)) })
 	conn.SetCloseHandler(func(code int, _ string) error {
