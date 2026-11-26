@@ -111,15 +111,20 @@ func limitsConditions[V any](p map[string]V) bool {
 // SetEmulatedConditions records owner's Network.setEmulatedConditions
 // parameters; parameters without a condition (conditionKeys) remove owner's
 // conditions. The latest owner's conditions are effective. It returns the
-// parameters to send when the effective conditions changed ({} for none).
-func (d *DesiredState) SetEmulatedConditions(owner Owner, params json.RawMessage) json.RawMessage {
+// parameters to send when the effective conditions changed ({} for none),
+// or when an earlier send had an unknown outcome (condsUnsure), and undo,
+// which puts owner's record back as it was: the caller runs it when WebKit
+// refused the send (noEffect), so that the record holds only what WebKit
+// holds and a retry sends the call again (parity-045 review F4).
+func (d *DesiredState) SetEmulatedConditions(owner Owner, params json.RawMessage) (send json.RawMessage, undo func()) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.refusedLocked() {
-		return nil
+		return nil, func() {}
 	}
 	d.ver++
 	before := d.effectiveCondsLocked()
+	prev, had := d.conds[owner]
 	var v map[string]json.RawMessage
 	if json.Unmarshal(params, &v) == nil && limitsConditions(v) {
 		d.condSeq++
@@ -127,13 +132,38 @@ func (d *DesiredState) SetEmulatedConditions(owner Owner, params json.RawMessage
 	} else {
 		delete(d.conds, owner)
 	}
-	if after := d.effectiveCondsLocked(); string(after) != string(before) {
-		if after == nil {
-			return json.RawMessage("{}")
+	undo = func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.ver++
+		if had {
+			d.conds[owner] = prev
+		} else {
+			delete(d.conds, owner)
 		}
-		return after
 	}
-	return nil
+	if after := d.effectiveCondsLocked(); string(after) != string(before) || d.condsUnsure {
+		if after == nil {
+			return json.RawMessage("{}"), undo
+		}
+		return after, undo
+	}
+	return nil, undo
+}
+
+// SentEmulatedConditions records the outcome err of a send that
+// SetEmulatedConditions asked for, with that call's undo: a refusal
+// (noEffect) puts owner's record back; after an unknown outcome the next
+// SetEmulatedConditions sends the effective conditions even when they did
+// not change.
+func (d *DesiredState) SentEmulatedConditions(err error, undo func()) {
+	refused := err != nil && noEffect(err)
+	if refused {
+		undo()
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.condsUnsure = err != nil && !refused
 }
 
 func (d *DesiredState) effectiveCondsLocked() json.RawMessage {
@@ -527,10 +557,13 @@ func legacyStateCall(ctx context.Context, ps *PageSession, owner Owner, c webkit
 		if err := acquireNetworkFor(ctx, ps, owner, c, limited); err != nil {
 			return nil, true, err
 		}
-		if v := ps.State.SetEmulatedConditions(owner, params); v != nil {
-			return send(v)
+		v, undo := ps.State.SetEmulatedConditions(owner, params)
+		if v == nil {
+			return empty, true, nil
 		}
-		return empty, true, nil
+		r, err := c.Send(ctx, method, v)
+		ps.State.SentEmulatedConditions(err, undo)
+		return r, true, err
 	case "Debugger.setBreakpoint", "Debugger.setBreakpointByUrl":
 		if err := acquireFor(ctx, ps.State, owner, c, ruleDomain(method)); err != nil {
 			return nil, true, err

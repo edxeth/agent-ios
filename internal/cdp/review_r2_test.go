@@ -369,28 +369,34 @@ func TestFetchClaimsBounds(t *testing.T) {
 	ev := func(id string) json.RawMessage {
 		return json.RawMessage(`{"requestId":"` + id + `","request":{"url":"https://one.example/"}}`)
 	}
-	if d := c.decide(pg, core.EventPosition{}, "t", evRequestIntercepted, ev("r0")); d.typ != "Other" {
+	if d := decided(&c, pg, core.EventPosition{}, "t", evRequestIntercepted, ev("r0")); d.typ != "Other" {
 		t.Errorf("type of the forgotten oldest request %q, want Other", d.typ)
 	}
-	if d := c.decide(pg, core.EventPosition{}, "t", evRequestIntercepted, ev(fmt.Sprint("r", maxRequestTypes))); d.typ != "Script" {
+	if d := decided(&c, pg, core.EventPosition{}, "t", evRequestIntercepted, ev(fmt.Sprint("r", maxRequestTypes))); d.typ != "Script" {
 		t.Errorf("type of the newest request %q, want Script", d.typ)
 	}
-	first := c.decide(pg, core.EventPosition{Seq: 1}, "t", evRequestIntercepted, ev("x"))
+	first := decided(&c, pg, core.EventPosition{Seq: 1}, "t", evRequestIntercepted, ev("x"))
 	var last *claimDecision
 	for seq := uint64(2); seq <= maxClaimDecisions+1; seq++ {
-		last = c.decide(pg, core.EventPosition{Seq: seq}, "t", evRequestIntercepted, ev("x"))
+		last = decided(&c, pg, core.EventPosition{Seq: seq}, "t", evRequestIntercepted, ev("x"))
 	}
 	if n := len(c.m[pg].decisions); n != maxClaimDecisions {
 		t.Fatalf("%d decisions kept, want %d", n, maxClaimDecisions)
 	}
-	if c.decide(pg, core.EventPosition{Seq: maxClaimDecisions + 1}, "t", evRequestIntercepted, ev("x")) != last {
+	if decided(&c, pg, core.EventPosition{Seq: maxClaimDecisions + 1}, "t", evRequestIntercepted, ev("x")) != last {
 		t.Error("the newest event got a second decision")
 	}
-	if c.decide(pg, core.EventPosition{Seq: 1}, "t", evRequestIntercepted, ev("x")) == first {
+	if decided(&c, pg, core.EventPosition{Seq: 1}, "t", evRequestIntercepted, ev("x")) == first {
 		t.Error("the oldest decision was kept beyond the bound")
 	}
 	c.leave(pg)
 	if c.m[pg] != nil {
 		t.Error("the page's arbitration outlived its last attachment")
 	}
+}
+
+// decided is fetchClaims.decide without its fresh flag.
+func decided(c *fetchClaims, pg *core.Page, pos core.EventPosition, target, method string, params json.RawMessage) *claimDecision {
+	d, _ := c.decide(pg, pos, target, method, params)
+	return d
 }

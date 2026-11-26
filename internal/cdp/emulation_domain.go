@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/edxeth/agent-ios/internal/core"
 	"github.com/edxeth/agent-ios/internal/devtools"
@@ -46,9 +45,9 @@ type emuState struct {
 	prefs map[string]bool
 	ua    bool
 	net   condState // network conditions (network_conditions.go)
-	// offline is the attachment's offline emulation, read by the event
-	// translation without mu.
-	offline atomic.Bool
+	// closed: the attachment closed, so its offline lifecycle registers no
+	// more on the page; fetchClaims.mu guards it (closeOffline).
+	closed bool
 }
 
 // mediaFeatures maps CDP media features to WIP user preferences
@@ -201,8 +200,11 @@ func emuUserAgent(ctx context.Context, call *Call) (any, Later, error) {
 // the owner's entry restores the current document's geolocation on
 // release and installs another owner's surviving override again (the
 // session's CLI "set geo"; devtools.GeoRelease), as
-// devtools.Page.SetGeolocation does for a session. A position without
-// coordinates (CDP: position unavailable) cannot be emulated by the shim.
+// devtools.Page.SetGeolocation does for a session. The last set wins: a
+// replaced part moves to the end of the script order, which GeoRelease
+// takes as the effective override (parity-045 review F5). A position
+// without coordinates (CDP: position unavailable) cannot be emulated by
+// the shim.
 func emuGeolocation(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
 		Latitude  *float64 `json:"latitude"`
@@ -228,7 +230,9 @@ func emuGeolocation(ctx context.Context, call *Call) (any, Later, error) {
 		src := devtools.GeoShim(lat, lng, acc)
 		return ps.State.Change(ctx, mo.Op.Caller(), func(c webkit.Caller) error {
 			first := !ps.State.Needs("Page")
-			if err := ps.State.SetPart(s.owner, devtools.GeoPartPrefix+string(s.owner), core.RankShim, src); err != nil {
+			name := devtools.GeoPartPrefix + string(s.owner)
+			ps.State.RemovePart(name) // the replaced part becomes the latest
+			if err := ps.State.SetPart(s.owner, name, core.RankShim, src); err != nil {
 				return err
 			}
 			ps.State.Put(core.Entry{
@@ -260,24 +264,36 @@ func emuGeolocation(ctx context.Context, call *Call) (any, Later, error) {
 // (devtools.GeoRelease: the page's own geolocation, or another owner's
 // surviving override, such as the session's CLI "set geo"). Without an
 // override of this attachment it sends nothing (chrome-devtools-mcp's
-// emulate clears on every call without a geolocation).
+// emulate clears on every call without a geolocation). The entry stays
+// until the current document is restored: a failed step leaves it (and
+// the part, when the bootstrap script was not sent), so the next clear or
+// the detach runs the rest again (parity-045 review F6).
 func emuClearGeolocation(ctx context.Context, call *Call) (any, Later, error) {
 	s := call.session
 	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
 		ps := s.pg.PS
 		key := "cdp:geo:" + string(s.owner)
+		name := devtools.GeoPartPrefix + string(s.owner)
 		return ps.State.Change(ctx, mo.Op.Caller(), func(c webkit.Caller) error {
 			e, ok := ps.State.Remove(key)
 			if !ok {
 				return nil
 			}
-			ps.State.RemovePart(devtools.GeoPartPrefix + string(s.owner))
-			if _, err := c.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": ps.State.Boot.Script()}); err != nil {
-				ps.State.Put(e) // the detach still restores the current document
-				return fmt.Errorf("Page.setBootstrapScript: %w", err)
+			if src, had := ps.State.Boot.Source(name); had {
+				ps.State.RemovePart(name)
+				if _, err := c.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": ps.State.Boot.Script()}); err != nil {
+					ps.State.Put(e)
+					if err := ps.State.SetPart(s.owner, name, core.RankShim, src); err != nil {
+						return err
+					}
+					return fmt.Errorf("Page.setBootstrapScript: %w", err)
+				}
 			}
 			if e.Release != nil {
-				return e.Release(ctx, c)
+				if err := e.Release(ctx, c); err != nil {
+					ps.State.Put(e) // the restore is still owed
+					return err
+				}
 			}
 			return nil
 		})

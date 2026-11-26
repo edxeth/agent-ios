@@ -424,8 +424,10 @@ func (p *Page) EmulateNetworkRate(ctx context.Context, c webkit.Caller, session 
 		params = json.RawMessage(fmt.Sprintf(`{%q:%d}`, name, bytesPerSecond))
 	}
 	return p.ps.State.Change(ctx, c, func(c webkit.Caller) error {
-		if send := p.ps.State.SetEmulatedConditions(owner("emulate", session), params); send != nil {
-			if _, err := c.Send(ctx, "Network.setEmulatedConditions", send); err != nil {
+		if send, undo := p.ps.State.SetEmulatedConditions(owner("emulate", session), params); send != nil {
+			_, err := c.Send(ctx, "Network.setEmulatedConditions", send)
+			p.ps.State.SentEmulatedConditions(err, undo)
+			if err != nil {
 				return fmt.Errorf("Network.setEmulatedConditions: %w", err)
 			}
 		}

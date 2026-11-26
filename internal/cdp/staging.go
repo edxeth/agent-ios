@@ -213,7 +213,14 @@ func (ps *pageState) onWire(pos core.EventPosition, target, method string, param
 	case method == "Network.requestWillBeSent":
 		ps.s.c.s.claims.noteType(ps.s.pg, target, params)
 	case interceptionEvent(method):
-		ev.claim = ps.s.c.s.claims.decide(ps.s.pg, pos, target, method, params)
+		var fresh bool
+		ev.claim, fresh = ps.s.c.s.claims.decide(ps.s.pg, pos, target, method, params)
+		if d := ev.claim; fresh && d.offline != nil {
+			// Once per event, for every attachment (network_conditions.go).
+			var e interceptedReq
+			_ = json.Unmarshal(params, &e) // decide gave offline only to a request event
+			go d.offline.resolveOffline(d, target, e.RequestID, e.url())
+		}
 		stage := stageRequest
 		if method == evResponseIntercepted {
 			stage = stageResponse

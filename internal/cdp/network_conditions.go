@@ -2,7 +2,6 @@ package cdp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 
@@ -24,18 +23,25 @@ import (
 //     download limit only); 18.0 to 27.2 lack the method; 27.3 takes
 //     bandwidth and latency (WebKit commit c4a7ebcc295f). An upload limit
 //     cannot be emulated anywhere. A throttle that the device cannot
-//     emulate is refused before any change; the unthrottled values change
-//     nothing unless this attachment set a throttle, which they clear, so
-//     a client's clear works on every iOS version.
+//     emulate is refused before any change. Core's condition owners
+//     (core DesiredState.SetEmulatedConditions) are the record of what
+//     WebKit holds: a refused send leaves the owner's record as it was,
+//     so the unthrottled values go to core every time and reach WebKit
+//     only when they change the effective conditions, and a client's
+//     clear works on every iOS version.
 //   - Offline is emulated through interception, as agent-ios set offline
 //     does (internal/devtools intercept.go SetOffline): one WIP rule for
-//     every URL at the request stage, owned by the attachment's owner, and
-//     every request that it pauses fails with WIP's General error. A
-//     request that a CLI interception handler of the session (network
+//     every URL at the request stage, owned by the attachment's owner.
+//     Its lifecycle is offlinePhase, one state machine per attachment,
+//     registered on the page (fetchClaims) so that the read loop decides
+//     each request-stage interception event once for every attachment
+//     (offlineDecision): while offline is on, the request fails (WIP's
+//     General error), and no Fetch client sees it; while offline is being
+//     set up or torn down, a Fetch client that claims the request reports
+//     it, and a request that no Fetch client claims is answered by the
+//     offline lifecycle (failed once the setup succeeded, else continued).
+//     A request that a CLI interception handler of the session (network
 //     route, set offline, set credentials) claims is left to that handler.
-//     A request that a Fetch rule of a CDP attachment also pauses is
-//     reported to that client too; its answer then gets "Invalid
-//     InterceptionId.".
 //   - Network.overrideNetworkState only changes navigator.onLine and
 //     navigator.connection in Chrome; the bridge does not emulate them, so
 //     it has no effect.
@@ -49,7 +55,6 @@ func init() {
 		Method{Name: "Network.emulateNetworkConditionsByRule", Levels: OnPage, Handle: emulateNetworkConditionsByRule},
 		Method{Name: "Network.overrideNetworkState", Levels: OnPage, Handle: overrideNetworkState},
 	)
-	onPageEvent(evRequestIntercepted, offlineIntercepted)
 }
 
 // netConditions are CDP network conditions: latency in milliseconds,
@@ -59,12 +64,54 @@ type netConditions struct {
 	latency, download, upload float64
 }
 
-// condState is the attachment's network conditions; emuState.mu guards it
-// but offline, which the event translation reads.
-type condState struct {
-	throttled bool // the attachment set a WIP throttle
-	ruleOn    bool // WebKit confirmed the attachment's offline rule
+// normal returns c with every "no limit" value as 0, so that two
+// conditions with the same effect are equal.
+func (c netConditions) normal() netConditions {
+	pos := func(v float64) float64 { return max(v, 0) }
+	return netConditions{c.offline, pos(c.latency), pos(c.download), pos(c.upload)}
 }
+
+// offlinePhase is the lifecycle of an attachment's offline emulation.
+// Transitions (setOfflineLocked, dropConditions, pageState.close):
+//
+//	off -> settingUp      offline on: interception and the rule are sent
+//	settingUp -> on       WebKit confirmed the rule
+//	settingUp -> off      WebKit refused a setup call (nothing installed)
+//	settingUp -> tearingDown  the rule's outcome is unknown
+//	on -> tearingDown     offline off, or the attachment closed
+//	tearingDown -> off    the rule is gone (removed, or WebKit lacks it)
+//	any -> off            Network.disable dropped the owner's rules, or
+//	                      the detach released them (unsubscribe)
+//
+// A tearingDown that cannot remove its rule stays: the requests that the
+// rule may still pause are continued until a retry or the release.
+type offlinePhase int
+
+const (
+	offlineOff offlinePhase = iota
+	offlineSettingUp
+	offlineOn
+	offlineTearingDown
+)
+
+// ruleState is what the attachment knows of its offline rule in WebKit.
+type ruleState int
+
+const (
+	ruleNone    ruleState = iota // not installed
+	ruleOn                       // WebKit confirmed it
+	ruleUnknown                  // a call about it had an unknown outcome
+)
+
+// condState is the attachment's network conditions; emuState.mu guards it.
+type condState struct {
+	phase offlinePhase
+	rule  ruleState
+	setup *offlineSetup // the current or last setup (phase settingUp)
+}
+
+// offlineSetup is one offline setup: done is closed when it ends.
+type offlineSetup struct{ done chan struct{} }
 
 // offlineRule is the WIP rule of the attachment's offline emulation:
 // every URL, request stage, made unique by the attachment's id (globRegex).
@@ -108,6 +155,13 @@ func (s *session) applyConditions(ctx context.Context, method string, c netCondi
 	if err != nil {
 		return err
 	}
+	clearOnly := params == nil
+	if clearOnly {
+		params = map[string]any{} // the attachment's throttle, if any, ends (core sends only a change)
+	}
+	if known, ok := wip.Supported(s.t.osVersion, "Network.setEmulatedConditions"); clearOnly && known && !ok {
+		params = nil // no throttle can be set on this iOS version: nothing to clear
+	}
 	return s.do(ctx, method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
 		st := &s.emu
 		st.mu.Lock()
@@ -115,57 +169,92 @@ func (s *session) applyConditions(ctx context.Context, method string, c netCondi
 		if err := s.setOfflineLocked(ctx, mo, c.offline); err != nil {
 			return err
 		}
-		switch {
-		case params != nil:
-			if err := s.owned(ctx, mo, "Network.setEmulatedConditions", params); err != nil {
-				return err
-			}
-			st.net.throttled = true
-		case st.net.throttled:
-			if err := s.owned(ctx, mo, "Network.setEmulatedConditions", map[string]any{}); err != nil {
-				return err
-			}
-			st.net.throttled = false
+		if params == nil {
+			return nil
 		}
-		return nil
+		return s.owned(ctx, mo, "Network.setEmulatedConditions", params)
 	})
 }
 
-// setOfflineLocked turns the attachment's offline emulation on or off;
-// s.emu.mu is held. The flag is on before the rule is installed, so that
-// the first request it pauses fails, and it stays on while the rule may
-// be in place (a failed removal), so that no paused request is left
-// without an answer.
-func (s *session) setOfflineLocked(ctx context.Context, mo *core.ManagedOp, on bool) error {
-	st := &s.emu
-	if on {
-		st.offline.Store(true)
-		if st.net.ruleOn {
-			return nil
-		}
-		if err := s.owned(ctx, mo, "Network.setInterceptionEnabled", map[string]bool{"enabled": true}); err != nil {
-			return err
-		}
-		if err := s.owned(ctx, mo, "Network.addInterception", s.offlineRule()); err != nil {
-			return err
-		}
-		st.net.ruleOn = true
+// setOfflinePhaseLocked moves the attachment's offline lifecycle to ph and
+// publishes it on the page (fetchClaims); s.emu.mu is held.
+func (s *session) setOfflinePhaseLocked(ph offlinePhase) {
+	st := &s.emu.net
+	if st.phase == offlineSettingUp && ph != offlineSettingUp {
+		close(st.setup.done)
+	}
+	if ph == offlineSettingUp && st.phase != offlineSettingUp {
+		st.setup = &offlineSetup{done: make(chan struct{})}
+	}
+	st.phase = ph
+	s.c.s.claims.setOffline(s, ph, st.setup)
+}
+
+// removeOfflineRuleLocked removes the attachment's offline rule when it
+// may be installed; s.emu.mu is held. A target that does not hold the
+// rule refuses its removal; the rule is gone, as wanted.
+func (s *session) removeOfflineRuleLocked(ctx context.Context, mo *core.ManagedOp) error {
+	st := &s.emu.net
+	if st.rule == ruleNone {
 		return nil
 	}
-	if st.net.ruleOn {
-		// A target that does not hold the rule refuses its removal; the
-		// rule is gone, as wanted.
-		if err := s.owned(ctx, mo, "Network.removeInterception", s.offlineRule()); err != nil && !core.MissingInterceptRule(err) {
-			return err
-		}
-		st.net.ruleOn = false
-		if err := s.owned(ctx, mo, "Network.setInterceptionEnabled", map[string]bool{"enabled": false}); err != nil {
-			st.offline.Store(false)
-			return err
-		}
+	err := s.owned(ctx, mo, "Network.removeInterception", s.offlineRule())
+	switch {
+	case err == nil || core.MissingInterceptRule(err):
+		st.rule = ruleNone
+		return nil
+	case !wipNoEffect(err):
+		st.rule = ruleUnknown
 	}
-	st.offline.Store(false)
-	return nil
+	return err
+}
+
+// setOfflineLocked turns the attachment's offline emulation on or off
+// (offlinePhase); s.emu.mu is held.
+func (s *session) setOfflineLocked(ctx context.Context, mo *core.ManagedOp, on bool) error {
+	st := &s.emu.net
+	if on {
+		if st.phase == offlineOn {
+			return nil
+		}
+		// A rule left by a teardown that failed goes first: WebKit
+		// refuses a second rule with the same text.
+		if err := s.removeOfflineRuleLocked(ctx, mo); err != nil {
+			return err
+		}
+		s.setOfflinePhaseLocked(offlineSettingUp)
+		err := s.owned(ctx, mo, "Network.setInterceptionEnabled", map[string]bool{"enabled": true})
+		if err == nil {
+			err = s.owned(ctx, mo, "Network.addInterception", s.offlineRule())
+			switch {
+			case err == nil:
+				st.rule = ruleOn
+				s.setOfflinePhaseLocked(offlineOn)
+				return nil
+			case !wipNoEffect(err):
+				st.rule = ruleUnknown
+				s.setOfflinePhaseLocked(offlineTearingDown) // a later call or the release removes it
+				return err
+			}
+		}
+		// Nothing was installed: the owner gives back the interception
+		// it enabled (core sends the disable only when no other owner
+		// needs interception).
+		if off := s.owned(ctx, mo, "Network.setInterceptionEnabled", map[string]bool{"enabled": false}); off != nil {
+			err = errors.Join(err, off)
+		}
+		s.setOfflinePhaseLocked(offlineOff)
+		return err
+	}
+	if st.phase == offlineOff {
+		return nil
+	}
+	s.setOfflinePhaseLocked(offlineTearingDown)
+	if err := s.removeOfflineRuleLocked(ctx, mo); err != nil {
+		return err
+	}
+	s.setOfflinePhaseLocked(offlineOff) // the rule is gone; core's record of interception ends with the call below or the release
+	return s.owned(ctx, mo, "Network.setInterceptionEnabled", map[string]bool{"enabled": false})
 }
 
 // dropConditions forgets the attachment's conditions after Network.disable
@@ -174,8 +263,8 @@ func (s *session) dropConditions() {
 	st := &s.emu
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.net = condState{}
-	st.offline.Store(false)
+	st.net.rule = ruleNone
+	s.setOfflinePhaseLocked(offlineOff)
 }
 
 // emulateNetworkConditions is Chrome's deprecated method.
@@ -202,10 +291,13 @@ type cdpNetworkConditions struct {
 	UploadThroughput   float64 `json:"uploadThroughput"`
 }
 
-// emulateNetworkConditionsByRule applies the first global rule (empty
-// urlPattern; none: no conditions) and the deprecated top-level offline.
-// A rule for some URLs only cannot be emulated unless it changes nothing
-// (no offline, no limit). The rule ids are "1", "2" and so on.
+// emulateNetworkConditionsByRule applies the rules with CDP's first-match
+// semantics where WIP can express them: WIP's conditions are global, so
+// every URL must get the same conditions. That holds when each rule before
+// the first global one (empty urlPattern) has that global rule's
+// conditions (none without a global rule); the rules after it are never
+// reached. Other rules are refused before any change. The deprecated
+// top-level offline adds offline. The rule ids are "1", "2" and so on.
 func emulateNetworkConditionsByRule(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
 		Offline                     *bool                  `json:"offline"`
@@ -219,17 +311,18 @@ func emulateNetworkConditionsByRule(ctx context.Context, call *Call) (any, Later
 		return nil, nil, serverError("%s: offline service workers cannot be emulated on iOS WebKit", call.Method)
 	}
 	var c netConditions
-	global := false
 	ids := []string{}
+	first := len(p.MatchedNetworkConditions) // the first global rule
 	for i, r := range p.MatchedNetworkConditions {
 		ids = append(ids, strconv.Itoa(i+1))
-		limited := r.Offline || r.Latency > 0 || r.DownloadThroughput > 0 || r.UploadThroughput > 0
-		switch {
-		case r.URLPattern != "" && limited:
-			return nil, nil, serverError("%s: conditions for some URLs only (urlPattern %q) cannot be emulated on iOS WebKit; use an empty urlPattern for all requests", call.Method, r.URLPattern)
-		case r.URLPattern == "" && !global:
-			global = true
+		if r.URLPattern == "" && first == len(p.MatchedNetworkConditions) {
+			first = i
 			c = netConditions{r.Offline, r.Latency, r.DownloadThroughput, r.UploadThroughput}
+		}
+	}
+	for _, r := range p.MatchedNetworkConditions[:first] {
+		if (netConditions{r.Offline, r.Latency, r.DownloadThroughput, r.UploadThroughput}).normal() != c.normal() {
+			return nil, nil, serverError("%s: conditions for some URLs only (urlPattern %q) cannot be emulated on iOS WebKit; use an empty urlPattern for all requests", call.Method, r.URLPattern)
 		}
 	}
 	if p.Offline != nil && *p.Offline {
@@ -257,34 +350,77 @@ func overrideNetworkState(_ context.Context, call *Call) (any, Later, error) {
 	return map[string]any{}, nil, nil
 }
 
-// offlineIntercepted fails a request that the attachment's offline rule
-// paused, unless a CLI interception handler of the session answers it.
-// It runs after fetchIntercepted (file order), under ps.mu.
-func offlineIntercepted(ps *pageState, target string, params json.RawMessage) {
-	if ps.s == nil || !ps.s.emu.offline.Load() {
+// offlineAct is what the offline lifecycle does with a request whose
+// interception event it decided (claimDecision.offline).
+type offlineAct int
+
+const (
+	offlineFail     offlineAct = iota + 1 // offline is on: fail it
+	offlineContinue                       // offline is ending: continue it
+	offlineAwait                          // offline is being set up: fail it once the setup succeeded, else continue it
+)
+
+// offlineDecisionLocked decides a request-stage interception event for the
+// offline lifecycles of the page's attachments, after its Fetch claimants
+// were found; fetchClaims.mu is held. An attachment whose offline is on
+// takes the request from every Fetch claimant; one that is being set up
+// or torn down takes it only when no Fetch client claims it. The choice
+// among attachments does not depend on map order.
+func (p *pageClaims) offlineDecisionLocked(d *claimDecision) {
+	var best *session
+	var bestPh offlinePhase
+	rank := map[offlinePhase]int{offlineOn: 3, offlineSettingUp: 2, offlineTearingDown: 1}
+	for s, o := range p.offline {
+		ph := o.phaseNow()
+		if rank[ph] == 0 {
+			continue
+		}
+		if best == nil || rank[ph] > rank[bestPh] || rank[ph] == rank[bestPh] && s.id < best.id {
+			best, bestPh = s, ph
+		}
+	}
+	switch {
+	case best == nil:
 		return
+	case bestPh == offlineOn:
+		clear(d.claimants)
+		d.offline, d.act = best, offlineFail
+	case len(d.claimants) > 0:
+		return
+	case bestPh == offlineSettingUp:
+		d.offline, d.act, d.setup = best, offlineAwait, p.offline[best].setup
+	default:
+		d.offline, d.act = best, offlineContinue
 	}
-	var e interceptedReq
-	if json.Unmarshal(params, &e) != nil || e.RequestID == "" || e.Request == nil {
-		return // a response-stage event: the offline rule pauses requests only
-	}
-	k := netKey{target, e.RequestID}
-	if ps.net.gapAt != 0 && !ps.holdOpen(k, stageRequest, ps.fetch.hold) {
-		return // a reset that comes after this event continued its hold
-	}
-	ps.failOfflineSoon(target, e.RequestID, e.Request.URL)
 }
 
-// failOfflineSoon fails the paused request id of target as offline mode
-// does, through the control lane, unless a CLI handler claims its URL.
-func (ps *pageState) failOfflineSoon(target, id, rawURL string) {
-	if handler, _ := ps.otherRules(stageRequest, rawURL); handler {
+// resolveOffline answers the request id of target (rawURL) that the
+// decision d gave to s's offline lifecycle, on the control lane, unless
+// a CLI handler of the session claims it. A failure that the detached
+// attachment can no longer send becomes a continue, so the request is
+// never left paused.
+func (s *session) resolveOffline(d *claimDecision, target, id, rawURL string) {
+	act := d.act
+	if act == offlineAwait {
+		wait, stop := context.WithTimeout(s.ctx, core.DefaultControlBudget) // the setup's calls have their own deadlines
+		select {
+		case <-d.setup.done:
+		case <-wait.Done():
+		}
+		stop()
+		act = offlineContinue
+		if s.c.s.claims.offlinePhase(s) == offlineOn {
+			act = offlineFail
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), core.DefaultControlBudget)
+	defer cancel()
+	ps := s.page
+	handler, others := ps.otherRules(stageRequest, rawURL)
+	if handler {
 		return
 	}
-	s := ps.s
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), core.DefaultControlBudget)
-		defer cancel()
+	if act == offlineFail {
 		err := s.control(func() error {
 			_, err := s.pg.PS.Sched.Control(ctx, core.ControlMsg{
 				Kind: core.ControlCompleteRequest, Session: s.c.rec.session, Epoch: s.epoch,
@@ -292,8 +428,16 @@ func (ps *pageState) failOfflineSoon(target, id, rawURL string) {
 			})
 			return err
 		})
-		if err != nil && !errors.Is(err, core.ErrControlRefused) && !errors.Is(err, errDetached) {
+		switch {
+		case err == nil || errors.Is(err, core.ErrControlRefused):
+			return
+		case !errors.Is(err, errDetached):
 			ps.logf("cdp: page %s: failing request %s of target %q offline: %v", logsafe.ID(ps.target), logsafe.ID(id), logsafe.ID(target), logsafe.Error(err))
+			return
 		}
-	}()
+		// detached: continue it instead
+	} else if others {
+		return // another owner's rule paused it too: that owner answers it
+	}
+	ps.continueNow(target, id, stageRequest)
 }

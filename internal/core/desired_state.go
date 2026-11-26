@@ -69,8 +69,11 @@ type DesiredState struct {
 	caching   map[Owner]bool // owners that disabled the resource cache
 	conds     map[Owner]condEntry
 	condSeq   uint64
-	entries   map[string]Entry
-	bpIDs     map[string]string // URL breakpoint id a client got -> the active target's id
+	// condsUnsure: the last send of the effective conditions had an
+	// unknown outcome (SentEmulatedConditions).
+	condsUnsure bool
+	entries     map[string]Entry
+	bpIDs       map[string]string // URL breakpoint id a client got -> the active target's id
 	// active is the target that bpIDs and the Scoped entries belong to (""
 	// when the connection does not name it). staged holds, per provisional
 	// target, the breakpoint ids its setup got, and stagedVia the sender

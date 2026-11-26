@@ -270,3 +270,171 @@ func TestCDP045EmulationAndNetworkOnWebKitGTK(t *testing.T) {
 		}
 	})
 }
+
+// waitChild waits until the fixture's iframe loaded its button.
+func (p *cdpPage) waitChild(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for p.evalString(t, "(function(){var d=document.getElementById('child').contentDocument;return d&&d.readyState==='complete'&&d.getElementById('inner')?'ready':''})()") != "ready" {
+		if ctx.Err() != nil {
+			t.Fatal("the iframe did not load")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// nodeAt is the local name and frame id of DOM.getNodeForLocation at (x, y).
+func (p *cdpPage) nodeAt(t *testing.T, x, y float64) (name, frame string) {
+	t.Helper()
+	var loc struct {
+		BackendNodeID int64  `json:"backendNodeId"`
+		FrameID       string `json:"frameId"`
+	}
+	if err := json.Unmarshal(p.call(t, "DOM.getNodeForLocation", map[string]any{"x": x, "y": y}), &loc); err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Node struct {
+			LocalName string `json:"localName"`
+		}
+	}
+	if err := json.Unmarshal(p.call(t, "DOM.describeNode", map[string]any{"backendNodeId": loc.BackendNodeID}), &d); err != nil {
+		t.Fatal(err)
+	}
+	return d.Node.LocalName, loc.FrameID
+}
+
+// Parity 0.45 review F7 and F8 (agent-browser 0.45 checks a click point
+// with DOM.getNodeForLocation; Chrome's quads and hit tests follow CSS
+// transforms): with the iframe scaled or translated, the button's quad,
+// the hit test and a click at its center follow the transform; a
+// transform that cannot be mapped exactly (a rotation) is refused.
+// Expected values come from the fixture's CSS: the iframe's border box
+// starts at (40, 60) with a 5px border, the button is at (10, 20) in it
+// and is 80x30.
+func TestCDP045TransformedIframeOnWebKitGTK(t *testing.T) {
+	p := cdp045Client(t, "cdp045.html")
+	p.waitChild(t)
+	var tree struct {
+		FrameTree struct {
+			ChildFrames []struct {
+				Frame struct{ ID string }
+			}
+		}
+	}
+	if err := json.Unmarshal(p.call(t, "Page.getFrameTree", nil), &tree); err != nil || len(tree.FrameTree.ChildFrames) != 1 {
+		t.Fatalf("frame tree %+v (%v), want one child frame", tree, err)
+	}
+	child := tree.FrameTree.ChildFrames[0].Frame.ID
+	inner := func() string {
+		var ev struct{ Result struct{ ObjectID string } }
+		_ = json.Unmarshal(p.call(t, "Runtime.evaluate", map[string]any{"expression": "document.getElementById('child').contentDocument.getElementById('inner')"}), &ev)
+		if ev.Result.ObjectID == "" {
+			t.Fatal("no object for #inner")
+		}
+		return ev.Result.ObjectID
+	}
+	for _, tc := range []struct {
+		name, transform string
+		want            []float64
+	}{
+		{"none", "none", []float64{55, 85, 135, 85, 135, 115, 55, 115}},
+		{"scale(2)", "scale(2)", []float64{70, 110, 230, 110, 230, 170, 70, 170}},
+		{"translate", "translate(30px, 40px)", []float64{85, 125, 165, 125, 165, 155, 85, 155}},
+		{"scale and translate", "translate(10px, 0) scale(0.5, 2)", []float64{57.5, 110, 97.5, 110, 97.5, 170, 57.5, 170}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p.evalString(t, "(function(){var f=document.getElementById('child');f.style.transformOrigin='0 0';f.style.transform='"+tc.transform+"';f.contentDocument.getElementById('inner').textContent='Inner';return 'ok'})()")
+			if q := p.quadsOf(t, map[string]any{"objectId": inner()}); len(q) != 1 || !sameQuad(q[0], tc.want) {
+				t.Errorf("getContentQuads = %v, want [%v]", q, tc.want)
+			}
+			if m := p.boxModel(t, map[string]any{"objectId": inner()}); !sameQuad(m.Border, tc.want) {
+				t.Errorf("getBoxModel border = %v, want %v", m.Border, tc.want)
+			}
+			x, y := (tc.want[0]+tc.want[2])/2, (tc.want[1]+tc.want[5])/2
+			if name, frame := p.nodeAt(t, x, y); name != "button" || frame != child {
+				t.Errorf("getNodeForLocation(%v, %v) = %q in frame %q, want the button in %q", x, y, name, frame, child)
+			}
+			p.call(t, "Input.dispatchMouseEvent", map[string]any{"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1})
+			p.call(t, "Input.dispatchMouseEvent", map[string]any{"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1})
+			if got := p.evalString(t, "document.getElementById('child').contentDocument.getElementById('inner').textContent"); got != "inner clicked" {
+				t.Errorf("after a click at (%v, %v) the button says %q", x, y, got)
+			}
+		})
+	}
+	t.Run("rotation refused", func(t *testing.T) {
+		p.evalString(t, "(function(){document.getElementById('child').style.transform='rotate(10deg)';return 'ok'})()")
+		if msg := p.failCall(t, "DOM.getContentQuads", map[string]any{"objectId": inner()}); !strings.Contains(msg, "transform other than scale and translate") {
+			t.Errorf("getContentQuads under a rotation: %s", msg)
+		}
+		if msg := p.failCall(t, "DOM.getNodeForLocation", map[string]any{"x": 95, "y": 100}); !strings.Contains(msg, "transform other than scale and translate") {
+			t.Errorf("getNodeForLocation under a rotation: %s", msg)
+		}
+	})
+}
+
+// Parity 0.45 review F5: geolocation overrides of three attachments, the
+// last set wins (a replaced override becomes the latest); clearing another
+// attachment's override keeps the latest surviving one in the current
+// document and in a new one.
+func TestCDP045GeoClearKeepsLatestOnWebKitGTK(t *testing.T) {
+	p := cdp045Client(t, "cdp045.html")
+	a := p.page
+	var target string
+	for _, ev := range p.c.Events() {
+		if ev.Method != "Target.attachedToTarget" {
+			continue
+		}
+		var at struct {
+			SessionID  string `json:"sessionId"`
+			TargetInfo struct {
+				TargetID string `json:"targetId"`
+			} `json:"targetInfo"`
+		}
+		_ = json.Unmarshal(ev.Params, &at)
+		if at.SessionID == a {
+			target = at.TargetInfo.TargetID
+		}
+	}
+	attach := func() string {
+		var x struct {
+			SessionID string `json:"sessionId"`
+		}
+		_ = json.Unmarshal(gtkCall(t, p.c, "", "Target.attachToTarget", map[string]any{"targetId": target, "flatten": true}), &x)
+		if x.SessionID == "" {
+			t.Fatal("attachToTarget gave no session")
+		}
+		return x.SessionID
+	}
+	b, c := attach(), attach()
+	set := func(id string, lat float64) {
+		p.page = id
+		p.call(t, "Emulation.setGeolocationOverride", map[string]any{"latitude": lat, "longitude": 0, "accuracy": 1})
+	}
+	set(a, 1)
+	set(b, 2)
+	set(c, 3)
+	set(b, 4)
+	const read = "new Promise(function(res){navigator.geolocation.getCurrentPosition(function(p){res(String(p.coords.latitude))},function(e){res('error '+e.code)})})"
+	p.page = a
+	if got := p.evalAwait(t, read); got != "4" {
+		t.Fatalf("before the clear: latitude %q, want 4", got)
+	}
+	p.call(t, "Emulation.clearGeolocationOverride", nil)
+	if got := p.evalAwait(t, read); got != "4" {
+		t.Fatalf("after clearing another attachment's override: latitude %q, want the latest survivor 4", got)
+	}
+	p.call(t, "Page.reload", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for p.evalString(t, "document.readyState") != "complete" {
+		if ctx.Err() != nil {
+			t.Fatal("the reload did not complete")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := p.evalAwait(t, read); got != "4" {
+		t.Fatalf("in a new document: latitude %q, want the latest survivor 4", got)
+	}
+}

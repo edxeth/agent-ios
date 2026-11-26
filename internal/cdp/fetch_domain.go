@@ -47,6 +47,10 @@ import (
 //     because an owner outside internal/devtools holds a matching rule
 //     (claimedElsewhere). So no request gets two answers from the two
 //     paths, and neither path waits for the other.
+//   - Offline emulation next (network_conditions.go offlinePhase): while
+//     an attachment's offline is on, the page's decision of a request
+//     gives it to that offline lifecycle, which fails it, and no Fetch
+//     client reports it.
 //   - Between CDP attachments of one page (design 5.2), the attachment
 //     whose pattern matches the request's URL, stage and resource type
 //     reports it. Every attachment whose rules may pause requests sees
@@ -275,6 +279,26 @@ type pageClaims struct {
 	typeOrder []netKey
 	decisions map[eventKey]*claimDecision
 	decOrder  []eventKey
+	// offline is the offline lifecycle of each attachment whose offline
+	// rule may be installed (network_conditions.go offlinePhase), from its
+	// setup until its phase is off or its subscription ends.
+	offline map[*session]*offlineReg
+}
+
+// offlineReg is an attachment's offline lifecycle on the page.
+type offlineReg struct {
+	phase  offlinePhase
+	setup  *offlineSetup
+	closed bool // the attachment closed: offline is ending
+}
+
+// phaseNow is the phase that decisions use: a closed attachment's offline
+// is ending.
+func (r *offlineReg) phaseNow() offlinePhase {
+	if r.closed && (r.phase == offlineOn || r.phase == offlineSettingUp) {
+		return offlineTearingDown
+	}
+	return r.phase
 }
 
 // eventKey names one event of a page: its connection and its place in
@@ -293,6 +317,12 @@ type eventKey struct {
 type claimDecision struct {
 	typ       string
 	claimants map[core.Owner]bool // guarded by fetchClaims.mu
+	// offline is the attachment whose offline lifecycle answers the
+	// request (resolveOffline: act, and setup for offlineAwait); no Fetch
+	// client reports it and no attachment continues it then.
+	offline *session
+	act     offlineAct
+	setup   *offlineSetup
 }
 
 // pageLocked returns pg's state, created on first use; c.mu is held.
@@ -302,7 +332,7 @@ func (c *fetchClaims) pageLocked(pg *core.Page) *pageClaims {
 	}
 	p := c.m[pg]
 	if p == nil {
-		p = &pageClaims{patterns: map[core.Owner][]fetchPattern{}, types: map[netKey]string{}, decisions: map[eventKey]*claimDecision{}}
+		p = &pageClaims{patterns: map[core.Owner][]fetchPattern{}, types: map[netKey]string{}, decisions: map[eventKey]*claimDecision{}, offline: map[*session]*offlineReg{}}
 		c.m[pg] = p
 	}
 	return p
@@ -342,7 +372,8 @@ func (c *fetchClaims) drop(pg *core.Page, o core.Owner) {
 	}
 }
 
-// owners returns the CDP Fetch owners on pg.
+// owners returns the CDP owners on pg whose rules the page's decisions
+// arbitrate: the Fetch owners and the owners of registered offline rules.
 func (c *fetchClaims) owners(pg *core.Page) map[core.Owner]bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -351,8 +382,61 @@ func (c *fetchClaims) owners(pg *core.Page) map[core.Owner]bool {
 		for o := range p.patterns {
 			out[o] = true
 		}
+		for s := range p.offline {
+			out[s.owner] = true
+		}
 	}
 	return out
+}
+
+// setOffline records the offline phase ph of s on its page (off: forgets
+// it). A closed attachment does not register again.
+func (c *fetchClaims) setOffline(s *session, ph offlinePhase, setup *offlineSetup) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p := c.m[s.pg]
+	var r *offlineReg
+	if p != nil {
+		r = p.offline[s]
+	}
+	switch {
+	case ph == offlineOff:
+		if r != nil {
+			delete(p.offline, s)
+		}
+	case r != nil:
+		r.phase, r.setup = ph, setup
+	case p != nil && !s.emu.closed:
+		p.offline[s] = &offlineReg{phase: ph, setup: setup}
+	}
+}
+
+// closeOffline marks s closed: its offline is ending, and it registers no
+// more. It reports whether s's offline rule may still be installed (its
+// subscription must stay until the release, unsubscribe).
+func (c *fetchClaims) closeOffline(s *session) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s.emu.closed = true
+	if p := c.m[s.pg]; p != nil {
+		if r := p.offline[s]; r != nil {
+			r.closed = true
+			return true
+		}
+	}
+	return false
+}
+
+// offlinePhase is the phase of s's offline that decisions use now.
+func (c *fetchClaims) offlinePhase(s *session) offlinePhase {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if p := c.m[s.pg]; p != nil {
+		if r := p.offline[s]; r != nil {
+			return r.phaseNow()
+		}
+	}
+	return offlineOff
 }
 
 // noteType records the type of the request that the requestWillBeSent
@@ -381,10 +465,10 @@ func (c *fetchClaims) noteType(pg *core.Page, target string, params json.RawMess
 
 // decide returns the decision for the interception event (params, of
 // method, from target) at pos: the one taken for it already, or a new one
-// from the request's type and the patterns now. An event without a place
-// in its stream (pos.Seq 0: a connection that does not count its
-// messages) gets a decision of its own.
-func (c *fetchClaims) decide(pg *core.Page, pos core.EventPosition, target, method string, params json.RawMessage) *claimDecision {
+// (fresh) from the request's type, the patterns and the offline phases
+// now. An event without a place in its stream (pos.Seq 0: a connection
+// that does not count its messages) gets a decision of its own.
+func (c *fetchClaims) decide(pg *core.Page, pos core.EventPosition, target, method string, params json.RawMessage) (d *claimDecision, fresh bool) {
 	var e interceptedReq
 	_ = json.Unmarshal(params, &e) // an event without a request id claims nothing; its handlers skip it
 	stage := stageRequest
@@ -396,13 +480,16 @@ func (c *fetchClaims) decide(pg *core.Page, pos core.EventPosition, target, meth
 	defer c.mu.Unlock()
 	p := c.pageLocked(pg)
 	if d := p.decisions[key]; d != nil && pos.Seq != 0 {
-		return d
+		return d, false
 	}
-	d := &claimDecision{typ: cmp.Or(p.types[netKey{target, e.RequestID}], "Other"), claimants: map[core.Owner]bool{}}
+	d = &claimDecision{typ: cmp.Or(p.types[netKey{target, e.RequestID}], "Other"), claimants: map[core.Owner]bool{}}
 	for o, pats := range p.patterns {
 		if patternsMatch(pats, stage, e.url(), d.typ) {
 			d.claimants[o] = true
 		}
+	}
+	if stage == stageRequest && e.RequestID != "" && e.Request != nil {
+		p.offlineDecisionLocked(d)
 	}
 	if pos.Seq != 0 {
 		if len(p.decOrder) == maxClaimDecisions {
@@ -412,7 +499,7 @@ func (c *fetchClaims) decide(pg *core.Page, pos core.EventPosition, target, meth
 		p.decOrder = append(p.decOrder, key)
 		p.decisions[key] = d
 	}
-	return d
+	return d, true
 }
 
 // take applies the decision d for owner o, which reports the request when
@@ -525,6 +612,9 @@ func fetchIntercepted(stage string) pageEventFn {
 			mine = ps.fetch.on && patternsMatch(ps.fetch.patterns, stage, u, typ)
 		} else { // the read loop decided the event (onWire)
 			d := ps.fetch.claim
+			if d.offline != nil {
+				return // the offline lifecycle answers it (resolveOffline)
+			}
 			typ = d.typ
 			mine, claimed = ps.s.c.s.claims.take(d, ps.s.fetchOwner(), ps.fetch.on)
 		}
@@ -684,11 +774,10 @@ func (ps *pageState) continueUnreported(ev wipEvent) {
 	if ev.method == evResponseIntercepted {
 		stage = stageResponse
 	}
-	_, claimed := ps.s.c.s.claims.take(ev.claim, ps.s.fetchOwner(), false) // decided in the read loop (onWire)
-	if stage == stageRequest && e.Request != nil && ps.s.emu.offline.Load() {
-		ps.failOfflineSoon(ev.target, e.RequestID, e.Request.URL) // the attachment's offline rule (network_conditions.go)
-		return
+	if ev.claim.offline != nil {
+		return // the offline lifecycle answers it (resolveOffline)
 	}
+	_, claimed := ps.s.c.s.claims.take(ev.claim, ps.s.fetchOwner(), false) // decided in the read loop (onWire)
 	if _, others := ps.otherRules(stage, e.url()); !claimed && !others {
 		ps.continueNow(ev.target, e.RequestID, stage)
 	}

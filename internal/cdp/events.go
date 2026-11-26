@@ -227,10 +227,14 @@ func (ps *pageState) close() {
 	paused := ps.takePausedLocked()
 	used := ps.fetch.used
 	ps.mu.Unlock()
+	// An offline rule that may be installed keeps the subscription until
+	// the release too: its requests are decided in the read loop
+	// (network_conditions.go offlinePhase).
+	offline := ps.s != nil && ps.s.c.s.claims.closeOffline(ps.s)
 	ps.endLife()
 	ps.unwatchNetworkReset()
 	queued := ps.q.close()
-	if !used {
+	if !used && !offline {
 		ps.unsubscribe()
 	}
 	var wg sync.WaitGroup
@@ -249,6 +253,9 @@ func (ps *pageState) close() {
 func (ps *pageState) unsubscribe() {
 	ps.unsubOnce.Do(func() {
 		ps.dropClaim()
+		if ps.s != nil {
+			ps.s.c.s.claims.setOffline(ps.s, offlineOff, nil) // the release removed its rule
+		}
 		ps.unsub()
 		if ps.s != nil {
 			ps.s.c.s.claims.leave(ps.s.pg)

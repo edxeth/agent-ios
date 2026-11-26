@@ -88,19 +88,51 @@
     o.altKey = !!(m & 1); o.ctrlKey = !!(m & 2); o.metaKey = !!(m & 4); o.shiftKey = !!(m & 8);
     return o;
   }
+  // fx: how frame element f maps a client point (px, py) of its frame to
+  // one of f's document: (px * sx + x, py * sy + y). Its border box's bounding
+  // rect and the scales of f's and its ancestors' transforms give it
+  // exactly for scales and translations; a rotation, skew, flip,
+  // perspective or 3D transform is refused, as no exact mapping exists.
+  function fx(f) {
+    var v = f.ownerDocument.defaultView, sx = 1, sy = 1, e, m, r = B.gbcr(f), s = v.getComputedStyle(f), n = function (k) { return parseFloat(s[k]) || 0; };
+    for (e = f; e; e = e.parentElement || (e.parentNode && e.parentNode.host)) {
+      m = /^matrix(3d)?\((.*)\)$/.exec(v.getComputedStyle(e).transform);
+      if (!m) { continue; }
+      m = m[2].split(",").map(Number);
+      if (m.length === 16) { // a 3D matrix maps like a 2D one only without z mixing and perspective
+        m = [2, 3, 6, 7, 8, 9, 11, 14].some(function (i) { return m[i]; }) || m[10] !== 1 || m[15] !== 1 ? null : [m[0], m[1], m[4], m[5]];
+      }
+      if (!m || m[1] || m[2] || !(m[0] > 0) || !(m[3] > 0)) {
+        throw new Error("the frame or one of its ancestors has a transform other than scale and translate; points in the frame cannot be mapped to the main frame");
+      }
+      sx *= m[0]; sy *= m[3];
+    }
+    return { sx: sx, sy: sy, x: r.left + (n("borderLeftWidth") + n("paddingLeft")) * sx, y: r.top + (n("borderTopWidth") + n("paddingTop")) * sy };
+  }
+  // fto: the mapping of node n's frame's client points to the main
+  // frame's (fx through every frame element up to the main window).
+  _.fto = function (n) {
+    var t = { sx: 1, sy: 1, x: 0, y: 0 }, v = n.ownerDocument.defaultView, m;
+    for (; v && v !== w && v.frameElement; v = v.parent) {
+      m = fx(v.frameElement);
+      t = { sx: t.sx * m.sx, sy: t.sy * m.sy, x: t.x * m.sx + m.x, y: t.y * m.sy + m.y };
+    }
+    return t;
+  };
   // deep: the element at client point (x, y), also inside same-origin
   // frames (a CDP client gives main-frame points, as Chrome takes them); a
   // cross-origin frame is the element itself.
   function deep(x, y) {
-    var h = _.at(x, y), d, r;
+    var h = _.at(x, y), d, m;
     while (h && /^I?FRAME$/.test(h.nodeName)) {
       try { d = h.contentDocument; } catch (y2) { d = null; }
       if (!d) { break; }
-      r = B.gbcr(h); x -= r.left + h.clientLeft; y -= r.top + h.clientTop;
+      m = fx(h); x = (x - m.x) / m.sx; y = (y - m.y) / m.sy;
       h = _.at(x, y, d) || d.documentElement;
     }
     return h;
   }
+  _.deep = deep;
   function common(a, b) {
     while (a && !a.contains(b)) { a = a.parentNode; }
     return a;

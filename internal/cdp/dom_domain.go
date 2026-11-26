@@ -820,16 +820,16 @@ func domSetFileInputFiles(ctx context.Context, call *Call) (any, Later, error) {
 
 // ---- page functions ----
 
-// jsFrameOffset is offset(n): the client point of n's frame's viewport
-// origin in the main frame W (jsCall; 0, 0 in the main document).
-const jsFrameOffset = `function offset(n){var w=n.ownerDocument.defaultView,x=0,y=0;for(;w&&w!==W&&w.frameElement;w=w.parent){var f=w.frameElement,r=f.getBoundingClientRect();x+=r.left+f.clientLeft;y+=r.top+f.clientTop}return {x:x,y:y}}`
+// jsQuad is q(l,t,R,b): the quad of the client rect (l, t, R, b) of the
+// node's frame as main-frame points, by the frame's mapping o (65-cdp.js
+// fto, which refuses frame transforms other than scale and translate).
+const jsQuad = `function q(l,t,R,b){l=l*o.sx+o.x;R=R*o.sx+o.x;t=t*o.sy+o.y;b=b*o.sy+o.y;return [l,t,R,t,R,b,l,b]}`
 
 // jsBoxModel is CDP's BoxModel from the border box and computed style;
 // quads are client points of the main frame.
-const jsBoxModel = `function(){` + jsFrameOffset + `var e=this;if(e.nodeType!==1||!e.getClientRects().length)throw new Error("Could not compute box model.");
-var r=e.getBoundingClientRect(),s=e.ownerDocument.defaultView.getComputedStyle(e),o=offset(e);
+const jsBoxModel = `function(a,_){` + jsQuad + `var e=this;if(e.nodeType!==1||!e.getClientRects().length)throw new Error("Could not compute box model.");
+var r=e.getBoundingClientRect(),s=e.ownerDocument.defaultView.getComputedStyle(e),o=_.fto(e);
 function n(p){return parseFloat(s.getPropertyValue(p))||0}
-function q(l,t,R,b){return [l+o.x,t+o.y,R+o.x,t+o.y,R+o.x,b+o.y,l+o.x,b+o.y]}
 var bl=n("border-left-width"),bt=n("border-top-width"),br=n("border-right-width"),bb=n("border-bottom-width");
 var pl=n("padding-left"),pt=n("padding-top"),pr=n("padding-right"),pb=n("padding-bottom");
 return {border:q(r.left,r.top,r.right,r.bottom),padding:q(r.left+bl,r.top+bt,r.right-br,r.bottom-bb),
@@ -838,10 +838,10 @@ margin:q(r.left-n("margin-left"),r.top-n("margin-top"),r.right+n("margin-right")
 width:Math.round(r.width),height:Math.round(r.height)}}`
 
 // jsContentQuads is one quad per client rect (a text node: of its range).
-const jsContentQuads = `function(){` + jsFrameOffset + `var n=this,rs=[],out=[],i;
+const jsContentQuads = `function(a,_){` + jsQuad + `var n=this,rs=[],out=[],i;
 if(n.nodeType===3){var g=n.ownerDocument.createRange();g.selectNodeContents(n);rs=g.getClientRects()}else if(n.nodeType===1){rs=n.getClientRects()}
-var o=n.nodeType===3||n.nodeType===1?offset(n):null;
-for(i=0;i<rs.length;i++){var r=rs[i];out.push([r.left+o.x,r.top+o.y,r.right+o.x,r.top+o.y,r.right+o.x,r.bottom+o.y,r.left+o.x,r.bottom+o.y])}
+var o=rs.length?_.fto(n):null;
+for(i=0;i<rs.length;i++){var r=rs[i];out.push(q(r.left,r.top,r.right,r.bottom))}
 if(!out.length)throw new Error("Could not compute content quads.");return out}`
 
 // jsScrollIntoView scrolls the node's element into view when it is not
@@ -890,8 +890,7 @@ throw new Error("Frame with the given id was not found.")}`
 // jsNodeAt is the handle of the element at client point (a.x, a.y) of the
 // main frame, also inside same-origin frames (65-cdp.js deep), and fp, the
 // path of frame indexes from the main window to the element's window.
-const jsNodeAt = `function(a,_){var x=a.x,y=a.y,e=_.at(x,y),d,r,w,u,i,p=[];
-while(e&&/^I?FRAME$/.test(e.nodeName)){try{d=e.contentDocument}catch(z){d=null}if(!d)break;r=e.getBoundingClientRect();x-=r.left+e.clientLeft;y-=r.top+e.clientTop;e=_.at(x,y,d)||d.documentElement}
+const jsNodeAt = `function(a,_){var e=_.deep(a.x,a.y),w,u,i,p=[];
 if(!e)throw new Error("No node found at given location");
 for(w=e.ownerDocument.defaultView;w&&w!==W;w=u){u=w.parent;i=0;while(i<u.frames.length&&u.frames[i]!==w)i++;if(u===w||i===u.frames.length)throw new Error("No node found at given location");p.unshift(i)}
 return {doc:_.doc(),h:_.handle(e),fp:p}}`

@@ -381,7 +381,7 @@ func TestEndedOperationChangeRecordsNoAddition(t *testing.T) {
 	if v := d.SetCachingDisabled(o, true); v != nil {
 		t.Errorf("SetCachingDisabled asked for a send: %v", *v)
 	}
-	if v := d.SetEmulatedConditions(o, json.RawMessage(`{"bytesPerSecondLimit":1}`)); v != nil {
+	if v, _ := d.SetEmulatedConditions(o, json.RawMessage(`{"bytesPerSecondLimit":1}`)); v != nil {
 		t.Errorf("SetEmulatedConditions asked for a send: %s", v)
 	}
 	d.setShared(cs, o, "legacy:Debugger.setPauseOnExceptions", "Debugger.setPauseOnExceptions", "Debugger.setPauseOnExceptions", map[string]any{"state": "all"}, false)
