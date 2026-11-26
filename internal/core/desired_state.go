@@ -50,6 +50,10 @@ type Entry struct {
 	// of a provisional target), so its Release never sends a stale id; a
 	// provisional target that is abandoned leaves it in place.
 	Scoped bool
+	// BeforeEnable entries are sent to a new or provisional target after
+	// the agent resets and before the domain enables (the Debugger pause
+	// settings, stateRule.beforeEnable).
+	BeforeEnable bool
 }
 
 // DesiredState is the per-page model of state that agent-ios set in WebKit
@@ -445,7 +449,31 @@ func (d *DesiredState) applySnapshot(ctx context.Context, s Sender, prior map[st
 			calls = append(calls, webkit.Call{Method: dom + ".enable"})
 		}
 	}
-	errs := sendPipelined(ctx, s, calls)
+	// The entries that must precede the enables go between the resets and
+	// the rest of the batch.
+	var pre []Entry
+	entries = slices.DeleteFunc(slices.Clone(entries), func(e Entry) bool {
+		if e.BeforeEnable {
+			pre = append(pre, e)
+		}
+		return e.BeforeEnable
+	})
+	var errs []error
+	if len(pre) == 0 {
+		errs = sendPipelined(ctx, s, calls)
+	} else {
+		errs = sendPipelined(ctx, s, calls[:resets])
+		for _, e := range pre {
+			if err := e.Apply(ctx, s); err != nil {
+				err = fmt.Errorf("applying desired state %q before the domain enables: %w", e.Key, err)
+				if networkDisableIn(calls[:resets], errs) {
+					err = networkResetWritten{err}
+				}
+				return err
+			}
+		}
+		errs = append(errs, sendPipelined(ctx, s, calls[resets:])...)
+	}
 	if networkDisableIn(calls, errs) {
 		// The Network agent may be reset whatever fails below
 		// (networkResetWritten).

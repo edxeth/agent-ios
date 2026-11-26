@@ -449,9 +449,12 @@ func TestResetOfAnUnknownDebuggerReappliesItsState(t *testing.T) {
 	for _, rec := range r.f.Received()[from:] {
 		got = append(got, rec.Method)
 	}
+	// The owner's pause on exceptions goes out before Debugger.enable:
+	// the pause settings live in JSC::Debugger and precede the enable
+	// (stateRule.beforeEnable, FIX-D F1).
 	want := []string{
 		"Debugger.setPauseOnExceptions", "Debugger.setPauseOnDebuggerStatements", "Debugger.disable",
-		"Debugger.enable", "Debugger.setBreakpointByUrl", "Debugger.setPauseOnExceptions",
+		"Debugger.setPauseOnExceptions", "Debugger.enable", "Debugger.setBreakpointByUrl",
 		"Debugger.setBreakpointsActive",
 	}
 	if !slices.Equal(got, want) {

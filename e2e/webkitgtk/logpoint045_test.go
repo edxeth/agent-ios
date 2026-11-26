@@ -3,11 +3,15 @@
 package webkitgtk
 
 import (
+	"context"
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/edxeth/agent-ios/internal/cdp/cdptest"
 )
 
 // Logpoints (parity-045 WP-LOGPOINTS; chrome-devtools-mcp 1.14.0
@@ -169,4 +173,62 @@ func TestLogpoint045SurvivesAReconnect(t *testing.T) {
 	if out := mustCLI(t, "logpoint", "list"); !strings.Contains(out, "1: logpoint.js:6") {
 		t.Fatalf("logpoint list after the reconnect:\n%s", out)
 	}
+}
+
+// FIX-D F1: a page whose hot loop runs a debugger statement never pauses
+// while a CDP client (chrome-devtools-mcp set_logpoints through DevTools'
+// Debugger calls) and the CLI add and remove logpoints, Debugger is
+// enabled and disabled, and the daemon reconnects. A paused page would
+// stop the counter and leave eval without an answer.
+func TestLogpoint045DebuggerStatementNeverPauses(t *testing.T) {
+	p := devtoolsBrowser(t, origin+"/logpoint.html")
+	mustCLI(t, "console")
+	js(t, "(function(){ window.dbgN = 0; setInterval(function () { window.dbgN++; debugger; }, 5); return 'ok'; })()")
+	waitCount(t, "window.dbgN", 20)
+
+	port := strings.TrimPrefix(freeAddr(t), "127.0.0.1:")
+	mustCLI(t, "cdp", "start", "--port", port)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, _, err := cdptest.Dial(ctx, strings.TrimSpace(mustCLI(t, "get", "cdp-url")), nil)
+	if err != nil {
+		t.Fatalf("dialing the CDP URL: %v", err)
+	}
+	t.Cleanup(c.Close)
+	gtkCall(t, c, "", "Target.setAutoAttach", map[string]any{
+		"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true,
+		"filter": []any{map[string]any{"type": "page", "exclude": true}, map[string]any{}},
+	})
+	tab, _ := gtkLastAttach(t, c)
+	cp := &cdpPage{c: c, tab: tab}
+	cp.attachPage(t)
+	logpoint := map[string]any{"url": origin + "/logpoint.js", "lineNumber": 5, "columnNumber": 0, "condition": "/** DEVTOOLS_LOGPOINT */ console.log('cdp-lp', step)"}
+
+	// The CDP client sets a logpoint without Debugger.enable (implicit),
+	// then with it; the CLI adds and removes its own.
+	bp := cp.call(t, "Debugger.setBreakpointByUrl", logpoint)
+	waitCount(t, "window.dbgN", 20)
+	var id struct{ BreakpointID string }
+	if err := json.Unmarshal(bp, &id); err != nil || id.BreakpointID == "" {
+		t.Fatalf("setBreakpointByUrl: %s, %v", bp, err)
+	}
+	cp.call(t, "Debugger.enable", nil)
+	mustCLI(t, "logpoint", "add", "logpoint.js:4", `"cli-lp", step`)
+	waitOutput(t, func(o string) bool { return strings.Contains(o, "cli-lp") && strings.Contains(o, "cdp-lp") }, "console")
+	waitCount(t, "window.dbgN", 20)
+	cp.call(t, "Debugger.removeBreakpoint", map[string]any{"breakpointId": id.BreakpointID})
+	mustCLI(t, "logpoint", "remove", "1")
+	waitCount(t, "window.dbgN", 20)
+
+	// A reconnect applies the desired state again.
+	mustCLI(t, "logpoint", "add", "logpoint.js:6", `"cli-again", step`)
+	reconnect(t, p)
+	waitCount(t, "window.dbgN", 20)
+	mustCLI(t, "console", "clear")
+	waitOutput(t, func(o string) bool { return strings.Contains(o, "cli-again") }, "console")
+	waitCount(t, "window.dbgN", 20)
+
+	// The last owners release: still no pause.
+	mustCLI(t, "logpoint", "clear")
+	waitCount(t, "window.dbgN", 20)
 }

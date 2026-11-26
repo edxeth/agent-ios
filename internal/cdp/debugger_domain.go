@@ -26,9 +26,13 @@ import (
 //     paused frame and continues, whatever the expression returns. Any
 //     other condition, or none, is refused, as is a breakpoint by
 //     scriptHash (an anonymous script; WIP has no hash).
-//   - Debugger.enable also activates breakpoints (a new WebKit backend
-//     starts with them inactive; CDP's are active) and turns off the
-//     pause on debugger statements, as owned state of the attachment.
+//   - Debugger.enable, and setBreakpointByUrl without it, acquire WIP
+//     Debugger for the attachment without any pause
+//     (core.AcquireNoPauseDebugger): the pause on debugger statements and
+//     on exceptions go off before WIP Debugger.enable, and breakpoints are
+//     activated after it (a new WebKit backend starts with them inactive;
+//     CDP's are active), as owned state of the attachment, which a new or
+//     provisional target gets in the same order.
 //   - setPauseOnExceptions takes only "none"; setSkipAllPauses,
 //     setAsyncCallStackDepth and setBlackboxPatterns have no effect (they
 //     change only pausing, stepping and async stacks of a debugger that
@@ -36,7 +40,10 @@ import (
 //
 // The breakpoints are owned by the attachment in the page's desired state
 // (core legacyCall through Manager.RawAs): replayed on new and provisional
-// targets and removed at detach. Scripts: WIP Debugger.scriptParsed
+// targets and removed at detach. A client knows a breakpoint by the id
+// its setBreakpointByUrl returned, also after a replay gave it another id
+// (breakpointResolved is translated back, core BreakpointClientID); it
+// sees only its own breakpoints' events and removes only its own. Scripts: WIP Debugger.scriptParsed
 // becomes CDP Debugger.scriptParsed with the main frame's default context
 // and a hash made from the script id; scripts with a URL are kept per
 // document (until Debugger.globalObjectCleared), so that an enable reports
@@ -161,10 +168,25 @@ func (ps *pageState) announceScriptsLocked() {
 	}
 }
 
-// breakpointResolved forwards WIP's event; its shape is CDP's
-// (breakpointId, location{scriptId, lineNumber, columnNumber}).
-func breakpointResolved(ps *pageState, _ string, params json.RawMessage) {
-	ps.emitLocked(domDebugger, "Debugger.breakpointResolved", params)
+// breakpointResolved forwards WIP's event (its shape is CDP's:
+// breakpointId, location{scriptId, lineNumber, columnNumber}) to the
+// attachment that owns the breakpoint, with the id that attachment got.
+func breakpointResolved(ps *pageState, target string, params json.RawMessage) {
+	if ps.s == nil {
+		return
+	}
+	var v struct {
+		BreakpointID string          `json:"breakpointId"`
+		Location     json.RawMessage `json:"location"`
+	}
+	if json.Unmarshal(params, &v) != nil {
+		return
+	}
+	id, ok := ps.s.pg.PS.State.BreakpointClientID(ps.s.owner, target, v.BreakpointID)
+	if !ok {
+		return // another owner's breakpoint, or a stale id of a replaced target
+	}
+	ps.emitLocked(domDebugger, "Debugger.breakpointResolved", map[string]any{"breakpointId": id, "location": v.Location})
 }
 
 // rawAs sends a WIP call as the attachment's owned call and decodes its
@@ -193,19 +215,7 @@ func debuggerEnable(ctx context.Context, call *Call) (any, Later, error) {
 		if _, err := ps.readTree(ctx, mo); err != nil {
 			return err
 		}
-		for _, c := range []struct {
-			method string
-			params any
-		}{
-			{"Debugger.enable", nil},
-			{"Debugger.setBreakpointsActive", map[string]bool{"active": true}},
-			{"Debugger.setPauseOnDebuggerStatements", map[string]bool{"enabled": false}},
-		} {
-			if err := s.rawAs(ctx, mo, c.method, c.params, nil); err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.c.s.o.Manager.AcquireNoPauseDebugger(ctx, mo, s.owner)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -294,6 +304,11 @@ func setBreakpointByURL(ctx context.Context, call *Call) (any, Later, error) {
 	}
 	s := call.session
 	err := s.do(ctx, call.Method, core.ClassMutate, func(ctx context.Context, mo *core.ManagedOp) error {
+		// Also without Debugger.enable: no breakpoint before the page
+		// is safe from pausing (implicit acquisition).
+		if err := s.c.s.o.Manager.AcquireNoPauseDebugger(ctx, mo, s.owner); err != nil {
+			return err
+		}
 		return s.rawAs(ctx, mo, "Debugger.setBreakpointByUrl", wp, &res)
 	})
 	if err != nil {
@@ -316,6 +331,9 @@ func removeBreakpoint(ctx context.Context, call *Call) (any, Later, error) {
 		return nil, nil, invalidParams("breakpointId is required")
 	}
 	s := call.session
+	if !s.pg.PS.State.OwnsBreakpoint(s.owner, p.BreakpointID) {
+		return nil, nil, serverError("Debugger.removeBreakpoint: breakpoint %s was not set by this session", p.BreakpointID)
+	}
 	err := s.do(ctx, call.Method, core.ClassMutate, func(ctx context.Context, mo *core.ManagedOp) error {
 		return s.rawAs(ctx, mo, "Debugger.removeBreakpoint", map[string]string{"breakpointId": p.BreakpointID}, nil)
 	})

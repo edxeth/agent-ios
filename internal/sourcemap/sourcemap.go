@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"sort"
 	"strings"
@@ -35,11 +36,48 @@ type Map struct {
 	// Mappings are the segments with an original position, ordered by
 	// generated position.
 	Mappings []Mapping
+	// unmapped are the generated positions of the one-field segments
+	// (no original position), ordered; each ends the mapping before it
+	// (Original). segments counts every segment the map kept.
+	unmapped []genPos
+	segments int
 }
 
-// Parse reads a source map. An index map (with "sections") is refused:
-// bundlers emit it rarely and the logpoint command does not need it.
-func Parse(data []byte) (*Map, error) {
+// genPos is a generated position.
+type genPos struct{ line, col int }
+
+// Limits are the budgets of one source map (Parse): its size in bytes and
+// its number of segments. A map is read host-side and kept for the page
+// connection, so a page cannot make the daemon decode and keep maps of
+// any size.
+type Limits struct {
+	Bytes    int
+	Segments int
+}
+
+// DefaultLimits are Parse's budgets: 16 MiB of map text and 2 million
+// segments (a segment is kept as 40 bytes, so about 80 MB). A large
+// production bundle has a few hundred thousand segments.
+var DefaultLimits = Limits{Bytes: 16 << 20, Segments: 2_000_000}
+
+// ErrTooLarge reports a source map beyond its Limits.
+var ErrTooLarge = errors.New("source map too large")
+
+// Segments returns the number of segments the map holds, one-field
+// segments included.
+func (m *Map) Segments() int { return m.segments }
+
+// Parse reads a source map within DefaultLimits. An index map (with
+// "sections") is refused: bundlers emit it rarely and the logpoint command
+// does not need it.
+func Parse(data []byte) (*Map, error) { return ParseWithLimits(data, DefaultLimits) }
+
+// ParseWithLimits is Parse with the budgets lim; a map beyond them fails
+// with ErrTooLarge.
+func ParseWithLimits(data []byte, lim Limits) (*Map, error) {
+	if len(data) > lim.Bytes {
+		return nil, fmt.Errorf("%w: %d bytes, more than the %d bytes agent-ios reads", ErrTooLarge, len(data), lim.Bytes)
+	}
 	var raw struct {
 		Version    int               `json:"version"`
 		SourceRoot string            `json:"sourceRoot"`
@@ -77,10 +115,11 @@ func Parse(data []byte) (*Map, error) {
 			m.Sources[i] = root + *s
 		}
 	}
-	ms, err := DecodeMappings(*raw.Mappings)
+	ms, ends, n, err := decode(*raw.Mappings, lim.Segments)
 	if err != nil {
 		return nil, fmt.Errorf("source map: %w", err)
 	}
+	m.unmapped, m.segments = ends, n
 	for _, x := range ms {
 		if x.Source >= len(m.Sources) {
 			return nil, fmt.Errorf("source map: a mapping names source %d of %d", x.Source, len(m.Sources))
@@ -148,6 +187,8 @@ func genBefore(a, b Mapping) bool {
 
 // Original returns the mapping that covers the generated position
 // line:col: the last segment of that line that starts at or before col.
+// ok is false when there is none or that segment has no original position
+// (a one-field segment ends the mapping before it).
 func (m *Map) Original(line, col int) (Mapping, bool) {
 	i := sort.Search(len(m.Mappings), func(i int) bool {
 		x := m.Mappings[i]
@@ -156,14 +197,31 @@ func (m *Map) Original(line, col int) (Mapping, bool) {
 	if i == 0 || m.Mappings[i-1].GenLine != line {
 		return Mapping{}, false
 	}
-	return m.Mappings[i-1], true
+	x := m.Mappings[i-1]
+	j := sort.Search(len(m.unmapped), func(j int) bool { return posBefore(genPos{line, col}, m.unmapped[j]) })
+	if j > 0 && m.unmapped[j-1].line == line && m.unmapped[j-1].col > x.GenCol {
+		return Mapping{}, false
+	}
+	return x, true
 }
 
 // DecodeMappings decodes the "mappings" string. Segments without an
 // original position (one field) are skipped; the result is ordered by
 // generated position.
 func DecodeMappings(s string) ([]Mapping, error) {
+	ms, _, _, err := decode(s, math.MaxInt)
+	return ms, err
+}
+
+// decode decodes the "mappings" string into the segments with an original
+// position and the positions of the one-field segments, each ordered by
+// generated position, and counts the segments; more than maxSegs fail with
+// ErrTooLarge.
+func decode(s string, maxSegs int) ([]Mapping, []genPos, int, error) {
 	var out []Mapping
+	var ends []genPos
+	var all []rawSeg
+	count := 0
 	var src, oline, ocol, name int
 	line := 0
 	for _, l := range strings.Split(s, ";") {
@@ -173,34 +231,63 @@ func DecodeMappings(s string) ([]Mapping, error) {
 				if seg == "" {
 					continue
 				}
+				if count++; count > maxSegs {
+					return nil, nil, 0, fmt.Errorf("%w: more than %d segments, the limit agent-ios reads", ErrTooLarge, maxSegs)
+				}
 				f, err := decodeSegment(seg)
 				if err != nil {
-					return nil, fmt.Errorf("mappings line %d: %w", line, err)
+					return nil, nil, 0, fmt.Errorf("mappings line %d: %w", line, err)
 				}
 				switch len(f) {
 				case 1, 4, 5:
 				default:
-					return nil, fmt.Errorf("mappings line %d: a segment of %d fields", line, len(f))
+					return nil, nil, 0, fmt.Errorf("mappings line %d: a segment of %d fields", line, len(f))
 				}
 				col += f[0]
+				if col < 0 {
+					return nil, nil, 0, fmt.Errorf("mappings line %d: a negative position", line)
+				}
 				if len(f) == 1 {
+					all = append(all, rawSeg{pos: genPos{line, col}})
 					continue
 				}
 				src, oline, ocol = src+f[1], oline+f[2], ocol+f[3]
 				if len(f) == 5 {
 					name += f[4]
 				}
-				if col < 0 || src < 0 || oline < 0 || ocol < 0 || name < 0 {
-					return nil, fmt.Errorf("mappings line %d: a negative position", line)
+				if src < 0 || oline < 0 || ocol < 0 || name < 0 {
+					return nil, nil, 0, fmt.Errorf("mappings line %d: a negative position", line)
 				}
-				out = append(out, Mapping{GenLine: line, GenCol: col, Source: src, OrigLine: oline, OrigCol: ocol})
+				all = append(all, rawSeg{pos: genPos{line, col}, mapped: true, m: Mapping{GenLine: line, GenCol: col, Source: src, OrigLine: oline, OrigCol: ocol}})
 			}
 		}
 		line++
 	}
-	sort.SliceStable(out, func(i, j int) bool { return genBefore(out[i], out[j]) })
-	return out, nil
+	// Of segments at the same generated position the last one counts, as
+	// it would for a reader that walks the line.
+	sort.SliceStable(all, func(i, j int) bool { return posBefore(all[i].pos, all[j].pos) })
+	for i, x := range all {
+		if i+1 < len(all) && all[i+1].pos == x.pos {
+			continue
+		}
+		if x.mapped {
+			out = append(out, x.m)
+		} else {
+			ends = append(ends, x.pos)
+		}
+	}
+	return out, ends, count, nil
 }
+
+// rawSeg is a decoded segment: with an original position (mapped) or one
+// field.
+type rawSeg struct {
+	pos    genPos
+	mapped bool
+	m      Mapping
+}
+
+func posBefore(a, b genPos) bool { return a.line < b.line || a.line == b.line && a.col < b.col }
 
 // EncodeMappings is the inverse of DecodeMappings for mappings ordered by
 // generated position (each segment with four fields).

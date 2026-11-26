@@ -187,17 +187,20 @@ func (d *DesiredState) takeSharedLocked(owner Owner, match func(rule string) boo
 }
 
 // sharedEntriesLocked returns the effective shared values that a new or
-// provisional target needs, as entries for Apply. The caller holds d.mu.
+// provisional target needs, as entries for Apply. A rule sent before the
+// enables (beforeEnable) gets its baseline value too, because a reused
+// backend keeps an earlier one. The caller holds d.mu.
 func (d *DesiredState) sharedEntriesLocked() []Entry {
 	var out []Entry
 	for k, vals := range d.shared {
 		eff := vals[len(vals)-1]
-		if eff.base {
+		rule := stateRules[eff.rule]
+		if eff.base && !rule.beforeEnable {
 			continue // a new backend starts at the baseline
 		}
 		m, p := eff.method, json.RawMessage(eff.params)
 		out = append(out, Entry{
-			Key: k, Rank: stateRules[eff.rule].rank, Owner: eff.owner, Domain: ruleDomain(eff.rule),
+			Key: k, Rank: rule.rank, Owner: eff.owner, Domain: ruleDomain(eff.rule), BeforeEnable: rule.beforeEnable,
 			Apply: func(ctx context.Context, s Sender) error {
 				_, err := s.Send(ctx, m, p)
 				return err

@@ -89,8 +89,9 @@ func TestActivationIsReplayedBeforeTheBreakpoints(t *testing.T) {
 		order = append(order, rec.Method+string(rec.Params))
 	}
 	// The connection does not know page-2's Debugger agent, so its enable
-	// follows the agent's reset (agentResetCalls).
-	want := []string{`Debugger.setPauseOnExceptions{"state":"none"}`, `Debugger.setPauseOnDebuggerStatements{"enabled":true}`, "Debugger.disable", "Debugger.enable", `Debugger.setBreakpointsActive{"active":true}`, "Debugger.setBreakpointByUrl" + bpByURL}
+	// follows the agent's reset (agentResetCalls), whose pause baseline is
+	// that of a new JSC::Debugger: no pause on debugger statements (FIX-D F1).
+	want := []string{`Debugger.setPauseOnExceptions{"state":"none"}`, `Debugger.setPauseOnDebuggerStatements{"enabled":false}`, "Debugger.disable", "Debugger.enable", `Debugger.setBreakpointsActive{"active":true}`, "Debugger.setBreakpointByUrl" + bpByURL}
 	if !slices.Equal(order, want) {
 		t.Fatalf("page-2 setup sent %q, want %q", order, want)
 	}

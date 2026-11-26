@@ -375,6 +375,18 @@ func resetAndApplyDomain(ctx context.Context, d *DesiredState, c Sender, dom str
 	if !needed {
 		return nil
 	}
+	// The pause settings precede the enable (Entry.BeforeEnable).
+	var rest []Entry
+	for _, e := range entries {
+		if !e.BeforeEnable {
+			rest = append(rest, e)
+			continue
+		}
+		if err := e.Apply(ctx, c); err != nil {
+			return fmt.Errorf("applying desired state %q before %s.enable: %w", e.Key, dom, err)
+		}
+	}
+	entries = rest
 	if _, err := c.Send(ctx, dom+".enable", nil); err != nil {
 		return err
 	}

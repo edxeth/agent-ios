@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -107,21 +109,45 @@ type BoundPosition struct {
 	Original *Position `json:"original,omitempty"`
 }
 
-// lpScript is a script that WebKit reported in Debugger.scriptParsed.
+// lpScript is a script that WebKit reported in Debugger.scriptParsed:
+// its id on the target (backend) that reported it, and the order of the
+// reports (seq).
 type lpScript struct {
-	id, url, sourceMapURL string
+	id, url, sourceMapURL, target string
+	seq                           uint64
 }
 
-// lpPage is the logpoint state of one page session: the scripts WebKit
-// reported since the first logpoint command, the source maps read, and
-// the logpoints of each session.
+// key is the script's key in lpPage.scripts and lpPage.maps: script ids
+// are per backend.
+func (s lpScript) key() string { return scriptKey(s.target, s.id) }
+
+func scriptKey(target, id string) string { return target + "\x00" + id }
+
+// lpPage is the logpoint state of one page session: the scripts of the
+// current documents that WebKit reported since the first logpoint command,
+// the source maps read for them, and the logpoints of each session. A
+// document's scripts and maps end with Debugger.globalObjectCleared of
+// its target; scripts of another target than the active one are not
+// candidates (resolve). The logpoints stay: they are desired state.
 type lpPage struct {
 	mu       sync.Mutex
-	byURL    map[string]lpScript
-	byID     map[string]string // script id -> url
-	maps     map[string]*lpMap // by script URL and sourceMapURL
+	scripts  map[string]lpScript // by key()
+	seq      uint64
+	maps     map[string]*lpMap // by the script's key(); at most maxLpMaps
+	mapUse   []string          // keys of maps, least recently used first
+	mapSegs  int               // segments of the kept maps; at most maxLpMapSegments
 	sessions map[string]*lpSession
+	active   func() string // the connection's active target ("" when unknown)
 }
+
+// Budgets of the source maps a page keeps (FIX-D F13): a map is read once
+// per script and kept until its document ends; each map alone is within
+// sourcemap.DefaultLimits. Beyond these, the least recently used maps are
+// dropped (and read again when a later logpoint needs them).
+const (
+	maxLpMaps        = 32
+	maxLpMapSegments = 4_000_000
+)
 
 type lpMap struct {
 	m       *sourcemap.Map
@@ -143,19 +169,25 @@ func lpFor(ps *core.PageSession) *lpPage {
 	if p, ok := lpPages.Load(ps); ok {
 		return p.(*lpPage)
 	}
-	p := &lpPage{byURL: map[string]lpScript{}, byID: map[string]string{}, maps: map[string]*lpMap{}, sessions: map[string]*lpSession{}}
+	p := newLpPage()
+	if at, ok := ps.Caller.(interface{ ActiveTarget() string }); ok {
+		p.active = at.ActiveTarget
+	}
 	actual, loaded := lpPages.LoadOrStore(ps, p)
 	if loaded {
 		return actual.(*lpPage)
 	}
-	sub := ps.Caller.Subscribe
-	if ss, ok := ps.Caller.(interface {
-		SubscribeSync(string, webkit.EventHandler) func()
-	}); ok {
-		sub = ss.SubscribeSync
+	sub := func(method string, h webkit.TargetEventHandler) func() {
+		return ps.Caller.Subscribe(method, func(m string, params json.RawMessage) { h("", m, params) })
 	}
-	u1 := sub("Debugger.scriptParsed", p.scriptParsed)
-	u2 := sub("Debugger.breakpointResolved", func(_ string, params json.RawMessage) { p.resolved(ps, params) })
+	if ss, ok := ps.Caller.(interface {
+		SubscribeTargetSync(string, webkit.TargetEventHandler) func()
+	}); ok {
+		sub = ss.SubscribeTargetSync
+	}
+	u1 := sub("Debugger.scriptParsed", func(target, _ string, params json.RawMessage) { p.scriptParsed(target, params) })
+	u2 := sub("Debugger.breakpointResolved", func(target, _ string, params json.RawMessage) { p.resolved(ps, target, params) })
+	u3 := sub("Debugger.globalObjectCleared", func(target, _ string, _ json.RawMessage) { p.cleared(target) })
 	go func() {
 		// The state ends with the page connection, as devtools.Page's
 		// does; a lost connection that is taken over keeps it.
@@ -171,12 +203,17 @@ func lpFor(ps *core.PageSession) *lpPage {
 		}
 		u1()
 		u2()
+		u3()
 		lpPages.Delete(ps)
 	}()
 	return p
 }
 
-func (p *lpPage) scriptParsed(_ string, params json.RawMessage) {
+func newLpPage() *lpPage {
+	return &lpPage{scripts: map[string]lpScript{}, maps: map[string]*lpMap{}, sessions: map[string]*lpSession{}, active: func() string { return "" }}
+}
+
+func (p *lpPage) scriptParsed(target string, params json.RawMessage) {
 	var v struct {
 		ScriptID     string `json:"scriptId"`
 		URL          string `json:"url"`
@@ -195,14 +232,89 @@ func (p *lpPage) scriptParsed(_ string, params json.RawMessage) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.byURL[u] = lpScript{id: v.ScriptID, url: u, sourceMapURL: v.SourceMapURL}
-	p.byID[v.ScriptID] = u
+	p.seq++
+	sc := lpScript{id: v.ScriptID, url: u, sourceMapURL: v.SourceMapURL, target: target, seq: p.seq}
+	if old, ok := p.scripts[sc.key()]; ok && old.sourceMapURL != sc.sourceMapURL {
+		p.dropMapLocked(sc.key())
+	}
+	p.scripts[sc.key()] = sc
+}
+
+// cleared forgets the scripts of target's document and their source maps
+// (Debugger.globalObjectCleared: a navigation or reload of that target),
+// so that a new logpoint resolves against the new document's scripts and
+// reads their maps again.
+func (p *lpPage) cleared(target string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for k, sc := range p.scripts {
+		if sc.target == target {
+			delete(p.scripts, k)
+			p.dropMapLocked(k)
+		}
+	}
+}
+
+// currentScriptsLocked returns the scripts of the active target (all when
+// it is unknown), the latest one of each URL, sorted by URL.
+func (p *lpPage) currentScriptsLocked() []lpScript {
+	active := p.active()
+	byURL := map[string]lpScript{}
+	for _, sc := range p.scripts {
+		if active != "" && sc.target != "" && sc.target != active {
+			continue
+		}
+		if old, ok := byURL[sc.url]; !ok || sc.seq > old.seq {
+			byURL[sc.url] = sc
+		}
+	}
+	out := make([]lpScript, 0, len(byURL))
+	for _, sc := range byURL {
+		out = append(out, sc)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].url < out[j].url })
+	return out
+}
+
+// dropMapLocked forgets the map of the script key k.
+func (p *lpPage) dropMapLocked(k string) {
+	m, ok := p.maps[k]
+	if !ok {
+		return
+	}
+	delete(p.maps, k)
+	p.mapSegs -= m.m.Segments()
+	p.mapUse = slices.DeleteFunc(p.mapUse, func(x string) bool { return x == k })
+}
+
+// putMapLocked keeps m as the map of the script key k, dropping the least
+// recently used maps beyond the budgets (maxLpMaps, maxLpMapSegments).
+func (p *lpPage) putMapLocked(k string, m *lpMap) {
+	p.dropMapLocked(k)
+	for len(p.mapUse) > 0 && (len(p.maps)+1 > maxLpMaps || p.mapSegs+m.m.Segments() > maxLpMapSegments) {
+		p.dropMapLocked(p.mapUse[0])
+	}
+	p.maps[k] = m
+	p.mapSegs += m.m.Segments()
+	p.mapUse = append(p.mapUse, k)
+}
+
+// useMapLocked returns the kept map of the script key k and marks it used.
+func (p *lpPage) useMapLocked(k string) *lpMap {
+	m := p.maps[k]
+	if m != nil {
+		p.mapUse = slices.DeleteFunc(p.mapUse, func(x string) bool { return x == k })
+		p.mapUse = append(p.mapUse, k)
+	}
+	return m
 }
 
 // resolved updates the bound location of the logpoint whose breakpoint
 // WebKit resolved (a script that loaded later, or the same script after a
-// reload).
-func (p *lpPage) resolved(ps *core.PageSession, params json.RawMessage) {
+// reload): only a logpoint of the session that owns the breakpoint, found
+// by the id that session got, also after a replay on a new target gave
+// the breakpoint another one.
+func (p *lpPage) resolved(ps *core.PageSession, target string, params json.RawMessage) {
 	var v struct {
 		BreakpointID string      `json:"breakpointId"`
 		Location     wipLocation `json:"location"`
@@ -212,10 +324,14 @@ func (p *lpPage) resolved(ps *core.PageSession, params json.RawMessage) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, s := range p.sessions {
+	for session, s := range p.sessions {
+		id, ok := ps.State.BreakpointClientID(core.SessionOwner("logpoint", session), target, v.BreakpointID)
+		if !ok {
+			continue
+		}
 		for _, lp := range s.points {
-			if lp.breakpointID == v.BreakpointID || ps.State.CurrentBreakpointID(lp.breakpointID) == v.BreakpointID {
-				lp.Bound = []BoundPosition{p.boundLocked(lp, v.Location)}
+			if lp.breakpointID == id {
+				lp.Bound = []BoundPosition{p.boundLocked(lp, target, v.Location)}
 			}
 		}
 	}
@@ -227,24 +343,52 @@ type wipLocation struct {
 	ColumnNumber int    `json:"columnNumber"`
 }
 
-// boundLocked is the 1-based position of a WebKit location, with its
-// original position for a source-mapped logpoint.
-func (p *lpPage) boundLocked(lp *Logpoint, l wipLocation) BoundPosition {
-	u := p.byID[l.ScriptID]
+// boundLocked is the 1-based position of a WebKit location of target,
+// with its original position for a source-mapped logpoint: from the map of
+// that script, or, while that map is not read (a reload made a new
+// script), the original position lp had at the same generated position.
+func (p *lpPage) boundLocked(lp *Logpoint, target string, l wipLocation) BoundPosition {
+	k := scriptKey(target, l.ScriptID)
+	u := p.scripts[k].url
 	if u == "" {
 		u = lp.URL
 	}
 	b := BoundPosition{Position: Position{URL: u, Line: l.LineNumber + 1, Column: l.ColumnNumber + 1}}
-	if lp.Original != nil {
-		if s, ok := p.byURL[u]; ok {
-			if m := p.maps[s.url+"\x00"+s.sourceMapURL]; m != nil {
-				if x, ok := m.m.Original(l.LineNumber, l.ColumnNumber); ok {
-					b.Original = &Position{URL: m.sources[x.Source], Line: x.OrigLine + 1, Column: x.OrigCol + 1}
-				}
-			}
+	if lp.Original == nil {
+		return b
+	}
+	if m := p.maps[k]; m != nil {
+		if x, ok := m.m.Original(l.LineNumber, l.ColumnNumber); ok {
+			b.Original = &Position{URL: m.sources[x.Source], Line: x.OrigLine + 1, Column: x.OrigCol + 1}
+		}
+		return b
+	}
+	for _, old := range lp.Bound {
+		if old.Position == b.Position && old.Original != nil {
+			o := *old.Original
+			b.Original = &o
 		}
 	}
 	return b
+}
+
+// snapshot is a copy of lp that shares no memory with it, for output
+// outside p.mu.
+func (lp *Logpoint) snapshot() *Logpoint {
+	c := *lp
+	if lp.Original != nil {
+		o := *lp.Original
+		c.Original = &o
+	}
+	c.Bound = make([]BoundPosition, len(lp.Bound))
+	for i, b := range lp.Bound {
+		c.Bound[i] = b
+		if b.Original != nil {
+			o := *b.Original
+			c.Bound[i].Original = &o
+		}
+	}
+	return &c
 }
 
 // pointsLocked returns the session's logpoints whose breakpoint is still
@@ -355,16 +499,15 @@ type lpTarget struct {
 // original source of a loaded source map, else a unique path suffix of
 // either (an original source wins over a script at the same URL, as in
 // chrome-devtools-mcp: a dev server serves a transpiled file at the URL
-// of its source). Without a match the breakpoint waits for the script:
-// an absolute URL as given, a suffix as a regular expression.
+// of its source). Every loaded script whose map has the source is a
+// candidate: the one with the mapping nearest at or after the position
+// wins, and two scripts with the same nearest original position are
+// reported as ambiguous. Without a match the breakpoint waits for the
+// script: an absolute URL as given, a suffix as a regular expression.
 func (l lpCmd) resolve(ctx context.Context, u string, line, col int) (lpTarget, error) {
 	l.p.mu.Lock()
-	scripts := make([]lpScript, 0, len(l.p.byURL))
-	for _, s := range l.p.byURL {
-		scripts = append(scripts, s)
-	}
+	scripts := l.p.currentScriptsLocked()
 	l.p.mu.Unlock()
-	sort.Slice(scripts, func(i, j int) bool { return scripts[i].url < scripts[j].url })
 
 	type cand struct {
 		url    string
@@ -372,14 +515,12 @@ func (l lpCmd) resolve(ctx context.Context, u string, line, col int) (lpTarget, 
 		m      *lpMap
 		src    int // source index when m != nil
 	}
-	cands := map[string]cand{}
+	var cands []cand
 	matches := func(c string) bool { return c == u || strings.HasSuffix(c, "/"+strings.TrimPrefix(u, "/")) }
 	var mapErrs []string
 	for _, s := range scripts {
 		if matches(s.url) {
-			if _, ok := cands[s.url]; !ok {
-				cands[s.url] = cand{url: s.url, script: s}
-			}
+			cands = append(cands, cand{url: s.url, script: s})
 		}
 		if s.sourceMapURL == "" {
 			continue
@@ -391,35 +532,61 @@ func (l lpCmd) resolve(ctx context.Context, u string, line, col int) (lpTarget, 
 		}
 		for i, src := range m.sources {
 			if matches(src) || m.m.Sources[i] == u {
-				cands[src] = cand{url: src, script: s, m: m, src: i}
+				cands = append(cands, cand{url: src, script: s, m: m, src: i})
 			}
 		}
 	}
-	pick, ok := cands[u]
-	if !ok && len(cands) > 1 {
-		names := make([]string, 0, len(cands))
-		for n := range cands {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		return lpTarget{}, fmt.Errorf("logpoint location %q matches several sources: %s; give a longer path", u, strings.Join(names, ", "))
+	names := map[string]bool{}
+	for _, c := range cands {
+		names[c.url] = true
 	}
-	if !ok {
-		for _, c := range cands {
-			pick, ok = c, true
-		}
+	if names[u] {
+		cands = slices.DeleteFunc(cands, func(c cand) bool { return c.url != u })
+	} else if len(names) > 1 {
+		return lpTarget{}, fmt.Errorf("logpoint location %q matches several sources: %s; give a longer path", u, strings.Join(slices.Sorted(maps.Keys(names)), ", "))
 	}
 	col0 := max(col-1, 0)
-	switch {
-	case ok && pick.m != nil:
-		g, found := pick.m.m.Generated(pick.src, line-1, col0)
-		if !found {
-			return lpTarget{}, fmt.Errorf("logpoint location %s:%d: the source map of %s maps no code at or after this line", pick.url, line, pick.script.url)
+	var mapped []cand
+	for _, c := range cands {
+		if c.m != nil {
+			mapped = append(mapped, c)
 		}
+	}
+	switch {
+	case len(mapped) > 0:
+		var best []cand
+		var bestG sourcemap.Mapping
+		for _, c := range mapped {
+			g, found := c.m.m.Generated(c.src, line-1, col0)
+			switch {
+			case !found:
+			case len(best) == 0 || g.OrigLine < bestG.OrigLine || g.OrigLine == bestG.OrigLine && g.OrigCol < bestG.OrigCol:
+				best, bestG = []cand{c}, g
+			case g.OrigLine == bestG.OrigLine && g.OrigCol == bestG.OrigCol:
+				best = append(best, c)
+			}
+		}
+		pick := mapped[0]
+		if len(best) == 0 {
+			var in []string
+			for _, c := range mapped {
+				in = append(in, c.script.url)
+			}
+			return lpTarget{}, fmt.Errorf("logpoint location %s:%d: the source map of %s maps no code at or after this line", pick.url, line, strings.Join(in, ", "))
+		}
+		if len(best) > 1 {
+			var in []string
+			for _, c := range best {
+				in = append(in, c.script.url)
+			}
+			return lpTarget{}, fmt.Errorf("logpoint location %s:%d is code of several loaded scripts (%s); a logpoint logs in one script: give that script's URL and generated line instead", best[0].url, line, strings.Join(in, ", "))
+		}
+		pick = best[0]
+		g, _ := pick.m.m.Generated(pick.src, line-1, col0)
 		orig := &Position{URL: pick.url, Line: line, Column: col}
 		return lpTarget{url: pick.script.url, line: g.GenLine, col: g.GenCol, original: orig}, nil
-	case ok:
-		return lpTarget{url: pick.url, line: line - 1, col: col0}, nil
+	case len(cands) > 0:
+		return lpTarget{url: cands[0].url, line: line - 1, col: col0}, nil
 	case strings.Contains(u, "://"):
 		return lpTarget{url: u, line: line - 1, col: col0}, nil
 	}
@@ -429,20 +596,29 @@ func (l lpCmd) resolve(ctx context.Context, u string, line, col int) (lpTarget, 
 	return lpTarget{regex: "(^|/)" + regexp.QuoteMeta(strings.TrimPrefix(u, "/")) + "$", line: line - 1, col: col0}, nil
 }
 
-// loadMap reads the source map of s once: a data: URL in Go, another URL
-// through WebKit's Network.loadResource (the page's network, as Web
-// Inspector loads source maps; a device's localhost is not the host's).
+// loadMap reads the source map of s once per script (a new document's
+// script is read again): a data: URL in Go, another URL through WebKit's
+// Network.loadResource (the page's network, as Web Inspector loads source
+// maps; a device's localhost is not the host's). A map beyond
+// sourcemap.DefaultLimits is refused.
 func (l lpCmd) loadMap(ctx context.Context, s lpScript) (*lpMap, error) {
-	key := s.url + "\x00" + s.sourceMapURL
+	key := s.key()
 	l.p.mu.Lock()
-	m := l.p.maps[key]
+	m := l.p.useMapLocked(key)
 	l.p.mu.Unlock()
 	if m != nil {
 		return m, nil
 	}
+	lim := sourcemap.DefaultLimits
+	tooLarge := func(what string, err error) error {
+		return fmt.Errorf("source map %s of %s: %w; set the logpoint on the generated script (%s:<line>) instead", what, s.url, err, s.url)
+	}
 	mapURL := s.sourceMapURL
 	var data []byte
 	if strings.HasPrefix(mapURL, "data:") {
+		if len(mapURL) > lim.Bytes/3*4+1024 {
+			return nil, tooLarge("(inline)", fmt.Errorf("%w: a data: URL of %d bytes, more than %d bytes of map", sourcemap.ErrTooLarge, len(mapURL), lim.Bytes))
+		}
 		d, err := sourcemap.DataURL(mapURL)
 		if err != nil {
 			return nil, fmt.Errorf("source map of %s: %w", s.url, err)
@@ -476,13 +652,19 @@ func (l lpCmd) loadMap(ctx context.Context, s lpScript) (*lpMap, error) {
 		}
 		data = []byte(res.Content)
 	}
-	sm, err := sourcemap.Parse(data)
+	sm, err := sourcemap.ParseWithLimits(data, lim)
+	if errors.Is(err, sourcemap.ErrTooLarge) {
+		return nil, tooLarge(mapURL, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("source map %s: %w", mapURL, err)
 	}
 	m = &lpMap{m: sm, sources: sm.ResolvedSources(mapURL)}
 	l.p.mu.Lock()
-	l.p.maps[key] = m
+	if _, live := l.p.scripts[key]; live {
+		// Kept only while its script's document lives (cleared).
+		l.p.putMapLocked(key, m)
+	}
 	l.p.mu.Unlock()
 	return m, nil
 }
@@ -548,18 +730,13 @@ func runLogpointAdd(ctx context.Context, env Env, in Input) (Result, error) {
 	if err := l.syntaxCheck(ctx, action); err != nil {
 		return Result{}, err
 	}
-	// Debugger for the owner first: its enable reports the loaded scripts
-	// (scriptParsed) that resolve needs. Breakpoints start inactive in a
-	// new WebKit backend, and a page's debugger statements must not pause
-	// it while Debugger is enabled for logpoints.
-	if err := l.call(ctx, "Debugger.enable", nil, nil); err != nil {
-		return Result{}, err
-	}
-	if err := l.call(ctx, "Debugger.setBreakpointsActive", map[string]bool{"active": true}, nil); err != nil {
-		return Result{}, l.dropIfEmpty(ctx, err)
-	}
-	if err := l.call(ctx, "Debugger.setPauseOnDebuggerStatements", map[string]bool{"enabled": false}, nil); err != nil {
-		return Result{}, l.dropIfEmpty(ctx, err)
+	// Debugger for the owner first, in a state where the page cannot
+	// pause (no pause on debugger statements or exceptions before the
+	// enable, then active breakpoints: a new WebKit backend starts with
+	// them inactive). Its enable reports the loaded scripts
+	// (scriptParsed) that resolve needs.
+	if err := core.AcquireNoPauseDebugger(ctx, l.ps, l.owner, l.c); err != nil {
+		return Result{}, l.dropIfEmpty(ctx, fmt.Errorf("logpoint add: Debugger could not be enabled without pausing the page, so no logpoint was set: %w", err))
 	}
 	t, err := l.resolve(ctx, u, line, col)
 	if err != nil {
@@ -589,10 +766,11 @@ func runLogpointAdd(ctx context.Context, env Env, in Input) (Result, error) {
 		lp.Column = t.col + 1
 	}
 	l.p.mu.Lock()
+	target := l.p.active()
 	for _, x := range reply.Locations {
-		lp.Bound = append(lp.Bound, l.p.boundLocked(lp, x))
+		lp.Bound = append(lp.Bound, l.p.boundLocked(lp, target, x))
 	}
-	_, known := l.p.byURL[t.url]
+	known := slices.ContainsFunc(l.p.currentScriptsLocked(), func(sc lpScript) bool { return sc.url == t.url })
 	l.p.mu.Unlock()
 	if len(lp.Bound) == 0 && known {
 		// The script is loaded and WebKit bound nothing: no code at or
@@ -606,8 +784,9 @@ func runLogpointAdd(ctx context.Context, env Env, in Input) (Result, error) {
 	lp.ID = s.next
 	s.next++
 	s.points = append(s.points, lp)
+	out := lp.snapshot() // a breakpointResolved may change lp from now on
 	l.p.mu.Unlock()
-	return Result{Text: "logpoint " + lpLine(lp), Data: lp}, nil
+	return Result{Text: "logpoint " + lpLine(out), Data: out}, nil
 }
 
 // dropIfEmpty ends the owner's Debugger state when the session has no
@@ -646,7 +825,10 @@ func runLogpointList(ctx context.Context, env Env, _ Input) (Result, error) {
 		return Result{}, err
 	}
 	l.p.mu.Lock()
-	points := append([]*Logpoint{}, l.p.pointsLocked(l.ps, l.session).points...)
+	points := []*Logpoint{}
+	for _, lp := range l.p.pointsLocked(l.ps, l.session).points {
+		points = append(points, lp.snapshot())
+	}
 	l.p.mu.Unlock()
 	if len(points) == 0 {
 		return Result{Text: "No logpoints.", Data: map[string]any{"logpoints": points}}, nil

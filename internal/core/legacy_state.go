@@ -346,6 +346,11 @@ type stateRule struct {
 	scoped bool
 	reset  func(p map[string]any) (string, any)
 	rank   int // Entry.Rank
+	// beforeEnable marks a shared value that a target gets before its
+	// <Domain>.enable (Entry.BeforeEnable), also when it is the baseline:
+	// the pause settings that live in JSC::Debugger, so that a page never
+	// runs with Debugger enabled and a pause setting it does not want.
+	beforeEnable bool
 }
 
 func param(p map[string]any, names ...string) string {
@@ -407,11 +412,22 @@ var stateRules = map[string]stateRule{
 	"DOM.highlightSelector":     {key: keyBy(), reset: hideHighlight},
 	"DOM.highlightFrame":        {key: keyBy(), reset: hideHighlight},
 	"DOM.setInspectModeEnabled": {key: keyBy(), clear: isFalse("enabled"), reset: resetWith("DOM.setInspectModeEnabled", nil, map[string]any{"enabled": false})},
+	// The pause on exceptions and on debugger statements live in
+	// JSC::Debugger: they survive Debugger.disable and a new inspector
+	// connection, and they act as soon as Debugger.enable attaches the
+	// debugger. Their baseline is that of a new JSC::Debugger, which pauses
+	// on neither (Debugger.h: m_pauseOnAllExceptionsBreakpoint,
+	// m_pauseOnUncaughtExceptionsBreakpoint and
+	// m_pauseOnDebuggerStatementsBreakpoint start null; Web Inspector's
+	// frontend turns the debugger statements on itself). WebKit has no
+	// getter, so a page's earlier value cannot be read; agent-ios never
+	// turns a pause on by itself. Both go to a target before its
+	// Debugger.enable (beforeEnable).
 	"Debugger.setPauseOnExceptions": {
-		key: keyBy(), replay: true, clear: func(p map[string]any) bool { return p["state"] == "none" },
+		key: keyBy(), replay: true, beforeEnable: true, clear: func(p map[string]any) bool { return p["state"] == "none" },
 		reset: resetWith("Debugger.setPauseOnExceptions", nil, map[string]any{"state": "none"}),
 	},
-	"Debugger.setPauseOnDebuggerStatements": {key: keyBy(), replay: true, clear: func(p map[string]any) bool { b, _ := p["enabled"].(bool); return b }, reset: resetWith("Debugger.setPauseOnDebuggerStatements", nil, map[string]any{"enabled": true})},
+	"Debugger.setPauseOnDebuggerStatements": {key: keyBy(), replay: true, beforeEnable: true, clear: isFalse("enabled"), reset: resetWith("Debugger.setPauseOnDebuggerStatements", nil, map[string]any{"enabled": false})},
 	"Debugger.setPauseOnAssertions":         {key: keyBy(), replay: true, clear: isFalse("enabled"), reset: resetWith("Debugger.setPauseOnAssertions", nil, map[string]any{"enabled": false})},
 	"Debugger.setPauseOnMicrotasks":         {key: keyBy(), replay: true, clear: isFalse("enabled"), reset: resetWith("Debugger.setPauseOnMicrotasks", nil, map[string]any{"enabled": false})},
 	// A new backend starts with breakpoints inactive (WebKit Debugger.cpp,
@@ -538,6 +554,13 @@ func legacyStateCall(ctx context.Context, ps *PageSession, owner Owner, c webkit
 		// that replayed it lose their copies too, so a later commit cannot
 		// bring it back (design 2.7).
 		id, _ := p["breakpointId"].(string)
+		ps.State.mu.Lock()
+		holder, held := ps.State.breakpointHolderLocked(id)
+		ps.State.mu.Unlock()
+		if held && holder != owner {
+			// One owner never removes another's breakpoint (design 2.4).
+			return nil, true, notSent{fmt.Errorf("%s: breakpoint %s is not one this client set, so it was not removed", method, id)}
+		}
 		ps.State.Remove(entryKey("Debugger.breakpoint", param(p, "breakpointId")))
 		cur, copies := ps.State.takeBreakpointID(id, changeTargetOf(c))
 		p["breakpointId"] = cur
