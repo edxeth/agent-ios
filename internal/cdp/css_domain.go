@@ -195,8 +195,11 @@ func cssGetDocument(ctx context.Context, call *Call) (any, Later, error) {
 			Doc string   `json:"doc"`
 			N   treeNode `json:"n"`
 		}
-		if err := json.Unmarshal(raw, &t); err != nil || t.N == nil {
-			return fmt.Errorf("decoding the document tree: %v", err)
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return fmt.Errorf("decoding the document tree: %w", err)
+		}
+		if t.N == nil {
+			return fmt.Errorf("decoding the document tree: the reply %.200s has no root node", raw)
 		}
 		doc, root = t.Doc, p.cdpTreeNode(t.Doc, t.N)
 		return nil
