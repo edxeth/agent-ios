@@ -101,12 +101,15 @@ The MCP server (`iwdp-mcp`), its tool profiles (`IWDP_MCP_TOOLS`, `--tools`), th
 | `cpu-profile`, `script-profile` | `profiler start`, `profiler stop [path]` | ScriptProfiler |
 | `call-function`, `get-properties` | removed | use `eval` |
 | `get-event-listeners`, `hide-highlight` | removed | |
-| `get-matched-styles`, `get-inline-styles`, `set-style-text`, `get-all-stylesheets`, `get-stylesheet-text` | removed | CSS rule reading and editing |
+| `get-matched-styles`, `get-inline-styles` | `css matched <target>`, `css computed <target> [props...]` | read only: the matched rules with the cascade, inline and inherited styles, and the computed style ([guide.md](guide.md#devtools-extras)) |
+| `set-style-text`, `get-all-stylesheets`, `get-stylesheet-text` | removed | CSS editing and style sheet text |
 | `disable-cache`, `set-log-level` | removed | |
 | `list-indexed-databases`, `get-indexed-db-data`, `clear-indexed-db-store` | removed | IndexedDB |
-| `debugger-enable`, `debugger-disable`, `set-breakpoint`, `remove-breakpoint`, `pause`, `resume`, `step-over`, `step-into`, `step-out`, `get-script-source`, `search-in-content`, `eval-on-frame`, `set-pause-on-exceptions` | removed | the JavaScript debugger |
+| `debugger-enable`, `debugger-disable`, `set-breakpoint`, `remove-breakpoint`, `pause`, `resume`, `step-over`, `step-into`, `step-out`, `get-script-source`, `search-in-content`, `eval-on-frame`, `set-pause-on-exceptions` | removed | the JavaScript debugger; to log a value at a script location without pausing, use `logpoint add <url>:<line> <expression>` |
 | `set-dom-breakpoint`, `remove-dom-breakpoint`, `set-event-breakpoint`, `remove-event-breakpoint`, `set-url-breakpoint`, `remove-url-breakpoint` | removed | DOM, event and URL breakpoints |
-| `memory-track`, `heap-snapshot`, `heap-track`, `heap-gc` | removed | heap and memory |
+| `heap-snapshot` | `heap snapshot [path]` | JavaScriptCore heap snapshot JSON plus a summary by class; `heap diff <a> <b>` compares two files |
+| `heap-gc` | `heap gc` | |
+| `memory-track`, `heap-track` | removed | memory and heap tracking |
 | `animation-enable`, `animation-disable`, `animation-track`, `get-animation-effect`, `resolve-animation` | removed | animations |
 | `canvas-enable`, `canvas-disable`, `get-canvas-content`, `start-canvas-recording`, `stop-canvas-recording`, `get-shader-source` | removed | canvas |
 | `get-layer-tree`, `get-compositing-reasons` | removed | layer tree |
@@ -114,6 +117,14 @@ The MCP server (`iwdp-mcp`), its tool profiles (`IWDP_MCP_TOOLS`, `--tools`), th
 | `run-audit`, `get-certificate-info` | removed | audits and certificates |
 | `browser-extensions-enable`, `browser-extensions-disable` | removed | browser extensions |
 | none | `wait`, `dialog`, `back`, `forward`, `tab`, `frame`, `diff snapshot`, `diff screenshot`, `vitals`, `state save|load`, `network har start|stop`, `set media|useragent|geo|offline|credentials`, `addinitscript`, `get cdp-url` | new |
+
+## Changes after 0.1.0
+
+- **BREAKING: state names.** `state save`, `state load` and `state show` take a state name or a path. A name is 1 to 128 letters, digits, `_` and `-`, stored as `<name>.json` under `$XDG_STATE_HOME/agent-ios/states`; anything else is a path. So `state save login` now writes the named state `login`, where 0.1.0 wrote the file `./login`. Write `./login` or `login.json` for a file in the current directory.
+- **keydown** follows agent-browser 0.45: keydown, then keypress and the insertion or default action unless the page cancels the keydown. 0.1.0 sent a bare keydown; `press <key> --phase down` still does.
+- **diff snapshot** compares with the session's last snapshot of the page (with its options) or with `--baseline <file>`; 0.1.0 compared the last two snapshots.
+- **Stale refs** fail with agent-browser 0.45's message "Ref @eN is from a document that is no longer loaded ..." (code `stale_ref` unchanged).
+- **Form errors** start with a stable code (`read_only`, `disabled`, `option_not_found`, ...) and refuse at once instead of waiting for the action deadline ([guide.md](guide.md#the-agentic-loop)).
 
 ## The kept commands: eval, cookies, status, devices, restart-iwdp
 

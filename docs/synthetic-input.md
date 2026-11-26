@@ -30,7 +30,7 @@ A trusted path exists only through Safari's remote automation, which opens its o
 | Clipboard read and write | partial, not verified | needs a user gesture and permission | `eval` with an emulated gesture |
 | Geolocation, offline | partial | no WIP method | `set geo` (a page-side shim), `set offline` (interception) |
 | Accessibility audit (axe) | not shipped | axe-core is MPL-2.0 and large | your own script through `eval` |
-| Frames that iOS 26 puts in their own target | not supported | separate targets per frame | the top-level page and frames in the same process |
+| Frames that WebKit puts in their own target (site isolation) | not supported | separate targets per frame; the iOS 26.5 Simulator kept cross-site iframes in the page's target, where `frame` works | the top-level page and frames in the page's target |
 | Native HTML5 drag and drop | best effort | synthetic events do not start a native drag | `drag` dispatches the drag events with a shared `DataTransfer` and says "best effort" |
 | Touch events on WebKitGTK | not available | WebKitGTK has no `Touch` constructor | `tap` and `swipe` send pointer and mouse events there; touch is checked on devices only |
 

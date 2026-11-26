@@ -12,7 +12,7 @@ description: Drive and debug Safari on a real iPhone or iPad or in an iOS Simula
 | Load | When you need |
 |---|---|
 | `agent-ios skills get agent-ios-device` | A physical device or local WebKitGTK pages; on the simulator a delegate, a lost turn, a refused `sim up`, real touches and the keyboard; a device or page list that does not answer; the rules for a restart of iwdp |
-| `agent-ios skills get agent-ios-devtools` | A cookie or storage change, HAR files, request routes, media and network emulation, traces, CPU profiles, init scripts |
+| `agent-ios skills get agent-ios-devtools` | A cookie or storage change, named states, HAR files, request routes, media and network emulation, traces, CPU profiles, heap snapshots, matched CSS rules, logpoints, init scripts |
 | `agent-ios skills get agent-ios-cdp` | A CDP client: agent-browser, Puppeteer, Playwright, chrome-devtools-mcp |
 
 ## Private mode
@@ -120,7 +120,10 @@ wait exit 0
 - A ref (`@e3`) names one element of the current document. Refs stay valid across commands of your session. After a navigation, a dialog, or any change of the page, take a new snapshot and use only refs from it. Never guess a ref number.
 - Targets can also be CSS selectors (`'#email'`) or locators (`text=Sign in`, `role=button`, `label=Email`, `placeholder=...`, `testid=...`). `find role button --name 'Sign in' click` finds and acts in one command.
 - An action waits up to 5 s until its element is attached, visible, stable, enabled and not covered at its center, as far as the action needs each. `fill` and `type` do not check coverage: a successful fill is no evidence that a user can reach the field. A click on a covered element fails (exit 1): find the covering element with `hit-test <x> <y>` at the element's center and report it as a finding. `--force` skips the checks; use it only when the task asks for it.
-- `snapshot -c` keeps text lines, `-s '#form'` limits the snapshot to one element, `-u` adds link URLs, and `diff snapshot` shows what changed between your last two snapshots.
+- fill, type, check, uncheck and select refuse at once with a code when the target cannot take the action (`read_only`, `disabled`, `not_editable`, `not_checkable`, `option_not_found` with the available options, `ambiguous`: add `--by value` or `--by label`). A `warning:` line after fill or select means the page changed the value: read it back with `get value`.
+- `click` and `dblclick` take `--button right|middle|back|forward` and `--modifiers shift,control,alt,meta`. `keydown Shift`, `press a`, `keyup Shift` types "A"; `keydown` also inserts a printable key, and `press <key> --phase down` sends a bare keydown.
+- `snapshot -c` keeps text lines, `-s '#form'` limits the snapshot to the elements that match, `-u` adds link URLs. A control with an empty or repeated name shows `hint="icon:…; in:…"` after its ref; the hint tells look-alikes apart, but act on them by ref.
+- `diff snapshot` shows what changed since your last snapshot (`--baseline <file>` for saved snapshot text); `diff url <url1> <url2>` opens and compares two pages and stays on the second.
 
 ### Synthetic input
 
@@ -199,7 +202,7 @@ agent-ios forward || exit "$?"
 agent-ios reload
 ```
 
-`open`, `back`, `forward` and `reload` wait for the load event. Open no tab (`tab new`) that the task did not ask for. `frame @eN` moves your later commands into a same-origin iframe, and `frame main` moves them back. Before the first action on another tab, find it with `tab find` (on the simulator with `--device SIMULATOR`), then select it (`tab <id>`, or `--page <id>` for one command).
+`open`, `back`, `forward` and `reload` wait for the load event. Open no tab (`tab new`) that the task did not ask for. `frame @eN` moves your later commands, `eval` too, into an iframe (also a cross-origin or nested one), and `frame main` moves them back; `eval --json` names the document it ran in as `origin`. Before the first action on another tab, find it with `tab find` (on the simulator with `--device SIMULATOR`), then select it (`tab <id>`, or `--page <id>` for one command).
 
 ## Errors and exit codes
 
@@ -218,4 +221,4 @@ agent-ios reload
 ## Known limits
 
 - Only one inspector connection per page. The daemon holds it; another tool that attaches (Safari Web Inspector on a Mac, a hand-written WebSocket client) takes the page from the daemon. Never write your own WebSocket client.
-- Not possible on iOS WebKit: trusted input other than `sim tap`, `sim swipe` and `sim type`, `set viewport` and `set device` (the viewport is the device's), PDF, downloads, video recording, browser contexts (every session shares one cookie jar), native pickers, `beforeunload` dialogs, cross-origin iframes.
+- Not possible on iOS WebKit: trusted input other than `sim tap`, `sim swipe` and `sim type`, `set viewport` and `set device` (the viewport is the device's), PDF, downloads, video recording, browser contexts (every session shares one cookie jar), native pickers, `beforeunload` dialogs, iframes in their own target, `tab keep`.

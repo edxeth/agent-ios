@@ -1,5 +1,7 @@
 # Design: agentic parity, CDP endpoint and direct transport for agent-ios
 
+> **Note (2026-11-26):** parity now targets agent-browser 0.45.0 and chrome-devtools-mcp 1.14.0 (it targeted agent-browser 0.41.2 below). Sections 3.1 (the runtime core and on-demand modules), 4.2 and 4.3 describe the current state; the CDP method table and limits are in docs/cdp.md, the accepted limits in docs/known-limits.md. Other sections still name 0.41.2 where they record how the first release was built.
+
 > **Note (2026-11-10):** the MCP server (commit f731071) and the old CLI commands (WS2b) are removed; agent-ios runs registry commands only. The parts of this design about the MCP server, its tools and the legacy commands are history.
 > The daemon protocol parts of section 2.2 are history too. The endpoints `/v1/op`, `/v1/raw`, `/v1/events` and `/v1/lease` are removed, with the operation scopes and raw calls of the legacy commands and the event streams of MCP clients. `/v1/run` takes an absolute `deadline` instead of `timeoutMs`. `/v1/batch` was never built. The current protocol (version 2) is in internal/daemon/proto.go; internal/daemon/server.go routes its four endpoints: `GET /v1/hello`, `GET /v1/status`, `POST /v1/run` and `POST /v1/shutdown`.
 
@@ -363,12 +365,13 @@ Rules: a new command is a new file with an `init()` that calls `Register`. Tests
 
 ### 3.1 Packaging, size budget and install
 
-- Source: `internal/runtime/js/NN-name.js`, hand-written **ES2017** (no optional chaining, no `??`, no class fields, no `Array.prototype.at`, no `structuredClone`; Safari 16.6 supports more, but ES2017 is the agreed floor). `go:embed js/*.js` joins the files in name order, so W3b adds files without editing a manifest: `10-core.js`, `20-visibility.js`, `30-aria.js`, `40-snapshot.js`, `45-locate.js` (W3a); `50-actionability.js`, `55-actions.js`, `60-keyboard.js`, `70-waits.js`, `80-dialogs.js`, `90-overlay.js` (W3b).
-- Size budget: the joined bundle must stay **at or below 64 KiB** of source, and, separately, every serialized outer message (install, bootstrap with all parts, init scripts, upload envelopes) is checked against `Limits.MaxOutgoing` on its real wire bytes before it is written, with the error "bootstrap is N bytes on the wire; the limit for this transport is M". Tests use escape-heavy content (quotes, backslashes, control characters), because JSON-in-JSON escaping can more than double the size. Reason: the whole bundle goes in one `Runtime.evaluate`, and WebKitGTK closes the connection for any message above about 128 KiB (spike A step D: 127 KiB passed, 130 KiB closed the socket); Target routing escapes the payload a second time. Chunked install through page `eval` is not an option because page CSP can forbid `eval`, while `Runtime.evaluate` is not subject to CSP. iwdp 1.9.2 or newer is required for payloads at or above 30 KB (MAP fact 10); `doctor` checks the version.
+- Source: hand-written **ES2017** (no optional chaining, no `??`, no class fields, no `Array.prototype.at`, no `structuredClone`; Safari 16.6 supports more, but ES2017 is the agreed floor). `internal/runtime/js/NN-name.js` is the **core**, joined in name order and minified to bundle.js, so a worker adds files without editing a manifest. Each directory `internal/runtime/js/mod-<name>/` is a **feature module**, built into `mod-<name>.js`; bundlegen wraps it so that it installs only on the core of the same version and only once. Modules: `forms` (fill, the form preconditions of type, check and uncheck, select native and ARIA, upload), `gestures` (swipe, drag, mouse) and `overlay` (screenshot --annotate, formerly `90-overlay.js`). Sizes at the split (2026-11-26): core about 49.5 KB, forms 8.5 KB, gestures 2.7 KB, overlay 2.6 KB.
+- Size budget (since the split): the core stays at or below 80% of 64 KiB (TestBundleLeavesHeadroom), each module and the core with all modules at or below 64 KiB, and every install message (core, each module, core with each module, core with all modules) fits every transport on its wire bytes. The original rule, kept for the reasons below: the joined bundle must stay **at or below 64 KiB** of source, and, separately, every serialized outer message (install, bootstrap with all parts, init scripts, upload envelopes) is checked against `Limits.MaxOutgoing` on its real wire bytes before it is written, with the error "bootstrap is N bytes on the wire; the limit for this transport is M". Tests use escape-heavy content (quotes, backslashes, control characters), because JSON-in-JSON escaping can more than double the size. Reason: the whole bundle goes in one `Runtime.evaluate`, and WebKitGTK closes the connection for any message above about 128 KiB (spike A step D: 127 KiB passed, 130 KiB closed the socket); Target routing escapes the payload a second time. Chunked install through page `eval` is not an option because page CSP can forbid `eval`, while `Runtime.evaluate` is not subject to CSP. iwdp 1.9.2 or newer is required for payloads at or above 30 KB (MAP fact 10); `doctor` checks the version.
 - Owner epoch: the install records `{v, daemonId, session, epoch}`. A call whose owner differs (another session, a new lease epoch, a restarted daemon) first runs `__iwdp.reset`, which clears ref maps and pending dialog answers; refs of other owners are then unknown.
 - Operation fencing: every runtime call carries `{opId, epoch, deadline}`, and an action attempt also carries `step` and `attemptEnd` (2.6). Both times are on the document's monotonic clock (`performance.now()`, captured at install), each projected through its own daemon instant with the conservative clock bounds of 2.6 (`pageMin`), which only shorten the page window; wall clocks are not used. The page dispatches only while `performance.now()` is strictly below both. Page code does no side effect when the op is canceled, the epoch changed, the step is not the next one, or the attempt end or the deadline passed, including a call that arrives after its attempt end, and it never dispatches after the call has settled.
-- Version: `runtime.Version` is the first 12 hex digits of the SHA-256 of the bundle. The bundle defines `window.__iwdp` (non-enumerable) only if it is absent or has another version.
+- Version: `runtime.Version` is the first 12 hex digits of the SHA-256 of the core and every module. The bundle defines `window.__iwdp` (non-enumerable) only if it is absent or has another version; a module on another core, or on none, answers `__IWDP_MISSING__` and changes nothing.
 - Install paths: (1) on demand for the current document by `Runtime.evaluate`; (2) as the `runtime` part of the bootstrap script (2.9), so that new documents have it before page scripts run. Path 2 needs `Page.enable` in the session, which the daemon keeps.
+- Modules on demand (decision D5 of 2026-11-26): a call site declares the modules of a runtime function with `runtime.With(fn, mods...)` (actions: `action.Needs`; CDP: `pageCall.act(..., needs...)`; the overlay calls of screenshot_annotate.go). Its expression is `(core check) ? (window.__iwdp.has("<mod>") ? 0 : "__IWDP_MODULE_MISSING__") || window.__iwdp.call(...) : "__IWDP_MISSING__"`, so nothing runs when a module is missing. On `__IWDP_MODULE_MISSING__` the Go side installs the modules by `Runtime.evaluate` (never page eval) through the same caller, so in the selected frame's context, and retries once; on `__IWDP_MISSING__` it installs the core together with the call's modules in one message and retries. Cost: two extra round trips on the first use per document, none later. Modules are not part of the bootstrap script; a new document gets them again on first use. Module state registers with `I.onReset` and `I.onRelease` like the core, so owner and epoch resets and releases clear it; the module stays installed for the document.
 - Every call is a small expression: `(window.__iwdp && window.__iwdp.v === "<ver>") ? window.__iwdp.call("<fn>", <json args>) : "__IWDP_MISSING__"` with `returnByValue: true`. On `__IWDP_MISSING__` the Go side installs and retries once. After `ErrTargetSwapped` it waits for the new target, installs and retries once only if the command is `RetrySafe` (2.6) and time remains before the deadline; otherwise it returns the error.
 - Async calls (waits, stability checks): `Runtime.evaluate` without `returnByValue` gives a promise object id; then `Runtime.awaitPromise{promiseObjectId, returnByValue:true}`. WIP `Runtime.evaluate` has **no `awaitPromise` parameter** in 16.6 or main (protocol JSON); spike A confirmed that `Runtime.awaitPromise` works and that `evaluate{awaitPromise:true}` is silently ignored. W0's `eval --await` must use the same two-step path.
 - Built-ins are captured at install time (`Element.prototype.getBoundingClientRect`, `document.querySelectorAll`, `Event` constructors, `JSON.stringify`), so later page code that overrides them does not change runtime behavior. WIP has no isolated world, so a hostile page can still read or replace `window.__iwdp`; section 9 lists this risk.
@@ -389,7 +392,7 @@ Result envelope from every runtime function: `{"ok":true,"value":...,"warnings":
 
 ### 3.2 Snapshot (agent-browser compatible)
 
-The runtime walks the flat tree (light DOM, open shadow roots, same-origin iframes one level deep) and returns JSON nodes: `{ref, role, name, level, checked, expanded, selected, disabled, required, value, url, cursor:{kind, hints, text}, children[]}`. Go renders the text, so the format has golden-file unit tests without a browser.
+The runtime walks the flat tree (light DOM, open shadow roots, same-origin iframes four levels deep since agent-browser 0.45 parity; one level in the first release) and returns JSON nodes: `{ref, role, name, level, checked, expanded, selected, disabled, required, value, url, cursor:{kind, hints, text}, children[]}`. Go renders the text, so the format has golden-file unit tests without a browser.
 
 Text format follows agent-browser's renderer (SRC/agent-browser/snapshot.rs `render_tree` lines 1222-1352), not its older documentation:
 
@@ -414,7 +417,7 @@ Role and name: a compact implementation of the HTML-AAM implicit role table and 
 - Allocation: one serialized allocator per session and page in the daemon (`refs.Table`), used only inside a mutate operation, so two snapshots never get the same range. Refs live for the logical session: kept across reconnects of the same lease, reset on a session change or lease epoch change (owner epoch, 3.1), and on daemon restart (old refs fail with "daemon restarted; run snapshot"). A BFCache restore or frame document change counts as a new generation. A snapshot call passes `nextRef`; the runtime gives new elements `e<nextRef++>` and returns the new counter. The counter belongs to the session in the daemon and is never reset while the session lives, so a reset of the page maps makes old refs unknown without recycling their ids. Ref ids are never reused inside a session, also across navigations (agent-browser rule: "Invalidated IDs are never recycled").
 - Storage in the page: an expando on the element (`el.__iwdpRef`) and `__iwdp.refs`, a `Map` from ref to element. Elements that keep their role and name keep their ref across snapshots (Playwright ariaSnapshot.ts lines 231-236 uses the same idea). JS state outlives the page connection, so refs survive reconnects and one-shot CLI processes.
 - Daemon table: ref to `{generation, role, name, uniqueInSnapshot, frameContextId}`.
-- Resolve order for `@eN`: (1) ref unknown to the table: `unknown_ref` "no snapshot produced @eN"; (2) table generation older than the current one: `stale_ref` "page navigated since the snapshot that produced @eN; run snapshot"; (3) element in the page map and connected: use it; (4) element gone, ref was unique by role and name in its snapshot, and exactly one element now has that role and name: use it and add a warning; (5) else `stale_ref` (agent-browser fallback rule).
+- Resolve order for `@eN`: (1) ref unknown to the table: `unknown_ref` "no snapshot produced @eN"; (2) table generation older than the current one: `stale_ref` "Ref @eN is from a document that is no longer loaded (the page navigated or the frame was removed). Take a new snapshot and use a fresh ref." (agent-browser 0.45; the first release said "page navigated since the snapshot that produced @eN; run snapshot"); (3) element in the page map and connected: use it; (4) element gone, ref was unique by role and name in its snapshot, and exactly one element now has that role and name: use it and add a warning; (5) else `stale_ref` (agent-browser fallback rule).
 - Targets accepted by every element command: `@eN`, a CSS selector, or locator forms `text=...`, `role=button[name="Save"]`, `label=...`, `placeholder=...`, `testid=...` (the `find` command uses the same resolver). A CSS selector that matches more than one element fails with `ambiguous` and the count, except where the command defines "first".
 
 ### 3.4 Visibility polyfill (`20-visibility.js`)
@@ -535,28 +538,29 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 | `get cdp-url` | `get cdp-url` (starts the CDP listener if needed) | `get_cdp_url` | daemon | W5 |
 | **Snapshot** | | | | |
 | `snapshot -i -c -d -s -u --json` | same flags; `-s` also takes `@eN` | `snapshot` {interactive, compact, depth, selector, urls} | runtime (3.2) | W3a |
-| `diff snapshot` | `diff snapshot` | `diff_snapshot` | Go line diff of the last two snapshots of the session | W3a |
+| `diff snapshot [--baseline file]` | `diff snapshot [-b file] [-s] [-i] [-c] [-d] [-u]` | none | Go line diff against the session's last snapshot of the page (same options) or a baseline file, without `[ref=eN]` (0.45; the first release diffed the last two snapshots) | W3a, parity-045 |
+| `diff url <u1> <u2>` | `diff url <u1> <u2> [--screenshot [--full]] [--wait-until ...] [-s] [-c] [-d]` | none | two navigations, snapshots and optional screenshots; snapshot and pixel diff | parity-045 |
 | **Actions** | | | | |
-| `click [--new-tab]` | `click <target> [--new-tab] [--button left\|right\|middle] [--count n] [--force]` | `click` (existing, +`target`) | runtime 3.5 | W3b |
+| `click [--new-tab] [--button] [--modifiers]` | `click <target> [--new-tab] [--button left\|right\|middle\|back\|forward] [--modifiers alt,control,meta,shift] [--count n] [--force]` | `click` (existing, +`target`) | runtime 3.5; every event carries button and modifiers | W3b, parity-045 |
 | (iOS) | `tap <target\|x y>` | `tap` | runtime touch sequence | W3b |
-| `dblclick` | `dblclick <target>` | `dblclick` | runtime | W3b |
+| `dblclick [--button] [--modifiers]` | `dblclick <target> [--button ...] [--modifiers ...]` | `dblclick` | runtime | W3b, parity-045 |
 | `fill` | `fill <target> <text>` (`--stdin` for secrets) | `fill` (existing, +`target`) | runtime native setter | W3b |
 | `type` | `type <target> <text> [--delay ms]`; alias `type-text` | `type_text` (existing, +`target`) | runtime key events | W3b |
 | `keyboard type`, `keyboard inserttext` | `keyboard type <text>`, `keyboard inserttext <text>` | `keyboard` {mode} | runtime | W3b |
-| `press` (alias `key`), `keydown`, `keyup` | `press <key>` (alias `key`), `keydown <key>`, `keyup <key>` | `press` {key, phase} | runtime + emulated default actions | W3b |
+| `press` (alias `key`), `keydown`, `keyup` | `press <key> [--phase]` (alias `key`), `keydown <key>`, `keyup <key>` | `press` {key, phase} | runtime + emulated default actions; `keydown` = keydown, keypress and insertion or default action (0.45 #2734), `press --phase down` = bare keydown; modifier keys held across commands | W3b, parity-045 |
 | `hover` | `hover <target> [--css]` | `hover` | runtime + optional `CSS.forcePseudoState` | W3b |
 | `focus` | `focus <target>`, `blur` | `focus` | `el.focus()` | W3b |
 | `check`, `uncheck` | `check <target>`, `uncheck <target>` | `check` {checked} | runtime | W3b |
-| `select` | `select <target> <value...>` | `select_option` | runtime | W3b |
+| `select [--by value\|label]` | `select <target> <value...> [--by value\|label]` | `select_option` | runtime module forms: `<select>` and ARIA combobox or listbox; stable refusal codes | W3b, parity-045 |
 | `drag` | `drag <src> <dst>` | `drag` | runtime, best effort | W3b |
-| `upload` | `upload <target> <file...>` | `upload_file` | runtime `DataTransfer` | W3b |
+| `upload` | `upload <target> <file...>` | `upload_file` | runtime `DataTransfer`; `~` expansion, `file_not_found`, `not_file_input` | W3b, parity-045 |
 | `scroll`, `scrollintoview` | `scroll <dir> [px] [--selector t]`, `scrollintoview <target>` | `scroll`, `scroll_into_view` | runtime | W3b |
 | `mouse move/down/up/wheel` | `mouse move <x> <y> [--steps n]`, `mouse down\|up [btn]`, `mouse wheel <dy> [dx]` | `mouse` {action} | runtime | W3b |
 | (iOS) | `swipe <up\|down\|left\|right> [px] [--selector t]` | `swipe` | touch events + scroll fallback | W3b |
 | **Waits** | | | | |
 | `wait <sel\|@ref\|ms>`, `--text`, `--url`, `--load`, `--fn`, `--state` | same flags, `--timeout` (default 25 s) | `wait` | 3.6 | W3b |
 | **Reading state** | | | | |
-| `eval <js>`, `-b`, `--stdin`, `--json` | `eval <js> [-b base64] [--stdin] [--await] [--json]` | `evaluate_script` (existing) | `Runtime.evaluate` (+`Runtime.awaitPromise`) | W0 base, W1 moves to registry |
+| `eval <js>`, `-b`, `--stdin`, `--json` | `eval <js> [--await] [--json]` | `evaluate_script` (existing) | `Runtime.evaluate` (+`Runtime.awaitPromise`) in the selected frame's context; `--json` has `origin` (0.45 `data.origin`) | W0 base, W1 moves to registry, parity-045 |
 | `get url`, `title` | `get url`, `get title` | `get` {what} | runtime or page list | W3a |
 | `get text`, `html`, `value`, `attr`, `count`, `box`, `styles` | `get text\|html\|value\|box\|styles <target>`, `get attr <target> <name>`, `get count <selector>` | `get` {what, target, name} | runtime; styles by `getComputedStyle`, never the CSS domain | W3a |
 | (asked in AGG) | `hit-test <x> <y>`: element at a point, its box and ref | `hit_test` | runtime `elementFromPoint` | W3a |
@@ -567,7 +571,8 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 | `tab new [--label] [url]` | `tab new [--label x] [url]`; alias `window new` | `tab_new` | `window.open` with user gesture | W3b |
 | `tab <id\|label>` | `tab <tN\|label>` | `tab_select` | lease move + probe | W3b |
 | `tab close [id]` | `tab close [tN]` | `tab_close` | `window.close()` | W3b |
-| `frame <sel\|@ref\|main>` | `frame <target\|main>` | `select_frame` | context id (3.8) | W3b |
+| `tab keep live\|throttled\|frozen` | `tab keep <mode> [tab]`: always fails with the reason (4.3) | none | none | parity-045 |
+| `frame <sel\|@ref\|main>` | `frame <target\|main>` | `select_frame` | context id (3.8); nested, unnamed and cross-origin iframes in the page's target | W3b, parity-045 |
 | **Dialogs** | | | | |
 | `dialog status`, `accept [text]`, `dismiss` | same; plus `--dialog-default` session flag | `dialog` {action, text} | runtime override (3.7) | W3b |
 | **Console and errors** | | | | |
@@ -597,7 +602,7 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 | `cookies set`, `cookies set --curl` | `cookies set <name> <value> [--same-site] [--expires] ...`, `cookies set --curl <file>`, `--json <file>` | `set_cookie` | `Page.setCookie` with read-back (W0) | W0 base, W4 import |
 | `cookies clear` | `cookies clear [--domain d]` | `clear_cookies` | `Page.setCookie` of each cookie with an expiry in the past (exact identity, W5c-1b), read back; scope is the frame resource URLs (MAP 1.8) | W4 |
 | `storage local\|session` | `storage local [key]`, `storage local set <k> <v>`, `storage local clear` (same for session) | existing storage tools + `storage` | JS `localStorage` (no storage id needed) | W4 |
-| `state save/load`, `--state` | `state save <path>`, `state load <path>` | `state_save`, `state_load` | cookies + storage of the current origin, JSON | W4 |
+| `state save/load/list/show/rename/clear`, `--state` | `state save\|load\|show <name-or-path>`, `state list`, `state rename <old> <new>`, `state clear <name>\|--all` | `state_save`, `state_load` | cookies + storage of the current origin, JSON; names in `$XDG_STATE_HOME/agent-ios/states` (parity-045 D7) | W4, parity-045 |
 | **Sessions and diagnostics** | | | | |
 | `session`, `session id/list/info`, `--session` | `session [id\|list\|info]`, `session release`, `lease break <page>` | `session_info` | daemon | W1 |
 | `doctor` | `doctor [--json]`: daemon, transport, iwdp version (needs 1.9.2+), usbmuxd, devices, Web Inspector hint, visible tab probe, leases | `doctor` | daemon | W1 |
@@ -607,6 +612,9 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 | `profiler start/stop` | `profiler start`, `profiler stop [path]` | `profiler_start`, `profiler_stop` | `ScriptProfiler` samples converted to `.cpuprofile` | W4 |
 | `vitals [url]` | `vitals [--json]` | `vitals` | JS: navigation and paint timing on 16.7; LCP and event timing on Safari 26.2+ (MAP 1.12) | W4 |
 | (DevTools extra) | `emulate network <preset>` | `set_emulated_conditions` (existing) | `Network.setEmulatedConditions` only where the iOS command list has it (16.4, 27.3+) | W4 |
+| (chrome-devtools-mcp `take_heapsnapshot`) | `heap snapshot [path] [--top n]`, `heap gc`, `heap diff <a> <b>` | none | WIP `Heap.snapshot` (JavaScriptCore JSON, not V8) and `Heap.gc`; class summary on the host | parity-045 |
+| (chrome-devtools-mcp `get_css_styles`) | `css matched <target> [--computed] [--page-size] [--page-index]`, `css computed <target> [props...]` | none | `CSS.getMatchedStylesForNode`, `getInlineStylesForNode`, `getComputedStyleForNode` without `CSS.enable`; cascade computed in Go | parity-045 |
+| (chrome-devtools-mcp `set_logpoints`) | `logpoint add <url>:<line>[:<col>] <expr>`, `logpoint list\|remove <id>\|clear` | none | WIP breakpoints with `autoContinue` and an evaluate action; source maps on the host | parity-045 |
 
 ### 4.3 Impossible or partial on iOS WebKit
 
@@ -625,7 +633,17 @@ WIP has no dialog events or commands, and a native dialog blocks `Runtime.evalua
 | clipboard read and write | partial | needs a user gesture and permission | `eval` with `emulateUserGesture`; unverified |
 | set geo, set offline | partial | no WIP method | JS shim; interception |
 | a11y (axe audit) | not shipped | axe-core is MPL-2.0 and large | existing `run_audit` (WebKit Audit domain); user-supplied script through `eval` |
-| subframe navigation, iOS 26 cross-origin frame targets | not in v1 | separate targets per frame (MAP 1.5) | top-level page only |
+| subframe navigation, frames in their own target (site isolation) | not supported | separate targets per frame (MAP 1.5); the iOS 26.5 Simulator kept cross-site iframes in the page's target (2026-11-26), where `frame` and `eval` work | frames in the page's target |
+| `tab keep live\|throttled\|frozen` | impossible | WIP has no focus emulation, no lifecycle freeze and no background throttling setting (iOS 16.0 to 27.3, WebKit main) | none; the command fails with the reason |
+| click with modifiers opening a new tab or window | partial | WebKit follows a modified synthetic click on a link in the same tab | `click --new-tab`, `tab new <url>` |
+| mouse back and forward buttons moving in history | partial | the synthetic events do not move history | `back`, `forward` |
+| form error codes in a JSON envelope | partial | agent-ios prints errors on stderr only | the code is the prefix of the error line |
+| chrome-devtools-mcp: CPU throttling above 1, `omitBackground`, `forced-colors: active`, `prefers-contrast` less or custom, per-URL network conditions | impossible | no WIP method or user preference | none |
+| chrome-devtools-mcp: network throttling | partial | `Network.setEmulatedConditions` exists on iOS 16.4 to 17.x (download) and 27.3 (download and latency) only | `emulate network` where it exists |
+| chrome-devtools-mcp: `configure_webauthn`, `resize_page`, `lighthouse_audit`, `screencast_start`, `new_page` isolatedContext | impossible | no WebAuthn domain, fixed viewport, no CPU throttling, no screencast frames, no browser contexts | none |
+| chrome-devtools-mcp: `take_heapsnapshot` and heap analysis | partial | `Heap.snapshot` is JavaScriptCore's format, not V8's; HeapProfiler is not translated | `heap snapshot`, `heap diff` (class counts and self sizes; no retained sizes) |
+| chrome-devtools-mcp: `get_css_styles` through the CDP endpoint | not built (decision D9 open) | DevTools needs `DOM.setChildNodes` events and stable node ids, which the bridge does not send | `css matched`, `css computed` |
+| chrome-devtools-mcp: breakpoints that pause | impossible through the endpoint | a paused page blocks its single connection | logpoints (`logpoint add`, CDP `set_logpoints`) |
 | react, webmcp, flow, auth, plugin, chat, dashboard, install, upgrade, confirm/deny | out of scope | agent-browser product features, not browser control | none |
 
 

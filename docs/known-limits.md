@@ -50,14 +50,73 @@ Pages opened by an explicit `ws://` URL that is not an iwdp device page (`--page
 - **document.cookie keeps deleted cookies.** In an open page, `document.cookie` still returns a cookie that WebKit deleted (an expired `Page.setCookie`, `cookies clear`), also after a reload and after a cross-site round trip, while the server and `Page.getCookies` no longer see it (device check 3, iOS 16.7). A non-expired `Page.setCookie` of the same cookie does update `document.cookie`. Inference: the web content process keeps a cookie cache that is not told about the deletion. Workaround: a page-side `document.cookie = "<name>=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=<path>"`.
 - **Playwright locators on Safari below 17.4.** Playwright's locator actions, `getByRole` and `ariaSnapshot` call `Element.prototype.checkVisibility`, which Safari 16.6 (iOS 16.7) lacks; the CDP endpoint installs a shim for it, and Playwright's popover and `getHTML` features still fail ([cdp.md](cdp.md#page-compatibility-shims)). With the shim, device check 4 (iOS 16.7, code a8aec70) passed Playwright's `getByRole` click, `getByLabel` fill, a locator read and `ariaSnapshot`.
 - **One ScriptProfiler recording per page.** `profiler start`, `trace start` with the `script` category (the default categories are `timeline,script`) and a CDP client's `Profiler.start` all use WebKit's one ScriptProfiler run of the page. While one of them records, a second start is refused and names what to do: stop the recording that holds the run (`profiler stop`, `trace stop`), or start the trace with `--categories timeline`. To trace and profile at the same time, record a Timeline-only trace (`trace start --categories timeline`) beside the profiler. Reason: WebKit runs at most one ScriptProfiler run per page, and a second `ScriptProfiler.startTracking` starts nothing, so the second recording would silently share the first one's samples.
-- **CSS through iwdp.** `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` hang through iwdp and are refused; `hover --css` therefore fails there.
+- **CSS through iwdp.** `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` hang through iwdp and are refused; `hover --css` therefore fails there. `css matched` and `css computed` need none of them (see "CSS rules" below).
 - **Not verified on a device:** see [Open device questions](#open-device-questions).
 - **Storage quota.** `state load` and `state save` refuse a storage area above 90% of the 5 MiB quota in WebKit's count; strings that page script stored as 16-bit can count less than WebKit counts.
 - **`diff screenshot`** compares viewport screenshots only. **`vitals`**: LCP, CLS and INP need Safari 26.2 or later.
 - **`click --new-tab`.** When the page changes between the readiness probe and the gesture call, the page can hold a transient user activation although no tab opened.
 - **Direct transport.** Results above the frame cap (default 256 MiB) need chunked messages, which are not supported: use `--transport iwdp`. On iOS 17 and later it may need a tunnel; until a device run passes, `auto` never chooses it.
 - **CDP.** The endpoint serves the methods of the table in [cdp.md](cdp.md#method-table) and answers every other method with "wasn't found"; [cdp.md](cdp.md#limits-per-domain) lists the limits per domain and what each pinned client loses. The compatibility suite runs only on WebKitGTK. An endpoint under `AGENT_IOS_NO_DAEMON=1` ends with its process.
+- **Network throttling and other emulation through CDP.** CPU throttling above rate 1, a transparent screenshot background (`omitBackground`), per-URL network conditions, `navigator.onLine` and `navigator.connection` emulation and upload throttling cannot be emulated through the CDP endpoint ([cdp.md](cdp.md#limits-per-domain)). Network throttling works on iOS 16.4 to 17.x (download only) and on iOS 27.3 (download and latency); iOS 18.0 to 27.2 have no throttling, and a throttle there is refused before any change. `forced-colors: active` and `prefers-contrast: less` or `custom` have no WIP user preference and are refused.
+- **chrome-devtools-mcp tools without a WIP route.** `configure_webauthn` (WIP has no WebAuthn domain), `resize_page` (the viewport is fixed), `lighthouse_audit` (it needs device metrics and CPU throttling), `screencast_start` (iOS sends no screencast frames), `new_page` with `isolatedContext` (no browser contexts) and `take_heapsnapshot` with its heap analysis tools (HeapProfiler is not translated: WebKit's `Heap.snapshot` is JavaScriptCore's format, not V8's; use `agent-ios heap snapshot`) fail with the method's "wasn't found" answer or the reason.
 - **Whitespace text in the CDP accessibility tree.** `Accessibility.getFullAXTree` has a StaticText node named " " for each whitespace-only text node between elements, which Chrome leaves out. Clients show them: chrome-devtools-mcp's `take_snapshot` lists them as lines such as `uid=1_3 " "`, and Puppeteer's `accessibility.snapshot()` as extra StaticText leaves. The elements, their names and their uids or refs are not affected. Reason: the endpoint builds the tree from the runtime's snapshot walk (internal/runtime/js/40-snapshot.js), which collapses such text to one space and keeps it.
+
+## agent-browser 0.45 and chrome-devtools-mcp 1.14 features
+
+Input and actions:
+
+- **Modified clicks on links stay in the tab.** A modified synthetic click on a link (`click --modifiers control`, meta, shift or alt, or `press Control+Enter` on a focused link) is followed by WebKit in the same tab (checked on WebKitGTK for all four modifiers); Chrome would open a new tab or window. Use `click --new-tab` or `tab new <url>`. Not checked on iOS Safari.
+- The back and forward buttons send their events (button 3 and 4, auxclick) but do not move in history.
+- Held modifiers (`keydown Shift`) end with the document (navigation, reload) and with a new owner; agent-browser keeps them until its browser closes.
+- Unknown key names and unknown chord modifiers stay usage errors (agent-browser sends an unknown name as key and code with keyCode 0); F-keys are not named keys.
+- A press interrupted mid-chord (attempt deadline) does not send the keyups of chord modifiers already pressed; a chord does not change the held modifiers, so no modifier stays held.
+- agent-ios dispatches synthetic events to the target element itself, so a stale press point cannot click another element (agent-browser 0.45 fixed real CDP input that landed elsewhere, #2587 and #2611). The point still matters for the receives-events check and for the clientX and clientY that the page sees; it is measured after the layout settled.
+- The action wait differs from agent-browser 0.45: no "up to 5 settle rounds, then press anyway" and no "re-scroll at most twice": agent-ios retries until the action deadline and fails with the last reason. hover keeps the receives-events check (agent-browser's hover only scrolls and settles). The error wording stays agent-ios's (`... stopped before step 1 of 1 (0 acknowledged): covered by <div id="banner">`).
+
+Forms:
+
+- **Form refusals have no JSON envelope.** agent-browser's `--json` error carries the code in `"code"`; agent-ios prints errors on stderr only, so the code is the prefix of the error line (`Error: select: option_not_found: ...`), in text and with `--json`.
+- fill does not apply `maxlength`: it sets the value through the native setter, which a browser does not cut, and agent-browser's `value_truncated` warning is not given.
+- `type --clear` is not implemented, and type gives no read-back warnings (`value_mismatch`, `effect_not_observed`).
+- A custom combobox select runs in two steps 50 ms apart; options that render more than about 150 ms after the open click are not found ("combobox opened but no visible role=option elements were found"). agent-browser waits up to 2 s.
+- upload refuses a directory (agent-browser passes directories for `webkitdirectory`); it reads regular files only.
+- A plain non-editable element (a `<div>`) is `not_editable` for fill and type; agent-browser tries to focus it first.
+
+Snapshots, frames and screenshots:
+
+- `snapshot -s` with only hidden matches prints "(empty page)" (a scoped snapshot shows what the page snapshot shows), where agent-browser 0.45 fails with "No accessibility node found for selector '<sel>'".
+- An iframe whose document the page cannot read (cross-origin, or a frame in its own target) shows as its Iframe line without content.
+- find, get, is and the other locator commands search same-origin iframes one level deep; refs from a snapshot reach every walked level (four).
+- **Frames in their own target.** WebKit with site isolation puts a cross-site iframe in its own target; agent-ios ignores non-page targets, and `frame` refuses such a frame with `unsupported`. Evidence (2026-11-26): Safari on the iOS 26.5 Simulator ran cross-site iframes, also nested ones, in the page's target with their own execution contexts: `frame`, `eval`, `check`, `find`, `wait`, `console`, `errors` and `screenshot --annotate` all worked there, so no frame target was seen and Target routing to frame targets was not built. When a future iOS enables site isolation, the refusal stays until that routing exists.
+- `screenshot --annotate` labels the refs of the top document's snapshot (which includes same-origin frames); refs of a selected cross-origin frame are not labelled. Boxes of rotated or skewed iframes use the frame's bounding box; only translation and scale are exact.
+
+Diffs, states and tabs:
+
+- **`tab keep`.** WIP has no focus emulation (Chrome's `Emulation.setFocusEmulationEnabled`), no lifecycle freeze (`Page.setWebLifecycleState`) and no setting for background throttling (checked in the protocol of iOS 16.0 to 27.3 and WebKit main: `Page.overrideSetting` has none). `tab keep live|throttled|frozen` exists and fails with the reason (exit 1, `unsupported`); Safari throttles background tabs itself.
+- **`diff url` screenshots.** The pixel rule is agent-ios's `diff screenshot` rule (largest channel difference over threshold × 255), not agent-browser's Euclidean RGB distance; no diff image is written (`diffPath` is null).
+- **`diff snapshot` text.** The diff marks no "\ No newline at end of file" and compares lines as split on "\n"; agent-browser's diff treats a last line without newline as different from the same line with one, so counts can differ when a change touches the last line.
+- **`state`.** No encryption (`encrypted` is always false), no `state clean`, no autosave files.
+
+Heap:
+
+- **Snapshot size.** A heap snapshot is one protocol reply. iwdp drops a device message above 64 MiB and the direct transport one above its frame cap (default 256 MiB); a heavier page's snapshot then gets no reply, and `heap snapshot` ends at its deadline (exit 124; with the direct transport the error adds the frame cap hint). The daemon holds the snapshot several times in memory while it decodes, writes and summarizes it (inferred from the code, not measured). JavaScriptCore returns no data for a snapshot that outgrows its string builder; the command then fails with "WebKit returned no snapshot data".
+- **Summary.** By class name and self size only: no retained sizes, dominators or paths (Web Inspector computes those from the same file). Snapshots in JavaScriptCore's GCDebugging format are refused. Instances of classes with the same name are counted together.
+- **Snapshot chain.** After the first `heap snapshot`, WebKit's Heap agent of the page keeps its snapshot chain until the agent is reset, which holds memory in the page; a later snapshot's JSON lists the live nodes of the whole chain. The memory cost on iOS was not measured.
+
+CSS rules:
+
+- `css matched`: WIP gives no style sheet headers without `CSS.enable` (which hangs through iwdp), so rules of the document's own `<style>` elements show the line inside the style element, not the document line; var() is resolved only in the element's own rules; keyframes, `@property`, `@position-try`, animation and transition styles are not shown. The inherited-property and shorthand lists are built in, so `--computed` and `css computed` with a shorthand can show a few more properties than DevTools. Checked on the iOS 26.5 Simulator and WebKitGTK 2.54 only; older iOS versions list the three methods but were not run.
+- The CDP endpoint serves no CSS method, so chrome-devtools-mcp's `get_css_styles` fails ([cdp.md](cdp.md#client-notes)); use `agent-ios css matched`.
+
+Logpoints:
+
+- A source-mapped logpoint is resolved once, at `logpoint add`; after a rebuilt bundle it stays on the old generated line: remove it and add it again. Index source maps (with `sections`) are not supported.
+- An original source is found only in a script that WebKit reported after the first logpoint command on the page; when another owner (a CDP client) enabled the debugger first, earlier scripts are unknown. A path suffix that matches no known script waits for a script with that suffix ("not bound yet").
+- Two logpoints that resolve to the same location cannot both bind (WebKit keeps one breakpoint per location); the second add fails. Logpoints in workers and in frames in their own target are not supported.
+
+Private mode:
+
+- `diff url`, the `state` group except `save` and `load`, `heap`, `css`, `logpoint` and `tab keep` print only their status line in private mode, because their results are page content (class names, style rules, logged values) or name saved states. Run the one command whose result you need with `--private=false`.
 
 ## Open device questions
 
@@ -92,4 +151,4 @@ Still open:
 - **Cookie delete.** The namesakes of the parent domain and of the other kind (host-only or domain cookie).
 - **ScriptProfiler.** CDP `Profiler` and traces with V8 categories through a CDP client.
 - **Interception.** The WIP rule texts with the bridge's NUL suffix on current iOS, and the interception of a cross-process navigation's document request through iwdp.
-- **Not reached by device check 3:** `set credentials` (enabled on WebKitGTK only), the direct transport, a second inspector moving the lease to lost, the busy hint with iwdp's frontend on, `diff screenshot`, `click --new-tab`, `frame` on a cross-origin iframe, and `wait --url` across a target swap.
+- **Not reached by device check 3:** `set credentials` (enabled on WebKitGTK only), the direct transport, a second inspector moving the lease to lost, the busy hint with iwdp's frontend on, `diff screenshot`, `click --new-tab`, `frame` on a cross-origin iframe (checked on the iOS 26.5 Simulator on 2026-11-26, not on a physical device), and `wait --url` across a target swap.

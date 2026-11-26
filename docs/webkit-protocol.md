@@ -31,6 +31,8 @@ iwdp → Client
 
 Some `<Domain>.enable` methods work through Target routing (for example `Debugger.enable`, `Canvas.enable`, `Worker.enable`, `Animation.enable`). Others, like `CSS.enable`, hang without a response. Most domain methods (`DOM.getDocument`, `CSS.getMatchedStylesForNode`, `CSS.getComputedStyleForNode`, `CSS.setStyleText`, `Runtime.evaluate`) work without an explicit enable.
 
+Checked 2026-11-26 on the iOS 26.5 Simulator through iwdp: `CSS.getMatchedStylesForNode`, `CSS.getInlineStylesForNode` and `CSS.getComputedStyleForNode` answer in about 42 ms without `CSS.enable`, and the connection stays usable (`css matched` and `css computed` use only these). `DOM.requestNode` before `DOM.getDocument` fails with "Document must have been requested" on iOS and with an empty error message on WebKitGTK 2.54.
+
 ## Known limitations
 
 - `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` hang through iwdp Target routing. The command is sent but no response comes back, and the hang corrupts the connection: every later command on the same connection hangs too. `webkit.Client.Send` refuses these three methods when Target-routed (`ErrHangsThroughTarget`; `TestClient_TargetRoutedCSSGuard` in internal/webkit/client_test.go).

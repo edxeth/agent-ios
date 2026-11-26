@@ -57,9 +57,12 @@ Sessions: "browser" is the browser session of a `/devtools/browser/...` connecti
 | Tracing | `start`, `end` | done | page | `dataCollected`, `tracingComplete` |
 | IO | `read`, `close` (trace streams) | done | page | |
 | Profiler | `enable`, `disable`, `start`, `stop` | done | page | |
+| Debugger | `enable`, `disable`, `removeBreakpoint`, `getScriptSource`, `getPossibleBreakpoints` (WIP `getBreakpointLocations`, iOS 16.4 and later) | done | page | `scriptParsed`, `breakpointResolved` |
+| Debugger | `setBreakpointByUrl` (logpoints only), `setPauseOnExceptions` (`none` only) | partial | page | |
+| Debugger | `setAsyncCallStackDepth`, `setBlackboxPatterns`, `setSkipAllPauses` | no effect | page | |
 | Audits | `enable` | no effect | page | none (`Audits.issueAdded` is never sent) |
 
-Not translated: every other method of these domains (for example `Network.getAllCookies`, `Tracing.getCategories`, `Profiler.startPreciseCoverage`, `Page.printToPDF`, `DOM.pushNodesByBackendIdsToFrontend`), and the domains Debugger, HeapProfiler, Overlay, CSS, Security, Inspector, WebMCP and Autofill. `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` are always refused, because they hang through iwdp.
+Not translated: every other method of these domains (for example `Network.getAllCookies`, `Tracing.getCategories`, `Profiler.startPreciseCoverage`, `Page.printToPDF`, `DOM.pushNodesByBackendIdsToFrontend`, `Debugger.pause`, `Debugger.resume`, the step methods, `Debugger.setBreakpoint`, `Debugger.evaluateOnCallFrame`, `Debugger.setBreakpointsActive`), and the domains HeapProfiler, Overlay, CSS, Security, Inspector, WebMCP and Autofill. `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` are always refused, because they hang through iwdp.
 
 ## How to connect
 
@@ -150,7 +153,7 @@ The pinned versions are agent-browser 0.41.2, playwright-core 1.65.0, puppeteer-
   - Loses: `page.on('crash')` for a page that existed when `connectOverCDP` connected (`Inspector.enable`).
   - On Safari below 17.4 (iOS 16.7), locator actions, `getByRole` and `ariaSnapshot` need the endpoint's `checkVisibility` shim, and the features that use the popover API or `getHTML` fail (see "Page compatibility shims").
 - **chrome-devtools-mcp**: `chrome-devtools-mcp --wsEndpoint <cdp-ws-url>`. It uses its bundled Puppeteer; the viewport rule above holds. Its page tools need the page id from `list_pages` (the server routes by page id by default); the list has the page of the URL. Checked tools: `list_pages`, `navigate_page`, `take_snapshot`, `click` by uid, `list_network_requests` and `take_screenshot`.
-  - Loses: `get_css_styles` (`CSS.enable`; the endpoint never serves CSS), source-mapped stack traces of console messages and errors (`Debugger.*`), the element or request selected in an open DevTools window (`Target.getDevToolsTarget`), `list_webmcp_tools` and `execute_webmcp_tool` (`WebMCP.enable`), and DevTools-SDK extras that no tool reads (`Autofill.*`, `Log.startViolationsReport`, `Network.setAttachDebugStack`, `Runtime.getIsolateId`, `Storage.getStorageKey`). Most of these come from the second, DevTools-SDK CDP session that the server opens per page.
+  - Loses: `get_css_styles` (`CSS.enable`; the endpoint never serves CSS; use `agent-ios css matched`), `take_heapsnapshot` and its heap analysis tools (HeapProfiler; use `agent-ios heap snapshot`), source-mapped stack traces of console messages and errors (not checked with the Debugger subset that now serves `Debugger.enable` and `getScriptSource`), the element or request selected in an open DevTools window (`Target.getDevToolsTarget`), `list_webmcp_tools` and `execute_webmcp_tool` (`WebMCP.enable`), and DevTools-SDK extras that no tool reads (`Autofill.*`, `Log.startViolationsReport`, `Network.setAttachDebugStack`, `Runtime.getIsolateId`, `Storage.getStorageKey`). Most of these come from the second, DevTools-SDK CDP session that the server opens per page.
   - Not checked: whether its trace tools accept a trace converted from WebKit's Timeline (they expect Chrome's trace metadata).
 - **Worlds**: Playwright's and Puppeteer's utility worlds are emulated as named contexts in the page's main world. They are not isolated from page scripts.
 - **Dialogs**: `Page.handleJavaScriptDialog` fails with "dynamic dialog handling is not supported on iOS WebKit; pre-arm answers with agent-ios dialog accept|dismiss". The session's dialog policy still answers dialogs (`Page.enable` installs it when the session has none), and each automatic answer is reported as a `Log.entryAdded` warning. No `Page.javascriptDialog*` events are sent.
@@ -272,6 +275,17 @@ Fetch:
 - Not supported (server error): `continueRequest` with `interceptResponse`, a change of a request at the response stage, `failRequest` at the response stage, and `fulfillRequest` without a body at the response stage.
 - **A lost reply.** When the reply to a rule that WebKit applied is lost, a retried `Fetch.enable` fails because WebKit refuses the duplicate rule. Recover with `Fetch.disable`, then `Fetch.enable`.
 - Paused requests that the client did not answer are continued unchanged at `Fetch.disable`, at the detach, at a connection loss and at the lease end. A request matched by the session's CLI interception (`network route`, `set offline`, `set credentials`) is answered by the CLI handler; the CDP client sees only its Network events.
+
+Debugger (the logpoint subset of chrome-devtools-mcp's `set_logpoints`):
+
+- The page never pauses through the bridge: a paused page would block every other command of its single connection. `setBreakpointByUrl` takes only a DevTools logpoint condition (`/** DEVTOOLS_LOGPOINT */ console.log(...)`) or DevTools' never-pause condition (`false`); it becomes a WIP breakpoint with `autoContinue` and an evaluate action of the condition, so it continues whatever the expression returns. Other conditions, no condition and breakpoints by `scriptHash` are refused; `pause`, `resume`, the step methods, `setBreakpoint`, `evaluateOnCallFrame` and `setBreakpointsActive` are not translated.
+- `Debugger.enable` activates WIP breakpoints and turns off the pause on `debugger` statements, as state of the attachment that the detach removes. Breakpoints belong to the attachment and are removed at the detach.
+- `scriptParsed` carries the main frame's default context for every script (scripts of child frames too) and a hash made from the script id. Scripts with a URL seen since the attach are announced at `Debugger.enable`, also when another owner enabled WIP Debugger first; scripts parsed before the attach are then missing.
+- `set_logpoints` also sends `Runtime.getHeapUsage`, which is not translated. Checked by unit tests only, not end to end with chrome-devtools-mcp 1.14.0.
+
+HeapProfiler:
+
+- HeapProfiler is not translated, so chrome-devtools-mcp's `take_heapsnapshot` and its heap analysis tools do not work through the bridge. WebKit's `Heap.snapshot` returns JavaScriptCore's own snapshot JSON, not a V8 `.heapsnapshot`: a conversion would leave the analyses that need V8's node types and native contexts empty or wrong. Use `agent-ios heap snapshot [path]`, which writes JavaScriptCore's JSON as WebKit returns it (Web Inspector reads it) with a summary by class, and `heap diff <a> <b>`.
 
 Tracing, IO and Profiler:
 
