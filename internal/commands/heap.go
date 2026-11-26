@@ -325,43 +325,47 @@ func readHeapFile(env Env, p string) (heapsnap.Snapshot, string, error) {
 	return s, path, nil
 }
 
-// heapDiffFiles is the two snapshots of heap diff.
-type heapDiffFiles struct {
-	a, b   heapsnap.Snapshot
-	pa, pb string
-}
-
 func runHeapDiff(ctx context.Context, env Env, in Input) (Result, error) {
 	// heap diff runs in the client (Local), where nothing else enforces
-	// the command deadline: the reads and parses end with ctx. A read
-	// still running at the deadline is left to the process exit.
+	// the command deadline: the whole diff (reads, parses, the class diff,
+	// its sort and the result) ends with ctx, and a run that ctx ended
+	// returns its error (exit 124), never a result. Work still running at
+	// the deadline is left to the process exit.
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
 	type result struct {
-		files heapDiffFiles
-		err   error
+		res Result
+		err error
 	}
 	done := make(chan result, 1) // the goroutine never blocks on the send
 	go func() {
-		var r result
-		r.files.a, r.files.pa, r.err = readHeapFile(env, arg(in, 0))
-		if r.err == nil {
-			r.files.b, r.files.pb, r.err = readHeapFile(env, arg(in, 1))
-		}
-		done <- r
+		r, err := heapDiff(env, in)
+		done <- result{r, err}
 	}()
-	var files heapDiffFiles
 	select {
 	case r := <-done:
-		if r.err != nil {
-			return Result{}, r.err
+		// select picks either case when both are ready: a result that
+		// arrives at the deadline is dropped.
+		if err := ctx.Err(); err != nil {
+			return Result{}, fmt.Errorf("heap diff: %w", err)
 		}
-		files = r.files
+		return r.res, r.err
 	case <-ctx.Done():
 		return Result{}, fmt.Errorf("heap diff: %w", ctx.Err())
 	}
-	a, b, pa, pb := files.a, files.b, files.pa, files.pb
+}
+
+// heapDiff reads the two snapshot files of in and compares them.
+func heapDiff(env Env, in Input) (Result, error) {
+	a, pa, err := readHeapFile(env, arg(in, 0))
+	if err != nil {
+		return Result{}, err
+	}
+	b, pb, err := readHeapFile(env, arg(in, 1))
+	if err != nil {
+		return Result{}, err
+	}
 	all := heapsnap.Diff(a, b)
 	shown := all
 	if n := heapTop(in); n < len(shown) {

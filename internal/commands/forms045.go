@@ -214,8 +214,9 @@ const (
 	maxOptionText    = 100
 )
 
-// cutOption cuts an option's value or label to maxOptionText characters
-// and marks the cut with "…".
+// cutOption cuts an option's value or label to maxOptionText Unicode code
+// points (runes; the page sends at most one more, mod-forms cut) and marks
+// the cut with "…".
 func cutOption(s string) string {
 	if r := []rune(s); len(r) > maxOptionText {
 		return string(r[:maxOptionText]) + "\u2026"

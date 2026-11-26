@@ -91,10 +91,11 @@
   // or value, then the normalized label; options sharing a value are one
   // choice, so only the first of them is picked. ARIA lists compare
   // normalized texts and count every match. option_not_found carries the
-  // first OPTS options, each text cut to OLEN + 1 characters (Go,
-  // forms045.go cutOption, cuts it to OLEN and marks the cut).
-  var OPTS = 50, OLEN = 100;
-  function cut(s) { return s.slice(0, OLEN + 1); }
+  // first OPTS options, each text cut to OLEN + 1 code points, never
+  // inside a surrogate pair (Go, forms045.go cutOption, cuts it to OLEN
+  // code points, Go runes, and marks the cut with "…").
+  var OPTS = 50, OLEN = 100, CUT = new RegExp("^[^]{0," + (OLEN + 1) + "}", "u");
+  function cut(s) { return CUT.exec(s)[0]; }
   function match(ps, g, s, e) {
     var by = g.by, out = [];
     g.vals.forEach(function (v, i) {
