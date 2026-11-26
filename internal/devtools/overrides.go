@@ -423,7 +423,7 @@ func (p *Page) EmulateNetworkRate(ctx context.Context, c webkit.Caller, session 
 		}
 		params = json.RawMessage(fmt.Sprintf(`{%q:%d}`, name, bytesPerSecond))
 	}
-	return p.ps.State.Change(ctx, c, func(c webkit.Caller) error {
+	err := p.ps.State.Change(ctx, c, func(c webkit.Caller) error {
 		if send, undo := p.ps.State.SetEmulatedConditions(owner("emulate", session), params); send != nil {
 			_, err := c.Send(ctx, "Network.setEmulatedConditions", send)
 			p.ps.State.SentEmulatedConditions(err, undo)
@@ -433,6 +433,16 @@ func (p *Page) EmulateNetworkRate(ctx context.Context, c webkit.Caller, session 
 		}
 		return nil
 	})
+	if wd := (*webkit.ErrorData)(nil); errors.As(err, &wd) && wd.Code == -32601 {
+		// The command list could not refuse first: the iOS version is
+		// unknown (iwdp lists none for the iOS Simulator).
+		ver := p.ps.Device.OSVersion
+		if ver == "" {
+			ver = "version unknown"
+		}
+		return fmt.Errorf("emulate network: %w: this WebKit (iOS %s) has no Network.setEmulatedConditions; iOS 18.0 to 27.2 lack it: %w", ErrUnsupported, ver, wd)
+	}
+	return err
 }
 
 func presetNames() []string { return []string{"slow-3g", "fast-3g", "4g"} }

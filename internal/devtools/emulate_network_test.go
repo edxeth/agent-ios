@@ -47,3 +47,24 @@ func TestEmulateNetworkRateFormByIOSVersion(t *testing.T) {
 		t.Fatalf("iOS 18.0: %v, want ErrUnsupported and nothing sent", err)
 	}
 }
+
+// parity-045 simulator check: iwdp lists no iOS version for the iOS
+// Simulator, so the command list cannot refuse first; WebKit's own "was not
+// found" answer (iOS 18.0 to 27.2 have no Network.setEmulatedConditions) is
+// reported as unsupported with the reason, not as a raw protocol error, and
+// leaves no throttle recorded.
+func TestEmulateNetworkUnknownVersionWithoutTheMethodIsUnsupported(t *testing.T) {
+	r := newRigOS(t, webkit.SessionOptions{TargetWait: time.Second}, "")
+	r.f.Unsupported("Network.setEmulatedConditions")
+	for i := 0; i < 2; i++ {
+		err := r.do(t, func(ctx context.Context, p *Page, wc webkit.Caller) error {
+			return p.EmulateNetworkRate(ctx, wc, "s1", 1000)
+		})
+		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "18.0 to 27.2") {
+			t.Fatalf("attempt %d: %v; want ErrUnsupported naming the iOS versions without the method", i+1, err)
+		}
+	}
+	if n := len(r.f.ReceivedMethod("Network.setEmulatedConditions")); n != 2 {
+		t.Fatalf("Network.setEmulatedConditions sent %d times, want 2: a refused throttle must not stay recorded as applied", n)
+	}
+}
