@@ -210,11 +210,6 @@
     if (t === "input") { return !el.readOnly && !!TEXT_INPUTS[(B.getAttr(el, "type") || "").toLowerCase()]; }
     return !!el.isContentEditable;
   }
-  function deepActive() {
-    var a = document.activeElement;
-    while (a && B.shadowRoot(a) && B.shadowRoot(a).activeElement) { a = B.shadowRoot(a).activeElement; }
-    return a;
-  }
 
   var DEFAULT_STYLES = ["display", "visibility", "opacity", "position", "z-index", "overflow", "width", "height", "margin",
     "padding", "color", "background-color", "font-family", "font-size", "font-weight", "line-height", "cursor",
@@ -257,7 +252,7 @@
     switch (a.state) {
     case "enabled": return !_.disabled(el);
     case "editable": return editable(el);
-    case "focused": return deepActive() === el;
+    case "focused": return _.deepActive() === el; // 55-actions.js
     case "checked":
       if (el.localName === "input" && (el.type === "checkbox" || el.type === "radio")) { return !!el.checked; }
       var r = _.role(el);

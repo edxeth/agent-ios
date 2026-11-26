@@ -32,10 +32,19 @@
     n.bubbles = n.cancelable = false;
     return n;
   }
+  // deepActive: the focused element, through open shadow roots and the
+  // documents of same-origin iframes (a document whose iframe has the focus
+  // holds it in its own activeElement). A focused iframe whose document
+  // this runtime cannot reach (cross-origin) is the answer itself.
   function deepActive() {
-    var a = document.activeElement;
-    while (a && B.shadowRoot(a) && B.shadowRoot(a).activeElement) { a = B.shadowRoot(a).activeElement; }
-    return a;
+    var a = document.activeElement, s, d;
+    for (;;) {
+      while (a && (s = B.shadowRoot(a)) && s.activeElement) { a = s.activeElement; }
+      d = null;
+      try { d = a && a.localName === "iframe" ? B.contentDocument(a) : null; } catch (y) { /* cross-origin */ }
+      if (!d) { return a; }
+      a = d.activeElement || d.body;
+    }
   }
   // over: the events of one native mouse move onto e.
   async function over(x, e, c, g) {

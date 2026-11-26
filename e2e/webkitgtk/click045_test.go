@@ -180,6 +180,11 @@ func TestClick045LabelInteractiveDescendants(t *testing.T) {
 		{"object", "document.createElement('object')"},
 		{"contenteditable", "document.createElement('span'); s.contentEditable = 'true'"},
 		{"tabindex 0", "document.createElement('span'); s.tabIndex = 0"},
+		// Closure review F12: every editing host, also plaintext-only, and
+		// a descendant of one on the hit-to-label path.
+		{"contenteditable plaintext-only", "document.createElement('span'); s.contentEditable = 'plaintext-only'"},
+		{"child of a plaintext-only host", "document.createElement('span'); s.contentEditable = 'plaintext-only'; " +
+			"s.innerHTML = '<b style=\"display:block;width:40px;height:24px\">x</b>'"},
 	} {
 		cover(c.js)
 		code, _, errOut := act(context.Background(), ps, "--timeout", "1s", "click", "#cb")
@@ -191,5 +196,73 @@ func TestClick045LabelInteractiveDescendants(t *testing.T) {
 	mustAct(t, ps, "click", "#cb")
 	if string(eval(t, "document.getElementById('cb').checked")) != "true" {
 		t.Fatalf("checkbox under a tabindex -1 span inside its label was not checked")
+	}
+}
+
+// Closure review F11: a drag between two refs of one same-origin frame
+// moves through that frame's document, so the target gets dragover and
+// drop and the top document gets none of the drag's events; a drag
+// between refs of different documents is refused before any event.
+func TestClick045DragInFrame(t *testing.T) {
+	navigate(t, "snapshot045.html", snapshot045Ready)
+	ps, _ := actionSession(t, hooks{})
+	eval(t, "window.dragEvents = []; window.topEvents = []; var d = document.getElementById('nest').contentDocument; "+
+		"d.body.innerHTML = '<button id=\"src\" draggable=\"true\" style=\"width:80px;height:40px\">Source</button> <button id=\"dst\" style=\"width:80px;height:40px\">Target</button>'; "+
+		"var s = d.getElementById('src'), z = d.getElementById('dst'); "+
+		"s.addEventListener('dragstart', function () { top.dragEvents.push('start'); }); "+
+		"z.addEventListener('dragover', function (e) { e.preventDefault(); if (top.dragEvents.indexOf('over') < 0) { top.dragEvents.push('over'); } }); "+
+		"z.addEventListener('drop', function () { top.dragEvents.push('drop'); }); "+
+		"['pointerdown', 'pointermove', 'pointerup', 'dragenter', 'dragover', 'drop'].forEach(function (k) { document.addEventListener(k, function (e) { top.topEvents.push(k); }, true); }); true")
+	snap := mustRun(t, ps, "snapshot", "-i", "-s", "#nest")
+	src, dst := refNamed(t, snap, `button "Source"`), refNamed(t, snap, `button "Target"`)
+	mustAct(t, ps, "drag", "@"+src, "@"+dst)
+	if got, top := pageString(t, "JSON.stringify(window.dragEvents)"), pageString(t, "JSON.stringify(window.topEvents)"); got != `["start","over","drop"]` || top != "[]" {
+		t.Fatalf("drag @%s to @%s in one frame: frame events %s, top-document events %s; want start, over, drop and none in the top document", src, dst, got, top)
+	}
+	top := refNamed(t, mustRun(t, ps, "snapshot", "-i", "-s", "#scope"), `button "First"`)
+	eval(t, "window.dragEvents = []; true")
+	code, _, errOut := act(context.Background(), ps, "--timeout", "2s", "drag", "@"+src, "@"+top)
+	if code == 0 || !strings.Contains(errOut, "unsupported") || !strings.Contains(errOut, "different documents") ||
+		pageString(t, "JSON.stringify(window.dragEvents)") != "[]" || pageString(t, "JSON.stringify(window.topEvents)") != "[]" {
+		t.Fatalf("drag from a frame to the top document: exit %d, err %q, events %s / %s; want unsupported and no event", code, errOut,
+			pageString(t, "JSON.stringify(window.dragEvents)"), pageString(t, "JSON.stringify(window.topEvents)"))
+	}
+}
+
+// Closure review F13: keyboard events go to the element focused inside a
+// same-origin frame chain (the top document's activeElement is the
+// iframe): press, keyboard type and keyboard inserttext, also into a
+// contenteditable, at frame depth 1 and 2.
+func TestClick045KeyboardFocusInFrame(t *testing.T) {
+	navigate(t, "snapshot045.html", snapshot045Ready)
+	ps, _ := actionSession(t, hooks{})
+	eval(t, "var d = document.getElementById('nest').contentDocument; d.body.innerHTML = '<input aria-label=\"Frame search\" id=\"q\"><div id=\"ed\" contenteditable=\"true\" role=\"textbox\" aria-label=\"Frame editor\" style=\"width:100px;height:20px\"></div><iframe id=\"inner\" width=\"200\" height=\"50\"></iframe>'; "+
+		"d.getElementById('inner').contentDocument.body.innerHTML = '<input aria-label=\"Inner search\" id=\"q2\">'; true")
+	snap := mustRun(t, ps, "snapshot", "-i", "-s", "#nest")
+	frame := "document.getElementById('nest').contentDocument"
+	q := refNamed(t, snap, `textbox "Frame search"`)
+	mustAct(t, ps, "click", "@"+q)
+	if got := strings.TrimSpace(mustRun(t, ps, "is", "focused", "@"+q)); got != "true" {
+		t.Fatalf("is focused @%s after clicking it in a frame: %q, want true", q, got)
+	}
+	mustAct(t, ps, "press", "x")
+	mustAct(t, ps, "keyboard", "type", "yz")
+	mustAct(t, ps, "keyboard", "inserttext", "w")
+	if v := pageString(t, frame+".getElementById('q').value"); v != "xyzw" {
+		t.Fatalf("click a textbox in a frame, then press x, keyboard type yz, inserttext w: value %q, want xyzw", v)
+	}
+	mustAct(t, ps, "press", "Tab") // Tab moves on in the frame's document
+	if id := pageString(t, frame+".activeElement.id"); id != "ed" && id != "inner" {
+		t.Fatalf("press Tab in the frame's textbox: focus on %q, want the frame's next focusable element (ed, or inner where WebKit gives the editor tabIndex -1)", id)
+	}
+	mustAct(t, ps, "click", "@"+refNamed(t, snap, `textbox "Frame editor"`))
+	mustAct(t, ps, "keyboard", "inserttext", "hi")
+	if v := pageString(t, frame+".getElementById('ed').textContent"); v != "hi" {
+		t.Fatalf("keyboard inserttext into a contenteditable in a frame: text %q, want hi", v)
+	}
+	mustAct(t, ps, "click", "@"+refNamed(t, snap, `textbox "Inner search"`))
+	mustAct(t, ps, "press", "k")
+	if v := pageString(t, frame+".getElementById('inner').contentDocument.getElementById('q2').value"); v != "k" {
+		t.Fatalf("press k after clicking a textbox two frames deep: value %q, want k", v)
 	}
 }

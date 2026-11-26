@@ -77,12 +77,19 @@
   // 0.45.0 BLOCKER_AT_JS, element.rs: its selector or an onclick function).
   var IA = 'button,a[href],area[href],input,select,textarea,summary,details,iframe,embed,object,[role],[onclick],' +
     '[tabindex]:not([tabindex="-1"]),[contenteditable=""],[contenteditable="true"]';
+  // An editing host (any contenteditable state that edits, plaintext-only
+  // too) is interactive as well; its editable descendants are not hosts,
+  // and a label inside an editable region still activates its control.
+  function host(n) {
+    var p = _.flatParent(n);
+    return !!n.isContentEditable && !(p && p.isContentEditable);
+  }
   function reaches(h, e) {
     if (within(h, e)) { return true; }
     var l = B.closest(h, "label");
     if (!l) { return false; }
     for (var n = h; n && n !== l; n = _.flatParent(n)) {
-      if (B.matches(n, IA) || typeof n.onclick === "function") { return false; }
+      if (B.matches(n, IA) || typeof n.onclick === "function" || host(n)) { return false; }
     }
     return l.control === e || within(e, l);
   }
@@ -222,9 +229,11 @@
     try {
       return await I.attempt(a, function () {
         if (why) { return why; }
-        if (el && d.chk) {
-          try { el = d.chk(el, g, a) || el; } catch (e) { no = e; throw e; }
-        }
+        // vet: a refusal of the dispatcher that needs no target (60-keyboard.js).
+        try {
+          if (d.vet) { d.vet(el, g); }
+          if (el && d.chk) { el = d.chk(el, g, a) || el; }
+        } catch (e) { no = e; throw e; }
         var r = el && !g.f && !(d.pre && a.step > 1) ? check(d.as || g.k, d.on ? d.on(el) : el, a.opId + "/" + a.step) : "";
         return r || (probe ? READY : "");
       }, dispatch);

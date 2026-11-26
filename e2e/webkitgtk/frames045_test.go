@@ -6,8 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +304,99 @@ func TestAnnotate045BoxesInImageCoordinates(t *testing.T) {
 	b := inside(e.data(agentA, "screenshot", "--annotate", "--selector", "@"+m[1], filepath.Join(t.TempDir(), "el.png")))
 	if b["x"] != 0.0 || b["y"] != 0.0 || b["width"] != 100.0 || b["height"] != 30.0 {
 		t.Fatalf("element capture of @%s inside a frame: Inside box %v, want 0, 0, 100x30", m[1], b)
+	}
+}
+
+// Closure review F13: when focus is inside a cross-origin frame, which the
+// top document's runtime cannot reach, press refuses and sends nothing;
+// with that frame selected, press goes to its focused element.
+func TestPress045FocusInCrossOriginFrame(t *testing.T) {
+	e := newFrames045(t)
+	// WebKit lets no cross-origin frame take focus by script; the top
+	// document focuses the frame itself, so its body has the focus.
+	e.must(agentA, "frame", ".xo")
+	e.must(agentA, "eval", "window.keys = []; document.addEventListener('keydown', function (k) { keys.push(k.key); }); 1")
+	e.must(agentA, "frame", "main")
+	e.must(agentA, "eval", "window.keys = []; document.addEventListener('keydown', function (k) { keys.push(k.key); }, true); document.querySelector('.xo').focus(); 1")
+	_, code, msg := e.run(agentA, "--timeout", "3s", "press", "x")
+	if code == 0 || !strings.Contains(msg, "cross-origin frame") || e.must(agentA, "eval", "'[' + keys.join() + ']'") != "[]" {
+		t.Fatalf("press x with focus in a cross-origin frame: exit %d, %q, top keys %q; want a refusal naming the cross-origin frame and no key event",
+			code, msg, e.must(agentA, "eval", "'[' + keys.join() + ']'"))
+	}
+	e.must(agentA, "frame", ".xo")
+	if got := e.must(agentA, "eval", "'[' + keys.join() + ']'"); got != "[]" {
+		t.Fatalf("the refused press reached the frame: keys %q", got)
+	}
+	e.must(agentA, "press", "x")
+	if got := e.must(agentA, "eval", "'[' + keys.join() + ']'"); got != "[x]" {
+		t.Fatalf("press x in the selected cross-origin frame: keydown keys %q, want x", got)
+	}
+}
+
+// Closure review F14: a ref that crosses its frame's viewport edge is
+// annotated with its visible part only: the reported box is cut at the
+// frame's edge, and nothing is painted on the top page outside the
+// frame; an element capture of that ref is refused, since its box shows
+// pixels outside the frame.
+func TestAnnotate045RefClippedByFrame(t *testing.T) {
+	decodePNG := func(t *testing.T, path string) image.Image {
+		t.Helper()
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		img, err := png.Decode(f)
+		if err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		return img
+	}
+	e := newFrames045(t)
+	// #scrolled's Inside button is at y 400..430 of its frame document, whose
+	// viewport starts at 253+5+7 = 265 of the page: scrolled by 415, 15 px
+	// of it show at the top of the frame.
+	e.js(agentA, "document.getElementById('scrolled').contentWindow.scrollTo(0, 415); document.getElementById('scaled').contentWindow.scrollTo(0, 0); window.scrollTo(0, 0); 1")
+	dir := t.TempDir()
+	plain, annotated := filepath.Join(dir, "plain.png"), filepath.Join(dir, "annotated.png")
+	e.must(agentA, "screenshot", plain)
+	d := e.data(agentA, "screenshot", "--annotate", annotated)
+	var box map[string]any
+	for _, l := range d["labels"].([]any) {
+		if m := l.(map[string]any); m["name"] == "Inside" {
+			box, _ = m["box"].(map[string]any)
+		}
+	}
+	if box == nil || box["x"] != 69.0 || box["y"] != 265.0 || box["width"] != 100.0 || box["height"] != 15.0 {
+		t.Fatalf("Inside button cut by its frame's top edge: box %v, want x 69, y 265, 100x15 (labels %v)", box, d["labels"])
+	}
+	// Between the Outer frame's annotations (to y 236) and the frame's
+	// viewport (from y 265), right of #scrolled's own label: the page and
+	// the frame's border and padding, where the uncut box's top edge and
+	// a label above the cut box would be. Both captures are equal there,
+	// but for #scrolled's own box edge (y 253 and 254).
+	a, b := decodePNG(t, plain), decodePNG(t, annotated)
+	iw, err := strconv.ParseFloat(e.js(agentA, "innerWidth"), 64)
+	if err != nil || iw <= 0 {
+		t.Fatalf("innerWidth: %v", err)
+	}
+	s := float64(a.Bounds().Dx()) / iw // image pixels per CSS pixel
+	for y := int(237 * s); y < int(265*s); y++ {
+		if y >= int(253*s) && y < int(255*s) {
+			continue
+		}
+		for x := int(65 * s); x < int(200*s); x++ {
+			if a.At(x, y) != b.At(x, y) {
+				t.Fatalf("the annotation of a frame-clipped ref painted at image pixel %d, %d, outside the frame's viewport", x, y)
+			}
+		}
+	}
+	m := regexp.MustCompile(`button "Inside" \[ref=(e\d+)\]`).FindStringSubmatch(e.must(agentA, "snapshot", "-s", "#scrolled"))
+	if m == nil {
+		t.Fatal("no Inside ref in the snapshot of #scrolled")
+	}
+	_, code, msg := e.run(agentA, "screenshot", "--annotate", "--selector", "@"+m[1], filepath.Join(dir, "el.png"))
+	if code == 0 || !strings.Contains(msg, "outside its frame") {
+		t.Fatalf("element capture of a ref cut by its frame: exit %d, %q; want refused", code, msg)
 	}
 }

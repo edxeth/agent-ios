@@ -45,7 +45,7 @@
     await ev(x, function () {
       var vs = VS[t.localName];
       if (!vs) {
-        if (t.isContentEditable) { document.execCommand(txt ? "insertText" : it === "deleteContentForward" ? "forwardDelete" : "delete", false, txt); }
+        if (t.isContentEditable) { B.ownerDoc(t).execCommand(txt ? "insertText" : it === "deleteContentForward" ? "forwardDelete" : "delete", false, txt); }
         return;
       }
       var r = sel(t), v = t.value;
@@ -71,7 +71,7 @@
     if (n === 1) { f.requestSubmit ? f.requestSubmit() : f.submit(); r.d.push("implicit submission: form.requestSubmit()"); }
   }
   function tab(t, back, r) {
-    var all = B.qsaDoc(document, "a[href],button,input,select,textarea,iframe,summary,[tabindex],[contenteditable]"), pos = [], zero = [];
+    var all = B.qsaDoc(B.ownerDoc(t), "a[href],button,input,select,textarea,iframe,summary,[tabindex],[contenteditable]"), pos = [], zero = [];
     for (var i = 0; i < all.length; i++) {
       var y = all[i];
       if (y.tabIndex >= 0 && !_.disabled(y) && y.type !== "hidden" && _.visible(y)) { (y.tabIndex > 0 ? pos : zero).push(y); }
@@ -168,7 +168,18 @@
       r.d.push("click " + desc(t));
     }
   }
-  function target(e) { return e || _.deepActive() || document.body; }
+  // target: e, else the focused element at the time of the event, also in
+  // a same-origin frame (_.deepActive); a focused frame that this runtime
+  // cannot reach is refused, as no key event can get into it from here.
+  function target(e) {
+    var t = e || _.deepActive() || document.body;
+    if (!e && t.localName === "iframe") {
+      throw _.fail("unsupported", "the focus is inside a cross-origin frame (" + desc(t) + "), which the agent runtime of this document cannot reach; select that frame first (frame <selector>)");
+    }
+    return t;
+  }
+  // vet (50-actionability.js act): refuse before the step's first event.
+  function vet(e) { if (!e) { target(e); } }
   A.type = async function (e, g, a, r, x) {
     if (e && _.deepActive() !== e) { await ev(x, function () { e.focus(); }); }
     var t = target(e), T = function () { return t; };
@@ -218,6 +229,7 @@
     var t = target(e);
     if (editable(t) && !await edit(x, t, g.text, "insertText")) { r.err = "page canceled the input"; }
   };
+  A.type.vet = A.press.vet = A.inserttext.vet = vet;
   // The forms module (mod-forms/) replaces this check with the form
   // preconditions of type; a type into a target without it is refused, so
   // a caller that did not declare the module never skips them.

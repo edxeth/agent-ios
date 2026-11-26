@@ -7,7 +7,7 @@
   "use strict";
   if (!I) { return; } // installed (internal/runtime module wrapper)
   // Built-ins captured at the core's install (design 3.1), not at this one.
-  var _ = I._, w = window, A = _.A, center = _.center, at = _.at, ev = _.ev, gap = _.gap, over = _.over, fire = _.fire, pi = _.pi;
+  var _ = I._, B = _.B, w = window, A = _.A, center = _.center, at = _.at, ev = _.ev, gap = _.gap, over = _.over, fire = _.fire, pi = _.pi;
   var touch = _.touch, noTouch = _.noTouch, scroller = _.scroller, BTN = _.BTN, PE = _.PE, ME = _.ME, DE = _.DE;
   // swipe: touch events along the gesture, then the scroll fallback when
   // the page canceled none of them.
@@ -25,6 +25,9 @@
   // drag: step 1 presses on the source and sends dragstart; each later step
   // moves toward the target; the last one drops (only when the last
   // dragover was canceled, as in HTML drag and drop) and releases.
+  // Source and target are in one document (chk), so their points share its
+  // viewport's coordinates, and each later point is hit-tested there; a
+  // drag between documents (frames) is refused before any event.
   var DR = {};
   I.onReset(function () { DR = {}; }); // release resets too
   function dinit(c, dt) {
@@ -37,7 +40,7 @@
     if (a.step === 1) {
       var dt = null;
       try { dt = new w.DataTransfer(); } catch (y) { /* no DataTransfer constructor */ }
-      S = DR[a.opId] = { s: center(e), t: center(g.el2), src: e, dt: dt };
+      S = DR[a.opId] = { s: center(e), t: center(g.el2), src: e, dt: dt, d: B.ownerDoc(e) };
       r.v = { step: 1 };
       await over(x, e, S.s, g);
       await gap(x);
@@ -47,7 +50,7 @@
     }
     if (!S) { r.err = "the page lost the drag state (it navigated or reset)"; return; }
     var k = (a.step - 1) / (a.steps - 1), c = { x: S.s.x + (S.t.x - S.s.x) * k, y: S.s.y + (S.t.y - S.s.y) * k };
-    var h = at(c.x, c.y) || document.documentElement;
+    var h = at(c.x, c.y, S.d) || S.d.documentElement;
     r.v = { step: a.step };
     await fire(x, h, PE, "pointermove", pi(c, g, 1)); await fire(x, h, ME, "mousemove", pi(c, g, 1));
     if (S.ok) {
@@ -64,6 +67,12 @@
     }
   };
   A.drag.pre = true;
+  A.drag.chk = function (e, g) {
+    if (B.ownerDoc(e) !== B.ownerDoc(g.el2)) {
+      throw _.fail("unsupported", "drag between different documents (a frame and its page, or two frames) is not supported: synthetic drag events cannot cross documents; drag within one document");
+    }
+    return e;
+  };
   // mouse: the pointer position and buttons belong to the page session.
   var M = { x: 0, y: 0, b: 0 };
   I.onReset(function () { M = { x: 0, y: 0, b: 0 }; });
