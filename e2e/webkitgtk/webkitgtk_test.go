@@ -76,7 +76,15 @@ func setupCLISuite() (func(), error) {
 		cleanup()
 		return nil, err
 	}
-	cliBin = filepath.Join(dir, "agent-ios")
+	// The binary lives in its own directory: $XDG_RUNTIME_DIR/agent-ios is
+	// the daemon's socket directory (daemon.SocketDir), and a file there
+	// makes every daemon start fail with "unsafe daemon socket directory".
+	cliDir := filepath.Join(dir, "cli")
+	if err := os.Mkdir(cliDir, 0o700); err != nil {
+		cleanup()
+		return nil, err
+	}
+	cliBin = filepath.Join(cliDir, "agent-ios")
 	build := exec.Command("go", "build", "-o", cliBin, "../../cmd/agent-ios")
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	if err := build.Run(); err != nil {
