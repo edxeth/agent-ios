@@ -63,7 +63,7 @@ func runHARStop(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	n := d.p.Netlog(d.session)
 	if n == nil {
-		return Result{}, fmt.Errorf("no HAR recording runs; start one with 'network har start'")
+		return Result{}, devtools.ErrNoHARRecording
 	}
 	show := flagBool(in, "show-secrets")
 	har, err := n.StopHAR(ctx, d.c, devtools.HAROptions{Creator: devtools.HARCreator{Name: "agent-ios", Version: "dev"}, ShowValues: show})

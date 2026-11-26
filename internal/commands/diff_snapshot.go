@@ -2,56 +2,327 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
+
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/refs"
+	"github.com/edxeth/agent-ios/internal/runtime"
 )
 
-// diff snapshot: a line diff of the last two snapshots of the session
-// (design docs/design/agentic-parity.md, section 4.2). The text follows
-// agent-browser's: a unified diff with three lines of context and the
-// headers "before" and "after", then the counts, or "No changes detected".
+// diff snapshot (design docs/design/agentic-parity.md, section 4.2;
+// agent-browser 0.45 "diff snapshot"): a fresh snapshot compared with a
+// baseline. Without --baseline the baseline is the last snapshot that this
+// session took of the page (snapshot and diff snapshot both replace it, so
+// each diff becomes the next baseline), and the fresh snapshot uses that
+// snapshot's options; with --baseline it is a file of snapshot text
+// (agent-ios snapshot > before.txt). The [ref=eN] annotations are removed
+// from both sides before the comparison. The text follows agent-browser's:
+// a unified diff with three lines of context and the headers "before" and
+// "after", then the counts, or "No changes detected".
 func init() {
 	Register(&Command{
-		Name:      "diff snapshot",
-		Summary:   "Show what changed between the last two snapshots of this session (a unified line diff).",
-		Page:      AnyPage,
-		RetrySafe: true,
-		Output:    OutputText,
-		Run:       runDiffSnapshot,
+		Name: "diff snapshot",
+		Summary: "Compare a fresh snapshot with this session's last snapshot of the page (taken with the same options) or with --baseline <file> " +
+			"of saved snapshot text, as a unified line diff without the [ref=eN] annotations.",
+		Flags: []Flag{
+			{Name: "baseline", Short: "b", Type: FlagPath, Help: "compare with this file of snapshot text (agent-ios snapshot > before.txt) instead of the last snapshot"},
+			{Name: "selector", Short: "s", Type: FlagString, Help: "snapshot only this element: CSS selector, locator or @ref"},
+			{Name: "interactive", Short: "i", Type: FlagBool, Help: "show only elements with refs"},
+			{Name: "compact", Short: "c", Type: FlagBool, Help: "keep lines with refs, values or text and their ancestors"},
+			{Name: "depth", Short: "d", Type: FlagInt, Help: "deepest level shown (0 = top level only)"},
+			{Name: "urls", Short: "u", Type: FlagBool, Help: "add url= to links"},
+		},
+		Page:    LeasedPage,
+		Mutates: true, // the fresh snapshot allocates refs (design 2.11)
+		Output:  OutputText,
+		Run:     runDiffSnapshot,
 	})
 }
 
-func runDiffSnapshot(ctx context.Context, env Env, _ Input) (Result, error) {
+// Error codes of diff snapshot (agent-browser 0.45 precondition codes).
+const (
+	codeFileNotFound     = "file_not_found"
+	codeNoBaseline       = "no_baseline"
+	codeBaselineMismatch = "baseline_mismatch"
+)
+
+func codedError(code, format string, a ...any) error {
+	return &runtime.Error{Code: code, Message: fmt.Sprintf(format, a...)}
+}
+
+func runDiffSnapshot(ctx context.Context, env Env, in Input) (Result, error) {
 	ps, err := env.Page(ctx)
 	if err != nil {
 		return Result{}, err
 	}
-	if ps == nil || ps.Refs == nil {
+	if ps == nil || ps.Refs == nil || ps.Runtime == nil {
 		return Result{}, errNoRuntime
 	}
-	before, after, n := ps.Refs.Snapshots(historySession(ps))
-	if n < 2 {
-		return Result{}, fmt.Errorf("diff snapshot needs two snapshots of this session, it has %d; run snapshot, change the page, run snapshot again", n)
+	var before string
+	eff := in
+	if b := flagString(in, "baseline"); b != "" {
+		if before, err = readBaseline(env.ResolvePath(b)); err != nil {
+			return Result{}, err
+		}
+	} else {
+		last, ok := ps.Refs.LastSnapshot(historySession(ps))
+		if !ok {
+			return Result{}, codedError(codeNoBaseline, "no earlier snapshot on this tab; run 'snapshot' first or pass --baseline <file>")
+		}
+		if last.FrameID != frameScopeID(ps, ps.Runtime.Generation()) {
+			return Result{}, codedError(codeBaselineMismatch, "the last snapshot was taken in a different frame; select that frame or run 'snapshot' again, or pass --baseline <file>")
+		}
+		opts, err := implicitBaselineOptions(in, last.Options)
+		if err != nil {
+			return Result{}, err
+		}
+		eff = Input{Args: in.Args, Flags: snapshotFlags(opts), Global: in.Global}
+		before = last.Text
 	}
-	a, b := strings.Split(before, "\n"), strings.Split(after, "\n")
-	ops := diffLines(a, b)
-	var add, del, same int
+	after, warnings, err := takeSnapshot(ctx, env, eff)
+	if err != nil {
+		return Result{}, err
+	}
+	d := diffSnapshots(snapshotComparisonText(before), snapshotComparisonText(after))
+	data := map[string]any{"changed": d.changed(), "additions": d.add, "removals": d.del, "unchanged": d.same, "diff": d.diff}
+	return Result{Text: withWarnings(diffSnapshotText(d.diff, d.add, d.del, d.same), warnings), Data: data}, nil
+}
+
+// readBaseline reads a baseline file of diff snapshot and strips one
+// trailing newline ("\n" or "\r\n"), which a redirected snapshot ends with.
+func readBaseline(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", codedError(codeFileNotFound, "baseline %s does not exist", path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading the baseline: %w", err)
+	}
+	s := strings.TrimSuffix(string(data), "\n")
+	if len(s) < len(data) {
+		s = strings.TrimSuffix(s, "\r")
+	}
+	return s, nil
+}
+
+// takeSnapshot runs snapshot with the flags of in (which also makes it the
+// session's last snapshot) and returns its text and warnings.
+func takeSnapshot(ctx context.Context, env Env, in Input) (string, []string, error) {
+	res, err := runSnapshot(ctx, env, Input{Args: nil, Flags: snapshotFlags(snapshotOptionsOf(in)), Global: in.Global})
+	if err != nil {
+		return "", nil, err
+	}
+	m, _ := res.Data.(map[string]any)
+	text, ok := m["snapshot"].(string)
+	if !ok {
+		return "", nil, fmt.Errorf("snapshot returned no text")
+	}
+	warnings, _ := m["warnings"].([]string)
+	return text, warnings, nil
+}
+
+// snapshotOptionsOf returns the snapshot options that the flags of in name.
+func snapshotOptionsOf(in Input) refs.SnapshotOptions {
+	o := refs.SnapshotOptions{
+		Selector: flagString(in, "selector"), Interactive: flagBool(in, "interactive"),
+		Compact: flagBool(in, "compact"), URLs: flagBool(in, "urls"),
+	}
+	if d, ok := in.Flags["depth"].(int); ok {
+		o.Depth, o.DepthSet = d, true
+	}
+	return o
+}
+
+// snapshotFlags is the flag map of snapshot for the options o.
+func snapshotFlags(o refs.SnapshotOptions) map[string]any {
+	f := map[string]any{"interactive": o.Interactive, "compact": o.Compact, "urls": o.URLs}
+	if o.Selector != "" {
+		f["selector"] = o.Selector
+	}
+	if o.DepthSet {
+		f["depth"] = o.Depth
+	}
+	return f
+}
+
+// implicitBaselineOptions returns the options of a diff snapshot without
+// --baseline: those the command names, which must agree with the last
+// snapshot's, else the last snapshot's (agent-browser
+// implicit_baseline_scope). A boolean flag that is not set inherits.
+func implicitBaselineOptions(in Input, last refs.SnapshotOptions) (refs.SnapshotOptions, error) {
+	o := last
+	var differ []string
+	if sel, ok := in.Flags["selector"].(string); ok && sel != "" {
+		if sel != last.Selector {
+			was := "no selector"
+			if last.Selector != "" {
+				was = fmt.Sprintf("%q", last.Selector)
+			}
+			differ = append(differ, fmt.Sprintf("--selector %q (last snapshot: %s)", sel, was))
+		}
+		o.Selector = sel
+	}
+	if d, ok := in.Flags["depth"].(int); ok {
+		if !last.DepthSet || d != last.Depth {
+			was := "no depth"
+			if last.DepthSet {
+				was = fmt.Sprint(last.Depth)
+			}
+			differ = append(differ, fmt.Sprintf("--depth %d (last snapshot: %s)", d, was))
+		}
+		o.Depth, o.DepthSet = d, true
+	}
+	for _, b := range []struct {
+		name string
+		was  bool
+		set  *bool
+	}{{"interactive", last.Interactive, &o.Interactive}, {"compact", last.Compact, &o.Compact}, {"urls", last.URLs, &o.URLs}} {
+		if flagBool(in, b.name) {
+			if !b.was {
+				differ = append(differ, "--"+b.name+" (last snapshot: without)")
+			}
+			*b.set = true
+		}
+	}
+	if len(differ) > 0 {
+		return o, codedError(codeBaselineMismatch, "the last snapshot used different options: %s; run 'snapshot' with the same options or pass --baseline <file>", strings.Join(differ, ", "))
+	}
+	return o, nil
+}
+
+// recordSnapshot makes text, which snapshot rendered with the flags of in
+// through p, the last snapshot of p's session on this page: the implicit
+// baseline of the next diff snapshot.
+func recordSnapshot(ctx context.Context, env Env, p *pageRuntime, in Input, text string) {
+	frame := ""
+	if ps, err := env.Page(ctx); err == nil && ps != nil {
+		frame = frameScopeID(ps, p.rt.Generation())
+	}
+	p.refs.RememberSnapshot(p.session, refs.LastSnapshot{Text: text, Options: snapshotOptionsOf(in), FrameID: frame})
+}
+
+// frameScopeID is the frame id of the lease holder's frame scope on ps
+// that applyFrameScope applies for the top document generation gen; ""
+// for the top document.
+func frameScopeID(ps *core.PageSession, gen uint64) string {
+	f := framesOf(ps, false)
+	if f == nil || ps.Sched == nil {
+		return ""
+	}
+	session, epoch := ps.Sched.Lease()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sc, ok := f.scopes[session]
+	if !ok || sc.epoch != epoch || sc.gen != gen {
+		return ""
+	}
+	return sc.frameID
+}
+
+// snapshotDiff is a line diff of two snapshot texts.
+type snapshotDiff struct {
+	diff           string // unified diff; "" when nothing changed
+	add, del, same int
+}
+
+func (d snapshotDiff) changed() bool { return d.add+d.del > 0 }
+
+// diffSnapshots compares two snapshot texts line by line (agent-browser
+// diff_snapshots).
+func diffSnapshots(before, after string) snapshotDiff {
+	ops := diffLines(splitLines(before), splitLines(after))
+	var d snapshotDiff
 	for _, o := range ops {
 		switch o.kind {
 		case '+':
-			add++
+			d.add++
 		case '-':
-			del++
+			d.del++
 		default:
-			same++
+			d.same++
 		}
 	}
-	diff := ""
-	if add+del > 0 {
-		diff = unified(ops, diffContext)
+	if d.changed() {
+		d.diff = unified(ops, diffContext)
 	}
-	data := map[string]any{"changed": add+del > 0, "additions": add, "removals": del, "unchanged": same, "diff": diff}
-	return Result{Text: diffSnapshotText(diff, add, del, same), Data: data}, nil
+	return d
+}
+
+// splitLines splits s into lines; "" has none.
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
+}
+
+// snapshotComparisonText removes the generated [ref=eN] annotations from a
+// snapshot text, for a comparison across documents (agent-browser
+// snapshot_comparison_text): in a bracket after a space, outside quoted
+// names, the fields "ref=e<digits>" are dropped, and the bracket with its
+// space when no field is left. Quoted names keep text that looks like a
+// ref.
+func snapshotComparisonText(tree string) string {
+	out := make([]byte, 0, len(tree))
+	quoted := false
+	for i := 0; i < len(tree); i++ {
+		ch := tree[i]
+		if quoted && ch == '\\' {
+			out = append(out, ch)
+			if i+1 < len(tree) {
+				i++
+				out = append(out, tree[i])
+			}
+			continue
+		}
+		if ch == '"' {
+			quoted = !quoted
+		}
+		if !quoted && ch == '[' && len(out) > 0 && out[len(out)-1] == ' ' {
+			end := i + 1
+			for end < len(tree) && tree[end] != ']' && tree[end] != '\n' {
+				end++
+			}
+			if end < len(tree) && tree[end] == ']' {
+				fields := strings.Split(tree[i+1:end], ", ")
+				var kept []string
+				for _, f := range fields {
+					if !isRefField(f) {
+						kept = append(kept, f)
+					}
+				}
+				if len(kept) != len(fields) {
+					if len(kept) == 0 {
+						out = out[:len(out)-1]
+					} else {
+						out = append(out, "["+strings.Join(kept, ", ")+"]"...)
+					}
+					i = end
+					continue
+				}
+			}
+		}
+		out = append(out, ch)
+	}
+	return string(out)
+}
+
+// isRefField reports whether f is "ref=e" and one or more ASCII digits.
+func isRefField(f string) bool {
+	id, ok := strings.CutPrefix(f, "ref=e")
+	if !ok || id == "" {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if id[i] < '0' || id[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // diffSnapshotText is the text of diff snapshot; private mode makes it

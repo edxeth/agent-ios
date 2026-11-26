@@ -85,11 +85,12 @@ func TestRuntimeCallsThroughTheDaemonKeepThePerPageLimit(t *testing.T) {
 	}
 }
 
-// "diff snapshot" compares "the last two snapshots of this session"
-// (command summary; design 4.2). The page's ref table is shared by the
-// lease owners of the page, but the snapshot history is not: session B's
-// first diff after A's lease ended finds no snapshot of B, and does not
-// show A's page contents.
+// "diff snapshot" compares a fresh snapshot with "this session's last
+// snapshot of the page" (command summary; agent-browser 0.45 implicit
+// baseline). The page's ref table is shared by the lease owners of the
+// page, but the last snapshot is not: session B's first diff after A's
+// lease ended finds no snapshot of B (no_baseline), and does not show A's
+// page contents.
 func TestDiffSnapshotUsesOnlyTheSessionsOwnSnapshots(t *testing.T) {
 	o := startInProcess(t, RunOptions{})
 	f := fakewebkit.New(fakewebkit.Options{})
@@ -123,15 +124,15 @@ func TestDiffSnapshotUsesOnlyTheSessionsOwnSnapshots(t *testing.T) {
 		}
 	}
 	diff, err := runAs("a", "diff", "snapshot")
-	if err != nil || !strings.Contains(diff.Text, "+- button \"Save-2\"") {
-		t.Fatalf("a's diff snapshot = %q, %v; want the change from Save-1 to Save-2", diff.Text, err)
+	if err != nil || !strings.Contains(diff.Text, "-- button \"Save-2\"\n+- button \"Save-3\"") {
+		t.Fatalf("a's diff snapshot = %q, %v; want the change from Save-2 (the last snapshot) to Save-3 (the fresh one)", diff.Text, err)
 	}
 	if _, err := runAs("a", "session", "release"); err != nil {
 		t.Fatalf("session release of a: %v", err)
 	}
 	res, err := runAs("b", "diff", "snapshot")
-	if err == nil || !strings.Contains(err.Error(), "it has 0") {
-		t.Fatalf("b's first diff snapshot = %q, %v; want the error that b has no snapshots", res.Text, err)
+	if err == nil || !strings.Contains(err.Error(), "no_baseline: no earlier snapshot on this tab") {
+		t.Fatalf("b's first diff snapshot = %q, %v; want no_baseline: b has no snapshot", res.Text, err)
 	}
 	if strings.Contains(res.Text, "Save-") {
 		t.Fatalf("b's diff snapshot shows a's page contents: %q", res.Text)

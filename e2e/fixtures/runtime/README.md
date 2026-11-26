@@ -26,3 +26,9 @@ span that sets visibility back to visible inside a hidden parent, opacity 0,
 a zero-size box, an off-screen box, display contents, and both selects with
 their options. Generic containers without a ref and with at most one child
 are not rendered (render_tree rule), so their text is at the top level.
+
+`diff045-a.html` and `diff045-b.html` are the pages of the diff snapshot and
+diff url tests, e2e/webkitgtk/diffstate045_test.go (agent-browser 0.45
+contract); their expected diffs are hand-written in that test from the
+snapshot rules above. diff045-b.html has a black background, so its
+screenshot differs from diff045-a.html's.

@@ -11,8 +11,18 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/edxeth/agent-ios/internal/runtime"
 	"github.com/edxeth/agent-ios/internal/webkit"
 )
+
+// ErrNoHARRecording is the error of "network har stop" when no HAR
+// recording is active (agent-browser 0.45 precondition code
+// no_har_recording). A recording lives in the daemon's network log of the
+// session, so a daemon restart discards it.
+var ErrNoHARRecording error = &runtime.Error{
+	Code:    "no_har_recording",
+	Message: "no HAR recording is active; run 'network har start' first. A daemon restart (close or idle shutdown) discards an active recording",
+}
 
 // HAR 1.2 (http://www.softwareishard.com/blog/har-12-spec/). Every
 // required field of the spec is always present; optional ones are omitted
@@ -356,7 +366,7 @@ func (n *Netlog) StopHAR(ctx context.Context, c webkit.Caller, o HAROptions) (HA
 	}
 	n.mu.Unlock()
 	if start < 0 {
-		return HAR{}, fmt.Errorf("no HAR recording runs; start one with 'network har start'")
+		return HAR{}, ErrNoHARRecording
 	}
 	bodies := map[string]HARBody{}
 	if content == "all" {

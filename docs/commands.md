@@ -40,7 +40,8 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`devices`](#devices) | List the devices of ios_webkit_debug_proxy's listing (name, UDID, the address of its pages). Starts ios_webkit_debug_proxy when it is not running, and on Linux restarts the one that agent-ios started when it lost its devices, as page commands do. Exits 5 when it lists no device although usbmuxd reports one. |
 | [`dialog`](#dialog) | Arm answers for alert, confirm and prompt, or show the dialog log (status, accept [text], dismiss, default accept\|dismiss). |
 | [`diff screenshot`](#diff-screenshot) | Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on the host, and report how many pixels differ. |
-| [`diff snapshot`](#diff-snapshot) | Show what changed between the last two snapshots of this session (a unified line diff). |
+| [`diff snapshot`](#diff-snapshot) | Compare a fresh snapshot with this session's last snapshot of the page (taken with the same options) or with --baseline \<file\> of saved snapshot text, as a unified line diff without the [ref=eN] annotations. |
+| [`diff url`](#diff-url) | Open url1, snapshot it (and screenshot it with --screenshot), then url2 the same way, and print the snapshot diff (and the pixel diff); the page stays on url2. |
 | [`drag`](#drag) | Drag from one element to another in 10 pointer steps with synthetic drag events (best effort). |
 | [`emulate network`](#emulate-network) | Throttle the page's network to a preset (4g, fast-3g, slow-3g) or a byte rate; 'none' removes the throttle. Uses Network.setEmulatedConditions, which only the iOS 16.4 to 17.x and 27.3+ command lists have. |
 | [`errors`](#errors) | Print uncaught errors and unhandled promise rejections with their stacks (the first run installs the error hooks). |
@@ -111,14 +112,19 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`skills list`](#skills-list) | List the agent skills built into this binary (name and description); 'skills get \<name\>' prints one. |
 | [`skills path`](#skills-path) | Write the built-in skills to the user cache directory (once per skills version, mode 0600) and print the directory of one skill or of all. |
 | [`snapshot`](#snapshot) | Print the page's accessibility tree with @eN refs for later commands. |
-| [`state load`](#state-load) | Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's. |
-| [`state save`](#state-save) | Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials). |
+| [`state clear`](#state-clear) | Delete the named state \<name\>, or with --all every named state (\<name\>.json) in the state directory. Nothing outside that directory is deleted: no path, no other file, no subdirectory, no symlink target. |
+| [`state list`](#state-list) | List the named states in the state directory ($XDG_STATE_HOME/agent-ios/states): file, size and date. |
+| [`state load`](#state-load) | Restore a state written by state save (a name or a path): the page must be at the state's origin; its cookies and storage are replaced by the state's. |
+| [`state rename`](#state-rename) | Rename a named state in the state directory; refuses to overwrite an existing state. |
+| [`state save`](#state-save) | Save the cookies, localStorage and sessionStorage of the page's current origin as a named state or to a JSON file (mode 0600; it holds live credentials). |
+| [`state show`](#state-show) | Show what a state holds without its values: the number of cookies and origins, size and date. |
 | [`status`](#status) | Check whether ios_webkit_debug_proxy answers on its listing address, count the devices that it lists, and name the log of an iwdp that agent-ios starts. It starts nothing. Exits 1 when iwdp does not answer or its device list cannot be read. |
 | [`storage`](#storage) | Read, set or clear localStorage or sessionStorage of the page: storage local [key], storage local set \<key\> \<value\>, storage local clear (same for session). |
 | [`swipe`](#swipe) | Swipe with synthetic touch events; scrolls as a fallback when the page cancels none (swipe up scrolls down). |
 | [`tab`](#tab) | Make a tab (tN or label) this session's current page after a liveness probe; without an id, list the tabs. |
 | [`tab close`](#tab-close) | Close a tab (default: the current one) with window.close(); works only for tabs that a script opened. In your turn on the simulator, a session that selected no tab must name the tab (exit 5). |
 | [`tab find`](#tab-find) | Print the id of the tab whose page shows exactly this URL (query and fragment included), compared inside the page. It only reads: it navigates and selects nothing. The session keeps the lease of the tab that the command prints, as after any read of that tab, and no lease that only the command used on another tab. Exit 7 when no tab shows the URL; exit 1 when several do or a tab could not be read; exit 6 when the listing hides pages of a device that the caller has not reserved (--device limits the search, and that count, to one device). |
+| [`tab keep`](#tab-keep) | Not available on iOS WebKit: the inspector protocol cannot keep a background tab running, throttle it or freeze it (Chrome's focus emulation and lifecycle freeze); Safari throttles background tabs itself. |
 | [`tab list`](#tab-list) | List the pages of the device as tabs t1, t2, ... with labels; \* marks this session's current tab. |
 | [`tab new`](#tab-new) | Open a new tab with window.open (emulated user gesture) from the current page and make it the current tab; the session's leases on other pages end. |
 | [`tap`](#tap) | Tap an element, or the element at viewport point \<x\> \<y\>: touchstart and touchend, then the click sequence with pointerType touch. |
@@ -523,12 +529,46 @@ Compare a viewport screenshot of the page with a baseline PNG, pixel by pixel on
 ### `diff snapshot`
 
 ```
-agent-ios diff snapshot
+agent-ios diff snapshot [flags]
 ```
 
-Show what changed between the last two snapshots of this session (a unified line diff).
+Compare a fresh snapshot with this session's last snapshot of the page (taken with the same options) or with --baseline \<file\> of saved snapshot text, as a unified line diff without the [ref=eN] annotations.
 
-- Page: uses the session's page
+- Page: leases the session's page
+
+| Flag | Value | Description |
+|---|---|---|
+| `-b`, `--baseline` | file path | compare with this file of snapshot text (agent-ios snapshot \> before.txt) instead of the last snapshot |
+| `-s`, `--selector` | text | snapshot only this element: CSS selector, locator or @ref |
+| `-i`, `--interactive` | none | show only elements with refs |
+| `-c`, `--compact` | none | keep lines with refs, values or text and their ancestors |
+| `-d`, `--depth` | integer | deepest level shown (0 = top level only) |
+| `-u`, `--urls` | none | add url= to links |
+
+### `diff url`
+
+```
+agent-ios diff url <url1> <url2> [flags]
+```
+
+Open url1, snapshot it (and screenshot it with --screenshot), then url2 the same way, and print the snapshot diff (and the pixel diff); the page stays on url2.
+
+- Page: leases the session's page
+- Default deadline: 1m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<url1>` | yes | the first URL (the before side) |
+| `<url2>` | yes | the second URL (the after side) |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--screenshot` | none | also compare viewport screenshots of the two pages, pixel by pixel (threshold 0.1) |
+| `--full` | none | with --screenshot: capture the whole scrollable documents |
+| `--wait-until` | `load`, `domcontentloaded`, `networkidle` | after each navigation, wait for this load state (networkidle: also no request in flight for 500 ms) (default `load`) |
+| `-s`, `--selector` | text | snapshot only this element: CSS selector or locator |
+| `-c`, `--compact` | none | keep lines with refs, values or text and their ancestors |
+| `-d`, `--depth` | integer | deepest level shown (0 = top level only) |
 
 ### `drag`
 
@@ -1687,33 +1727,90 @@ Print the page's accessibility tree with @eN refs for later commands.
 | `-s`, `--selector` | text | scope the snapshot to every element matching a CSS selector or locator, or to a @ref |
 | `-u`, `--urls` | none | add url= to links |
 
+### `state clear`
+
+```
+agent-ios state clear [<name>] [flags]
+```
+
+Delete the named state \<name\>, or with --all every named state (\<name\>.json) in the state directory. Nothing outside that directory is deleted: no path, no other file, no subdirectory, no symlink target.
+
+- Page: none
+
+| Argument | Required | Description |
+|---|---|---|
+| `<name>` | no | the state to delete (a name; a trailing .json is ignored); or --all |
+
+| Flag | Value | Description |
+|---|---|---|
+| `-a`, `--all` | none | delete every named state in the state directory |
+
+### `state list`
+
+```
+agent-ios state list
+```
+
+List the named states in the state directory ($XDG_STATE_HOME/agent-ios/states): file, size and date.
+
+- Page: none
+
 ### `state load`
 
 ```
-agent-ios state load <path>
+agent-ios state load <name-or-path>
 ```
 
-Restore a state file written by state save: the page must be at the file's origin; its cookies and storage are replaced by the file's.
+Restore a state written by state save (a name or a path): the page must be at the state's origin; its cookies and storage are replaced by the state's.
 
 - Page: leases the session's page
 
 | Argument | Required | Description |
 |---|---|---|
-| `<path>` | yes | the state file to read |
+| `<name-or-path>` | yes | a state name (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as ./login or login.json) |
+
+### `state rename`
+
+```
+agent-ios state rename <old-name> <new-name>
+```
+
+Rename a named state in the state directory; refuses to overwrite an existing state.
+
+- Page: none
+
+| Argument | Required | Description |
+|---|---|---|
+| `<old-name>` | yes | the state to rename (a name; a trailing .json is ignored) |
+| `<new-name>` | yes | its new name (letters, digits, _ and -; a trailing .json is ignored) |
 
 ### `state save`
 
 ```
-agent-ios state save <path>
+agent-ios state save <name-or-path>
 ```
 
-Save the cookies, localStorage and sessionStorage of the page's current origin to a JSON file (mode 0600; it holds live credentials).
+Save the cookies, localStorage and sessionStorage of the page's current origin as a named state or to a JSON file (mode 0600; it holds live credentials).
 
 - Page: leases the session's page
 
 | Argument | Required | Description |
 |---|---|---|
-| `<path>` | yes | the state file to write |
+| `<name-or-path>` | yes | a state name (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as ./login or login.json); an existing file is overwritten |
+
+### `state show`
+
+```
+agent-ios state show <name-or-path>
+```
+
+Show what a state holds without its values: the number of cookies and origins, size and date.
+
+- Page: none
+
+| Argument | Required | Description |
+|---|---|---|
+| `<name-or-path>` | yes | a state name (letters, digits, _ and -: the file \<name\>.json in the state directory) or a file path (anything else, such as ./login or login.json) |
 
 ### `status`
 
@@ -1812,6 +1909,21 @@ Print the id of the tab whose page shows exactly this URL (query and fragment in
 |---|---|---|
 | `--url-file` | file path | read the URL from this file (one line), so the URL is not on the command line |
 | `--device` | text | only the pages of this device: SIMULATOR (the iOS Simulator) or a UDID; other devices' pages are neither listed nor counted as hidden |
+
+### `tab keep`
+
+```
+agent-ios tab keep <mode> [<tab>]
+```
+
+Not available on iOS WebKit: the inspector protocol cannot keep a background tab running, throttle it or freeze it (Chrome's focus emulation and lifecycle freeze); Safari throttles background tabs itself.
+
+- Page: none
+
+| Argument | Required | Description |
+|---|---|---|
+| `<mode>` | yes | live, throttled or frozen |
+| `<tab>` | no | the tab (ignored: the command always fails) |
 
 ### `tab list`
 

@@ -50,20 +50,9 @@ func runDiffScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("reading the baseline: %w", err)
 	}
-	_, c, err := pageAndCaller(ctx, env)
+	shot, err := screenshotPNG(ctx, env, false)
 	if err != nil {
 		return Result{}, err
-	}
-	url, err := tools.CaptureScreenshot(ctx, c, tools.ScreenshotOptions{})
-	if err != nil {
-		return Result{}, fmt.Errorf("taking the screenshot: %w", err)
-	}
-	if !strings.HasPrefix(url, pngDataURL) {
-		return Result{}, fmt.Errorf("the screenshot is not a PNG data URL (%.30q...)", url)
-	}
-	shot, err := base64.StdEncoding.DecodeString(url[len(pngDataURL):])
-	if err != nil {
-		return Result{}, fmt.Errorf("decoding the screenshot: %w", err)
 	}
 	d, err := devtools.DiffPNG(base, shot, th)
 	if err != nil {
@@ -74,6 +63,27 @@ func runDiffScreenshot(ctx context.Context, env Env, in Input) (Result, error) {
 		"threshold": th, "match": d.Different == 0,
 	}
 	return Result{Text: diffScreenshotText(d.Different, d.Total, d.Ratio, th), Data: data}, nil
+}
+
+// screenshotPNG captures the viewport, or the whole document with full,
+// as PNG bytes.
+func screenshotPNG(ctx context.Context, env Env, full bool) ([]byte, error) {
+	_, c, err := pageAndCaller(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	url, err := tools.CaptureScreenshot(ctx, c, tools.ScreenshotOptions{FullPage: full})
+	if err != nil {
+		return nil, fmt.Errorf("taking the screenshot: %w", err)
+	}
+	if !strings.HasPrefix(url, pngDataURL) {
+		return nil, fmt.Errorf("the screenshot is not a PNG data URL (%.30q...)", url)
+	}
+	shot, err := base64.StdEncoding.DecodeString(url[len(pngDataURL):])
+	if err != nil {
+		return nil, fmt.Errorf("decoding the screenshot: %w", err)
+	}
+	return shot, nil
 }
 
 // diffScreenshotText is the text of diff screenshot; private mode makes it

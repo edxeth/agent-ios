@@ -515,30 +515,6 @@ func TestReadURL(t *testing.T) {
 	}
 }
 
-// diff snapshot compares the last two snapshots of the session (design
-// 4.2): a unified line diff with the counts, as agent-browser prints it.
-func TestDiffSnapshot(t *testing.T) {
-	h := newHarness(t)
-	if code, _, errOut := h.run("diff", "snapshot"); code != ExitError || !strings.Contains(errOut, "run snapshot") {
-		t.Fatalf("diff without snapshots: exit %d, %q", code, errOut)
-	}
-	h.page.set("snapshot", snapshotReply(3, "d"))
-	h.mustRun(t, "snapshot")
-	h.mustRun(t, "snapshot")
-	if got := h.mustRun(t, "diff", "snapshot"); got != "No changes detected" {
-		t.Fatalf("diff of equal snapshots = %q", got)
-	}
-	h.page.set("snapshot", okEnv(map[string]any{
-		"tree": []any{map[string]any{"role": "button", "name": "Save", "ref": "e1"}, map[string]any{"role": "button", "name": "Undo", "ref": "e3"}},
-		"refs": []any{}, "nextRef": 4, "doc": "d",
-	}))
-	h.mustRun(t, "snapshot")
-	want := "--- before\n+++ after\n@@ -1,2 +1,2 @@\n - button \"Save\" [ref=e1]\n-- link \"Home\" [ref=e2]\n+- button \"Undo\" [ref=e3]\n\n1 additions, 1 removals, 1 unchanged"
-	if got := h.mustRun(t, "diff", "snapshot"); got != want {
-		t.Fatalf("diff snapshot =\n%s\nwant\n%s", got, want)
-	}
-}
-
 // A page session without the runtime (a daemon that did not wire W3a) is
 // an actionable error, not a nil dereference.
 func TestRuntimeCommandsNeedRuntime(t *testing.T) {
