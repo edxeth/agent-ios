@@ -98,6 +98,7 @@ An agent works in a loop: look, act, wait, check.
    Read single values with `get` (url, title, text, html, value, attr, count, box, styles), test states with `is` (visible, enabled, checked, editable, focused; `focused` follows the focus into open shadow roots and same-origin frames), find elements with `find`, read the element at a point with `hit-test`, and read the visible text with `read`. `screenshot --annotate` draws the refs on the screenshot.
 
 4. **Act.** Actions take a ref, a CSS selector, or a locator (`text=Save`, `role=button[name="Save"]`, `label=Email`, `placeholder=...`, `testid=...`). A CSS selector that matches more than one element fails with the count.
+   `find` and the locators search the current document (the top page, or the frame that `frame` selected), as agent-browser 0.45 does, and do not enter iframes: for an element inside an iframe, use its ref from `snapshot` or run `frame <iframe>` first.
 
    ```bash
    agent-ios fill @e10 user@example.com
