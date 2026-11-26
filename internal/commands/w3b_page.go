@@ -169,6 +169,7 @@ type action struct {
 	Steps   int
 	Delay   time.Duration
 	Args    func(step int) map[string]any // kind-specific fields per step
+	Form    *formCtx                      // fill, type, check, select and upload: the words of their refusals (forms045.go)
 }
 
 // actValue is the value of one dispatched step (50-actionability.js act).
@@ -178,6 +179,7 @@ type actValue struct {
 	Wrn string          `json:"warn"`
 	V   json.RawMessage `json:"v"`
 	Dlg []dialogUse     `json:"dlg"`
+	FW  string          `json:"fw"` // facts of a form read-back warning (forms045.go)
 }
 
 // actResult is what an action reports (design 3.5: "trusted": false and
@@ -256,6 +258,9 @@ func (w *w3bPage) run(ctx context.Context, a action) (*actResult, error) {
 		if v.Wrn != "" {
 			out.Warnings = append(out.Warnings, v.Wrn)
 		}
+		if v.FW != "" {
+			out.Warnings = append(out.Warnings, a.formWarning(v.FW))
+		}
 		if len(v.V) > 0 && string(v.V) != "null" {
 			out.Value = v.V
 		}
@@ -267,9 +272,23 @@ func (w *w3bPage) run(ctx context.Context, a action) (*actResult, error) {
 	w.st.dialogs.acknowledge(out.Dialogs)
 	w.st.mu.Unlock()
 	if err != nil {
-		return out, actionError(err)
+		err = actionError(err)
+		var re *runtime.Error
+		if errors.As(err, &re) {
+			if fe := a.formError(re.Code, re.Message); fe != nil {
+				err = fe
+			}
+		}
+		return out, err
 	}
 	if failure != "" {
+		// A form refusal after the fence: fill's focus guard (only focus
+		// moved) or the option match of a combobox, which step 1 opened.
+		if code, facts, ok := strings.Cut(failure, ": "); ok {
+			if fe := a.formError(code, facts); fe != nil {
+				return out, fe
+			}
+		}
 		return out, fmt.Errorf("%s: %s", a.Name, failure)
 	}
 	return out, nil

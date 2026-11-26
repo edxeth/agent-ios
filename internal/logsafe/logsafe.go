@@ -95,6 +95,9 @@ func Register(named map[string]error) {
 var knownCodes = map[string]bool{
 	runtime.CodeStaleOwner: true, "unknown_ref": true, "stale_ref": true,
 	"unsupported": true, "not_found": true, "ambiguous": true,
+	// Form refusals and upload preconditions (agent-browser 0.45 codes).
+	"not_editable": true, "read_only": true, "disabled": true, "not_checkable": true, "option_not_found": true,
+	"not_multiple": true, "malformed_value": true, "not_file_input": true, "file_not_found": true,
 }
 
 // Error renders err for the daemon log. It walks err's wrap chain (Unwrap,

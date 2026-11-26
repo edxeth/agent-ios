@@ -83,7 +83,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`screenshot`](#screenshot) | Capture the viewport, the full page or one element as PNG; --annotate labels each ref [N] (@eN), --if-changed skips an identical capture. |
 | [`scroll`](#scroll) | Scroll the window or an element up, down, left or right (default 300 px). |
 | [`scrollintoview`](#scrollintoview) | Scroll an element into the center of the viewport. |
-| [`select`](#select) | Select options of a \<select\> by value, then by visible label; dispatches input and change. |
+| [`select`](#select) | Select options of a \<select\> or an ARIA combobox or listbox by value or visible label; dispatches input and change. |
 | [`session`](#session) | Print the current session name (--session or AGENT_IOS_SESSION; default "default"). |
 | [`session info`](#session-info) | Show this session's leased pages: page, lease state (active or lost), epoch and last use. |
 | [`session list`](#session-list) | List the sessions that hold page leases in the daemon. |
@@ -1238,18 +1238,19 @@ Scroll an element into the center of the viewport.
 agent-ios select <target> <values>... [flags]
 ```
 
-Select options of a \<select\> by value, then by visible label; dispatches input and change.
+Select options of a \<select\> or an ARIA combobox or listbox by value or visible label; dispatches input and change.
 
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
 | Argument | Required | Description |
 |---|---|---|
-| `<target>` | yes | select element: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator |
+| `<target>` | yes | select element, or role=combobox or role=listbox element: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator |
 | `<values>...` | yes | option values or labels (several for a multiple select) |
 
 | Flag | Value | Description |
 |---|---|---|
+| `--by` | `value`, `label` | match only option values or only visible labels (when a value equals another option's label) |
 | `--force` | none | skip the actionability checks (attached, visible, stable, enabled, receives events) |
 
 ### `session`

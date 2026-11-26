@@ -1,0 +1,71 @@
+<!doctype html>
+<html><head><title>Forms 0.45</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  .row { margin: 4px 8px; min-height: 24px; }
+  #opa { opacity: 0; }
+  [role=option] { display: block; padding: 2px; }
+</style>
+</head>
+<body>
+<!-- Form preconditions of agent-browser 0.45 (forms.rs), driven by
+     e2e/webkitgtk/forms045_test.go. Every field records its input and
+     change events into T.ev; the expected values are hand-written in the
+     test from the agent-browser 0.45 contract. -->
+<div class="row"><input id="ro" readonly value="keep"><input id="dis" disabled value="keep"><input id="hid" type="hidden" value="keep"><button id="btn">Button</button><div id="plain">plain</div></div>
+<div class="row"><label id="lbl" for="name">Name</label><input id="name" value=""><input id="rofocus" value="keep"><span inert><input id="inert" value="keep"></span></div>
+<div class="row"><input id="upper" value=""><input id="cut" value=""><input id="wipe" value=""><input id="pw" type="password" value=""><div id="ed" contenteditable="true">old</div></div>
+<div class="row"><input id="date" type="date"><input id="time" type="time"><input id="dtl" type="datetime-local"><input id="month" type="month"><input id="week" type="week"></div>
+<div class="row"><input id="color" type="color" value="#000000"><input id="range" type="range" min="0" max="10" step="2" value="4"></div>
+<div class="row"><input type="checkbox" id="cb"><input type="checkbox" id="cbdis" disabled><input type="radio" name="rg" id="r1" checked><input type="radio" name="rg" id="r2">
+  <input type="checkbox" id="opa"><label id="wrap"><input type="checkbox" id="inwrap"> Wrapped</label>
+  <div id="aria" role="checkbox" aria-checked="false" tabindex="0">Aria box</div><input type="checkbox" id="stuck"><a id="link" href="#x">Link</a></div>
+<div class="row"><select id="s1"><option value="x">Apple</option><option value="Apple">Avocado</option><option value="y">Cherry</option></select>
+  <select id="sdis" disabled><option value="a">A</option></select>
+  <select id="sreset"><option value="a">A</option><option value="b">B</option></select></div>
+<div class="row"><button id="combo" role="combobox" aria-expanded="false" aria-controls="combo-list">Pick a fruit</button>
+  <input type="file" id="file"></div>
+<script>
+  var T = window.T = { ev: [], combo: [] };
+  document.querySelectorAll("input, select, textarea, [contenteditable]").forEach(function (el) {
+    ["input", "change"].forEach(function (type) {
+      el.addEventListener(type, function () { T.ev.push(el.id + ":" + type); });
+    });
+  });
+  // The page rewrites some values after they were entered.
+  document.getElementById("upper").addEventListener("input", function (e) { e.target.value = e.target.value.toUpperCase(); });
+  document.getElementById("cut").addEventListener("input", function (e) { e.target.value = e.target.value.slice(0, 3); });
+  document.getElementById("wipe").addEventListener("change", function (e) { e.target.value = ""; });
+  // #rofocus turns readonly when it is focused. The test browser's window
+  // has no focus, so it sends no focus event: the page's focus() does it.
+  var rofocus = document.getElementById("rofocus");
+  rofocus.focus = function () { rofocus.readOnly = true; HTMLElement.prototype.focus.call(rofocus); };
+  document.getElementById("sreset").addEventListener("change", function (e) { e.target.selectedIndex = 0; });
+  document.getElementById("stuck").addEventListener("click", function (e) { e.preventDefault(); });
+  var aria = document.getElementById("aria");
+  aria.addEventListener("click", function () { aria.setAttribute("aria-checked", aria.getAttribute("aria-checked") === "true" ? "false" : "true"); });
+  // A Radix-like combobox: a click opens it, and its listbox mounts in a
+  // later task as a portal at the end of the body (aria-controls names it
+  // before it exists); a click on an option selects it and closes the list.
+  var combo = document.getElementById("combo");
+  combo.addEventListener("click", function () {
+    if (combo.getAttribute("aria-expanded") === "true") { return; }
+    combo.setAttribute("aria-expanded", "true");
+    setTimeout(function () {
+      var lb = document.createElement("div");
+      lb.id = "combo-list"; lb.setAttribute("role", "listbox");
+      [["apple", "Apple"], ["banana", "Banana"], ["kiwi", "Kiwi", true], ["cherry", "Banana split"]].forEach(function (o) {
+        var d = document.createElement("div");
+        d.setAttribute("role", "option"); d.setAttribute("data-value", o[0]); d.textContent = o[1];
+        if (o[2]) { d.setAttribute("aria-disabled", "true"); }
+        d.addEventListener("click", function () {
+          T.combo.push(o[0]); combo.textContent = o[1];
+          combo.setAttribute("aria-expanded", "false"); lb.remove();
+        });
+        lb.appendChild(d);
+      });
+      document.body.appendChild(lb);
+    }, 0);
+  });
+</script>
+</body></html>

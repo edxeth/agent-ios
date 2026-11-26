@@ -211,10 +211,81 @@
     var t = target(e);
     if (editable(t) && !await edit(x, t, g.text, "insertText")) { r.err = "page canceled the input"; }
   };
+  // Form preconditions of fill and type (agent-browser 0.45 forms.rs): g.fk
+  // from Go maps a tag, "input:<type>" or "v:<type>" (value inputs) to the
+  // refusal kind; m is the mode, fill or type.
+  var own = Object.prototype.hasOwnProperty, isEd = _.isEd, fd = _.fd, ff = _.ff;
+  function tchk(e, g, m) {
+    e = _.ctl(e);
+    var t = e.localName, y = t === "input" ? e.type : "", K = g.fk, k = null, v = own.call(K, "v:" + y);
+    if (B.matches(e, ":disabled")) {
+      k = "disabled";
+    } else if (own.call(K, t) && !isEd(e)) {
+      k = K[t];
+    } else if (own.call(K, "input:" + y) || m === "type" && v) {
+      k = v ? "fill" : K["input:" + y];
+    } else if (t !== "input" && t !== "textarea" && !isEd(e)) {
+      k = "";
+    } else if (m === "fill" && e.readOnly) {
+      k = "read_only";
+    }
+    if (k !== null) { throw ff(k === "disabled" || k === "read_only" ? k : "not_editable", e, { k: k }); }
+    if (m === "fill" && v) { g.vv = vval(e, y, String(g.text).trim()); }
+    return e;
+  }
+  // vval: the value fill stores in a value input, or malformed_value when
+  // the input would sanitize it away; a color is any opaque CSS color,
+  // stored as #rrggbb.
+  function vval(e, y, s) {
+    var ok, lo = e.min === "" ? 0 : +e.min, hi = e.max === "" ? 100 : +e.max, c = document.createElement(y === "color" ? "canvas" : "input");
+    if (y === "color") {
+      c = c.getContext("2d");
+      // An opaque color serializes as #rrggbb; another (rgba) is refused.
+      var p = function (z) { c.fillStyle = z; c.fillStyle = s; return c.fillStyle; }, q = c && p("#010203");
+      s = q === p("#040506") && q.charAt(0) === "#" && q;
+      ok = !!s;
+    } else if (y === "range") {
+      ok = /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) && +s >= lo && +s <= hi;
+    } else {
+      c.type = y;
+      VS.input.call(c, s);
+      ok = c.value || !s;
+    }
+    if (!ok) { throw ff("malformed_value", e, { lo: lo, hi: hi }); }
+    return s;
+  }
+  // back: the read-back warning when the page changed the value it was
+  // given (Go words it from the lengths; passwords are not judged).
+  function back(e, want, r) {
+    var ed = isEd(e), o = ed ? B.innerText(e) : e.value;
+    function cmp(s) {
+      s = String(s).replace(/\r\n/g, "\n");
+      return ed ? s.split(/\s+/).filter(Boolean).join(" ") : e.type === "color" ? s.toLowerCase() : s;
+    }
+    if (e.type !== "password" && cmp(o) !== cmp(want)) { r.fw = fd(e, { k: o === "" ? "empty" : "len", g: want.length, h: o.length }); }
+  }
   A.fill = async function (e, g, a, r, x) {
-    if (_.deepActive() !== e) { await ev(x, function () { e.focus(); }); }
+    var vs = VS[e.localName], got;
+    if (g.vv !== undefined) {
+      await ev(x, function () {
+        vs.call(e, g.vv);
+        got = e.value;
+        disp(e, new Ev("input", { bubbles: true, composed: true }));
+        disp(e, new Ev("change", { bubbles: true }));
+      });
+      await gap(x);
+      if (e.type === "range" && +got !== +g.vv) { r.fw = fd(e, { k: "snap" }); } else { back(e, got, r); }
+      r.v = e.value;
+      return;
+    }
+    if (_.deepActive() !== e) {
+      var seen = false, h = function () { seen = true; };
+      await ev(x, function () { e.addEventListener("focus", h, true); e.focus(); e.removeEventListener("focus", h, true); });
+      for (var n = _.deepActive(); n && !seen; n = n.parentNode || n.host) { seen = n === e; }
+      if (!seen) { r.err = "not_editable: " + fd(e, { k: "focus" }); return; }
+    }
+    if (vs && e.readOnly) { r.err = "read_only: " + fd(e, { k: "read_only" }); return; }
     if (!await ev(x, function () { return disp(e, ie("beforeinput", "insertReplacementText", g.text, true)); })) { r.err = "page canceled the input"; return; }
-    var vs = VS[e.localName];
     await ev(x, function () {
       if (vs) {
         try { e.select(); } catch (y) { /* no selection */ }
@@ -225,11 +296,12 @@
         document.execCommand("insertText", false, g.text);
       }
     });
-    if (vs) {
-      await ev(x, function () { disp(e, new Ev("change", { bubbles: true })); });
-      r.v = e.value;
-    } else {
-      r.v = B.textContent(e);
-    }
+    if (vs) { await ev(x, function () { disp(e, new Ev("change", { bubbles: true })); }); }
+    await gap(x);
+    back(e, g.text, r);
+    r.v = vs ? e.value : B.textContent(e);
   };
+  A.fill.chk = function (e, g) { return tchk(e, g, "fill"); };
+  A.fill.as = "focus"; // the precheck decides editability: only attached and visible are awaited
+  A.type.chk = function (e, g) { return g.ko ? e : tchk(e, g, "type"); };
 })(window.__iwdpBuilding);

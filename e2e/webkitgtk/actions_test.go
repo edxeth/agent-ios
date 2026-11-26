@@ -818,8 +818,8 @@ func TestActionSelect(t *testing.T) {
 	}
 	eval(t, "T.form = []; true")
 	for _, c := range []struct{ args, err string }{
-		{"Durian", `no option with the value or label "Durian"`},
-		{"a c", "the select takes one value"},
+		{"Durian", `option_not_found: No option matched ["Durian"]. The select has 3 options`},
+		{"a c", "not_multiple: 2 values requested but <select> does not allow multiple selection"},
 	} {
 		code, _, errOut := act(context.Background(), ps, append([]string{"select", "#pick"}, strings.Fields(c.args)...)...)
 		if code == 0 || !strings.Contains(errOut, c.err) {
@@ -907,7 +907,7 @@ func TestActionUpload(t *testing.T) {
 		err  string
 	}{
 		{[]string{"#file", a, b}, "the file input takes one file"},
-		{[]string{"#btn", a}, "the element is not a file input"},
+		{[]string{"#btn", a}, "not_file_input: '#btn' matched <button>, not an <input type=file>"},
 	} {
 		code, _, errOut := act(context.Background(), ps, append([]string{"upload"}, c.args...)...)
 		if code == 0 || !strings.Contains(errOut, c.err) {

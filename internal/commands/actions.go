@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/runtime"
 	"github.com/edxeth/agent-ios/internal/upload"
 	"github.com/edxeth/agent-ios/internal/webkit"
 )
@@ -113,10 +117,13 @@ func init() {
 	})
 	registerAction(&Command{
 		Name:    "select",
-		Summary: "Select options of a <select> by value, then by visible label; dispatches input and change.",
-		Args:    []Arg{targetArg("select element"), {Name: "values", Help: "option values or labels (several for a multiple select)", Required: true, Variadic: true}},
-		Flags:   []Flag{forceFlag},
-		Run:     runSelect,
+		Summary: "Select options of a <select> or an ARIA combobox or listbox by value or visible label; dispatches input and change.",
+		Args:    []Arg{targetArg("select element, or role=combobox or role=listbox element"), {Name: "values", Help: "option values or labels (several for a multiple select)", Required: true, Variadic: true}},
+		Flags: []Flag{
+			{Name: "by", Type: FlagEnum, Enum: []string{"value", "label"}, Help: "match only option values or only visible labels (when a value equals another option's label)"},
+			forceFlag,
+		},
+		Run: runSelect,
 	})
 	registerAction(&Command{
 		Name:    "scroll",
@@ -519,20 +526,24 @@ func runCheck(want bool) func(context.Context, Env, Input) (Result, error) {
 		}
 		defer w.close()
 		t := arg(in, 0)
+		done := "checked"
+		if !v {
+			done = "unchecked"
+		}
 		r, err := w.run(ctx, action{
-			Name: "check", Kind: "check", Target: t, Force: flagBool(in, "force"),
-			Args: func(int) map[string]any { return map[string]any{"v": v} },
+			Name: "check", Kind: "check", Target: t, Force: flagBool(in, "force"), Form: &formCtx{Verb: done},
+			Args: func(int) map[string]any { return map[string]any{"v": v, "cb": checkBox} },
 		})
 		if err != nil {
 			return Result{}, err
 		}
-		done := "checked "
-		if !v {
-			done = "unchecked "
-		}
-		return w.result(done+t, r), nil
+		return w.result(done+" "+t, r), nil
 	}
 }
+
+// selectSettle is the pause between the steps of select: the page's
+// change handlers run, and a combobox renders its options.
+const selectSettle = 50 * time.Millisecond
 
 func runSelect(ctx context.Context, env Env, in Input) (Result, error) {
 	vals := in.Args[1:]
@@ -544,9 +555,13 @@ func runSelect(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, err
 	}
 	defer w.close()
+	by := flagString(in, "by")
+	// Step 1 selects in a <select>, or opens a collapsed combobox; step 2
+	// reads the <select> back, or clicks the combobox's options.
 	r, err := w.run(ctx, action{
 		Name: "select", Kind: "select", Target: arg(in, 0), Force: flagBool(in, "force"),
-		Args: func(int) map[string]any { return map[string]any{"vals": vals} },
+		Steps: 2, Delay: selectSettle, Form: &formCtx{Values: vals, By: by},
+		Args: func(int) map[string]any { return map[string]any{"vals": vals, "by": by} },
 	})
 	if err != nil {
 		return Result{}, err
@@ -636,8 +651,12 @@ type uploadFile struct {
 func runUpload(ctx context.Context, env Env, in Input) (Result, error) {
 	var files []uploadFile
 	total := 0
-	for _, p := range in.Args[1:] {
-		data, err := upload.Read(ctx, env.ResolvePath(p), upload.MaxBytes-total)
+	paths, err := uploadPaths(env, in.Args[1:])
+	if err != nil {
+		return Result{}, err
+	}
+	for i, p := range in.Args[1:] {
+		data, err := upload.Read(ctx, paths[i], upload.MaxBytes-total)
 		if err != nil {
 			return Result{}, fmt.Errorf("upload: reading %s: %w", p, err)
 		}
@@ -654,13 +673,39 @@ func runUpload(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	defer w.close()
 	r, err := w.run(ctx, action{
-		Name: "upload", Kind: "upload", Target: arg(in, 0),
-		Args: func(int) map[string]any { return map[string]any{"files": files} },
+		Name: "upload", Kind: "upload", Target: arg(in, 0), Form: &formCtx{},
+		Args: func(int) map[string]any { return map[string]any{"files": files, "fi": true} },
 	})
 	if err != nil {
 		return Result{}, err
 	}
 	return w.result(fmt.Sprintf("set %d file(s), %d bytes, on %s", len(files), total, arg(in, 0)), r), nil
+}
+
+// uploadPaths resolves the file arguments of upload before anything goes
+// to the page (agent-browser 0.45): "~" and "~/" expand to the home
+// directory ("~user" does not), a relative path is relative to the CLI's
+// working directory, and a missing file is file_not_found.
+func uploadPaths(env Env, args []string) ([]string, error) {
+	out := make([]string, 0, len(args))
+	for _, p := range args {
+		if p == "~" || strings.HasPrefix(p, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("upload: expanding %s: %w", p, err)
+			}
+			p = filepath.Join(home, p[1:])
+		}
+		p = env.ResolvePath(p)
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) {
+			return nil, &runtime.Error{Code: "file_not_found", Message: p + " does not exist"}
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // mimeOf guesses a file's MIME type from its extension for File.type.

@@ -178,6 +178,10 @@
     }
     var d = _.A[g.k];
     if (!d) { return failed(_.fail("unsupported", "the agent runtime has no action " + g.k)); }
+    // chk: the form preconditions (55-actions.js); a refusal changes nothing.
+    if (el && d.chk) {
+      try { el = d.chk(el, g, a) || el; } catch (e) { return failed(e); }
+    }
     return I.attempt(a, function () {
       if (why) { return why; }
       var r = el && !g.f && !(d.pre && a.step > 1) ? check(d.as || g.k, d.on ? d.on(el) : el, a.opId + "/" + a.step) : "";

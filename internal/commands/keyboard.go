@@ -339,8 +339,8 @@ func runFill(ctx context.Context, env Env, in Input) (Result, error) {
 	defer w.close()
 	text := arg(in, 1)
 	r, err := w.run(ctx, action{
-		Name: "fill", Kind: "fill", Target: arg(in, 0), Force: flagBool(in, "force"),
-		Args: func(int) map[string]any { return map[string]any{"text": text} },
+		Name: "fill", Kind: "fill", Target: arg(in, 0), Force: flagBool(in, "force"), Form: &formCtx{Verb: "filled"},
+		Args: func(int) map[string]any { return map[string]any{"text": text, "fk": formKinds} },
 	})
 	if err != nil {
 		return Result{}, err
@@ -362,9 +362,14 @@ func typeInto(ctx context.Context, env Env, name, target, text string, delay tim
 		return Result{}, err
 	}
 	defer w.close()
+	// Text of only newlines and tabs is keys: the form checks do not apply
+	// (agent-browser 0.45 type).
+	keysOnly := strings.Trim(text, "\n\r\t") == ""
 	r, err := w.run(ctx, action{
-		Name: name, Kind: "type", Target: target, Force: force, Steps: len(steps), Delay: delay,
-		Args: func(step int) map[string]any { return map[string]any{"keys": steps[step-1]} },
+		Name: name, Kind: "type", Target: target, Force: force, Steps: len(steps), Delay: delay, Form: &formCtx{Verb: "typed into"},
+		Args: func(step int) map[string]any {
+			return map[string]any{"keys": steps[step-1], "fk": formKinds, "ko": keysOnly}
+		},
 	})
 	if err != nil {
 		return Result{}, err
