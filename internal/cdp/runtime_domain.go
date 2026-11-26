@@ -447,34 +447,120 @@ func releaseObject(ctx context.Context, call *Call) (any, Later, error) {
 
 // binding is a Runtime.addBinding of the attachment. All worlds of a
 // frame share its WIP main world (worlds.go), so the page function cannot
-// tell which world called it; Runtime.bindingCalled names the context the
-// binding was added for, as Chrome does: Puppeteer handles the call only
-// in the ExecutionContext whose id the event names (puppeteer-core 25.18.1
-// cdp/ExecutionContext.js #onBindingCalled), and its utility world adds
-// __ariaQuerySelector, which aria/ selectors call, by executionContextName.
+// tell which world called it; Runtime.bindingCalled names the calling
+// frame's context of the world the binding was added for, as Chrome does:
+// Puppeteer handles the call only in the ExecutionContext whose id the
+// event names (puppeteer-core 25.18.1 cdp/ExecutionContext.js
+// #onBindingCalled), and the utility world of every frame adds
+// __ariaQuerySelector, which aria/ selectors call, by
+// executionContextName. The page function of a child frame tags its
+// messages with the frame's default context (frameBindSource); the main
+// frame's function has no tag.
 type binding struct {
 	token string // marks the page function's messages (addBinding)
 	world string // executionContextName; "" for none
 	ctx   int    // executionContextId; 0 for none
 }
 
-// bindingContextLocked returns the context id that a call of b reports:
-// the main frame's context of b's world or b's context while it is in the
-// current document, else the main frame's default context.
-func (ps *pageState) bindingContextLocked(b binding) int {
-	switch {
-	case b.world != "" && ps.main != nil:
-		for _, c := range ps.ctxs {
-			if c.wipFrame == ps.main.wip.ID && c.world == b.world {
-				return c.id
-			}
-		}
-	case b.ctx != 0:
-		if _, ok := ps.lookupContextLocked(b.ctx, ""); ok {
-			return b.ctx
+// bindingContextLocked returns the context id that a call of b reports
+// when the page function of the frame whose default context is from (0,
+// or a context that is gone: the main frame) called it: b's context when
+// it is in that frame, else that frame's context of b's world (of the
+// world of b's context when b names one that still exists), else the
+// frame's default context.
+func (ps *pageState) bindingContextLocked(b binding, from int) int {
+	if ps.main == nil {
+		return 0
+	}
+	frame := ps.main.wip.ID
+	if c, ok := ps.lookupContextLocked(from, ""); from != 0 && ok {
+		frame = c.wipFrame
+	}
+	world := b.world
+	if b.ctx != 0 {
+		c, ok := ps.lookupContextLocked(b.ctx, "")
+		switch {
+		case ok && c.wipFrame == frame:
+			return c.id
+		case ok:
+			world = c.world
+		default:
+			world = ""
 		}
 	}
-	return ps.mainContextLocked()
+	for _, c := range ps.ctxs {
+		if c.wipFrame == frame && c.world == world {
+			return c.id
+		}
+	}
+	return ps.contextLocked(frame, "").id
+}
+
+// frameBind is a binding installed in the document of a child frame,
+// named by the frame's default context (frameBound).
+type frameBind struct {
+	ctx         int
+	name, token string
+}
+
+// frameBindSource installs bindings (%s: a JSON list of {n, k}) in a child
+// frame's document, whose default context is %d: each page function
+// writes the marked message of 66-cdp-page.js cdpBind with that context
+// as f, so that bindingCalled can name the frame. The agent runtime is not
+// needed in the frame.
+const frameBindSource = `(function (l, f) {
+  var d = console.debug.bind(console);
+  l.forEach(function (b) {
+    window[b.n] = function (p) {
+      try { d("` + bindMarker + `" + JSON.stringify({ n: b.n, k: b.k, f: f, p: String(p) })); } catch (e) { /* console replaced by the page */ }
+    };
+  });
+  return true;
+})(%s, %d)`
+
+// bindChildFrames installs the binding name in the document of every child
+// frame of the current document that has none with token yet (Chrome adds
+// a binding to the contexts of every frame; Puppeteer adds its utility
+// world's bindings once per frame context and calls them in each frame).
+// New documents get it from the bootstrap part, untagged, until the next
+// addBinding. A frame that navigated or detached meanwhile is skipped.
+func (s *session) bindChildFrames(mo *core.ManagedOp, name, token string) error {
+	ps := s.page
+	ps.mu.Lock()
+	var ids []int
+	live := map[int]bool{}
+	if ps.main != nil {
+		for _, c := range ps.ctxs {
+			live[c.id] = true
+			if c.world == "" && c.wipFrame != ps.main.wip.ID && !ps.frameBound[frameBind{c.id, name, token}] {
+				ids = append(ids, c.id)
+			}
+		}
+	}
+	for k := range ps.frameBound {
+		if !live[k.ctx] {
+			delete(ps.frameBound, k)
+		}
+	}
+	ps.mu.Unlock()
+	list, _ := json.Marshal([]map[string]string{{"n": name, "k": token}}) // strings only
+	for _, id := range ids {
+		b, err := s.bind(mo, id, "")
+		if err == nil {
+			_, err = b.send("Runtime.evaluate", map[string]any{"expression": fmt.Sprintf(frameBindSource, list, id), "returnByValue": true})
+			err = boundErr(err)
+		}
+		if errors.Is(err, errNoContext) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		ps.mu.Lock()
+		ps.frameBound[frameBind{id, name, token}] = true
+		ps.mu.Unlock()
+	}
+	return nil
 }
 
 // addBinding installs window[name] in the current document and, through
@@ -497,8 +583,13 @@ func addBinding(ctx context.Context, call *Call) (any, Later, error) {
 	}
 	s := call.session
 	ps := s.page
-	token := randomHex(8)
+	// A name that is added again keeps its token: the functions that an
+	// earlier addBinding installed, also in child frames, stay valid.
 	ps.mu.Lock()
+	token := randomHex(8)
+	if old, ok := ps.bindings[p.Name]; ok {
+		token = old.token
+	}
 	ps.bindings[p.Name] = binding{token: token, world: p.ExecutionContextName, ctx: p.ExecutionContextID}
 	ps.mu.Unlock()
 	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
@@ -508,7 +599,10 @@ func addBinding(ctx context.Context, call *Call) (any, Later, error) {
 		if err := ps.installBoot(ctx, mo); err != nil {
 			return err
 		}
-		return runtimeCall(ctx, mo, "cdpBind", map[string]any{"add": []map[string]string{{"n": p.Name, "k": token}}})
+		if err := runtimeCall(ctx, mo, "cdpBind", map[string]any{"add": []map[string]string{{"n": p.Name, "k": token}}}); err != nil {
+			return err
+		}
+		return s.bindChildFrames(mo, p.Name, token)
 	})
 	return nil, nil, err
 }
@@ -588,12 +682,15 @@ func consoleMessage(ps *pageState, target string, params json.RawMessage) {
 			ps.sameDocumentLocked(target, v.U, v.T)
 		}
 	case strings.HasPrefix(m.Text, bindMarker):
-		var v struct{ N, K, P string }
+		var v struct {
+			N, K, P string
+			F       int // the calling child frame's default context; 0 for the main frame
+		}
 		if json.Unmarshal([]byte(m.Text[len(bindMarker):]), &v) != nil {
 			break
 		}
 		if b, ok := ps.bindings[v.N]; ok && v.K != "" && b.token == v.K {
-			ps.emitLocked("", "Runtime.bindingCalled", map[string]any{"name": v.N, "payload": v.P, "executionContextId": ps.bindingContextLocked(b)})
+			ps.emitLocked("", "Runtime.bindingCalled", map[string]any{"name": v.N, "payload": v.P, "executionContextId": ps.bindingContextLocked(b, v.F)})
 		}
 	case strings.HasPrefix(m.Text, dialogMarker):
 		ps.dialogEntryLocked(m.Text[len(dialogMarker):])

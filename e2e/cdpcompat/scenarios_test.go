@@ -299,8 +299,9 @@ func devtoolsMCPFeatures(t *testing.T) {
 	}
 	// wait_for (Puppeteer's aria/ and text/ locators): text present from
 	// the start, and a text and an accessible name (aria/ only) that a
-	// timer adds after the call began.
-	for _, name := range []string{"wait_for present", "wait_for late text", "wait_for late name"} {
+	// timer adds after the call began; on frames.html, present text of the
+	// main document and of its three same-origin frames.
+	for _, name := range []string{"wait_for present", "wait_for late text", "wait_for late name", "wait_for frames main", "wait_for frames inner"} {
 		var found string
 		stepValue(t, run.result, name, &found)
 		if found != "found" {

@@ -225,6 +225,16 @@ func (ps *pageState) lookupContextLocked(id int, unique string) (*execContext, b
 	return nil, false
 }
 
+// childFrameContext reports whether the context id of the current
+// document belongs to a child frame.
+func (s *session) childFrameContext(id int) bool {
+	ps := s.page
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	c, ok := ps.lookupContextLocked(id, "")
+	return ok && ps.main != nil && c.wipFrame != ps.main.wip.ID
+}
+
 // mainWorldLocked returns the WIP id of the frame's main world in the
 // current document, as the attachment's events reported it; 0 while
 // unknown.

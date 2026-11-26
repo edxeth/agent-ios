@@ -166,6 +166,7 @@ type pageState struct {
 	scripts    []initScript
 	nextScript int
 	bindings   map[string]binding // by binding name
+	frameBound map[frameBind]bool // bindings installed in child frame documents (runtime_domain.go)
 	exceptions int                // exceptionThrown ids
 	jsHeap     float64            // last Memory tracking javascript size (performance_domain.go)
 
@@ -197,7 +198,7 @@ func newPageModel(target string, send func(method string, params any)) *pageStat
 	life, endLife := context.WithCancel(context.Background())
 	ps := &pageState{
 		target: target, send: send, enabled: map[string]bool{}, frames: map[string]*frameInfo{},
-		navChanged: make(chan struct{}), bindings: map[string]binding{}, lastConsole: map[string]json.RawMessage{}, unsub: func() {},
+		navChanged: make(chan struct{}), bindings: map[string]binding{}, frameBound: map[frameBind]bool{}, lastConsole: map[string]json.RawMessage{}, unsub: func() {},
 		life: life, endLife: endLife,
 	}
 	ps.init()

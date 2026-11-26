@@ -450,11 +450,14 @@ func domRequestNode(ctx context.Context, call *Call) (any, Later, error) {
 
 // domResolveNode returns a remote object of a node: WIP DOM.resolveNode
 // for a nodeId, the runtime handle for a backendNodeId (evaluated by
-// reference in the main world). The CDP utility worlds are aliases of the
-// main world (design 5.2), so an executionContextId does not change where
-// the node is resolved; it must still name a context of the attachment's
-// current document (runtime_domain.go wipContext), otherwise the call
-// fails closed with Chrome's unknown-context error, as Runtime calls do.
+// reference in the main world, or in the main world of the child frame
+// that executionContextId names: WIP refuses a call in a frame's context
+// with an argument of another frame's world, and Puppeteer passes the
+// node it resolved for a frame's world to calls in that world). The CDP
+// utility worlds are aliases of their frame's main world (design 5.2);
+// an executionContextId must name a context of the attachment's current
+// document (runtime_domain.go wipContext), otherwise the call fails
+// closed with Chrome's unknown-context error, as Runtime calls do.
 func domResolveNode(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
 		nodeParams
@@ -469,9 +472,14 @@ func domResolveNode(ctx context.Context, call *Call) (any, Later, error) {
 	}
 	var obj map[string]any
 	err := call.session.withPage(ctx, call.Method, core.ClassRead, func(pc *pageCall) error {
+		var in core.ExecContext // the world of a backendNodeId's object
 		if p.ExecutionContextID != 0 {
-			if _, err := pc.s.wipContext(pc.ctx, p.ExecutionContextID, ""); err != nil {
+			ec, err := pc.s.wipContext(pc.ctx, p.ExecutionContextID, "")
+			if err != nil {
 				return err
+			}
+			if pc.s.childFrameContext(p.ExecutionContextID) {
+				in = ec
 			}
 		}
 		if p.NodeID != 0 {
@@ -493,7 +501,7 @@ func domResolveNode(ctx context.Context, call *Call) (any, Later, error) {
 			return nil
 		}
 		var err error
-		obj, err = pc.byReference(p.BackendNodeID, p.ObjectGroup)
+		obj, err = pc.byReferenceIn(in, p.BackendNodeID, p.ObjectGroup)
 		return err
 	})
 	if err != nil {
@@ -502,22 +510,37 @@ func domResolveNode(ctx context.Context, call *Call) (any, Later, error) {
 	return map[string]any{"object": toCDP(obj)}, nil, nil
 }
 
-// jsByHandle evaluates to the node of a handle, or the missing sentinel.
-const jsByHandle = `(function(){var I=window.__iwdp;if(!I||I.v!==%q)return %q;return I._.byHandle(%s,%d)})()`
+// jsByHandle evaluates to the node of a handle, or the missing sentinel;
+// %s is the main frame's window as the evaluating world reaches it.
+const jsByHandle = `(function(){var I=%s.__iwdp;if(!I||I.v!==%q)return %q;return I._.byHandle(%s,%d)})()`
 
 // byReference evaluates the node of backendNodeId by reference.
 func (p *pageCall) byReference(backendNodeID int64, group string) (map[string]any, error) {
+	return p.byReferenceIn(core.ExecContext{}, backendNodeID, group)
+}
+
+// byReferenceIn evaluates the node of backendNodeId by reference in the
+// WIP world in (the zero context: the main frame's main world), so that
+// WIP wraps the node there. The handle lives in the main frame's agent
+// runtime, which a child frame's world reaches as window.top (a same-
+// origin frame only; a cross-origin one fails). The runtime is installed
+// in the main frame only.
+func (p *pageCall) byReferenceIn(in core.ExecContext, backendNodeID int64, group string) (map[string]any, error) {
 	k, ok := handlesOf(p.s.pg).lookup(backendNodeID)
 	if !ok {
 		return nil, errNoNode
 	}
 	ks, _ := json.Marshal(k.doc)
-	params := map[string]any{"expression": fmt.Sprintf(jsByHandle, runtime.Version, runtime.MissingSentinel, ks, k.h)}
+	top := "window"
+	if in.ID != 0 {
+		top = "window.top"
+	}
+	params := map[string]any{"expression": fmt.Sprintf(jsByHandle, top, runtime.Version, runtime.MissingSentinel, ks, k.h)}
 	if group != "" {
 		params["objectGroup"] = group
 	}
 	for attempt := 0; ; attempt++ {
-		r, err := wipCall(p.ctx, p.mo, "Runtime.evaluate", params)
+		r, err := p.evaluateIn(in, params)
 		if err != nil {
 			return nil, err
 		}
@@ -534,6 +557,19 @@ func (p *pageCall) byReference(backendNodeID int64, group string) (map[string]an
 			return nil, err
 		}
 	}
+}
+
+// evaluateIn sends the Runtime.evaluate params in the WIP world in (the
+// zero context: where the operation works), then restores the
+// operation's context.
+func (p *pageCall) evaluateIn(in core.ExecContext, params map[string]any) (wipResult, error) {
+	if in.ID == 0 {
+		return wipCall(p.ctx, p.mo, "Runtime.evaluate", params)
+	}
+	prev := p.mo.Op.ExecutionContext()
+	p.mo.Op.SetExecutionContext(in)
+	defer p.mo.Op.SetExecutionContext(prev)
+	return wipCall(p.ctx, p.mo, "Runtime.evaluate", params)
 }
 
 // ---- describeNode ----

@@ -2,6 +2,7 @@ package cdp
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -362,5 +363,70 @@ func TestChildFrameContexts(t *testing.T) {
 	d := sessionEvents(c, seq, sid, "Runtime.executionContextDestroyed")
 	if len(d) != 1 || decode[struct{ ExecutionContextID int }](t, d[0].Params).ExecutionContextID != child.ID {
 		t.Fatalf("executionContextDestroyed %v, want the child's context %d", d, child.ID)
+	}
+}
+
+// Puppeteer adds its utility world's bindings (__ariaQuerySelector) once
+// per frame context, by executionContextName, and calls them in each
+// frame (chrome-devtools-mcp wait_for races aria/ locators over the
+// frames): addBinding installs the page function in the child frame's
+// document too, and a call from the child frame names the child's context
+// of the binding's world. Before, the child had no function (page error
+// "undefined is not an object (evaluating 'o.args')") and a call would
+// have named the main frame's context.
+func TestBindingCalledFromChildFrame(t *testing.T) {
+	r, fp, c, sid, target := attachPage(t)
+	f := r.fake["One"]
+	fp.children = []wipTree{{Frame: wipFrame{ID: "child", ParentID: "main", LoaderID: "0.9", URL: "https://one.example/frame.html", SecurityOrigin: "https://one.example"}}}
+	call(t, c, sid, "Page.enable", nil)
+	f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 7, "type": "normal", "frameId": "child"}})
+	call(t, c, sid, "Runtime.enable", nil)
+	childCtx := contextOf(t, c, sid, "child")
+	world := func(frame string) int {
+		return decode[struct{ ExecutionContextID int }](t, call(t, c, sid, "Page.createIsolatedWorld", map[string]any{"frameId": frame, "worldName": "util"})).ExecutionContextID
+	}
+	mainUtil, childUtil := world(target), world("child")
+	const name = "puppeteer___ariaQuerySelector"
+	call(t, c, sid, "Runtime.addBinding", map[string]any{"name": name, "executionContextName": "util"})
+	token := bindingToken(t, fp, name)
+	installed := func() int {
+		n := 0
+		for _, ev := range f.ReceivedMethod("Runtime.evaluate") {
+			var p struct {
+				Expression string
+				ContextID  int
+			}
+			_ = json.Unmarshal(ev.Params, &p)
+			if p.ContextID == 7 && strings.Contains(p.Expression, name) && strings.Contains(p.Expression, token) {
+				n++
+			}
+		}
+		return n
+	}
+	if installed() != 1 {
+		t.Fatalf("addBinding did not install %s in the child frame's document (WIP context 7): %v", name, f.ReceivedMethod("Runtime.evaluate"))
+	}
+	// Puppeteer adds the binding again for the child's own context: the
+	// token stays, so the functions installed before still match.
+	call(t, c, sid, "Runtime.addBinding", map[string]any{"name": name, "executionContextName": "util"})
+	if got := bindingToken(t, fp, name); got != token {
+		t.Fatalf("a second addBinding changed the token from %s to %s", token, got)
+	}
+	for _, tc := range []struct {
+		from string
+		want int
+	}{
+		{fmt.Sprintf(`,"f":%d`, childCtx), childUtil},
+		{"", mainUtil},
+	} {
+		seq := c.Seq()
+		fp.consoleDebug(bindMarker + `{"n":"` + name + `","k":"` + token + `"` + tc.from + `,"p":"{\"seq\":1}"}`)
+		b := decode[struct {
+			Name, Payload      string
+			ExecutionContextID int
+		}](t, waitEvent(t, c, seq, sid, "Runtime.bindingCalled", nil).Params)
+		if b.Name != name || b.Payload != `{"seq":1}` || b.ExecutionContextID != tc.want {
+			t.Errorf("call with tag %q: bindingCalled %+v, want context %d (main util %d, child util %d)", tc.from, b, tc.want, mainUtil, childUtil)
+		}
 	}
 }

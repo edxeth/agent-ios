@@ -14,7 +14,9 @@
 //     changed; the server runs with --categoryNetworkMocks):
 //     navigate_page to css.html, take_snapshot and get_css_styles on its
 //     button (the winning and the overloaded declarations, the <style>
-//     source lines, a var() value), navigate_page to console.html,
+//     source lines, a var() value), navigate_page to frames.html and
+//     wait_for a text of the main document and one of its three
+//     same-origin frames, both present at the call, navigate_page to console.html,
 //     list_console_messages with includeStackTraces (the message of console.js has its frame),
 //     get_console_message, emulate (colorScheme dark, geolocation,
 //     cpuThrottlingRate 1; the page sees dark and the position), emulate
@@ -307,6 +309,26 @@ async function refusal(server, name, args) {
   throw new Error(`${name} answered without an error:\n${text}`);
 }
 
+// waitFor is the step name: wait_for of text in the page, which must
+// answer that it found it; with insert, a timer of the page adds that HTML
+// 500 ms after the call began.
+async function waitFor(server, pageId, name, text, insert) {
+  await observe(out, name, async () => {
+    if (insert) {
+      await evaluate(server, pageId, `() => {
+        setTimeout(() => { document.body.insertAdjacentHTML('beforeend', ${JSON.stringify(insert)}); }, 500);
+        return true;
+      }`);
+    }
+    const { text: answer } = await server.callTool('wait_for', { pageId, text: [text], timeout: 10_000 });
+    const line = `Element matching one of ${JSON.stringify([text])} found.`;
+    if (!answer.includes(line)) {
+      throw new Error(`wait_for answered without "${line}":\n${answer}`);
+    }
+    return 'found';
+  });
+}
+
 const scenarios = {
   async scenario() {
     const form = origin() + '/form.html';
@@ -412,6 +434,14 @@ scenarios.features = async function features() {
         }
         return { uid, rules: rules.filter((r) => r.source.startsWith('<style>')) };
       });
+    }
+    // wait_for on a page with three same-origin frames (frames.html): a
+    // text of the main document and a text of the frames, both present at
+    // the call. Puppeteer runs the aria/ locator in every frame's utility
+    // world, whose binding call must reach the frame's context.
+    if (await navigate(server, pageId, origin() + '/frames.html')) {
+      await waitFor(server, pageId, 'wait_for frames main', 'Frames heading');
+      await waitFor(server, pageId, 'wait_for frames inner', 'Inner button');
     }
     if (!(await navigate(server, pageId, consolePage))) {
       return false;
@@ -533,25 +563,9 @@ scenarios.features = async function features() {
     // world (Runtime.bindingCalled must name that world's context) and
     // Accessibility.queryAXTree, while the poller's awaited promise is
     // pending.
-    const waitFor = async (name, text, insert) => {
-      await observe(out, name, async () => {
-        if (insert) {
-          await evaluate(server, pageId, `() => {
-            setTimeout(() => { document.body.insertAdjacentHTML('beforeend', ${JSON.stringify(insert)}); }, 500);
-            return true;
-          }`);
-        }
-        const { text: answer } = await server.callTool('wait_for', { pageId, text: [text], timeout: 10_000 });
-        const line = `Element matching one of ${JSON.stringify([text])} found.`;
-        if (!answer.includes(line)) {
-          throw new Error(`wait_for answered without "${line}":\n${answer}`);
-        }
-        return 'found';
-      });
-    };
-    await waitFor('wait_for present', 'Console');
-    await waitFor('wait_for late text', 'late text arrived', '<p id="late-text">late text arrived</p>');
-    await waitFor('wait_for late name', 'late label', '<button id="late-button" aria-label="late label">x</button>');
+    await waitFor(server, pageId, 'wait_for present', 'Console');
+    await waitFor(server, pageId, 'wait_for late text', 'late text arrived', '<p id="late-text">late text arrived</p>');
+    await waitFor(server, pageId, 'wait_for late name', 'late label', '<button id="late-button" aria-label="late label">x</button>');
   } finally {
     await step(out, 'close', async () => {
       const exit = await server.close();

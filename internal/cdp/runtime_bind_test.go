@@ -327,3 +327,44 @@ func TestContextProofRefusesAnotherTargetsWorld(t *testing.T) {
 		}
 	}
 }
+
+// DOM.resolveNode{backendNodeId, executionContextId} of a child frame's
+// context wraps the node in that frame's WIP world: Puppeteer's aria/
+// query in a frame (adoptBackendNode) passes the node to calls in the
+// frame's context, which WebKit refuses for an object of another world
+// ("Arguments should belong to the same JavaScript world as the target
+// object"). The handle lives in the main frame's runtime, reached as
+// window.top.
+func TestResolveNodeInChildFrameWorld(t *testing.T) {
+	r, fp, c, sid, s := attachWithPriorContexts(t, true)
+	f := r.fake["One"]
+	backend := handlesOf(s.pg).id("doc-1", 5)
+	fp.mu.Lock()
+	fp.eval = func(expr string) (any, bool) {
+		if strings.Contains(expr, "I._.byHandle(\"doc-1\",5)") {
+			return map[string]any{"result": map[string]any{"type": "object", "subtype": "node", "objectId": "obj-5"}}, true
+		}
+		return nil, false
+	}
+	fp.mu.Unlock()
+	util := decode[struct{ ExecutionContextID int }](t, call(t, c, sid, "Page.createIsolatedWorld", map[string]any{"frameId": "c1", "worldName": "pptr"})).ExecutionContextID
+	for _, id := range []int{contextOf(t, c, sid, "c1"), util} {
+		res, err := c.Call(ctxFor(t, 5*time.Second), sid, "DOM.resolveNode", map[string]any{"backendNodeId": backend, "executionContextId": id})
+		if err != nil || !strings.Contains(string(res), "obj-5") {
+			t.Fatalf("resolveNode in child context %d: %s, %v", id, res, err)
+		}
+		ev := f.ReceivedMethod("Runtime.evaluate")
+		last := string(ev[len(ev)-1].Params)
+		if !strings.Contains(last, `"contextId":7`) || !strings.Contains(last, "window.top.__iwdp") {
+			t.Fatalf("resolveNode in child context %d evaluated %s, want the child's WIP world 7 reaching window.top", id, last)
+		}
+	}
+	// The main frame's context still resolves in the main world.
+	if _, err := c.Call(ctxFor(t, 5*time.Second), sid, "DOM.resolveNode", map[string]any{"backendNodeId": backend, "executionContextId": contextOf(t, c, sid, s.targetID())}); err != nil {
+		t.Fatalf("resolveNode in the main context: %v", err)
+	}
+	ev := f.ReceivedMethod("Runtime.evaluate")
+	if last := string(ev[len(ev)-1].Params); strings.Contains(last, "contextId") || strings.Contains(last, "window.top") {
+		t.Fatalf("resolveNode in the main context evaluated %s", last)
+	}
+}

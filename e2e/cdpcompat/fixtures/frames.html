@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CDP frames</title>
+</head>
+<body>
+<!-- wait_for on a page with same-origin frames: Puppeteer races its
+     locators over every frame, and its aria/ locator calls the binding
+     __ariaQuerySelector in each frame's utility world. -->
+<h1>Frames heading</h1>
+<iframe src="frame.html" title="Frame 1"></iframe>
+<iframe src="frame.html" title="Frame 2"></iframe>
+<iframe src="frame.html" title="Frame 3"></iframe>
+</body>
+</html>
