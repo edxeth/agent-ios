@@ -525,7 +525,7 @@ func newTestSim(t *testing.T, fm *fakeMac, iw *fakeIWDP, cfg Config) (*Sim, *fak
 	t.Helper()
 	mac := NewMac(cfg, fm.run)
 	p := newFakeProcs()
-	return &Sim{Cfg: cfg, Mac: mac, Run: fm.run, Forward: newForward(t, mac, p), IWDP: iw, Poll: time.Millisecond, PageWait: 50 * time.Millisecond, CleanupWait: 200 * time.Millisecond}, p
+	return &Sim{Cfg: cfg, Mac: mac, Run: fm.run, Forward: newForward(t, mac, p), IWDP: iw, Poll: time.Millisecond, PageWait: 50 * time.Millisecond, KeptWait: 5 * time.Second, CleanupWait: 200 * time.Millisecond}, p
 }
 
 func readyMac() *fakeMac {
@@ -625,6 +625,35 @@ func TestUpKeepsAStillConnectingIWDP(t *testing.T) {
 		iw.st.Listed = true
 		if r, err := s.Up(context.Background(), "", "", false); err != nil || r.IWDPRestarted || iw.restarts != 0 || iw.starts != 1 {
 			t.Fatalf("Up after the kept start = %+v, %v (%d starts, %d restarts); want none", r, err, iw.starts, iw.restarts)
+		}
+	})
+}
+
+// Review 2 F10: the wait for the listing after a kept iwdp start is
+// bounded by KeptWait, and its error, also at the command's deadline,
+// gives the last listing error and the advice to run restart-iwdp.
+func TestUpKeptIWDPThatNeverListsFailsWithItsListingError(t *testing.T) {
+	const listErr = "reading ios_webkit_debug_proxy's device list: timeout"
+	t.Run("kept wait ends", func(t *testing.T) {
+		iw := &fakeIWDP{keep: 1 << 30}
+		s, _ := newTestSim(t, readyMac(), iw, Config{SSH: "mac", Device: udidA})
+		s.KeptWait = 100 * time.Millisecond
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, err := s.Up(ctx, "", "", false)
+		if err == nil || !strings.Contains(err.Error(), listErr) || !strings.Contains(err.Error(), "agent-ios restart-iwdp") || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			t.Fatalf("Up with a kept iwdp that never lists = %v; want, before the command's deadline, the last listing error and the restart-iwdp advice", err)
+		}
+	})
+	t.Run("command deadline ends", func(t *testing.T) {
+		iw := &fakeIWDP{keep: 1 << 30}
+		s, _ := newTestSim(t, readyMac(), iw, Config{SSH: "mac", Device: udidA})
+		s.KeptWait = time.Hour
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		_, err := s.Up(ctx, "", "", false)
+		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), listErr) || !strings.Contains(err.Error(), "agent-ios restart-iwdp") {
+			t.Fatalf("Up at the deadline with a kept iwdp = %v; want the deadline with the last listing error and the restart-iwdp advice", err)
 		}
 	})
 }

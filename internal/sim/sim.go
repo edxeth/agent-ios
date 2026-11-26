@@ -67,6 +67,9 @@ type Sim struct {
 	// PageWait bounds the wait for Safari's first inspectable tab: Safari
 	// restores its tabs some seconds after it starts.
 	PageWait time.Duration
+	// KeptWait bounds the wait for the simulator's listing after a start
+	// or restart that kept a still connecting iwdp (ErrIWDPKept).
+	KeptWait time.Duration
 	// RestartAnyway lets a restart of iwdp end active page leases.
 	RestartAnyway bool
 	// Tabs closes a tab that Up's open made when Up fails after the open;
@@ -510,13 +513,48 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 			return err
 		}
 	}
+	if kept {
+		return s.keptListed(ctx, startErr)
+	}
 	return s.until(ctx, "ios_webkit_debug_proxy lists the simulator", func() (bool, error) {
 		st, err := s.IWDP.State(ctx)
-		if kept && err != nil && st.Running && st.Own {
-			return false, nil // the kept iwdp answers once its devices are connected
+		return st.Listed && st.Own, err
+	})
+}
+
+// keptListed waits up to KeptWait, within ctx, until the iwdp that a start
+// kept (startErr) lists the simulator; until then a listing error of that
+// running, own iwdp means "not yet", because it answers once its devices
+// are connected. The wait is bounded (review 2 F10) because the simulator
+// stays reserved meanwhile; its end, and ctx's, report the last listing
+// error and the advice to restart iwdp.
+func (s *Sim) keptListed(ctx context.Context, startErr error) error {
+	const what = "the kept ios_webkit_debug_proxy lists the simulator"
+	wctx, cancel := context.WithTimeout(ctx, s.KeptWait)
+	defer cancel()
+	var last error
+	err := s.until(wctx, what, func() (bool, error) {
+		st, err := s.IWDP.State(wctx)
+		if wctx.Err() == nil { // not the wait's own end
+			last = err
+		}
+		if err != nil && st.Running && st.Own {
+			return false, nil
 		}
 		return st.Listed && st.Own, err
 	})
+	if err == nil || wctx.Err() == nil {
+		return err
+	}
+	lastText := "none (it answers, without the simulator)"
+	if last != nil {
+		lastText = last.Error()
+	}
+	const advice = "run 'agent-ios restart-iwdp' (it stops only an iwdp that agent-ios started), then sim up again"
+	if ctx.Err() != nil {
+		return fmt.Errorf("waiting until %s: %w; its last listing error: %s; %s", what, ctx.Err(), lastText, advice)
+	}
+	return fmt.Errorf("ios_webkit_debug_proxy, kept running after its start (%v), did not list the simulator within %s more; its last listing error: %s; %s", startErr, s.KeptWait, lastText, advice)
 }
 
 // markKeptWait bounds the forward record's update after a kept iwdp start,

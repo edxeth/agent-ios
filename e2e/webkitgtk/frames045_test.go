@@ -270,6 +270,27 @@ func TestFrames045GuardIgnoresRedefinedFrameGetters(t *testing.T) {
 	}
 }
 
+// Review 2 F7, design 3.1: the frame walk (B.frameEl) uses the Window
+// parent and frameElement getters captured at install, so a page that
+// replaces them afterwards in its frames (parent is [Replaceable]) does
+// not make the runtime take a ref inside a same-origin frame for one of
+// a document that the frame no longer shows.
+func TestFrames045WalkIgnoresReplacedWindowGetters(t *testing.T) {
+	e := newFrames045(t)
+	m := regexp.MustCompile(`button "Inside" \[ref=(e\d+)\]`).FindStringSubmatch(e.must(agentA, "snapshot", "-i"))
+	if m == nil {
+		t.Fatal("no Inside ref in the snapshot")
+	}
+	e.js(agentA, "['scrolled', 'scaled'].forEach(function (id) { var v = document.getElementById(id).contentWindow; v.parent = v; "+
+		"Object.defineProperty(v, 'frameElement', {get: function () { return null; }, configurable: true}); }); 1")
+	if _, code, msg := e.run(agentA, "click", "@"+m[1]); code != 0 {
+		t.Fatalf("click @%s inside a frame whose window getters the page replaced: exit %d, %s", m[1], code, msg)
+	}
+	if out := e.must(agentA, "is", "visible", "@"+m[1]); !strings.Contains(out, "true") {
+		t.Fatalf("is visible @%s: %q", m[1], out)
+	}
+}
+
 // Contract 9: screenshot --annotate places the boxes of refs inside
 // iframes in page coordinates, through the frame's offset, border,
 // padding, scroll position and CSS scale. The expected boxes are computed

@@ -32,7 +32,11 @@ type tabFake struct {
 	n       int
 	kind    transport.Kind // "": a local browser (WebKitGTK)
 	device  string         // "": "fake"
-	failing atomic.Bool    // Pages fails while set
+	failing atomic.Bool    // Pages of the device fails while set
+	// second is a second device's id ("": none), listed after; its Pages
+	// fails while secondFailing is set.
+	second        string
+	secondFailing atomic.Bool
 }
 
 func (f *tabFake) deviceID() string { return cmp.Or(f.device, "fake") }
@@ -45,16 +49,26 @@ func (f *tabFake) Kind() transport.Kind {
 }
 
 func (f *tabFake) Devices(context.Context) ([]transport.Device, error) {
-	return []transport.Device{{ID: f.deviceID(), Label: "Fake browser", Transport: f.Kind()}}, nil
+	d := []transport.Device{{ID: f.deviceID(), Label: "Fake browser", Transport: f.Kind()}}
+	if f.second != "" {
+		d = append(d, transport.Device{ID: f.second, Label: "Second fake browser", Transport: f.Kind()})
+	}
+	return d, nil
 }
 
-func (f *tabFake) Pages(context.Context, string) ([]transport.Page, error) {
-	if f.failing.Load() {
+func (f *tabFake) Pages(_ context.Context, id string) ([]transport.Page, error) {
+	if (id == f.second && f.secondFailing.Load()) || (id == f.deviceID() && f.failing.Load()) {
 		return nil, errors.New("fake page list failed")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]transport.Page(nil), f.pages...), nil
+	var out []transport.Page
+	for _, p := range f.pages {
+		if p.DeviceID == id {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 func (f *tabFake) Open(ctx context.Context, p transport.Page) (transport.MessageConn, error) {
@@ -72,12 +86,17 @@ func (f *tabFake) Close() error { return nil }
 // window.open(url) by listing a new page at url, and window.close() by
 // leaving the list, as a browser that lists script-opened windows does.
 func (f *tabFake) add(title, url string) *fakewebkit.Server {
+	return f.addOn(f.deviceID(), title, url)
+}
+
+// addOn is add on the device id.
+func (f *tabFake) addOn(device, title, url string) *fakewebkit.Server {
 	s := fakewebkit.New(fakewebkit.Options{})
 	f.t.Cleanup(s.Close)
 	f.mu.Lock()
 	f.n++
 	id := fmt.Sprintf("page-%d", f.n)
-	f.pages = append(f.pages, transport.Page{DeviceID: f.deviceID(), ID: id, Title: title, URL: url, Debuggable: true})
+	f.pages = append(f.pages, transport.Page{DeviceID: device, ID: id, Title: title, URL: url, Debuggable: true})
 	if f.servers == nil {
 		f.servers = map[string]*fakewebkit.Server{}
 	}
@@ -292,17 +311,10 @@ func TestTabNewAndClose(t *testing.T) {
 	}
 }
 
-// Review F8 (FIX-U): click --new-tab lists the tabs after its checks,
-// right before the call; a listing that fails there does not stop the
-// click, and the session still follows the new tab, found as the only tab
-// without a lease that shows the link's href (query and fragment are
-// not listed).
-func TestClickNewTabFollowsWhenTheListingBeforeTheCallFails(t *testing.T) {
-	m, f := newTabManager(t)
-	// iwdp: a failed page list of a device with an open page is an error
-	// (a local browser's counts as no pages).
-	f.kind, f.device = transport.KindIWDP, "SIMULATOR"
-	s := f.add("One", "http://one.test/")
+// newTabOpener makes the page served by s answer click --new-tab #link:
+// the probe passes, and the gesture call runs gesture, then reports that
+// window.open opened http://next.test/page.
+func newTabOpener(s *fakewebkit.Server, gesture func()) {
 	s.Handle("Runtime.evaluate", nil) // the runtime handler below answers
 	p := &fakePage{replies: map[string]any{}}
 	p.set("clock", okEnv(map[string]any{"now": 1000, "doc": "doc-1"}))
@@ -312,22 +324,97 @@ func TestClickNewTabFollowsWhenTheListingBeforeTheCallFails(t *testing.T) {
 		case "actProbe":
 			return attempt("retry", "ready to dispatch", nil)
 		case "actGesture":
-			f.failing.Store(false)
-			f.add("Opened", "http://next.test/page")
+			gesture()
 			return attempt("dispatched", "", map[string]any{"v": map[string]any{"href": "http://next.test/page?q=1#f", "opened": true}})
 		}
 		return p.handler(c, fn, args)
 	})
+}
+
+// notFollowed is the warning of click --new-tab when the tab list right
+// before the gesture call could not be read (review 2 F9).
+const notFollowed = "warning: the session stays on this page: the tab list right before the click could not be read"
+
+// Review 2 F9 (instance 1): the listing right before the gesture call is
+// a complete listing of the opener's device. When that device's page list
+// fails, also for a local browser, whose failure Manager.Tabs leaves out
+// as a device without pages, the click runs and the session stays on the
+// opener with a warning; no tab is taken for the new one.
+func TestClickNewTabStaysOnTheOpenerWhenItsDeviceListingFails(t *testing.T) {
+	m, f := newTabManager(t) // a local browser (WebKitGTK)
+	s := f.add("One", "http://one.test/")
+	newTabOpener(s, func() {
+		f.failing.Store(false)
+		f.add("Opened", "http://next.test/page")
+	})
 	if got := pageOf(t, m, "a"); got != "One" {
 		t.Fatalf("fixture: session a runs on %q", got)
 	}
-	f.failing.Store(true) // until the call opens the tab
+	f.failing.Store(true) // the listing right before the call fails
 	out := mustIn(t, m, "a", "click", "--new-tab", "#link")
-	if !strings.Contains(out, "the new tab is tab t2 (http://next.test/page?q=1#f); it is now the current page") {
+	if !strings.Contains(out, notFollowed) || !strings.Contains(out, "fake page list failed") || strings.Contains(out, "the new tab is") {
+		t.Fatalf("click --new-tab: %q; want the warning %q with the listing's error, and no new tab", out, notFollowed)
+	}
+	if !strings.HasPrefix(out, "opened http://next.test/page?q=1#f with window.open") {
+		t.Fatalf("click --new-tab: %q; want the click reported as run", out)
+	}
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("after click --new-tab session a runs on %q, want the opener One", got)
+	}
+}
+
+// Review 2 F9 (instance 2): when the listing right before the call fails,
+// no tab is guessed by its URL: a tab without a lease that showed the
+// link's href before the click is not followed, and neither is the new
+// tab; the session stays on the opener with a warning.
+func TestClickNewTabTakesNoTabByURLWhenTheListingBeforeTheCallFails(t *testing.T) {
+	m, f := newTabManager(t)
+	// iwdp: a failed page list of a device with an open page is an error
+	// for Manager.Tabs too.
+	f.kind, f.device = transport.KindIWDP, "SIMULATOR"
+	s := f.add("One", "http://one.test/")
+	f.add("Old", "http://next.test/page") // opened before the click, no lease
+	newTabOpener(s, func() {
+		f.failing.Store(false)
+		// The browser lists the new tab a moment after window.open.
+		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
+	})
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("fixture: session a runs on %q", got)
+	}
+	f.failing.Store(true)
+	out := mustIn(t, m, "a", "click", "--new-tab", "#link")
+	if !strings.Contains(out, notFollowed) || strings.Contains(out, "the new tab is") {
+		t.Fatalf("click --new-tab: %q; want the warning %q and no new tab", out, notFollowed)
+	}
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("after click --new-tab session a runs on %q, want the opener One", got)
+	}
+}
+
+// Review 2 F9: only the opener's device is listed and polled. A second
+// device whose page list fails before the call (Manager.Tabs leaves it
+// out) and lists a tab afterwards does not give the new tab; the session
+// follows the tab that opens on the opener's device.
+func TestClickNewTabFollowsOnlyATabOfTheOpenersDevice(t *testing.T) {
+	m, f := newTabManager(t)
+	f.second = "other"
+	s := f.add("One", "http://one.test/")
+	f.addOn("other", "Other", "http://other.test/")
+	newTabOpener(s, func() {
+		f.secondFailing.Store(false)
+		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
+	})
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("fixture: session a runs on %q", got)
+	}
+	f.secondFailing.Store(true) // the other device's list fails until the call
+	out := mustIn(t, m, "a", "click", "--new-tab", "#link")
+	if !strings.Contains(out, "(http://next.test/page?q=1#f); it is now the current page") || strings.Contains(out, "warning") {
 		t.Fatalf("click --new-tab: %q; want the new tab followed", out)
 	}
 	if got := pageOf(t, m, "a"); got != "Opened" {
-		t.Fatalf("after click --new-tab session a runs on %q, want the new tab", got)
+		t.Fatalf("after click --new-tab session a runs on %q, want the new tab Opened", got)
 	}
 }
 

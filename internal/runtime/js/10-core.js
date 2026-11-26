@@ -25,6 +25,9 @@
   }
   var EP = Element.prototype, NP = Node.prototype, DP = Document.prototype, IFP = HTMLIFrameElement.prototype;
   var cw = getter(IFP, "contentWindow"), cd = getter(IFP, "contentDocument");
+  // WebKit defines parent and frameElement on each window, not on
+  // Window.prototype; the top window's getters read a same-origin frame's.
+  var par = getter(w, "parent"), fel = getter(w, "frameElement");
   var perf = w.performance, gpo = Object.getPrototypeOf;
   var MapProto = Map.prototype, WMProto = WeakMap.prototype;
   var B = {
@@ -60,9 +63,10 @@
     // it first. contentDocument: the document of iframe f, null when
     // cross-origin (or f is no iframe: the captured getters throw);
     // frameEl: the frame element that shows window v, null for the top
-    // window and under a cross-origin parent.
+    // window and under a cross-origin parent; parent: window v's parent.
     contentDocument: function (f) { try { var v = cw(f); return v && gpo(v) ? cd(f) : null; } catch (e) { return null; } },
-    frameEl: function (v) { var p = v && v.parent; return p && p !== v && gpo(p) ? v.frameElement : null; },
+    frameEl: function (v) { var p = v && par(v); return p && p !== v && gpo(p) ? fel(v) : null; },
+    parent: par,
     assigned: w.HTMLSlotElement ? uncurry(HTMLSlotElement.prototype.assignedNodes) : null,
     now: function () { return perfNow(perf); },
     mapGet: uncurry(MapProto.get), mapSet: uncurry(MapProto.set), mapDelete: uncurry(MapProto.delete),

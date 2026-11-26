@@ -510,6 +510,6 @@ func TestTabCloseOnTheSimulatorClosesOnlyTheSelectedTab(t *testing.T) {
 
 // tabsOf is the page list of f.
 func tabsOf(f *tabFake) []transport.Page {
-	p, _ := f.Pages(context.Background(), "")
+	p, _ := f.Pages(context.Background(), f.deviceID())
 	return p
 }

@@ -351,20 +351,24 @@ func runDblclick(ctx context.Context, env Env, in Input) (Result, error) {
 // active one: Safari shows the new tab and hides the opener, whose
 // animation frames stop. That runs in the result's After, once the
 // command's operation on the opener has ended, because following ends
-// the session's lease on the opener. The tabs are listed after the
-// checks, right before the call (action.Ready), so only a tab that opens
-// between that listing and the follow can be taken for the new one; a
-// listing that fails there does not stop the click (newTabPick).
+// the session's lease on the opener. The new tab is a tab of the
+// opener's device that a complete listing of that device, taken after
+// the checks right before the call (action.Ready), did not have; only
+// that device is polled. So only a tab that opens on that device between
+// that listing and the follow can be taken for the new one. A listing
+// that fails there does not stop the click, but the session then stays
+// on the opener with a warning: no tab is guessed (review 2 F9).
 func (w *w3bPage) openInNewTab(ctx context.Context, env Env, in Input, t string) (Result, error) {
 	m, _ := managerOf(env) // nil outside the daemon: no tabs to follow
 	a := action{Name: "click --new-tab", Kind: "newtab", Target: t, Force: flagBool(in, "force"), Gesture: true}
+	device := w.ps.Device.ID
 	var known map[string]bool
 	var listErr error
 	if m != nil {
 		a.Ready = func() {
 			lctx, cancel := context.WithTimeout(ctx, newTabListBudget)
 			defer cancel()
-			known, listErr = knownTabs(lctx, m, in)
+			known, listErr = deviceKnownTabs(lctx, m, in, device)
 		}
 	}
 	r, err := w.run(ctx, a)
@@ -386,6 +390,17 @@ func (w *w3bPage) openInNewTab(ctx context.Context, env Env, in Input, t string)
 		return res, nil
 	}
 	res.After = func(ctx context.Context, res *Result) {
+		var lines []string
+		defer func() {
+			// The tab lines follow the first line, before the notes.
+			head, notes, _ := strings.Cut(res.Text, "\n")
+			res.Text = strings.Join(append(append([]string{head}, lines...), notes), "\n")
+			res.Text = strings.TrimSuffix(res.Text, "\n")
+		}()
+		if listErr != nil {
+			lines = []string{fmt.Sprintf("warning: the session stays on this page: the tab list right before the click could not be read, so no tab is taken for the new one (%v); run 'tab list', then 'tab <id>'", listErr)}
+			return
+		}
 		// The wait ends newTabReserve before the command deadline, so
 		// that the follow and the result fit before it (review F2).
 		start := time.Now()
@@ -399,25 +414,19 @@ func (w *w3bPage) openInNewTab(ctx context.Context, env Env, in Input, t string)
 		}
 		wctx, cancel := context.WithDeadline(ctx, end)
 		defer cancel()
-		pick, how := newTabPick(known, listErr, v.Href)
-		nt, found, err := waitNewTab(wctx, m, in, pick, end)
+		nt, found, err := waitNewTab(wctx, m, in, device, newKeyIn(known), end)
 		if err != nil && wctx.Err() != nil && ctx.Err() == nil {
 			found, err = false, nil // the wait's own end, not the listing's failure
 		}
-		var lines []string
 		switch {
 		case err != nil:
 			lines = []string{fmt.Sprintf("warning: the session stays on this page: listing the tabs after window.open failed: %v", err)}
 		case !found:
-			lines = []string{fmt.Sprintf("warning: the session stays on this page: no new tab appeared in the page list within %s%s; run 'tab list'", max(end.Sub(start), 0).Round(time.Millisecond), how)}
+			lines = []string{fmt.Sprintf("warning: the session stays on this page: no new tab appeared in the page list within %s; run 'tab list'", max(end.Sub(start), 0).Round(time.Millisecond))}
 		default:
 			r.Tab = nt.ID
 			lines = followTab(fctx, m, in, nt, fmt.Sprintf("the new tab is tab %s (%s)", nt.ID, v.Href))
 		}
-		// The tab lines follow the first line, before the notes.
-		head, notes, _ := strings.Cut(res.Text, "\n")
-		res.Text = strings.Join(append(append([]string{head}, lines...), notes), "\n")
-		res.Text = strings.TrimSuffix(res.Text, "\n")
 	}
 	return res, nil
 }
@@ -431,34 +440,6 @@ const (
 	newTabReserve    = 500 * time.Millisecond
 	newTabAnswer     = 100 * time.Millisecond
 )
-
-// newTabPick returns how click --new-tab finds the new tab in a listing:
-// a tab whose key the listing before the call (known) did not have; when
-// that listing failed (listErr), the only tab without a lease whose URL
-// is href without its query and fragment (as the listing shows it), so
-// that the click still runs and is followed when the tab is certain. how
-// is the note of the warning when no tab is found.
-func newTabPick(known map[string]bool, listErr error, href string) (pick func([]core.Tab) (core.Tab, bool), how string) {
-	if listErr == nil {
-		return newKeyIn(known), ""
-	}
-	u := href
-	if i := strings.IndexAny(u, "?#"); i >= 0 {
-		u = u[:i]
-	}
-	return func(tabs []core.Tab) (core.Tab, bool) {
-		var hit []core.Tab
-		for _, t := range tabs {
-			if t.LeasedBy == "" && t.URL == u {
-				hit = append(hit, t)
-			}
-		}
-		if len(hit) == 1 {
-			return hit[0], true
-		}
-		return core.Tab{}, false
-	}, fmt.Sprintf(" (the tab list before the click could not be read: %v; so the new tab was looked for as the only tab without a lease that shows %s)", listErr, u)
-}
 
 // evalValue decodes the value of a Runtime.evaluate reply with returnByValue.
 func evalValue[T any](raw json.RawMessage) (T, error) {

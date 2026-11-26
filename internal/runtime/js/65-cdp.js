@@ -113,7 +113,7 @@
   // frame's (fx through every frame element up to the main window).
   _.fto = function (n) {
     var t = { sx: 1, sy: 1, x: 0, y: 0 }, v = n.ownerDocument.defaultView, m, f;
-    for (; v && v !== w && (f = B.frameEl(v)); v = v.parent) {
+    for (; v && v !== w && (f = B.frameEl(v)); v = B.parent(v)) {
       m = fx(f);
       t = { sx: t.sx * m.sx, sy: t.sy * m.sy, x: t.x * m.sx + m.x, y: t.y * m.sy + m.y };
     }
@@ -121,12 +121,11 @@
   };
   // deep: the element at client point (x, y), also inside same-origin
   // frames (a CDP client gives main-frame points, as Chrome takes them); a
-  // cross-origin frame is the element itself.
+  // cross-origin iframe is the element itself, and so is a frameset's
+  // <frame> (B.contentDocument reads iframes only; docs/cdp.md).
   function deep(x, y) {
     var h = _.at(x, y), d, m;
-    while (h && /^I?FRAME$/.test(h.nodeName)) {
-      d = B.contentDocument(h); // null for a cross-origin frame
-      if (!d) { break; }
+    while (h && (d = B.contentDocument(h))) {
       m = fx(h); x = (x - m.x) / m.sx; y = (y - m.y) / m.sy;
       h = _.at(x, y, d) || d.documentElement;
     }

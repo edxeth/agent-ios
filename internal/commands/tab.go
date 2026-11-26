@@ -330,7 +330,7 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, failed(err)
 	}
-	t, found, err := waitNewTab(ctx, m, in, newKeyIn(known), time.Now().Add(tabNewWait))
+	t, found, err := waitNewTab(ctx, m, in, "", newKeyIn(known), time.Now().Add(tabNewWait))
 	switch {
 	case err != nil:
 		return Result{}, failed(err)
@@ -363,6 +363,29 @@ func knownTabs(ctx context.Context, m *core.Manager, in Input) (map[string]bool,
 	return known, nil
 }
 
+// deviceKnownTabs are the page keys of the tabs of the device id listed
+// now, before click --new-tab opens a tab, for waitNewTab on that device.
+// Only a complete listing of the device counts: its page list failing is
+// an error (Manager.DeviceTabs), and so is a listing that hides pages of
+// it (a reservation that ended), or a device without an id.
+func deviceKnownTabs(ctx context.Context, m *core.Manager, in Input, device string) (map[string]bool, error) {
+	if device == "" {
+		return nil, errors.New("the opener's device has no id")
+	}
+	tabs, hidden, err := m.DeviceTabs(ctx, tabRequest(in, ""), acquireFor(in), device)
+	if err != nil {
+		return nil, err
+	}
+	if hidden != 0 {
+		return nil, fmt.Errorf("the listing hides %d page(s) of device %s", hidden, device)
+	}
+	known := map[string]bool{}
+	for _, t := range tabs {
+		known[t.Key] = true
+	}
+	return known, nil
+}
+
 // newKeyIn picks the first listed tab whose key known has not.
 func newKeyIn(known map[string]bool) func([]core.Tab) (core.Tab, bool) {
 	return func(tabs []core.Tab) (core.Tab, bool) {
@@ -375,11 +398,12 @@ func newKeyIn(known map[string]bool) func([]core.Tab) (core.Tab, bool) {
 	}
 }
 
-// waitNewTab polls the page list every tabPollEvery until pick finds the
-// new tab in it, and returns it; found is false when none appeared by end.
-func waitNewTab(ctx context.Context, m *core.Manager, in Input, pick func([]core.Tab) (core.Tab, bool), end time.Time) (t core.Tab, found bool, err error) {
+// waitNewTab polls the page list of device ("" for every device) every
+// tabPollEvery until pick finds the new tab in it, and returns it; found
+// is false when none appeared by end.
+func waitNewTab(ctx context.Context, m *core.Manager, in Input, device string, pick func([]core.Tab) (core.Tab, bool), end time.Time) (t core.Tab, found bool, err error) {
 	for {
-		tabs, _, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
+		tabs, _, err := m.DeviceTabs(ctx, tabRequest(in, ""), acquireFor(in), device)
 		if err != nil {
 			return core.Tab{}, false, err
 		}

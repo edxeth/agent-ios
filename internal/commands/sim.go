@@ -183,7 +183,7 @@ var newSim = func(env Env) (*sim.Sim, error) {
 		NewToken: proxy.NewStartToken,
 	}
 	return &sim.Sim{
-		Cfg: cfg, Mac: mac, Run: sim.ExecRunner, Poll: 3 * time.Second, PageWait: 30 * time.Second, CleanupWait: simUpCleanupWait,
+		Cfg: cfg, Mac: mac, Run: sim.ExecRunner, Poll: 3 * time.Second, PageWait: 30 * time.Second, KeptWait: 30 * time.Second, CleanupWait: simUpCleanupWait,
 		Forward: &sim.Forward{Mac: mac, Dir: dir, Addr: sim.InspectorAddr, Procs: procs, Wait: 15 * time.Second},
 		IWDP:    hostIWDP{env: env},
 	}, nil
