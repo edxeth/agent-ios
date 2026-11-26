@@ -52,6 +52,9 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`frame`](#frame) | Make an iframe (@eN, CSS or locator) the frame that this session's later commands work in, or return to the top document with main. |
 | [`get`](#get) | Get url, title, or text, html, value, attr, count, box or styles of a target (@ref, CSS selector or locator). |
 | [`get cdp-url`](#get-cdp-url) | Print a CDP URL for this session's page (starts the CDP endpoint if needed). Clients act for this session; use the URL exactly as printed. |
+| [`heap diff`](#heap-diff) | Compare two files of heap snapshot by class, on the host: the changes of node count and self size from a to b. |
+| [`heap gc`](#heap-gc) | Run a full garbage collection of the page's JavaScript heap (Heap.gc). |
+| [`heap snapshot`](#heap-snapshot) | Take a JavaScriptCore heap snapshot of the page, write its JSON (mode 0600) to path or a new temp file, and summarize it by class. |
 | [`highlight`](#highlight) | Highlight an element on the device screen (DOM.highlightNode) until release. |
 | [`hit-test`](#hit-test) | Print the element at a viewport point (CSS pixels): its snapshot line with a ref, its tag and its box. |
 | [`hover`](#hover) | Move the pointer over an element (synthetic events do not set CSS :hover; --css forces it). |
@@ -712,6 +715,55 @@ Print a CDP URL for this session's page (starts the CDP endpoint if needed). Cli
 |---|---|---|
 | `--scope` | `page`, `device` | page: only this page; device: also the other pages of the devices reserved by --reservation (default `page`) |
 | `--form` | `ws`, `http` | ws: the browser WebSocket URL (every client; agent-browser --cdp, Puppeteer browserWSEndpoint, Playwright connectOverCDP); http: the discovery base for Playwright connectOverCDP and Puppeteer browserURL (default `ws`) |
+
+### `heap diff`
+
+```
+agent-ios heap diff <a> <b> [flags]
+```
+
+Compare two files of heap snapshot by class, on the host: the changes of node count and self size from a to b.
+
+- Page: none; runs in the client process, not in the daemon
+- Default deadline: 2m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<a>` | yes | the earlier snapshot file |
+| `<b>` | yes | the later snapshot file |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--top` | integer | classes per list (1 to 1000) (default `10`) |
+
+### `heap gc`
+
+```
+agent-ios heap gc
+```
+
+Run a full garbage collection of the page's JavaScript heap (Heap.gc).
+
+- Page: leases the session's page
+
+### `heap snapshot`
+
+```
+agent-ios heap snapshot [<path>] [flags]
+```
+
+Take a JavaScriptCore heap snapshot of the page, write its JSON (mode 0600) to path or a new temp file, and summarize it by class.
+
+- Page: leases the session's page
+- Default deadline: 2m0s (`--timeout` overrides it)
+
+| Argument | Required | Description |
+|---|---|---|
+| `<path>` | no | the snapshot file to write (default: a new agent-ios-heap-\*.json in the temp directory) |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--top` | integer | classes per list (1 to 1000) (default `10`) |
 
 ### `highlight`
 
