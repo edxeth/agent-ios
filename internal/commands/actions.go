@@ -48,19 +48,20 @@ func init() {
 		Summary: "Click an element with synthetic pointer and mouse events after the actionability checks.",
 		Args:    []Arg{targetArg("element to click")},
 		Flags: []Flag{
-			{Name: "button", Type: FlagEnum, Enum: []string{"left", "right", "middle"}, Default: "left", Help: "mouse button; right ends with contextmenu, middle with auxclick"},
+			buttonFlag,
+			modifiersFlag,
 			{Name: "count", Type: FlagInt, Help: "number of clicks (detail 1..n)"},
-			{Name: "new-tab", Type: FlagBool, Help: "open the link's href with window.open (emulated user gesture) instead of clicking; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds"},
+			{Name: "new-tab", Type: FlagBool, Help: "open the link's href with window.open (emulated user gesture) instead of clicking; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds; not with --button or --modifiers"},
 			forceFlag,
 		},
 		Run: runClick,
 	})
 	registerAction(&Command{
 		Name:    "dblclick",
-		Summary: "Double-click an element: two click sequences (detail 1 and 2), then dblclick.",
+		Summary: "Double-click an element: two click sequences (detail 1 and 2), then dblclick (left button only, as in Chrome).",
 		Args:    []Arg{targetArg("element to double-click")},
-		Flags:   []Flag{forceFlag},
-		Run:     simpleAction("dblclick", "dblclick", "double-clicked"),
+		Flags:   []Flag{buttonFlag, modifiersFlag, forceFlag},
+		Run:     runDblclick,
 	})
 	registerAction(&Command{
 		Name:    "tap",
@@ -152,10 +153,10 @@ func init() {
 	})
 	registerAction(&Command{
 		Name:    "mouse",
-		Summary: "Low-level mouse: move <x> <y> [--steps n], down [button], up [button], wheel <dy> [dx].",
+		Summary: "Low-level mouse: move <x> <y> [--steps n], down [button], up [button], wheel <dy> [dx]; the events carry the modifiers that keydown holds.",
 		Args: []Arg{
 			{Name: "action", Help: "move, down, up or wheel", Required: true},
-			{Name: "a", Help: "move: x; down and up: left, right or middle; wheel: dy"},
+			{Name: "a", Help: "move: x; down and up: left, right, middle, back or forward; wheel: dy"},
 			{Name: "b", Help: "move: y; wheel: dx"},
 		},
 		Flags: []Flag{{Name: "steps", Type: FlagInt, Help: "move: number of increments, each one step (default 1)"}},
@@ -194,7 +195,66 @@ func simpleAction(name, kind, done string) func(context.Context, Env, Input) (Re
 	}
 }
 
-var buttons = map[string]int{"left": 0, "middle": 1, "right": 2}
+// clickButtons are the --button values of click and dblclick (agent-browser
+// 0.45) with their MouseEvent.button numbers; buttons masks 1, 4, 2, 8, 16
+// are set by 55-actions.js.
+var clickButtons = map[string]int{"left": 0, "middle": 1, "right": 2, "back": 3, "forward": 4}
+
+var (
+	buttonFlag    = Flag{Name: "button", Type: FlagString, Help: "mouse button: left, right, middle, back or forward (default left); right ends with contextmenu, the others but left with auxclick"}
+	modifiersFlag = Flag{Name: "modifiers", Type: FlagString, Help: "modifier keys held during the click: alt, control (ctrl), meta (cmd, command), shift, joined by , or +; every event carries them"}
+)
+
+// Modifier bits of 55-actions.js and 60-keyboard.js (CDP Input values).
+const (
+	modAlt     = 1
+	modControl = 2
+	modMeta    = 4
+	modShift   = 8
+)
+
+// modifierBits maps the modifier names of click --modifiers and of key
+// chords to their bits (agent-browser key_modifier_bit).
+var modifierBits = map[string]int{
+	"alt": modAlt, "control": modControl, "ctrl": modControl,
+	"meta": modMeta, "cmd": modMeta, "command": modMeta, "shift": modShift,
+}
+
+// parseModifiers parses click --modifiers: names split on "," or "+",
+// trimmed, case-insensitive (agent-browser 0.45 wording on a bad part).
+func parseModifiers(s string) (int, error) {
+	mask := 0
+	for _, p := range strings.Split(strings.ReplaceAll(s, "+", ","), ",") {
+		b, ok := modifierBits[strings.ToLower(strings.TrimSpace(p))]
+		if !ok {
+			return 0, usagef("Unknown modifier '%s'. Use alt, control, meta, or shift", strings.TrimSpace(p))
+		}
+		mask |= b
+	}
+	return mask, nil
+}
+
+// clickOpts reads --button and --modifiers of click and dblclick, and
+// refuses --new-tab with either (agent-browser 0.45 messages).
+func clickOpts(in Input) (btn, mods int, err error) {
+	b, hasB := in.Flags["button"].(string)
+	m, hasM := in.Flags["modifiers"].(string)
+	if flagBool(in, "new-tab") && (hasB || hasM) {
+		return 0, 0, usagef("--new-tab opens the link URL directly and cannot be combined with --button or --modifiers")
+	}
+	if hasB {
+		var ok bool
+		if btn, ok = clickButtons[b]; !ok {
+			return 0, 0, usagef("Unknown mouse button '%s'. Use left, right, middle, back, or forward", b)
+		}
+	}
+	if hasM {
+		if mods, err = parseModifiers(m); err != nil {
+			return 0, 0, err
+		}
+	}
+	return btn, mods, nil
+}
 
 // runTap taps a target, or with two arguments the element at a viewport
 // point (design 4.2: tap <target|x y>).
@@ -224,9 +284,9 @@ func runTap(ctx context.Context, env Env, in Input) (Result, error) {
 }
 
 func runClick(ctx context.Context, env Env, in Input) (Result, error) {
-	btn, ok := buttons[flagString(in, "button")]
-	if !ok && flagString(in, "button") != "" {
-		return Result{}, usagef("click --button %q: want left, right or middle", flagString(in, "button"))
+	btn, mods, err := clickOpts(in)
+	if err != nil {
+		return Result{}, err
 	}
 	count := flagInt(in, "count", 1)
 	if count < 1 {
@@ -243,12 +303,35 @@ func runClick(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	r, err := w.run(ctx, action{
 		Name: "click", Kind: "click", Target: t, Force: flagBool(in, "force"),
-		Args: func(int) map[string]any { return map[string]any{"b": btn, "cnt": count} },
+		Args: func(int) map[string]any { return map[string]any{"b": btn, "cnt": count, "mod": mods} },
 	})
 	if err != nil {
 		return Result{}, err
 	}
 	return w.result("clicked "+t, r), nil
+}
+
+// runDblclick: two click sequences (detail 1 and 2), then dblclick for the
+// left button, with click's --button and --modifiers.
+func runDblclick(ctx context.Context, env Env, in Input) (Result, error) {
+	btn, mods, err := clickOpts(in)
+	if err != nil {
+		return Result{}, err
+	}
+	w, err := openPage(ctx, env, "dblclick")
+	if err != nil {
+		return Result{}, err
+	}
+	defer w.close()
+	t := arg(in, 0)
+	r, err := w.run(ctx, action{
+		Name: "dblclick", Kind: "dblclick", Target: t, Force: flagBool(in, "force"),
+		Args: func(int) map[string]any { return map[string]any{"b": btn, "mod": mods} },
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return w.result("double-clicked "+t, r), nil
 }
 
 // openInNewTab opens a link's href with window.open (design 3.5 click
@@ -624,9 +707,9 @@ func runMouse(ctx context.Context, env Env, in Input) (Result, error) {
 			return Result{}, usagef("mouse move --steps %d: want 1 or more", steps)
 		}
 	case "down", "up":
-		btn, ok := buttons[a]
+		btn, ok := clickButtons[a]
 		if !ok && a != "" {
-			return Result{}, usagef("mouse %s %q: want left, right or middle", op, a)
+			return Result{}, usagef("Unknown mouse button '%s'. Use left, right, middle, back, or forward", a)
 		}
 		fields["b"] = btn
 	case "wheel":

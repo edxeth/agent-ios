@@ -33,7 +33,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`daemon start`](#daemon-start) | Start the daemon in the background unless it runs. |
 | [`daemon status`](#daemon-status) | Show the daemon, its pages, leases and device reservations. |
 | [`daemon stop`](#daemon-stop) | Stop the daemon after the cleanup of every page (5 s at most). |
-| [`dblclick`](#dblclick) | Double-click an element: two click sequences (detail 1 and 2), then dblclick. |
+| [`dblclick`](#dblclick) | Double-click an element: two click sequences (detail 1 and 2), then dblclick (left button only, as in Chrome). |
 | [`device list`](#device-list) | List the live device reservations. |
 | [`device release`](#device-release) | Release an owner's device reservation. |
 | [`device reserve`](#device-reserve) | Reserve a physical device for an owner, so that only that owner's sessions attach to its pages. |
@@ -57,11 +57,11 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`hover`](#hover) | Move the pointer over an element (synthetic events do not set CSS :hover; --css forces it). |
 | [`is`](#is) | Print true or false: is a target visible, enabled, checked, editable or focused. |
 | [`keyboard`](#keyboard) | Type into the focused element (keyboard type \<text\>) or insert text without key events (keyboard inserttext \<text\>). |
-| [`keydown`](#keydown) | Send keydown for a key on the focused element (no default action). |
-| [`keyup`](#keyup) | Send keyup for a key on the focused element. |
+| [`keydown`](#keydown) | Press a key without releasing it: keydown, then unless canceled keypress and the insertion or default action; a modifier key (Shift, Control, Alt, Meta) stays held for later press, keydown, keyup and mouse commands until keyup. |
+| [`keyup`](#keyup) | Send keyup for a key on the focused element; a modifier key stops being held. |
 | [`lease break`](#lease-break) | End the lease on a page whoever holds it, with its cleanup. |
 | [`lease takeover`](#lease-takeover) | Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval). |
-| [`mouse`](#mouse) | Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx]. |
+| [`mouse`](#mouse) | Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx]; the events carry the modifiers that keydown holds. |
 | [`network har start`](#network-har-start) | Start recording a HAR of the requests from now on; 'network har stop' writes it. |
 | [`network har stop`](#network-har-stop) | Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values masked unless --show-secrets). |
 | [`network request`](#network-request) | Show one request of 'network requests': headers, request body and status; --body adds the response body. |
@@ -69,7 +69,7 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`network route`](#network-route) | Abort, fulfill or delay requests whose URL matches: a glob with \* and \*\* matches the whole URL, other text any URL that contains it. Without --abort, --body or --status the request continues after --delay. |
 | [`network unroute`](#network-unroute) | Remove the routes with this pattern (all without one); requests that a route holds continue unchanged. |
 | [`open`](#open) | Open a URL in the page (location.href), then wait for the load state; a URL that does not start with http:, https:, about:, data: or file: gets https:// (agent-browser open). |
-| [`press`](#press) | Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action. |
+| [`press`](#press) | Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action; chord modifiers get their own key events, and modifiers held by keydown apply. |
 | [`profiler start`](#profiler-start) | Start sampling the page's JavaScript with the WebKit ScriptProfiler (profiler stop writes the .cpuprofile). |
 | [`profiler stop`](#profiler-stop) | Stop sampling and write the CPU profile (.cpuprofile, Chrome DevTools format, mode 0600) to path, or to a new file in the temp directory. |
 | [`pushstate`](#pushstate) | Change the URL without loading: the Next.js router when the page has one, else history.pushState and a popstate event. |
@@ -254,9 +254,10 @@ Click an element with synthetic pointer and mouse events after the actionability
 
 | Flag | Value | Description |
 |---|---|---|
-| `--button` | `left`, `right`, `middle` | mouse button; right ends with contextmenu, middle with auxclick (default `left`) |
+| `--button` | text | mouse button: left, right, middle, back or forward (default left); right ends with contextmenu, the others but left with auxclick |
+| `--modifiers` | text | modifier keys held during the click: alt, control (ctrl), meta (cmd, command), shift, joined by , or +; every event carries them |
 | `--count` | integer | number of clicks (detail 1..n) |
-| `--new-tab` | none | open the link's href with window.open (emulated user gesture) instead of clicking; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds |
+| `--new-tab` | none | open the link's href with window.open (emulated user gesture) instead of clicking; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds; not with --button or --modifiers |
 | `--force` | none | skip the actionability checks (attached, visible, stable, enabled, receives events) |
 
 ### `close`
@@ -420,7 +421,7 @@ Stop the daemon after the cleanup of every page (5 s at most).
 agent-ios dblclick <target> [flags]
 ```
 
-Double-click an element: two click sequences (detail 1 and 2), then dblclick.
+Double-click an element: two click sequences (detail 1 and 2), then dblclick (left button only, as in Chrome).
 
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
@@ -431,6 +432,8 @@ Double-click an element: two click sequences (detail 1 and 2), then dblclick.
 
 | Flag | Value | Description |
 |---|---|---|
+| `--button` | text | mouse button: left, right, middle, back or forward (default left); right ends with contextmenu, the others but left with auxclick |
+| `--modifiers` | text | modifier keys held during the click: alt, control (ctrl), meta (cmd, command), shift, joined by , or +; every event carries them |
 | `--force` | none | skip the actionability checks (attached, visible, stable, enabled, receives events) |
 
 ### `device list`
@@ -805,14 +808,14 @@ Type into the focused element (keyboard type \<text\>) or insert text without ke
 agent-ios keydown <key>
 ```
 
-Send keydown for a key on the focused element (no default action).
+Press a key without releasing it: keydown, then unless canceled keypress and the insertion or default action; a modifier key (Shift, Control, Alt, Meta) stays held for later press, keydown, keyup and mouse commands until keyup.
 
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
 
 | Argument | Required | Description |
 |---|---|---|
-| `<key>` | yes | key name or character |
+| `<key>` | yes | key name or character (Shift, ShiftLeft, ShiftRight, Control, Alt, Meta and their Left/Right forms hold a modifier) |
 
 ### `keyup`
 
@@ -820,7 +823,7 @@ Send keydown for a key on the focused element (no default action).
 agent-ios keyup <key>
 ```
 
-Send keyup for a key on the focused element.
+Send keyup for a key on the focused element; a modifier key stops being held.
 
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
@@ -863,7 +866,7 @@ Reattach a lost page and take its lease for this session (needs the device reser
 agent-ios mouse <action> [<a>] [<b>] [flags]
 ```
 
-Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx].
+Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx]; the events carry the modifiers that keydown holds.
 
 - Page: leases the session's page
 - Default deadline: 5s (`--timeout` overrides it)
@@ -871,7 +874,7 @@ Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel
 | Argument | Required | Description |
 |---|---|---|
 | `<action>` | yes | move, down, up or wheel |
-| `<a>` | no | move: x; down and up: left, right or middle; wheel: dy |
+| `<a>` | no | move: x; down and up: left, right, middle, back or forward; wheel: dy |
 | `<b>` | no | move: y; wheel: dx |
 
 | Flag | Value | Description |
@@ -1010,7 +1013,7 @@ Open a URL in the page (location.href), then wait for the load state; a URL that
 agent-ios press <key> [flags]
 ```
 
-Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action.
+Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action; chord modifiers get their own key events, and modifiers held by keydown apply.
 
 - Aliases: `key`
 - Page: leases the session's page
@@ -1022,7 +1025,7 @@ Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused ele
 
 | Flag | Value | Description |
 |---|---|---|
-| `--phase` | `both`, `down`, `up` | down or up sends only keydown or keyup (default `both`) |
+| `--phase` | `both`, `down`, `up` | down sends a bare keydown (no keypress, insertion or default action; agent-ios only), up only keyup (default `both`) |
 
 ### `profiler start`
 

@@ -58,18 +58,18 @@ func init() {
 	})
 	registerAction(&Command{
 		Name: "press", Aliases: []string{"key"},
-		Summary: "Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action.",
+		Summary: "Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action; chord modifiers get their own key events, and modifiers held by keydown apply.",
 		Args:    []Arg{{Name: "key", Help: "key name or character, with optional Control+, Shift+, Alt+, Meta+ modifiers", Required: true}},
-		Flags:   []Flag{{Name: "phase", Type: FlagEnum, Enum: []string{"both", "down", "up"}, Default: "both", Help: "down or up sends only keydown or keyup"}},
+		Flags:   []Flag{{Name: "phase", Type: FlagEnum, Enum: []string{"both", "down", "up"}, Default: "both", Help: "down sends a bare keydown (no keypress, insertion or default action; agent-ios only), up only keyup"}},
 		Run:     runPress(""),
 	})
 	registerAction(&Command{
-		Name: "keydown", Summary: "Send keydown for a key on the focused element (no default action).",
-		Args: []Arg{{Name: "key", Help: "key name or character", Required: true}},
-		Run:  runPress("down"),
+		Name: "keydown", Summary: "Press a key without releasing it: keydown, then unless canceled keypress and the insertion or default action; a modifier key (Shift, Control, Alt, Meta) stays held for later press, keydown, keyup and mouse commands until keyup.",
+		Args: []Arg{{Name: "key", Help: "key name or character (Shift, ShiftLeft, ShiftRight, Control, Alt, Meta and their Left/Right forms hold a modifier)", Required: true}},
+		Run:  runPress("kd"),
 	})
 	registerAction(&Command{
-		Name: "keyup", Summary: "Send keyup for a key on the focused element.",
+		Name: "keyup", Summary: "Send keyup for a key on the focused element; a modifier key stops being held.",
 		Args: []Arg{{Name: "key", Help: "key name or character", Required: true}},
 		Run:  runPress("up"),
 	})
@@ -77,7 +77,9 @@ func init() {
 
 // keyDesc is one key as 60-keyboard.js takes it: KeyboardEvent key and
 // code, the legacy keyCode (kc), charCode of keypress (cc) and
-// keyIdentifier (ki), and the text a printable key inserts.
+// keyIdentifier (ki), the text a printable key inserts, the location
+// (loc: 1 left, 2 right modifier key), the modifier bit of a modifier key
+// (mb) and the key with Shift on a US layout (sk).
 type keyDesc struct {
 	Key  string `json:"key"`
 	Code string `json:"code,omitempty"`
@@ -85,6 +87,9 @@ type keyDesc struct {
 	CC   int    `json:"cc,omitempty"`
 	KI   string `json:"ki,omitempty"`
 	Text string `json:"text,omitempty"`
+	Loc  int    `json:"loc,omitempty"`
+	MB   int    `json:"mb,omitempty"`
+	SK   string `json:"sk,omitempty"`
 }
 
 // namedKeys are the non-printable keys with their legacy codes (UI Events
@@ -104,12 +109,42 @@ var namedKeys = map[string]keyDesc{
 	"End":        {Key: "End", Code: "End", KC: 35, KI: "End"},
 	"PageUp":     {Key: "PageUp", Code: "PageUp", KC: 33, KI: "PageUp"},
 	"PageDown":   {Key: "PageDown", Code: "PageDown", KC: 34, KI: "PageDown"},
+	// Modifier keys (agent-browser 0.45 named_key_info and key_location).
+	"Shift":        {Key: "Shift", Code: "ShiftLeft", KC: 16, KI: "Shift", Loc: 1, MB: modShift},
+	"ShiftLeft":    {Key: "Shift", Code: "ShiftLeft", KC: 16, KI: "Shift", Loc: 1, MB: modShift},
+	"ShiftRight":   {Key: "Shift", Code: "ShiftRight", KC: 16, KI: "Shift", Loc: 2, MB: modShift},
+	"Control":      {Key: "Control", Code: "ControlLeft", KC: 17, KI: "Control", Loc: 1, MB: modControl},
+	"ControlLeft":  {Key: "Control", Code: "ControlLeft", KC: 17, KI: "Control", Loc: 1, MB: modControl},
+	"ControlRight": {Key: "Control", Code: "ControlRight", KC: 17, KI: "Control", Loc: 2, MB: modControl},
+	"Alt":          {Key: "Alt", Code: "AltLeft", KC: 18, KI: "Alt", Loc: 1, MB: modAlt},
+	"AltLeft":      {Key: "Alt", Code: "AltLeft", KC: 18, KI: "Alt", Loc: 1, MB: modAlt},
+	"AltRight":     {Key: "Alt", Code: "AltRight", KC: 18, KI: "Alt", Loc: 2, MB: modAlt},
+	"Meta":         {Key: "Meta", Code: "MetaLeft", KC: 91, KI: "Meta", Loc: 1, MB: modMeta},
+	"MetaLeft":     {Key: "Meta", Code: "MetaLeft", KC: 91, KI: "Meta", Loc: 1, MB: modMeta},
+	"MetaRight":    {Key: "Meta", Code: "MetaRight", KC: 92, KI: "Meta", Loc: 2, MB: modMeta},
 }
 
 var keyAliases = map[string]string{
 	"return": "Enter", "esc": "Escape", "left": "ArrowLeft", "right": "ArrowRight", "up": "ArrowUp", "down": "ArrowDown",
-	"del": "Delete", "space": " ",
+	"del": "Delete", "space": " ", "ctrl": "Control", "cmd": "Meta", "command": "Meta",
 }
+
+// usPunct are the US-layout punctuation keys: code, keyCode and the
+// character with Shift (agent-browser 0.45 punctuation_key_info and
+// shifted_char); each shifted character has the same code and keyCode.
+// The shifted digits (!, @, ...) have neither, as in agent-browser.
+var usPunct = map[rune]struct {
+	code    string
+	kc      int
+	shifted rune
+}{
+	';': {"Semicolon", 186, ':'}, '=': {"Equal", 187, '+'}, ',': {"Comma", 188, '<'}, '-': {"Minus", 189, '_'},
+	'.': {"Period", 190, '>'}, '/': {"Slash", 191, '?'}, '`': {"Backquote", 192, '~'}, '[': {"BracketLeft", 219, '{'},
+	'\\': {"Backslash", 220, '|'}, ']': {"BracketRight", 221, '}'}, '\'': {"Quote", 222, '"'},
+}
+
+// usShiftDigits are the characters of Shift with the digits 0 to 9.
+const usShiftDigits = ")!@#$%^&*("
 
 // charKey is the descriptor of a printable character; a newline is Enter.
 func charKey(r rune) keyDesc {
@@ -124,8 +159,22 @@ func charKey(r rune) keyDesc {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
 		u := unicode.ToUpper(r)
 		k.Code, k.KC = "Key"+string(u), int(u)
+		if r >= 'a' {
+			k.SK = string(u)
+		}
 	case r >= '0' && r <= '9':
 		k.Code, k.KC = "Digit"+s, int(r)
+		k.SK = string(usShiftDigits[r-'0'])
+	default:
+		if p, ok := usPunct[r]; ok {
+			k.Code, k.KC, k.SK = p.code, p.kc, string(p.shifted)
+			break
+		}
+		for _, p := range usPunct {
+			if p.shifted == r {
+				k.Code, k.KC = p.code, p.kc
+			}
+		}
 	}
 	return k
 }
@@ -136,6 +185,20 @@ type modifiers struct {
 	C bool `json:"c,omitempty"`
 	A bool `json:"a,omitempty"`
 	M bool `json:"m,omitempty"`
+}
+
+// mask is m as modifier bits (Alt 1, Control 2, Meta 4, Shift 8).
+func (m modifiers) mask() int {
+	n := 0
+	for _, b := range []struct {
+		on  bool
+		bit int
+	}{{m.A, modAlt}, {m.C, modControl}, {m.M, modMeta}, {m.S, modShift}} {
+		if b.on {
+			n |= b.bit
+		}
+	}
+	return n
 }
 
 // parseKey parses "Enter", "a", "Shift+Tab" or "Control+a" (agent-browser
@@ -176,6 +239,9 @@ func parseKey(s string) (keyDesc, modifiers, error) {
 			return charKey(' '), m, nil
 		}
 	}
+	if r, ok := codeNameChar(key); ok {
+		return charKey(r), m, nil
+	}
 	if k, ok := namedKeys[key]; ok {
 		return k, m, nil
 	}
@@ -185,6 +251,26 @@ func parseKey(s string) (keyDesc, modifiers, error) {
 		}
 	}
 	return keyDesc{}, m, usagef("press %q: unknown key %q", s, key)
+}
+
+// chordKeys are the modifier keys that press sends for chord modifiers,
+// by modifier bit (60-keyboard.js A.press).
+var chordKeys = map[string]keyDesc{
+	"1": namedKeys["Alt"], "2": namedKeys["Control"], "4": namedKeys["Meta"], "8": namedKeys["Shift"],
+}
+
+// codeNameChar reads the code names KeyA to KeyZ and Digit0 to Digit9
+// (case-insensitive) as their character: lowercase for a letter
+// (agent-browser 0.45 named_key_info).
+func codeNameChar(name string) (rune, bool) {
+	l := strings.ToLower(name)
+	if len(l) == 4 && strings.HasPrefix(l, "key") && l[3] >= 'a' && l[3] <= 'z' {
+		return rune(l[3]), true
+	}
+	if len(l) == 6 && strings.HasPrefix(l, "digit") && l[5] >= '0' && l[5] <= '9' {
+		return rune(l[5]), true
+	}
+	return 0, false
 }
 
 // typeSteps splits text into the steps of type (design 2.6): one
@@ -338,13 +424,15 @@ func runPress(phase string) func(context.Context, Env, Input) (Result, error) {
 			return Result{}, err
 		}
 		defer w.close()
+		// c, the chord's modifier bits, makes 60-keyboard.js apply the
+		// modifiers held by keydown (A.press).
 		r, err := w.run(ctx, action{Name: "press", Kind: "press", Args: func(int) map[string]any {
-			return map[string]any{"keys": []keyDesc{k}, "m": m, "ph": ph}
+			return map[string]any{"keys": []keyDesc{k}, "c": m.mask(), "ph": ph, "mk": chordKeys}
 		}})
 		if err != nil {
 			return Result{}, err
 		}
-		done := map[string]string{"": "pressed ", "down": "key down ", "up": "key up "}[ph]
+		done := map[string]string{"": "pressed ", "down": "key down ", "kd": "key down ", "up": "key up "}[ph]
 		return w.result(done+arg(in, 0), r), nil
 	}
 }

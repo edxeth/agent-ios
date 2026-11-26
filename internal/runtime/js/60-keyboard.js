@@ -16,7 +16,7 @@
   var BLOCK = { text: 1, search: 1, url: 1, tel: 1, email: 1, password: 1, date: 1, month: 1, week: 1, time: 1, "datetime-local": 1, number: 1 };
   function kev(x, t, type, k, m) {
     return ev(x, function () {
-      var e = new KE(type, { key: k.key, code: k.code || "", bubbles: true, cancelable: true, composed: true, view: w,
+      var e = new KE(type, { key: k.key, code: k.code || "", location: k.loc || 0, bubbles: true, cancelable: true, composed: true, view: w,
         shiftKey: !!m.s, ctrlKey: !!m.c, altKey: !!m.a, metaKey: !!m.m });
       try {
         def(e, "keyCode", { value: type === "keypress" ? k.cc || k.kc : k.kc });
@@ -120,7 +120,14 @@
   // canceled keydown skips the default action). A full press of the key
   // and an owner reset (a release also resets, 10-core.js) forget it.
   var KD = {};
-  I.onReset(function () { KD = {}; });
+  // H: the modifier bits (Alt 1, Control 2, Meta 4, Shift 8) that keydown
+  // of a modifier key holds until its keyup; press, keydown, keyup and
+  // mouse (55-actions.js) apply them. They belong to the page runtime, as
+  // KD and the mouse state do, so an owner reset and a new document end
+  // them.
+  var H = 0;
+  I.onReset(function () { KD = {}; H = 0; });
+  _.held = function () { return H; };
   // key: keydown; unless canceled, keypress and text insertion (printable
   // keys) or the default action; then, as the next native input event,
   // keyup (Space activates on keyup). ph "down" sends only keydown, ph "up"
@@ -139,7 +146,7 @@
         KD[k.key] = { t: t, ok: ok };
         return;
       }
-      if (ok && !m.c && !m.m && (k.text || k.key === "Enter")) { ok = await kev(x, t, "keypress", k, m); }
+      if (ok && !k.np && !m.c && !m.m && (k.text || k.key === "Enter")) { ok = await kev(x, t, "keypress", k, m); }
       if (ok) {
         if (k.text && !m.c && !m.m) {
           if (editable(t)) { await edit(x, t, k.text, "insertText"); }
@@ -161,7 +168,45 @@
     for (var i = 0; i < g.keys.length; i++) { await key(x, t, g.keys[i], g.m || {}, r); }
     r.v = t.value;
   };
-  A.press = function (e, g, a, r, x) { return key(x, target(e), g.keys[0], g.m || {}, r, g.ph); };
+  function mo(n) { return { a: n & 1, c: n & 2, m: n & 4, s: n & 8 }; }
+  // km: key k under modifier bits n (agent-browser 0.45 modified_key_info):
+  // Shift gives the US-layout shifted key (sk) and text; Alt, Control or
+  // Meta remove the text and the keypress (np).
+  function km(k, n) {
+    var o = {}, p;
+    for (p in k) { o[p] = k[p]; }
+    if (n & 8 && k.sk) {
+      o.key = k.sk;
+      if (o.text) { o.text = k.sk; o.cc = k.sk.charCodeAt(0); }
+    }
+    if (n & 7) { o.text = ""; o.np = 1; }
+    return o;
+  }
+  // press: CDP key events (internal/cdp) send g.m; the press, keydown and
+  // keyup commands send g.c, the chord's modifier bits, and g.mk, the
+  // modifier keys by bit (keyboard.go), and get the held
+  // ones (H) as agent-browser 0.45 does: ph "kd" (keydown) and "down" (a
+  // bare keydown) hold a modifier key, "up" releases it; a full press
+  // first presses the chord modifiers not held (Control, Alt, Shift,
+  // Meta), then the key, then releases them in reverse.
+  A.press = async function (e, g, a, r, x) {
+    var t = target(e), k = g.keys[0], MK = g.mk;
+    if (g.c === undefined) { return key(x, t, k, g.m || {}, r, g.ph); }
+    var own = k.mb || 0, held = H, cur = H, n, i, ch = [2, 1, 8, 4].filter(function (b) { return g.c & b & ~held; });
+    if (g.ph === "up") {
+      H &= ~own; n = H | g.c;
+      return key(x, t, km(k, n), mo(n), r, "up");
+    }
+    if (g.ph) {
+      n = H | g.c | own; H |= own;
+      return key(x, t, km(k, n), mo(n), r, g.ph);
+    }
+    for (i = 0; i < ch.length; i++) { cur |= ch[i]; await key(x, t, MK[ch[i]], mo(cur), r, "kd"); }
+    await key(x, t, km(k, cur | own), mo(cur | own), r, "kd");
+    n = cur & ~(own & ~held);
+    await key(x, t, km(k, n), mo(n), r, "up");
+    for (i = ch.length - 1; i >= 0; i--) { cur &= ~ch[i]; await key(x, t, MK[ch[i]], mo(cur), r, "up"); }
+  };
   A.inserttext = async function (e, g, a, r, x) {
     var t = target(e);
     if (editable(t) && !await edit(x, t, g.text, "insertText")) { r.err = "page canceled the input"; }

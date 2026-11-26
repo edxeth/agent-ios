@@ -711,29 +711,30 @@ func abs(f float64) float64 {
 	return f
 }
 
-// Review finding 5: keydown and press --phase down send only keydown (no
-// keypress, no insertion); keyup sends only keyup; a full press sends
-// keydown, keypress, the insertion and keyup.
+// Review finding 5, revised by parity-045: keydown follows agent-browser
+// 0.45 #2734 (keydown, keypress and the insertion); press --phase down
+// keeps the bare keydown (no keypress, no insertion); keyup sends only
+// keyup; a full press sends keydown, keypress, the insertion and keyup.
 func TestActionKeydownPhaseSendsOnlyKeydown(t *testing.T) {
 	loadActions(t)
 	ps, _ := actionSession(t, hooks{})
 	mustAct(t, ps, "focus", "#keys")
 	mustAct(t, ps, "keydown", "a")
-	if v := pageString(t, "T.keys.join(',')"); v != "keydown:a" {
-		t.Fatalf("keydown a sent %s, want keydown:a", v)
+	if v := pageString(t, "T.keys.join(',')"); v != "keydown:a,keypress:a,input:a" {
+		t.Fatalf("keydown a sent %s, want keydown:a,keypress:a,input:a", v)
 	}
 	mustAct(t, ps, "press", "b", "--phase", "down")
 	mustAct(t, ps, "keyup", "a")
-	if v := pageString(t, "T.keys.join(',')"); v != "keydown:a,keydown:b,keyup:a" {
-		t.Fatalf("keydown a, press b --phase down, keyup a sent %s, want keydown:a,keydown:b,keyup:a", v)
+	if v := pageString(t, "T.keys.join(',')"); v != "keydown:a,keypress:a,input:a,keydown:b,keyup:a" {
+		t.Fatalf("keydown a, press b --phase down, keyup a sent %s, want keydown:a,keypress:a,input:a,keydown:b,keyup:a", v)
 	}
-	if v := pageString(t, "document.getElementById('keys').value"); v != "" {
-		t.Fatalf("the split phases inserted %q, want nothing", v)
+	if v := pageString(t, "document.getElementById('keys').value"); v != "a" {
+		t.Fatalf("keydown a and press b --phase down left %q, want a (press --phase down inserts nothing)", v)
 	}
 	eval(t, "T.keys = []; true")
 	mustAct(t, ps, "press", "c")
-	if v, val := pageString(t, "T.keys.join(',')"), pageString(t, "document.getElementById('keys').value"); v != "keydown:c,keypress:c,input:c,keyup:c" || val != "c" {
-		t.Fatalf("press c sent %s, value %q; want keydown:c,keypress:c,input:c,keyup:c and c", v, val)
+	if v, val := pageString(t, "T.keys.join(',')"), pageString(t, "document.getElementById('keys').value"); v != "keydown:c,keypress:c,input:c,keyup:c" || val != "ac" {
+		t.Fatalf("press c sent %s, value %q; want keydown:c,keypress:c,input:c,keyup:c and ac", v, val)
 	}
 }
 

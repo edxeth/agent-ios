@@ -10,15 +10,20 @@
   var _ = I._, B = _.B, w = window, A = _.A, center = _.center, at = _.at, ev = _.ev, gap = _.gap;
   var disp = Function.prototype.call.bind(EventTarget.prototype.dispatchEvent);
   var PE = w.PointerEvent || w.MouseEvent, ME = w.MouseEvent, DE = w.DragEvent || w.MouseEvent, Ev = w.Event;
-  var BTN = [1, 4, 2];
+  // BTN: the buttons mask of MouseEvent.button left, middle, right, back, forward.
+  var BTN = [1, 4, 2, 8, 16];
   var FOC = "a[href],area[href],button,input,select,textarea,iframe,summary,[tabindex],[contenteditable]";
   // fire dispatches new C(type, o) on t as the next event of attempt x;
   // it resolves to false when the page canceled the event.
   function fire(x, t, C, type, o) { return ev(x, function () { return disp(t, new C(type, o)); }); }
   function bub(type) { return new Ev(type, { bubbles: true }); }
+  // pi: the init of a pointer or mouse event at c; g.mod holds the
+  // modifier bits (Alt 1, Control 2, Meta 4, Shift 8).
   function pi(c, g, buttons) {
+    var m = g.mod || 0;
     return { bubbles: true, cancelable: true, composed: true, view: w, clientX: c.x, clientY: c.y, screenX: c.x, screenY: c.y,
-      button: g.b || 0, buttons: buttons, detail: g.n || 0, pointerId: 1, pointerType: g.pt || "mouse", isPrimary: true };
+      button: g.b || 0, buttons: buttons, detail: g.n || 0, pointerId: 1, pointerType: g.pt || "mouse", isPrimary: true,
+      altKey: !!(m & 1), ctrlKey: !!(m & 2), metaKey: !!(m & 4), shiftKey: !!(m & 8) };
   }
   function ne(o) {
     var n = {};
@@ -50,8 +55,8 @@
   }
   // press: one native mouse down (pointerdown, mousedown, and focus, the
   // default action of mousedown), then, after the next frame, one native
-  // mouse up (pointerup, mouseup, then click, auxclick for the middle
-  // button or contextmenu for the right one). A canceled pointerdown
+  // mouse up (pointerup, mouseup, then click for the left button,
+  // contextmenu for the right one, auxclick for the others). A canceled pointerdown
   // suppresses the mouse compatibility events, not the click.
   async function press(x, e, c, g) {
     var b = g.b || 0, o = pi(c, g, BTN[b]);
@@ -62,20 +67,20 @@
     o = pi(c, g, 0);
     await fire(x, e, PE, "pointerup", o);
     if (pd) { await fire(x, e, ME, "mouseup", o); }
-    await fire(x, e, ME, b === 2 ? "contextmenu" : b === 1 ? "auxclick" : "click", o);
+    await fire(x, e, ME, b === 2 ? "contextmenu" : b ? "auxclick" : "click", o);
   }
+  // click: one move, then g.cnt presses (detail 1..n); the second press of
+  // the left button ends with dblclick, as Chrome's clickCount 2 does.
   A.click = async function (e, g, a, r, x) {
     var c = center(e);
     await over(x, e, c, g);
-    for (var i = 1; i <= (g.cnt || 1); i++) { g.n = i; await press(x, e, c, g); }
+    for (var i = 1; i <= (g.cnt || 1); i++) {
+      g.n = i;
+      await press(x, e, c, g);
+      if (i === 2 && !g.b) { await fire(x, e, ME, "dblclick", pi(c, g, 0)); }
+    }
   };
-  A.dblclick = async function (e, g, a, r, x) {
-    var c = center(e);
-    await over(x, e, c, g);
-    g.n = 1; await press(x, e, c, g);
-    g.n = 2; await press(x, e, c, g);
-    await fire(x, e, ME, "dblclick", pi(c, g, 0));
-  };
+  A.dblclick = function (e, g, a, r, x) { g.cnt = 2; return A.click(e, g, a, r, x); };
   // touch dispatches one touch event as its own native input event; null
   // when the page has no Touch constructor.
   async function touch(x, e, c, type) {
@@ -241,6 +246,7 @@
     var c = { x: M.x, y: M.y }, h = at(c.x, c.y) || document.documentElement, b = g.b || 0;
     if (g.op === "down") { M.b |= BTN[b]; }
     if (g.op === "up") { M.b &= ~BTN[b]; }
+    g.mod = _.held(); // the modifiers that keydown holds (60-keyboard.js)
     var o = pi(c, g, M.b), t = { move: "move", down: "down", up: "up" }[g.op];
     r.v = { x: M.x, y: M.y, buttons: M.b };
     if (t) {

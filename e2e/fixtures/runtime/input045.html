@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>input045</title>
+<style>body { margin: 0; } #b { position: absolute; left: 40px; top: 40px; width: 120px; height: 40px; } #k { position: absolute; left: 40px; top: 120px; }</style>
+</head><body>
+<button id="b">Probe</button>
+<input id="k">
+<script>
+  // parity-045 input probe (agent-browser 0.45 click_probe.html and the
+  // keyboard e2e tests): L logs the mouse events of #b and of the
+  // document (M, for mouse down and up), and the key and input events of #k.
+  // A mouse event is "type:b<button>:bs<buttons>:d<detail>:c<ctrl>s<shift>a<alt>m<meta>";
+  // a key event is "type key code keyCode location c<ctrl>s<shift>a<alt>m<meta>".
+  window.L = []; window.M = [];
+  function mods(e) { return "c" + (+e.ctrlKey) + "s" + (+e.shiftKey) + "a" + (+e.altKey) + "m" + (+e.metaKey); }
+  function mouse(e) { return e.type + ":b" + e.button + ":bs" + e.buttons + ":d" + e.detail + ":" + mods(e); }
+  var b = document.getElementById("b"), k = document.getElementById("k");
+  ["mousedown", "mouseup", "click", "auxclick", "contextmenu", "dblclick"].forEach(function (type) {
+    b.addEventListener(type, function (e) { L.push(mouse(e)); if (type === "contextmenu") { e.preventDefault(); } });
+  });
+  ["mousedown", "mouseup"].forEach(function (type) {
+    document.addEventListener(type, function (e) { M.push(mouse(e)); }, true);
+  });
+  ["keydown", "keypress", "keyup"].forEach(function (type) {
+    k.addEventListener(type, function (e) { L.push([type, e.key, e.code, e.keyCode, e.location, mods(e)].join(" ")); });
+  });
+  k.addEventListener("input", function (e) { L.push("input " + e.data); });
+</script>
+</body></html>
