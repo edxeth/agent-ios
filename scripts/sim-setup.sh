@@ -486,18 +486,31 @@ wait_boot
 
 # 3. Open Safari to a test page of this run: its random query tells it
 #    from every other tab and device.
-#    Right after a fresh boot, openurl can time out (exit 60) while
-#    SpringBoard is still starting; it is tried 3 times, each with a new
-#    token, so a page that an earlier attempt opened late is never selected.
-for attempt in 1 2 3; do
+#    After a fresh boot on GitHub's macOS runners, openurl can time out
+#    (exit 60) for more than a minute while the system app still starts.
+#    It is tried for up to 150 s; a retry first launches Safari. Each try
+#    has a new token, so a page that an earlier try opened late is never
+#    selected.
+open_deadline=$((SECONDS + 150))
+attempt=0
+while :; do
+  attempt=$((attempt + 1))
   SIM_PAGE_URL="https://example.com/?iwdp-sim=$(new_token)"
   echo "Opening Safari at $SIM_PAGE_URL (attempt $attempt)..." >&2
+  if [ "$attempt" -gt 1 ]; then
+    xcrun simctl launch "$SIM_UDID" com.apple.mobilesafari > /dev/null 2>&1 || true
+  fi
   rc=0
   xcrun simctl openurl "$SIM_UDID" "$SIM_PAGE_URL" || rc=$?
   [ "$rc" -eq 0 ] && break
-  [ "$attempt" -eq 3 ] && exit "$rc"
-  echo "  openurl failed (exit $rc); trying again in 5 s" >&2
-  sleep 5
+  if [ "$SECONDS" -ge "$open_deadline" ]; then
+    echo "ERROR: openurl failed $attempt times in 150 s (last exit $rc). Simulator state:" >&2
+    xcrun simctl list devices booted >&2 || true
+    xcrun simctl spawn "$SIM_UDID" launchctl list 2> /dev/null | grep -i -E 'springboard|mobilesafari' >&2 || true
+    exit "$rc"
+  fi
+  echo "  openurl failed (exit $rc); trying again in 10 s" >&2
+  sleep 10
 done
 sleep 3
 
