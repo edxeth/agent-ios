@@ -2,6 +2,8 @@ module github.com/edxeth/agent-ios
 
 go 1.26.0
 
+toolchain go1.27.4
+
 require (
 	github.com/danielpaulus/go-ios v1.3.2
 	github.com/evanw/esbuild v0.28.2
