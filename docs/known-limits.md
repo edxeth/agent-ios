@@ -153,6 +153,7 @@ Found:
 
 Still open:
 
+- **Write deadline of an action attempt.** Since the attempt timing moved to the call (parity-045 FIX-M), the writes of an attempt (its arm and its call) are bounded by the 10 s per-call budget instead of the attempt's reply wait (about 2.25 s). Deadlines and exit codes are unchanged; only a write that stalls during an action keeps the page's later commands failing for about 10 s instead of about 2 s before the connection is replaced. Seen in a test (closure review rev2-armed-detach F5), not on a device.
 - **Reply nudge on iOS 26.** The nudge of design 2.6 (a `Runtime.evaluate "0"` sent 250 ms after a call that has no reply, for a device that holds replies until the next message) exists in the session code but no daemon session enables it. On a physical device that holds replies, every call, the arm step of an action included, waits for its reply budget; an action whose arm reply is held past about 2.25 s stops and reports that the step did not run. Not checked on a physical iOS 26 device.
 - **Listing.** Whether a CDP client can work on an iwdp with the broken slot.
 - **Pause-on-start.** Whether iwdp relays the reply of `Target.setPauseOnStart` on iOS 26, which may hold it; the inline `confirm()` of a new document was not run.

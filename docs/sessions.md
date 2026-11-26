@@ -50,7 +50,7 @@ The daemon cannot see every inspector client: another agent's script, an older a
 
 ## Operations on one page
 
-All entry points (CLI commands and CDP messages) are operations in one scheduler per page. Commands that change the page (actions, snapshots, which allocate refs) run one at a time in arrival order; reads run in parallel with at most 8 protocol calls in flight. A cancelled command (Ctrl+C) is cancelled in the daemon at once; an action step that was already sent may still have run, and the error says so ("the page may have run step 2 of 3 of type before the reply was lost").
+All entry points (CLI commands and CDP messages) are operations in one scheduler per page. Commands that change the page (actions, snapshots, which allocate refs) run one at a time in arrival order; reads run in parallel with at most 8 protocol calls in flight. A pending `Runtime.awaitPromise` (the armed reply of an action, a CDP awaited evaluation) gives its place back once it is written, so waits never block the calls that settle them. A cancelled command (Ctrl+C) is cancelled in the daemon at once; an action step that was already sent may still have run, and the error says so ("the page may have run step 2 of 3 of type before the reply was lost").
 
 ## Rules for agents
 
