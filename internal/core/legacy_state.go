@@ -153,17 +153,19 @@ func (d *DesiredState) SetEmulatedConditions(owner Owner, params json.RawMessage
 
 // SentEmulatedConditions records the outcome err of a send that
 // SetEmulatedConditions asked for, with that call's undo: a refusal
-// (noEffect) puts owner's record back; after an unknown outcome the next
+// (noEffect) puts owner's record back and changes nothing else, so an
+// earlier unknown outcome stays unknown; after an unknown outcome the next
 // SetEmulatedConditions sends the effective conditions even when they did
-// not change.
+// not change; only an applied send makes the record certain.
 func (d *DesiredState) SentEmulatedConditions(err error, undo func()) {
 	refused := err != nil && noEffect(err)
 	if refused {
 		undo()
+		return
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.condsUnsure = err != nil && !refused
+	d.condsUnsure = err != nil
 }
 
 func (d *DesiredState) effectiveCondsLocked() json.RawMessage {

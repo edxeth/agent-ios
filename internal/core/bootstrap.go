@@ -123,11 +123,19 @@ func (b *BootstrapParts) orderedLocked() []string {
 }
 
 // Script returns the joined bootstrap script, or "" when there are no parts.
-func (b *BootstrapParts) Script() string {
+func (b *BootstrapParts) Script() string { return b.ScriptWithout("") }
+
+// ScriptWithout is Script without the part name, which stays in place: a
+// caller sends it first and removes the part only when WebKit took it, so
+// a refused send leaves the order unchanged.
+func (b *BootstrapParts) ScriptWithout(name string) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var sb strings.Builder
 	for _, n := range b.orderedLocked() {
+		if n == name {
+			continue
+		}
 		fmt.Fprintf(&sb, "// iwdp bootstrap part: %s\ntry {\n%s\n} catch (e) {}\n", n, b.parts[n].source)
 	}
 	return sb.String()

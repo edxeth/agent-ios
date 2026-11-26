@@ -56,3 +56,29 @@ func TestEmulatedConditionsFollowWebKit(t *testing.T) {
 		t.Fatalf("after a's refused set the effective conditions are %s, want other's %s", got, limit)
 	}
 }
+
+// Closure review rev2-cdp-logpoint F15: a refusal after an unknown outcome
+// leaves the outcome unknown. WebKit may still hold the conditions of the
+// timed-out send, so an identical later set is sent again rather than
+// reported as already applied.
+func TestEmulatedConditionsRefusalKeepsAnUnknownOutcome(t *testing.T) {
+	o := Owner("a")
+	limit := json.RawMessage(`{"bandwidth":1}`)
+	other := json.RawMessage(`{"bandwidth":2}`)
+	d := NewDesiredState()
+	send, undo := d.SetEmulatedConditions(o, limit)
+	d.SentEmulatedConditions(nil, undo)
+	if send == nil {
+		t.Fatal("the first set sent nothing")
+	}
+	_, undo = d.SetEmulatedConditions(o, other)
+	d.SentEmulatedConditions(errors.New("connection lost"), undo)
+	send, undo = d.SetEmulatedConditions(o, other)
+	if send == nil {
+		t.Fatal("the retry after the unknown outcome sent nothing")
+	}
+	d.SentEmulatedConditions(&webkit.ErrorData{Code: -32000, Message: "refused"}, undo)
+	if send, _ := d.SetEmulatedConditions(o, other); send == nil {
+		t.Fatal("after a timeout and a refusal, an identical set sent nothing: WebKit may hold the timed-out conditions")
+	}
+}

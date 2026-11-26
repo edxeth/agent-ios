@@ -348,3 +348,41 @@ func TestGeoClearKeepsLatestSurvivor(t *testing.T) {
 		t.Fatalf("the clear evaluated:\n%s\nwant the restore, then the latest survivor (latitude 4)", strings.Join(evals, "\n---\n"))
 	}
 }
+
+// Closure review rev2-cdp-logpoint F5: a clear whose Page.setBootstrapScript
+// WebKit refused leaves the override where it was in the script order; it
+// does not come back as the latest and so win over an override set after it.
+func TestGeoFailedClearKeepsScriptOrder(t *testing.T) {
+	r, _, c, a, target := attachPage(t)
+	f := r.fake["One"]
+	b := decode[struct {
+		SessionID string `json:"sessionId"`
+	}](t, call(t, c, "", "Target.attachToTarget", map[string]any{"targetId": target, "flatten": true})).SessionID
+	call(t, c, a, "Emulation.setGeolocationOverride", map[string]any{"latitude": 1, "longitude": 0, "accuracy": 1})
+	call(t, c, b, "Emulation.setGeolocationOverride", map[string]any{"latitude": 2, "longitude": 0, "accuracy": 1})
+	var refuse atomic.Bool
+	refuse.Store(true)
+	f.Handle("Page.setBootstrapScript", func(fakewebkit.Call) (any, *fakewebkit.Error) {
+		if refuse.Load() {
+			return nil, &fakewebkit.Error{Code: -32000, Message: "injected refusal"}
+		}
+		return map[string]any{}, nil
+	})
+	if e := callErr(t, c, a, "Emulation.clearGeolocationOverride", nil); !strings.Contains(e.Message, "injected refusal") {
+		t.Fatalf("clear: %v, want the refused bootstrap script", e)
+	}
+	refuse.Store(false)
+	// A third override sends the whole script again without moving the
+	// first two.
+	cc := decode[struct {
+		SessionID string `json:"sessionId"`
+	}](t, call(t, c, "", "Target.attachToTarget", map[string]any{"targetId": target, "flatten": true})).SessionID
+	call(t, c, cc, "Emulation.setGeolocationOverride", map[string]any{"latitude": 3, "longitude": 0, "accuracy": 1})
+	sent := f.ReceivedMethod("Page.setBootstrapScript")
+	var p struct{ Source string }
+	_ = json.Unmarshal(sent[len(sent)-1].Params, &p)
+	one, two := strings.Index(p.Source, devtools.GeoShim(1, 0, 1)), strings.Index(p.Source, devtools.GeoShim(2, 0, 1))
+	if one < 0 || two < 0 || one > two {
+		t.Fatalf("after the failed clear the script runs latitude 1 at %d and latitude 2 at %d; want 1 before 2 (2 was set last)", one, two)
+	}
+}

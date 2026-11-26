@@ -278,15 +278,14 @@ func emuClearGeolocation(ctx context.Context, call *Call) (any, Later, error) {
 			if !ok {
 				return nil
 			}
-			if src, had := ps.State.Boot.Source(name); had {
-				ps.State.RemovePart(name)
-				if _, err := c.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": ps.State.Boot.Script()}); err != nil {
+			if _, had := ps.State.Boot.Source(name); had {
+				// The part leaves the state only when WebKit took the script
+				// without it, so a refusal keeps its place in the order.
+				if _, err := c.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": ps.State.Boot.ScriptWithout(name)}); err != nil {
 					ps.State.Put(e)
-					if err := ps.State.SetPart(s.owner, name, core.RankShim, src); err != nil {
-						return err
-					}
 					return fmt.Errorf("Page.setBootstrapScript: %w", err)
 				}
+				ps.State.RemovePart(name)
 			}
 			if e.Release != nil {
 				if err := e.Release(ctx, c); err != nil {
