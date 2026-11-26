@@ -127,7 +127,8 @@ type Scheduler struct {
 	barriers int  // open barriers; admission is closed while any is open
 	queue    []*Op
 	running  map[*Op]bool
-	changed  chan struct{} // closed and replaced when running shrinks or a completion ends
+	detached map[*Op]bool  // operations that Detach took out of admission, until their End
+	changed  chan struct{} // closed and replaced when running or detached shrinks or a completion ends
 	nextOp   int
 	clocks   map[clockKey]*ClockMap // by document generation and execution context
 	ctxs     contextBook            // execution contexts that operations selected (exec_context_w3b.go)
@@ -199,6 +200,7 @@ func NewScheduler(c webkit.Caller, o SchedulerOptions) *Scheduler {
 		c:           c,
 		o:           o,
 		running:     make(map[*Op]bool),
+		detached:    make(map[*Op]bool),
 		changed:     make(chan struct{}),
 		clocks:      make(map[clockKey]*ClockMap),
 		intercepted: make(map[holdKey]*heldRequest),
@@ -696,9 +698,38 @@ func (op *Op) End() {
 	}()
 }
 
+// Detach takes a running operation out of the page's admission: queued
+// operations are admitted as if it had ended, while it stays fenced
+// (lease epoch, deadline, cancel) and can still send, and a release
+// cancels it and waits for its End. It is for an operation whose last
+// call only waits for page progress and changes nothing: CDP's awaited
+// Runtime.awaitPromise, which otherwise holds every later operation of
+// the page until the promise settles, also the calls that settle it (a
+// Puppeteer binding answers its page function through ordinary calls).
+// End must still be called.
+func (op *Op) Detach() {
+	s := op.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.running[op] {
+		return
+	}
+	delete(s.running, op)
+	s.detached[op] = true
+	close(s.changed)
+	s.changed = make(chan struct{})
+	s.pumpLocked()
+}
+
 func (s *Scheduler) release(op *Op) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.detached[op] {
+		delete(s.detached, op)
+		close(s.changed)
+		s.changed = make(chan struct{})
+		return
+	}
 	if !s.running[op] {
 		return
 	}
@@ -902,6 +933,11 @@ func (s *Scheduler) control(ctx context.Context, m ControlMsg) (json.RawMessage,
 		s.mu.Lock()
 		var op *Op
 		for r := range s.running {
+			if r.ID == m.OpID {
+				op = r
+			}
+		}
+		for r := range s.detached {
 			if r.ID == m.OpID {
 				op = r
 			}
@@ -1285,6 +1321,9 @@ func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Contex
 	for op := range s.running {
 		running = append(running, op)
 	}
+	for op := range s.detached {
+		running = append(running, op)
+	}
 	// Holds with a completion in flight too: that completion can fail and
 	// leave the request paused.
 	requests := make([]holdKey, 0, len(s.intercepted))
@@ -1325,7 +1364,7 @@ func (s *Scheduler) Release(ctx context.Context, cleanup func(ctx context.Contex
 		// on are read in one critical section, so a pause or the end of an
 		// operation after the check closes the channel captured here.
 		s.mu.Lock()
-		n, changed := len(s.running), s.changed
+		n, changed := len(s.running)+len(s.detached), s.changed
 		_, ok, inflight := pauses.nextLocked()
 		s.mu.Unlock()
 		if (ok || inflight) && ctx.Err() == nil {

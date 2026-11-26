@@ -51,6 +51,7 @@ Parity with agent-browser 0.45.0 and chrome-devtools-mcp 1.14.0 wherever iOS Web
 - `DOM.requestNode` works before `DOM.getDocument`, also on WebKit's empty refusal.
 - Console stack traces carry async parents (`stackTrace.parent`).
 - CSS for chrome-devtools-mcp's `get_css_styles`: `CSS.enable` and `CSS.disable` (answered by the endpoint), `CSS.getMatchedStylesForNode`, `getInlineStylesForNode`, `getComputedStyleForNode` and `DOM.pushNodesByBackendIdsToFrontend` for sessions that send `CSS.enable`. A shorthand's `longhandProperties` are given only when its declaration block has no other shorthand.
+- chrome-devtools-mcp's `wait_for` works: it timed out on every text, also on text that was on the page. An awaited `Runtime.evaluate` or `callFunctionOn` no longer holds the page's later calls while its promise is pending (Puppeteer's locator pollers need them to settle), and `Runtime.bindingCalled` names the context that the binding was added for (`executionContextName` or `executionContextId`), so Puppeteer's `aria/` selectors answer. Checked on WebKitGTK and the iOS 26.5 Simulator.
 - HeapProfiler and the other CSS methods are still not translated. See [cdp.md](docs/cdp.md#limits-per-domain).
 
 ### Docs

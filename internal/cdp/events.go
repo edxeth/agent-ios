@@ -165,9 +165,9 @@ type pageState struct {
 	// The attachment's bootstrap part (page_domain.go, runtime_domain.go).
 	scripts    []initScript
 	nextScript int
-	bindings   map[string]string // binding name -> token
-	exceptions int               // exceptionThrown ids
-	jsHeap     float64           // last Memory tracking javascript size (performance_domain.go)
+	bindings   map[string]binding // by binding name
+	exceptions int                // exceptionThrown ids
+	jsHeap     float64            // last Memory tracking javascript size (performance_domain.go)
 
 	// lastConsole is the last WIP Console.messageAdded params of each
 	// target (runtime_domain.go consoleRepeated); a reset forgets them.
@@ -197,7 +197,7 @@ func newPageModel(target string, send func(method string, params any)) *pageStat
 	life, endLife := context.WithCancel(context.Background())
 	ps := &pageState{
 		target: target, send: send, enabled: map[string]bool{}, frames: map[string]*frameInfo{},
-		navChanged: make(chan struct{}), bindings: map[string]string{}, lastConsole: map[string]json.RawMessage{}, unsub: func() {},
+		navChanged: make(chan struct{}), bindings: map[string]binding{}, lastConsole: map[string]json.RawMessage{}, unsub: func() {},
 		life: life, endLife: endLife,
 	}
 	ps.init()

@@ -189,6 +189,93 @@ func TestReadCallsInFlightAreBounded(t *testing.T) {
 	op.End()
 }
 
+// A detached operation (Op.Detach: CDP's awaited Runtime.awaitPromise)
+// no longer holds the page: a queued mutation is admitted while its
+// waiting call is in flight, and that call stays fenced; the End of a
+// detached operation frees nothing that a later operation holds; a
+// release cancels a detached operation and waits for its end.
+func TestDetachedOperationAdmitsTheQueue(t *testing.T) {
+	h := newHarness(t, SchedulerOptions{})
+	h.f.Stall("Test.await")
+	ctx, _ := timeoutCtx(t, 5*time.Second)
+	beginAsync := func() <-chan *Op {
+		ch := make(chan *Op, 1)
+		go func() {
+			op, err := h.s.Begin(ctx, OpSpec{Name: "next", Class: ClassMutate, Session: testSession, Epoch: 1})
+			if err != nil {
+				t.Errorf("Begin: %v", err)
+			}
+			ch <- op
+		}()
+		return ch
+	}
+	admittedWithin := func(ch <-chan *Op, d time.Duration) *Op {
+		select {
+		case op := <-ch:
+			return op
+		case <-time.After(d):
+			return nil
+		}
+	}
+
+	// a waits in a call, detached; b is admitted meanwhile.
+	a := h.begin(t, ctx, ClassMutate)
+	awaited := make(chan error, 1)
+	go func() {
+		_, err := a.Caller().Send(ctx, "Test.await", nil)
+		awaited <- err
+		a.End()
+	}()
+	waitUntil(t, "the waiting call to reach the page", func() bool { return len(h.f.ReceivedMethod("Test.await")) == 1 })
+	a.Detach()
+	b := admittedWithin(beginAsync(), 2*time.Second)
+	if b == nil {
+		t.Fatal("a mutation queued behind a detached operation was not admitted")
+	}
+	if _, err := b.Caller().Send(ctx, "Test.next", nil); err != nil {
+		t.Fatalf("send of the admitted operation: %v", err)
+	}
+
+	// e is detached and ends while b runs: c stays queued behind b.
+	eCh := beginAsync()
+	waitUntil(t, "e to queue behind b", func() bool { return h.queueLen() == 1 })
+	b.End()
+	e := admittedWithin(eCh, 2*time.Second)
+	if e == nil {
+		t.Fatal("e was not admitted after b ended")
+	}
+	e.Detach()
+	c := admittedWithin(beginAsync(), 2*time.Second)
+	if c == nil {
+		t.Fatal("c was not admitted after e detached")
+	}
+	dCh := beginAsync()
+	waitUntil(t, "d to queue behind c", func() bool { return h.queueLen() == 1 })
+	e.End()
+	if d := admittedWithin(dCh, 50*time.Millisecond); d != nil {
+		t.Fatal("the End of a detached operation admitted d while c runs")
+	}
+	c.End()
+	d := admittedWithin(dCh, 2*time.Second)
+	if d == nil {
+		t.Fatal("d was not admitted after c ended")
+	}
+	d.End()
+
+	// The release cancels the detached a and returns after its End.
+	if err := h.s.Release(ctx, nil); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	select {
+	case err := <-awaited:
+		if !errors.Is(err, ErrLeaseEnded) {
+			t.Fatalf("the detached call after the release: %v, want ErrLeaseEnded", err)
+		}
+	default:
+		t.Fatal("Release returned before the detached operation's call ended")
+	}
+}
+
 // 7.3 test 4a: cancel while queued.
 func TestCancelWhileQueuedSendsNothing(t *testing.T) {
 	h := newHarness(t, SchedulerOptions{})

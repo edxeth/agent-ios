@@ -356,8 +356,12 @@ func (b *boundOp) release(objectID any, what logsafe.Label) {
 // finish turns the WIP result r of an evaluate or callFunctionOn sent by
 // reference into the CDP result. A Promise is awaited with
 // Runtime.awaitPromise in a Later, so the session's next messages do not
-// wait for it; another object is read by value when returnByValue asks
-// for it. end is called when the operation's work is done.
+// wait for it, and the operation is detached from the page's admission
+// first (core Op.Detach), so the page's next operations do not wait for
+// it either: in Chrome other commands run while a promise is awaited,
+// and a promise can need them to settle (a Puppeteer binding's answer).
+// Another object is read by value when returnByValue asks for it. end is
+// called when the operation's work is done.
 func (b *boundOp) finish(end func(), r wipResult, err error, byValue, await bool) (any, Later, error) {
 	if err != nil || r.WasThrown || !await || !isPromise(r.Result) {
 		defer end()
@@ -371,6 +375,7 @@ func (b *boundOp) finish(end func(), r wipResult, err error, byValue, await bool
 	}
 	return nil, func(context.Context) (any, error) {
 		defer end()
+		b.mo.Op.Detach()
 		ar, err := b.call("Runtime.awaitPromise", map[string]any{
 			"promiseObjectId": r.Result["objectId"], "returnByValue": byValue,
 		})
@@ -440,6 +445,38 @@ func releaseObject(ctx context.Context, call *Call) (any, Later, error) {
 
 // ---- bindings ----
 
+// binding is a Runtime.addBinding of the attachment. All worlds of a
+// frame share its WIP main world (worlds.go), so the page function cannot
+// tell which world called it; Runtime.bindingCalled names the context the
+// binding was added for, as Chrome does: Puppeteer handles the call only
+// in the ExecutionContext whose id the event names (puppeteer-core 25.18.1
+// cdp/ExecutionContext.js #onBindingCalled), and its utility world adds
+// __ariaQuerySelector, which aria/ selectors call, by executionContextName.
+type binding struct {
+	token string // marks the page function's messages (addBinding)
+	world string // executionContextName; "" for none
+	ctx   int    // executionContextId; 0 for none
+}
+
+// bindingContextLocked returns the context id that a call of b reports:
+// the main frame's context of b's world or b's context while it is in the
+// current document, else the main frame's default context.
+func (ps *pageState) bindingContextLocked(b binding) int {
+	switch {
+	case b.world != "" && ps.main != nil:
+		for _, c := range ps.ctxs {
+			if c.wipFrame == ps.main.wip.ID && c.world == b.world {
+				return c.id
+			}
+		}
+	case b.ctx != 0:
+		if _, ok := ps.lookupContextLocked(b.ctx, ""); ok {
+			return b.ctx
+		}
+	}
+	return ps.mainContextLocked()
+}
+
 // addBinding installs window[name] in the current document and, through
 // the attachment's bootstrap part, in new ones. The page function writes
 // a marked console.debug message with the binding's token; the bridge
@@ -448,7 +485,9 @@ func releaseObject(ctx context.Context, call *Call) (any, Later, error) {
 // name (which Console.enable can replay) from reaching this client.
 func addBinding(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
-		Name string `json:"name"`
+		Name                 string `json:"name"`
+		ExecutionContextID   int    `json:"executionContextId"`
+		ExecutionContextName string `json:"executionContextName"`
 	}
 	if err := call.decode(&p); err != nil {
 		return nil, nil, err
@@ -460,7 +499,7 @@ func addBinding(ctx context.Context, call *Call) (any, Later, error) {
 	ps := s.page
 	token := randomHex(8)
 	ps.mu.Lock()
-	ps.bindings[p.Name] = token
+	ps.bindings[p.Name] = binding{token: token, world: p.ExecutionContextName, ctx: p.ExecutionContextID}
 	ps.mu.Unlock()
 	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
 		if err := s.owned(ctx, mo, "Console.enable", nil); err != nil {
@@ -550,8 +589,11 @@ func consoleMessage(ps *pageState, target string, params json.RawMessage) {
 		}
 	case strings.HasPrefix(m.Text, bindMarker):
 		var v struct{ N, K, P string }
-		if json.Unmarshal([]byte(m.Text[len(bindMarker):]), &v) == nil && v.K != "" && ps.bindings[v.N] == v.K {
-			ps.emitLocked("", "Runtime.bindingCalled", map[string]any{"name": v.N, "payload": v.P, "executionContextId": ps.mainContextLocked()})
+		if json.Unmarshal([]byte(m.Text[len(bindMarker):]), &v) != nil {
+			break
+		}
+		if b, ok := ps.bindings[v.N]; ok && v.K != "" && b.token == v.K {
+			ps.emitLocked("", "Runtime.bindingCalled", map[string]any{"name": v.N, "payload": v.P, "executionContextId": ps.bindingContextLocked(b)})
 		}
 	case strings.HasPrefix(m.Text, dialogMarker):
 		ps.dialogEntryLocked(m.Text[len(dialogMarker):])

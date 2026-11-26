@@ -110,7 +110,7 @@ func TestConsoleRepeatCountUpdates(t *testing.T) {
 	})
 	ps.setEnabled(domLog, true)
 	ps.setEnabled(domRuntime, true)
-	ps.bindings["ping"] = "tok"
+	ps.bindings["ping"] = binding{token: "tok"}
 	added := func(target string, m map[string]any) {
 		b, _ := json.Marshal(map[string]any{"message": m})
 		ps.dispatch(target, "Console.messageAdded", b)

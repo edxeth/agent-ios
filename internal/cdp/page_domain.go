@@ -260,7 +260,7 @@ func (ps *pageState) bindingListLocked() []map[string]string {
 	slices.Sort(names)
 	out := make([]map[string]string, len(names))
 	for i, n := range names {
-		out[i] = map[string]string{"n": n, "k": ps.bindings[n]}
+		out[i] = map[string]string{"n": n, "k": ps.bindings[n].token}
 	}
 	return out
 }

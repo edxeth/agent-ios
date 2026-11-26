@@ -297,6 +297,16 @@ func devtoolsMCPFeatures(t *testing.T) {
 	if !logpoint.Bound || logpoint.Logged != "logpoint 21" {
 		t.Errorf("set_logpoints: %+v, want the logpoint bound and \"logpoint 21\" logged", logpoint)
 	}
+	// wait_for (Puppeteer's aria/ and text/ locators): text present from
+	// the start, and a text and an accessible name (aria/ only) that a
+	// timer adds after the call began.
+	for _, name := range []string{"wait_for present", "wait_for late text", "wait_for late name"} {
+		var found string
+		stepValue(t, run.result, name, &found)
+		if found != "found" {
+			t.Errorf("%s: %q, want found", name, found)
+		}
+	}
 	// get_css_styles on css.html's button: the cascade of the fixture's
 	// CSS, as chrome-devtools-mcp prints it from the endpoint's CSS domain
 	// (the script checks every declaration; here the decisive ones).

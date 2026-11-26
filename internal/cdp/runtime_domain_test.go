@@ -76,6 +76,38 @@ func TestCallFunctionOn(t *testing.T) {
 	}
 }
 
+// An awaited call does not hold the page while its promise is pending:
+// Puppeteer's aria/ selector (chrome-devtools-mcp's wait_for) awaits a
+// poller whose promise settles only after the client answered a binding
+// call through Runtime.callFunctionOn and Runtime.getProperties. Here the
+// fake answers the awaitPromise only after the page got getProperties and
+// another callFunctionOn, sent while the await is pending.
+func TestAwaitedCallLetsLaterCallsRun(t *testing.T) {
+	r, _, c, sid, _ := attachPage(t)
+	f := r.fake["One"]
+	f.Result("Runtime.callFunctionOn", map[string]any{"result": map[string]any{"type": "object", "className": "Promise", "objectId": "p-1"}})
+	f.Result("Runtime.awaitPromise", map[string]any{"result": map[string]any{"type": "string", "value": "settled"}})
+	f.HoldUntil("Runtime.awaitPromise", "Runtime.getProperties")
+	f.Result("Runtime.getProperties", map[string]any{"properties": []any{}})
+	awaited := make(chan json.RawMessage, 1)
+	go func() {
+		res, err := c.Call(testCtx(t), sid, "Runtime.callFunctionOn", map[string]any{
+			"objectId": "poller", "functionDeclaration": "function() { return this.result(); }", "awaitPromise": true, "returnByValue": true,
+		})
+		if err != nil {
+			t.Errorf("the awaited callFunctionOn: %v", err)
+		}
+		awaited <- res
+	}()
+	eventually(t, 5*time.Second, "the awaitPromise", func() bool { return len(f.ReceivedMethod("Runtime.awaitPromise")) > 0 })
+	call(t, c, sid, "Runtime.callFunctionOn", map[string]any{"objectId": "args", "functionDeclaration": "function() { return 1; }"})
+	call(t, c, sid, "Runtime.getProperties", map[string]any{"objectId": "args", "ownProperties": true})
+	res := decode[struct{ Result map[string]any }](t, <-awaited)
+	if res.Result["value"] != "settled" {
+		t.Fatalf("the awaited callFunctionOn = %v", res.Result)
+	}
+}
+
 // Runtime.getProperties maps WIP property descriptors; releaseObject and
 // releaseObjectGroup reach WIP.
 func TestGetPropertiesAndRelease(t *testing.T) {
@@ -197,6 +229,72 @@ func TestBindings(t *testing.T) {
 	waitEvent(t, c, seq, sid, "Runtime.consoleAPICalled", nil)
 	if b := sessionEvents(c, seq, sid, "Runtime.bindingCalled"); len(b) != 0 {
 		t.Fatalf("bindingCalled after removeBinding: %v", b)
+	}
+}
+
+// bindingToken returns the token of the last cdpBind call that added name.
+func bindingToken(t *testing.T, fp *fakePage, name string) string {
+	t.Helper()
+	token := ""
+	for _, rc := range fp.runtimeCalls() {
+		var a struct{ Add []struct{ N, K string } }
+		if strings.HasPrefix(rc, "cdpBind ") && json.Unmarshal([]byte(strings.TrimPrefix(rc, "cdpBind ")), &a) == nil {
+			for _, b := range a.Add {
+				if b.N == name {
+					token = b.K
+				}
+			}
+		}
+	}
+	if token == "" {
+		t.Fatalf("runtime calls %v, want cdpBind adding %s", fp.runtimeCalls(), name)
+	}
+	return token
+}
+
+// Runtime.bindingCalled names the context that the binding was added for
+// (executionContextName or executionContextId), as Chrome does: Puppeteer
+// handles the call only in the ExecutionContext whose id the event names,
+// so its utility world's __ariaQuerySelector (aria/ selectors,
+// chrome-devtools-mcp's wait_for) never answered when the event named the
+// main world. A binding without either names the main world.
+func TestBindingCalledNamesTheBindingsContext(t *testing.T) {
+	_, fp, c, sid, target := attachPage(t)
+	call(t, c, sid, "Page.enable", nil)
+	call(t, c, sid, "Runtime.enable", nil)
+	mainCtx := 0
+	for _, x := range contextsOf(t, c, 0, sid) {
+		if x.AuxData.IsDefault && x.AuxData.FrameID == target {
+			mainCtx = x.ID
+		}
+	}
+	alias := decode[struct{ ExecutionContextID int }](t, call(t, c, sid, "Page.createIsolatedWorld", map[string]any{"frameId": target, "worldName": "util"})).ExecutionContextID
+	if mainCtx == 0 || alias == 0 || alias == mainCtx {
+		t.Fatalf("main context %d, alias %d", mainCtx, alias)
+	}
+	for _, tc := range []struct {
+		name   string
+		params map[string]any
+		want   int
+	}{
+		{"byName", map[string]any{"executionContextName": "util"}, alias},
+		{"byId", map[string]any{"executionContextId": alias}, alias},
+		{"global", map[string]any{}, mainCtx},
+	} {
+		params := map[string]any{"name": tc.name}
+		for k, v := range tc.params {
+			params[k] = v
+		}
+		call(t, c, sid, "Runtime.addBinding", params)
+		seq := c.Seq()
+		fp.consoleDebug(bindMarker + `{"n":"` + tc.name + `","k":"` + bindingToken(t, fp, tc.name) + `","p":"x"}`)
+		b := decode[struct {
+			Name               string
+			ExecutionContextID int
+		}](t, waitEvent(t, c, seq, sid, "Runtime.bindingCalled", nil).Params)
+		if b.Name != tc.name || b.ExecutionContextID != tc.want {
+			t.Errorf("%s: bindingCalled %+v, want context %d (main %d, alias %d)", tc.name, b, tc.want, mainCtx, alias)
+		}
 	}
 }
 

@@ -23,8 +23,10 @@
 //     emulate), emulate with networkConditions Offline (a fetch of
 //     /resource fails) and without it (offline ends), mock_network on
 //     /resource with a body file (a fetch gets the file),
-//     remove_network_mock (a fetch reaches the server), and set_logpoints
-//     (the logpoint binds, and doubled(21) logs "logpoint 21").
+//     remove_network_mock (a fetch reaches the server), set_logpoints
+//     (the logpoint binds, and doubled(21) logs "logpoint 21"), and
+//     wait_for (a text present from the start, a text and an accessible
+//     name that a timer adds 500 ms after the call).
 // Method recording: the server's bundled Puppeteer logs every CDP command
 // it sends ("puppeteer:protocol:SEND ►", enabled by NODE_DEBUG) to the
 // server's --logFile; the script reads the commands from that file when
@@ -200,7 +202,7 @@ function pagesOf(text) {
 const toolsUsed = ['list_pages', 'navigate_page', 'take_snapshot', 'click', 'list_network_requests', 'take_screenshot'];
 
 // featureTools are the tools of the features scenario.
-const featureTools = ['list_pages', 'navigate_page', 'take_snapshot', 'get_css_styles', 'list_console_messages', 'get_console_message', 'emulate', 'evaluate_script', 'mock_network', 'remove_network_mock', 'set_logpoints'];
+const featureTools = ['list_pages', 'navigate_page', 'take_snapshot', 'get_css_styles', 'list_console_messages', 'get_console_message', 'emulate', 'evaluate_script', 'mock_network', 'remove_network_mock', 'set_logpoints', 'wait_for'];
 
 // start runs initialize and tools/list on server, checks that it lists
 // tools, and returns the id of its one page, the start page; undefined
@@ -522,6 +524,34 @@ scenarios.features = async function features() {
       }
       return { bound: true, logged: 'logpoint 21' };
     });
+    // wait_for races Puppeteer's aria/ and text/ locators over the page's
+    // frames (McpPage.waitForTextOnPage): for the heading that
+    // console.html has from the start, for a text and for an accessible
+    // name that a timer adds 500 ms after the call began. The name is only
+    // a button's aria-label, so only the aria/ locator can find it: it
+    // goes through the binding __ariaQuerySelector of Puppeteer's utility
+    // world (Runtime.bindingCalled must name that world's context) and
+    // Accessibility.queryAXTree, while the poller's awaited promise is
+    // pending.
+    const waitFor = async (name, text, insert) => {
+      await observe(out, name, async () => {
+        if (insert) {
+          await evaluate(server, pageId, `() => {
+            setTimeout(() => { document.body.insertAdjacentHTML('beforeend', ${JSON.stringify(insert)}); }, 500);
+            return true;
+          }`);
+        }
+        const { text: answer } = await server.callTool('wait_for', { pageId, text: [text], timeout: 10_000 });
+        const line = `Element matching one of ${JSON.stringify([text])} found.`;
+        if (!answer.includes(line)) {
+          throw new Error(`wait_for answered without "${line}":\n${answer}`);
+        }
+        return 'found';
+      });
+    };
+    await waitFor('wait_for present', 'Console');
+    await waitFor('wait_for late text', 'late text arrived', '<p id="late-text">late text arrived</p>');
+    await waitFor('wait_for late name', 'late label', '<button id="late-button" aria-label="late label">x</button>');
   } finally {
     await step(out, 'close', async () => {
       const exit = await server.close();
