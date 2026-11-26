@@ -770,6 +770,15 @@ func (r *Runtime) arm(ctx context.Context, c webkit.Caller, fn string) (*armedRe
 	case <-written:
 		return a, nil
 	case res := <-a.awaited:
+		// A reply implies its write: the sender marks the write before it
+		// waits for the reply. When both were ready before this select
+		// ran, it picks either, so the write is checked again here.
+		select {
+		case <-written:
+			a.awaited <- res
+			return a, nil
+		default:
+		}
 		cancel()
 		if res.err == nil {
 			res.err = errors.New("Runtime.awaitPromise was answered without a write notice")

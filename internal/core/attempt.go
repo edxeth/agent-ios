@@ -64,6 +64,9 @@ type Action struct {
 	// refuse it: click --new-tab sends Fn with emulateUserGesture, which
 	// grants the page a user activation (W3b, design 3.5).
 	Probe string
+	// Ready, when set, runs after a probe answered ProbeReady, right
+	// before Fn is sent (click --new-tab lists the tabs there).
+	Ready func()
 	// Done, when set, ends the action after a dispatched step whose value
 	// it accepts: the later steps are not sent (select on a native
 	// <select> needs one step, on an ARIA combobox two).
@@ -239,6 +242,9 @@ func (op *Op) RunSteps(a Action) (StepsResult, error) {
 			}
 			rep, out, err := op.sendAttempt(a, fn, step, false)
 			if out == attemptReplied && a.Probe != "" && rep.Status == StatusRetry && rep.Reason == ProbeReady {
+				if a.Ready != nil {
+					a.Ready()
+				}
 				rep, out, err = op.sendAttempt(a, a.Fn, step, true)
 			}
 			switch out {

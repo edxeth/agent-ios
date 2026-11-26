@@ -165,7 +165,8 @@ type action struct {
 	Target  string // "" for page-level actions (press, keyboard, mouse)
 	Target2 string // drag destination
 	Force   bool
-	Gesture bool // each attempt is the probe actProbe, then actGesture with emulateUserGesture (core.Action.Probe)
+	Gesture bool   // each attempt is the probe actProbe, then actGesture with emulateUserGesture (core.Action.Probe)
+	Ready   func() // with Gesture: runs after a ready probe, right before the call (core.Action.Ready)
 	Steps   int
 	Delay   time.Duration
 	Args    func(step int) map[string]any // kind-specific fields per step
@@ -233,7 +234,7 @@ func (w *w3bPage) run(ctx context.Context, a action) (*actResult, error) {
 	if a.Gesture {
 		fn, probe = runtime.With("actGesture", a.Needs...), runtime.With("actProbe", a.Needs...)
 	}
-	res, err := w.op.RunSteps(core.Action{Name: a.Name, Fn: fn, Probe: probe, Steps: a.Steps, Delay: a.Delay, Reserve: reserveFor(ctx), Done: stepFinished, Args: func(step int) any {
+	res, err := w.op.RunSteps(core.Action{Name: a.Name, Fn: fn, Probe: probe, Ready: a.Ready, Steps: a.Steps, Delay: a.Delay, Reserve: reserveFor(ctx), Done: stepFinished, Args: func(step int) any {
 		m := map[string]any{"k": a.Kind, "dp": policy}
 		if t1 != nil {
 			m["t"] = t1

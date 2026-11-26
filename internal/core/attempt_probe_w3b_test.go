@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,6 +88,37 @@ func TestProbedCallWindowCoversThreeRoundTrips(t *testing.T) {
 	// 150 ms leave well over 300 ms.
 	if left := p.leftAtCall[0]; left < 3*probeDelay-150*time.Millisecond || left <= DefaultAttemptBudget {
 		t.Fatalf("the gesture call arrived with %v of its window left, want about 3 x %v, more than the plain %v", left, probeDelay, DefaultAttemptBudget)
+	}
+}
+
+// Review F8 (FIX-U): Action.Ready runs after the probe answered ready,
+// right before the probed call, so click --new-tab lists the tabs after
+// its checks instead of before them.
+func TestReadyRunsBetweenTheReadyProbeAndTheCall(t *testing.T) {
+	p := &probePage{t0: time.Now()}
+	s := NewScheduler(nopCaller{}, SchedulerOptions{Runtime: p.runtime})
+	t.Cleanup(s.Close)
+	s.SetLease(testSession, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	op, err := s.Begin(ctx, OpSpec{Class: ClassMutate, Session: testSession, Epoch: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer op.End()
+	var at []string
+	ready := func() {
+		p.mu.Lock()
+		at = append(at, strings.Join(p.calls, " "))
+		p.mu.Unlock()
+	}
+	if _, err := op.RunSteps(Action{Name: "click --new-tab", Fn: "gesture", Probe: "probe", Ready: ready, Steps: 1}); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !slices.Equal(at, []string{"probe"}) || !slices.Equal(p.calls, []string{"probe", "gesture"}) {
+		t.Fatalf("Ready ran after calls %q (page calls %v); want once, after the probe and before the gesture call", at, p.calls)
 	}
 }
 

@@ -626,30 +626,21 @@ func (v *viewport) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// pinch splits the page's visualViewport.scale (CSS pixels to screen
-// points) into Chrome's two factors (FIX-R): scale, the pinch zoom of the
-// visual viewport relative to innerWidth, and zoom, the rest. On iOS
-// innerWidth is the visual viewport, so scale is 1 and zoom is the page's
-// zoom (0.33 on a page without a meta viewport on an iPhone): a client
-// that takes innerWidth/scale as the visible area, as Playwright's
-// viewport screenshot does, gets the visible area. In Chrome, innerWidth
-// is the layout viewport and scale is the pinch zoom; that case keeps it.
-func (v viewport) pinch() (scale, zoom float64) {
-	if v.VW <= 0 || v.IW <= 0 {
-		return v.SC, 1
-	}
-	scale = v.IW / v.VW
-	return scale, v.SC / scale
-}
-
 func getLayoutMetrics(ctx context.Context, call *Call) (any, Later, error) {
 	var v viewport
 	if err := call.session.evalInto(ctx, call.Method, viewportExpr, &v); err != nil {
 		return nil, nil, err
 	}
 	layout := map[string]any{"pageX": v.SX, "pageY": v.SY, "clientWidth": v.CW, "clientHeight": v.CH}
-	scale, zoom := v.pinch()
-	visual := map[string]any{"offsetX": v.VX, "offsetY": v.VY, "pageX": v.VPX, "pageY": v.VPY, "clientWidth": v.VW, "clientHeight": v.VH, "scale": scale, "zoom": zoom}
+	// Chrome's visualViewport.scale is the pinch zoom relative to
+	// innerWidth, and zoom the rest (FIX-R). WebKit's innerWidth always
+	// follows the visual viewport (iOS; WebKitGTK has no pinch), so the
+	// pinch scale is 1 and the page's visualViewport.scale is the zoom
+	// (0.33 on a page without a meta viewport on an iPhone): Playwright's
+	// viewport screenshot, innerWidth/scale CSS pixels, is the visible
+	// area. innerWidth/visualViewport.width is no pinch scale: classic
+	// scrollbars make it 1024/1003 (review F3).
+	visual := map[string]any{"offsetX": v.VX, "offsetY": v.VY, "pageX": v.VPX, "pageY": v.VPY, "clientWidth": v.VW, "clientHeight": v.VH, "scale": 1, "zoom": v.SC}
 	content := map[string]any{"x": 0, "y": 0, "width": v.W, "height": v.H}
 	return map[string]any{
 		"layoutViewport": layout, "visualViewport": visual, "contentSize": content,

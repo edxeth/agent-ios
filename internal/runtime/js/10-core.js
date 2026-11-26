@@ -23,7 +23,8 @@
     var d = Object.getOwnPropertyDescriptor(proto, name);
     return d && d.get ? uncurry(d.get) : function (o) { return o[name]; };
   }
-  var EP = Element.prototype, NP = Node.prototype, DP = Document.prototype;
+  var EP = Element.prototype, NP = Node.prototype, DP = Document.prototype, IFP = HTMLIFrameElement.prototype;
+  var cw = getter(IFP, "contentWindow"), cd = getter(IFP, "contentDocument");
   var perf = w.performance, gpo = Object.getPrototypeOf;
   var MapProto = Map.prototype, WMProto = WeakMap.prototype;
   var B = {
@@ -56,11 +57,11 @@
     // logs "Blocked a frame with origin ..." to the page's console
     // (CheckSecurityForNode). The prototype of a cross-origin WindowProxy
     // is null, which it answers without an error or a log, so these check
-    // it first. contentDocument: the document of frame element f, null
-    // when cross-origin (or f is no frame); frameEl: the frame element
-    // that shows window v, null for the top window and under a
-    // cross-origin parent.
-    contentDocument: function (f) { var v = f.contentWindow; return v && gpo(v) ? f.contentDocument : null; },
+    // it first. contentDocument: the document of iframe f, null when
+    // cross-origin (or f is no iframe: the captured getters throw);
+    // frameEl: the frame element that shows window v, null for the top
+    // window and under a cross-origin parent.
+    contentDocument: function (f) { try { var v = cw(f); return v && gpo(v) ? cd(f) : null; } catch (e) { return null; } },
     frameEl: function (v) { var p = v && v.parent; return p && p !== v && gpo(p) ? v.frameElement : null; },
     assigned: w.HTMLSlotElement ? uncurry(HTMLSlotElement.prototype.assignedNodes) : null,
     now: function () { return perfNow(perf); },

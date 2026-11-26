@@ -249,6 +249,27 @@ func TestConsole045NoCrossOriginAccessErrors(t *testing.T) {
 	}
 }
 
+// Review F7 (FIX-U), design 3.1: the frame guard uses the
+// HTMLIFrameElement getters captured at install, so a page that redefines
+// them afterwards can neither hide its same-origin frames from the
+// runtime (contentDocument answers null) nor make the runtime read the
+// document of a cross-origin frame (contentWindow answers a same-origin
+// window, after which reading contentDocument logs "Blocked a frame").
+func TestFrames045GuardIgnoresRedefinedFrameGetters(t *testing.T) {
+	e := newFrames045(t)
+	e.must(agentA, "snapshot") // the runtime is installed before the page redefines the getters
+	e.js(agentA, "Object.defineProperty(HTMLIFrameElement.prototype, 'contentDocument', {get: function () { return null; }, configurable: true}); 1")
+	if snap := e.must(agentA, "snapshot", "-i"); !strings.Contains(snap, `button "Inside"`) {
+		t.Fatalf("with contentDocument redefined to null the snapshot skips the same-origin frames:\n%s", snap)
+	}
+	e.js(agentA, "delete HTMLIFrameElement.prototype.contentDocument; Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {get: function () { return window; }, configurable: true}); 1")
+	e.must(agentA, "console", "clear")
+	e.must(agentA, "snapshot", "-i")
+	if out := e.must(agentA, "console"); strings.Contains(out, "Blocked a frame") {
+		t.Fatalf("with contentWindow redefined the runtime read a cross-origin frame's document:\n%s", out)
+	}
+}
+
 // Contract 9: screenshot --annotate places the boxes of refs inside
 // iframes in page coordinates, through the frame's offset, border,
 // padding, scroll position and CSS scale. The expected boxes are computed

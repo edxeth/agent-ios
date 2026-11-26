@@ -330,7 +330,7 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, failed(err)
 	}
-	t, found, err := waitNewTab(ctx, m, in, known, time.Now().Add(tabNewWait))
+	t, found, err := waitNewTab(ctx, m, in, newKeyIn(known), time.Now().Add(tabNewWait))
 	switch {
 	case err != nil:
 		return Result{}, failed(err)
@@ -363,19 +363,28 @@ func knownTabs(ctx context.Context, m *core.Manager, in Input) (map[string]bool,
 	return known, nil
 }
 
-// waitNewTab polls the page list every tabPollEvery until it lists a tab
-// that known has not, and returns it; found is false when none appeared
-// by end.
-func waitNewTab(ctx context.Context, m *core.Manager, in Input, known map[string]bool, end time.Time) (t core.Tab, found bool, err error) {
+// newKeyIn picks the first listed tab whose key known has not.
+func newKeyIn(known map[string]bool) func([]core.Tab) (core.Tab, bool) {
+	return func(tabs []core.Tab) (core.Tab, bool) {
+		for _, t := range tabs {
+			if !known[t.Key] {
+				return t, true
+			}
+		}
+		return core.Tab{}, false
+	}
+}
+
+// waitNewTab polls the page list every tabPollEvery until pick finds the
+// new tab in it, and returns it; found is false when none appeared by end.
+func waitNewTab(ctx context.Context, m *core.Manager, in Input, pick func([]core.Tab) (core.Tab, bool), end time.Time) (t core.Tab, found bool, err error) {
 	for {
 		tabs, _, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
 		if err != nil {
 			return core.Tab{}, false, err
 		}
-		for _, t := range tabs {
-			if !known[t.Key] {
-				return t, true, nil
-			}
+		if t, ok := pick(tabs); ok {
+			return t, true, nil
 		}
 		if time.Now().After(end) {
 			return core.Tab{}, false, nil

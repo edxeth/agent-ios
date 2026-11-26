@@ -344,3 +344,24 @@ func TestClickNewTabFollowsTheNewTab(t *testing.T) {
 		e.must(agentA, "tab", "close", id)
 	}
 }
+
+// Review F2 (FIX-U): click --new-tab whose window.open returns a window
+// that the page list never shows ends its wait for the new tab before
+// the command deadline: the result comes before the deadline, exit 0,
+// with the "no new tab appeared" warning (guide.md, click --new-tab).
+func TestClickNewTabWithoutANewTabAnswersBeforeTheDeadline(t *testing.T) {
+	e := newNavEnv(t, "dialog.html", false)
+	e.js(agentA, "document.body.insertAdjacentHTML('beforeend', '<a id=\"nt\" href=\"second.html\">next</a>'); window.open = function () { return {}; }; 1")
+	start := time.Now()
+	out, code, msg := e.run(agentA, "--timeout", "5s", "click", "--new-tab", "#nt")
+	el := time.Since(start)
+	if code != 0 || !strings.Contains(out, "no new tab appeared in the page list within") || strings.Contains(out, "listing the tabs after window.open failed") {
+		t.Fatalf("exit %d after %v, output %q (%s); want exit 0 with the no-new-tab warning", code, el, out, msg)
+	}
+	if el >= 5*time.Second {
+		t.Fatalf("the result of a 5 s command came after %v, after its deadline", el)
+	}
+	if title := e.js(agentA, "document.title"); title != "\"Dialogs\"" {
+		t.Fatalf("the session runs on %s, want the opener", title)
+	}
+}

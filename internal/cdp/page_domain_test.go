@@ -265,7 +265,9 @@ func TestGetLayoutMetrics(t *testing.T) {
 // zoom there it captured 3x the visible area (2940x4842 instead of
 // 960x1582). The bridge reports the pinch scale relative to innerWidth
 // (Chrome's meaning, 1 on WebKit) and the zoom as zoom, so the clip is
-// the visible area.
+// the visible area. Review F3: with a classic scrollbar (WebKitGTK,
+// GTK_OVERLAY_SCROLLING=0) visualViewport.width is innerWidth less the
+// scrollbar, and the scale stays 1 there too, as in Chrome.
 func TestLayoutMetricsOfAZoomedPage(t *testing.T) {
 	for _, tc := range []struct {
 		name                string
@@ -274,7 +276,7 @@ func TestLayoutMetricsOfAZoomedPage(t *testing.T) {
 	}{
 		{"zoomed out", 980, 1614, 980, 1614, 0.3265306, 1, 0.3265306},
 		{"zoomed in on an input", 220, 362, 220, 362, 1.454, 1, 1.454},
-		{"pinch-zoomed layout viewport", 1000, 800, 500, 400, 2, 2, 1},
+		{"classic vertical scrollbar", 1024, 768, 1003, 768, 1, 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, fp, c, sid, _ := attachPage(t)
@@ -296,9 +298,10 @@ func TestLayoutMetricsOfAZoomedPage(t *testing.T) {
 				if v.Scale != tc.wantScale || v.Zoom != tc.wantZoom {
 					t.Fatalf("%s = %+v, want scale %v and zoom %v", name, v, tc.wantScale, tc.wantZoom)
 				}
-				// Playwright's viewport clip: innerWidth / scale.
-				if w, h := tc.iw/v.Scale, tc.ih/v.Scale; w != tc.vw || h != tc.vh {
-					t.Fatalf("%s: a clip of innerWidth/scale is %vx%v CSS pixels, want the visible %vx%v", name, w, h, tc.vw, tc.vh)
+				// Playwright's viewport clip, innerWidth / scale, is what
+				// the viewport capture takes: innerWidth x innerHeight.
+				if w, h := tc.iw/v.Scale, tc.ih/v.Scale; w != tc.iw || h != tc.ih {
+					t.Fatalf("%s: a clip of innerWidth/scale is %vx%v CSS pixels, want the viewport's %vx%v", name, w, h, tc.iw, tc.ih)
 				}
 			}
 		})

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ type tabFake struct {
 	n       int
 	kind    transport.Kind // "": a local browser (WebKitGTK)
 	device  string         // "": "fake"
+	failing atomic.Bool    // Pages fails while set
 }
 
 func (f *tabFake) deviceID() string { return cmp.Or(f.device, "fake") }
@@ -47,6 +49,9 @@ func (f *tabFake) Devices(context.Context) ([]transport.Device, error) {
 }
 
 func (f *tabFake) Pages(context.Context, string) ([]transport.Page, error) {
+	if f.failing.Load() {
+		return nil, errors.New("fake page list failed")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]transport.Page(nil), f.pages...), nil
@@ -284,6 +289,45 @@ func TestTabNewAndClose(t *testing.T) {
 	}
 	if got := pageOf(t, m, "a"); got != "One" {
 		t.Fatalf("after closing the current tab session a runs on %q, want One", got)
+	}
+}
+
+// Review F8 (FIX-U): click --new-tab lists the tabs after its checks,
+// right before the call; a listing that fails there does not stop the
+// click, and the session still follows the new tab, found as the only tab
+// without a lease that shows the link's href (query and fragment are
+// not listed).
+func TestClickNewTabFollowsWhenTheListingBeforeTheCallFails(t *testing.T) {
+	m, f := newTabManager(t)
+	// iwdp: a failed page list of a device with an open page is an error
+	// (a local browser's counts as no pages).
+	f.kind, f.device = transport.KindIWDP, "SIMULATOR"
+	s := f.add("One", "http://one.test/")
+	s.Handle("Runtime.evaluate", nil) // the runtime handler below answers
+	p := &fakePage{replies: map[string]any{}}
+	p.set("clock", okEnv(map[string]any{"now": 1000, "doc": "doc-1"}))
+	p.set("dialogs", okEnv(map[string]any{"doc": "doc-1", "used": []any{}, "pending": []any{}, "withdrawn": []any{}, "on": true}))
+	s.SetRuntime(func(c fakewebkit.Call, fn string, args json.RawMessage) any {
+		switch fn {
+		case "actProbe":
+			return attempt("retry", "ready to dispatch", nil)
+		case "actGesture":
+			f.failing.Store(false)
+			f.add("Opened", "http://next.test/page")
+			return attempt("dispatched", "", map[string]any{"v": map[string]any{"href": "http://next.test/page?q=1#f", "opened": true}})
+		}
+		return p.handler(c, fn, args)
+	})
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("fixture: session a runs on %q", got)
+	}
+	f.failing.Store(true) // until the call opens the tab
+	out := mustIn(t, m, "a", "click", "--new-tab", "#link")
+	if !strings.Contains(out, "the new tab is tab t2 (http://next.test/page?q=1#f); it is now the current page") {
+		t.Fatalf("click --new-tab: %q; want the new tab followed", out)
+	}
+	if got := pageOf(t, m, "a"); got != "Opened" {
+		t.Fatalf("after click --new-tab session a runs on %q, want the new tab", got)
 	}
 }
 
