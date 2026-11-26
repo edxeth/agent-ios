@@ -486,9 +486,19 @@ wait_boot
 
 # 3. Open Safari to a test page of this run: its random query tells it
 #    from every other tab and device.
-SIM_PAGE_URL="https://example.com/?iwdp-sim=$(new_token)"
-echo "Opening Safari at $SIM_PAGE_URL..." >&2
-xcrun simctl openurl "$SIM_UDID" "$SIM_PAGE_URL"
+#    Right after a fresh boot, openurl can time out (exit 60) while
+#    SpringBoard is still starting; it is tried 3 times, each with a new
+#    token, so a page that an earlier attempt opened late is never selected.
+for attempt in 1 2 3; do
+  SIM_PAGE_URL="https://example.com/?iwdp-sim=$(new_token)"
+  echo "Opening Safari at $SIM_PAGE_URL (attempt $attempt)..." >&2
+  rc=0
+  xcrun simctl openurl "$SIM_UDID" "$SIM_PAGE_URL" || rc=$?
+  [ "$rc" -eq 0 ] && break
+  [ "$attempt" -eq 3 ] && exit "$rc"
+  echo "  openurl failed (exit $rc); trying again in 5 s" >&2
+  sleep 5
+done
 sleep 3
 
 # 4. Find the webinspectord socket.
