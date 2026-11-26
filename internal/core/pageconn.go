@@ -1086,7 +1086,8 @@ func stallCut(ctx, stall context.Context, what string, err error) error {
 }
 
 // notSentWrap marks err as never sent for callers that check ErrNotSent.
-func notSentWrap(err error) error { return fmt.Errorf("%w: %w", webkit.ErrNotSent, err) }
+// It keeps err's text: its callers already say "not sent" (notSent).
+func notSentWrap(err error) error { return notSent{err} }
 
 // errProbeCanceled marks a probe that its owner canceled (canceledByOwner).
 var errProbeCanceled = errors.New("the liveness probe was canceled")

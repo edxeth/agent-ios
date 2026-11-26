@@ -495,9 +495,13 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 	} else if err := refuseUnselectedSimulatorTab(ctx, m, in); err != nil {
 		return Result{}, err
 	}
-	var key string
+	var (
+		key  string
+		pg   *core.Page
+		lost error // the lost-page error of window.close() (core.ErrLost)
+	)
 	err = m.Do(ctx, tabRequest(in, page), acquireFor(in), "tab close", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
-		key = mo.Page.Key
+		key, pg = mo.Page.Key, mo.Page
 		cctx, cancel := context.WithTimeout(ctx, navStartBudget)
 		defer cancel()
 		// A closing page can go away before it answers; a lost reply is
@@ -505,6 +509,9 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 		_, err := mo.Op.Caller().Send(cctx, "Runtime.evaluate", map[string]any{"expression": "window.close()"})
 		if errors.Is(err, webkit.ErrNotSent) {
 			return err
+		}
+		if errors.Is(err, core.ErrLost) {
+			lost = err
 		}
 		return nil
 	})
@@ -527,6 +534,17 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 			break
 		}
 		if time.Now().After(end) {
+			// A closed tab's connection ends too (iwdp: close 1001 "Page
+			// ... not found"), so only a tab that is still listed tells a
+			// lost page: another inspector took it (close 1001 "... claimed
+			// by remote"). It fails as other commands on a lost page do
+			// (exit 4, --takeover).
+			if lost == nil && pg.ConnState() == core.ConnLost {
+				lost = &core.CodedError{Code: core.CodeBusy, Err: core.ErrLost}
+			}
+			if lost != nil {
+				return Result{}, fmt.Errorf("tab close: tab %s is still open: %w", name, lost)
+			}
 			return Result{}, fmt.Errorf("tab close: tab %s is still open after window.close(); only tabs that a script opened can be closed", name)
 		}
 		sleepUntil(ctx, time.Now().Add(tabPollEvery))
