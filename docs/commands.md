@@ -1628,7 +1628,7 @@ Print the page's accessibility tree with @eN refs for later commands.
 | `-i`, `--interactive` | none | show only elements with refs |
 | `-c`, `--compact` | none | keep lines with refs, values or text and their ancestors |
 | `-d`, `--depth` | integer | deepest level shown (0 = top level only) |
-| `-s`, `--selector` | text | snapshot only this element: CSS selector, locator or @ref |
+| `-s`, `--selector` | text | scope the snapshot to every element matching a CSS selector or locator, or to a @ref |
 | `-u`, `--urls` | none | add url= to links |
 
 ### `state load`
