@@ -82,8 +82,11 @@
     if (nat(b) && !(_.visible(b) && _.css(b, "opacity") > 0 && _.css(b, "pointer-events") !== "none")) { g.f = g.dom = true; }
     return b;
   };
-  // select: a native <select> (one step: select, then read back after the
-  // change handlers ran; "fin" ends the action) or an ARIA combobox or
+  // select: a native <select> (one step that runs whole in the task of the
+  // call: select, input and change, whose handlers run inside
+  // dispatchEvent, then read back; "fin" ends the action), so its reply
+  // comes before a navigation that a change handler started can destroy
+  // the document; or an ARIA combobox or
   // listbox (step 1 opens a collapsed combobox, step 2 clicks the matching
   // role=option elements, or closes the list it opened when it refuses).
   // match: the indexes of the options ([value, label] pairs) that the
@@ -117,22 +120,22 @@
   }
   var OPENED = {}; // the combobox that step 1 opened, by operation
   I.onReset(function () { OPENED = {}; });
-  A.select = async function (e, g, a, r, x) {
+  A.select = function (e, g, a, r, x) {
+    var j, os = e.options, p = g.pick;
+    if (e.localName !== "select") { return aria(e, g, a, r, x); }
+    delete OPENED[a.opId];
+    _.evs(x, function () {
+      for (j = 0; j < os.length; j++) { os[j].selected = p.indexOf(j) >= 0; }
+      disp(e, bub("input"));
+    });
+    _.evs(x, function () { disp(e, bub("change")); });
+    for (j = 0; j < os.length; j++) { if (os[j].selected !== p.indexOf(j) >= 0) { r.fw = fd(e, { k: "sel" }); } }
+    r.v = p.map(function (i) { return os[i] && os[i].value; });
+    r.fin = true;
+  };
+  async function aria(e, g, a, r, x) {
     var j, ga = B.getAttr, role = ga(e, "role"), op = OPENED[a.opId];
     delete OPENED[a.opId];
-    if (e.localName === "select") {
-      var os = e.options, p = g.pick;
-      await ev(x, function () {
-        for (j = 0; j < os.length; j++) { os[j].selected = p.indexOf(j) >= 0; }
-        disp(e, bub("input"));
-      });
-      await ev(x, function () { disp(e, bub("change")); });
-      await gap(x);
-      for (j = 0; j < os.length; j++) { if (os[j].selected !== p.indexOf(j) >= 0) { r.fw = fd(e, { k: "sel" }); } }
-      r.v = p.map(function (i) { return os[i] && os[i].value; });
-      r.fin = true;
-      return;
-    }
     if (a.step === 1) {
       if (role === "combobox" && ga(e, "aria-expanded") !== "true") { OPENED[a.opId] = e; await pressOn(x, e, g); }
       return;
@@ -172,7 +175,7 @@
       await pressOn(x, o, g);
     }
     r.v = want.map(function (o) { o = pv[opts.indexOf(o)]; return o[0] || o[1]; });
-  };
+  }
   A.select.pre = true;
   A.select.chk = function (e, g, a) {
     if (e.localName !== "select") {

@@ -36,6 +36,9 @@ func (p *modulePage) handle(c fakewebkit.Call) (any, *fakewebkit.Error) {
 	str := func(s string) (any, *fakewebkit.Error) {
 		return map[string]any{"result": map[string]any{"type": "string", "value": s}}, nil
 	}
+	if res, ok := fakewebkit.ArmedPromise(e); ok {
+		return res, nil
+	}
 	if m := fakewebkit.RuntimeCallPattern.FindStringSubmatch(e); m != nil {
 		p.calls++
 		if !p.core {

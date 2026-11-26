@@ -68,3 +68,27 @@ func TestEmulateNetworkUnknownVersionWithoutTheMethodIsUnsupported(t *testing.T)
 		t.Fatalf("Network.setEmulatedConditions sent %d times, want 2: a refused throttle must not stay recorded as applied", n)
 	}
 }
+
+// FIX-K (sim recheck claim 1): on the iOS Simulator, which iwdp lists as
+// 0.0.0, the refusal names no iOS 0.0.0 and carries no raw protocol text
+// ("'Network.setEmulatedConditions' was not found" and its JSON), while the
+// error chain keeps ErrUnsupported and WebKit's error for errors.Is/As and
+// the daemon log.
+func TestEmulateNetworkUnsupportedMessageIsClean(t *testing.T) {
+	r := newRigOS(t, webkit.SessionOptions{TargetWait: time.Second}, "0.0.0")
+	r.f.Unsupported("Network.setEmulatedConditions")
+	err := r.do(t, func(ctx context.Context, p *Page, wc webkit.Caller) error {
+		return p.EmulateNetworkRate(ctx, wc, "s1", 1000)
+	})
+	want := "emulate network: unsupported: this WebKit (iOS version unknown) has no Network.setEmulatedConditions; iOS 18.0 to 27.2 lack it"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v\nwant %s", err, want)
+	}
+	var wd *webkit.ErrorData
+	if !errors.Is(err, ErrUnsupported) || !errors.As(err, &wd) || wd.Code != -32601 {
+		t.Fatalf("err = %v: the chain lost ErrUnsupported or WebKit's -32601 error", err)
+	}
+	if got := string(r.f.ReceivedMethod("Network.setEmulatedConditions")[0].Params); got != `{"bandwidth":1000}` {
+		t.Fatalf("sent %s, want the bandwidth form of an unknown (current) WebKit", got)
+	}
+}

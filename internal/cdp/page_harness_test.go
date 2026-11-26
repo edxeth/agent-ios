@@ -66,6 +66,9 @@ func newFakePage(f *fakewebkit.Server) *fakePage {
 			ContextID  int    `json:"contextId"`
 		}
 		_ = json.Unmarshal(c.Params, &p)
+		if res, ok := fakewebkit.ArmedPromise(p.Expression); ok {
+			return res, nil
+		}
 		if m := fakewebkit.RuntimeCallPattern.FindStringSubmatch(p.Expression); m != nil {
 			fp.mu.Lock()
 			fp.rtCalls = append(fp.rtCalls, m[1]+" "+m[2])

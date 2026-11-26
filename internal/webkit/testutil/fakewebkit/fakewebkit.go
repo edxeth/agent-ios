@@ -696,7 +696,26 @@ func (s *Server) deliver(hs []held) {
 
 // RuntimeCallPattern matches the runtime call expression of design 3.1:
 // (window.__iwdp && window.__iwdp.v === "<ver>") ? window.__iwdp.call("<fn>", <json args>) : "__IWDP_MISSING__"
-var RuntimeCallPattern = regexp.MustCompile(`(?s)window\.__iwdp\.call\("([A-Za-z0-9_.]+)", (.*)\) : "__IWDP_MISSING__"$`)
+// also inside the wrapper of an async call, (function (r) { ... })(<call expression>)
+// (internal/runtime settleExpression).
+var RuntimeCallPattern = regexp.MustCompile(`(?s)window\.__iwdp\.call\("([A-Za-z0-9_.]+)", (.*)\) : "__IWDP_MISSING__"\)?$`)
+
+// ArmPattern matches the expression that arms the reply of an async runtime
+// call (internal/runtime armExpression); the submatch is the call's id.
+var ArmPattern = regexp.MustCompile(`^\(function \(w\) \{ var q = w\.__iwdpQ .*q\["([^"]+)"\] = f; \}\); \}\)\(window\)$`)
+
+// ArmedPromise returns WebKit's result of an arm expression (ArmPattern), a
+// Promise object, and true; for another expression it returns false. The
+// value of an async runtime call that the fake answers by value comes with
+// the call's own reply, so Runtime.awaitPromise on the promise needs no
+// particular answer (the default is an empty result).
+func ArmedPromise(expression string) (any, bool) {
+	m := ArmPattern.FindStringSubmatch(expression)
+	if m == nil {
+		return nil, false
+	}
+	return map[string]any{"result": map[string]any{"type": "object", "subtype": "promise", "className": "Promise", "objectId": "armed-" + m[1]}}, true
+}
 
 func (s *Server) handlePage(c *conn, call Call) {
 	s.mu.Lock()
@@ -801,6 +820,9 @@ func (s *Server) evaluate(call Call, rt RuntimeHandler) (any, string) {
 		Expression string `json:"expression"`
 	}
 	_ = json.Unmarshal(call.Params, &p)
+	if res, ok := ArmedPromise(p.Expression); ok {
+		return res, ""
+	}
 	if m := RuntimeCallPattern.FindStringSubmatch(p.Expression); m != nil && rt != nil {
 		v := rt(call, m[1], json.RawMessage(m[2]))
 		if v == NoReply {

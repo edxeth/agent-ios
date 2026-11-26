@@ -225,22 +225,6 @@ func TestInstallOverWireLimitFailsBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestCallAsyncAwaitsPromise(t *testing.T) {
-	f := fakewebkit.New(fakewebkit.Options{})
-	defer f.Close()
-	f.Result("Runtime.evaluate", map[string]any{"result": map[string]any{"type": "object", "subtype": "promise", "objectId": "p1"}})
-	f.Handle("Runtime.awaitPromise", func(c fakewebkit.Call) (any, *fakewebkit.Error) {
-		if !strings.Contains(string(c.Params), `"promiseObjectId":"p1"`) {
-			return nil, &fakewebkit.Error{Code: -1, Message: "wrong promise"}
-		}
-		return map[string]any{"result": map[string]any{"type": "object", "value": map[string]any{"ok": true, "value": 42}}}, nil
-	})
-	var v int
-	if err := New(session(t, f), nil).CallAsync(context.Background(), "wait", nil, &v); err != nil || v != 42 {
-		t.Fatalf("CallAsync = %d, %v", v, err)
-	}
-}
-
 // Design 2.4 (row "Page-side runtime state"): the daemon releases a lease
 // with __iwdp.release(epoch). The call carries no owner, so it never makes
 // the page reset for a new owner; a document without the runtime has

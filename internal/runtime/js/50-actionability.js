@@ -194,11 +194,16 @@
   // microtask turn; it stops the step when the attempt is no longer live.
   async function ev(x, fn) {
     await null;
+    return evs(x, fn);
+  }
+  // evs is ev without the microtask turn: an event whose reply the step
+  // computes in the task of the call (the native select of mod-forms/).
+  function evs(x, fn) {
     if (!x.live()) { x.interrupt("attempt end"); throw STOP; }
     x.n = (x.n || 0) + 1;
     return fn();
   }
-  _.ev = ev; _.gap = gap; _.sT = sT;
+  _.ev = ev; _.evs = evs; _.gap = gap; _.sT = sT;
   _.A = {}; // dispatchers by action kind: 55-actions.js, 60-keyboard.js and the modules mod-*/
   function failed(e) {
     if (!e || !e.__iwdpError) { throw e; }
@@ -208,12 +213,15 @@
   // f (force: skip checks), dp (dialog policy) and kind-specific fields.
   // A target that is ambiguous, stale or unknown fails at once; a missing
   // one is retried.
-  // act is async, so every answer is a promise: the attempt loop awaits it
-  // with Runtime.awaitPromise (internal/runtime asyncFns).
+  // act answers a promise only when its step waits (a later event, task or
+  // frame); a check that fails, a refusal and a step that runs whole in the
+  // task of the call answer at once, so the reply comes with the call's
+  // own Runtime.evaluate, before a navigation that the step started can
+  // destroy the document (internal/runtime asyncFns).
   // With probe, act runs the fence and the checks and dispatches nothing:
   // it answers "retry" with reason READY when it would dispatch now.
   var READY = "ready to dispatch";
-  async function act(a, call, probe) {
+  function act(a, call, probe) {
     var g = a.args || {}, el = null, why = "";
     try {
       if (g.t) { el = _.resolve(g.t, call); }
@@ -227,7 +235,7 @@
     // answers only for the next step of a live operation, and changes nothing.
     var no = null;
     try {
-      return await I.attempt(a, function () {
+      return I.attempt(a, function () {
         if (why) { return why; }
         // vet: a refusal of the dispatcher that needs no target (60-keyboard.js).
         try {
@@ -241,16 +249,20 @@
       if (e === no) { return failed(e); }
       throw e;
     }
-    async function dispatch(x) {
+    function dispatch(x) {
       _.dlgOn(g.dp);
-      var r = { trusted: false, d: [] };
-      try {
-        await d(el, g, a, r, x);
-      } catch (e) {
+      var r = { trusted: false, d: [] }, p;
+      function fin() { r.dlg = _.dlgUsed(); return r; }
+      function stop(e) {
         if (e !== STOP) { throw e; }
+        return fin();
       }
-      r.dlg = _.dlgUsed();
-      return r;
+      try {
+        p = d(el, g, a, r, x);
+      } catch (e) {
+        return stop(e);
+      }
+      return p && typeof p.then === "function" ? p.then(fin, stop) : fin();
     }
   }
   // click --new-tab (actGesture, with emulateUserGesture): the runtime

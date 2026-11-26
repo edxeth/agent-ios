@@ -74,6 +74,9 @@ func newPageFake(f *fakewebkit.Server) *pageFake {
 	f.Handle("Runtime.evaluate", func(c fakewebkit.Call) (any, *fakewebkit.Error) {
 		var p struct{ Expression string }
 		_ = json.Unmarshal(c.Params, &p)
+		if res, ok := fakewebkit.ArmedPromise(p.Expression); ok {
+			return res, nil
+		}
 		if m := fakewebkit.RuntimeCallPattern.FindStringSubmatch(p.Expression); m != nil {
 			return map[string]any{"result": map[string]any{"type": "object", "value": rt(m[1], json.RawMessage(m[2]))}}, nil
 		}

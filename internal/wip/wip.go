@@ -47,15 +47,24 @@ func parseVersion(v string) (major, minor int, ok bool) {
 	return major, minor, true
 }
 
+// KnownVersion reports whether osVersion names an iOS release. "" (WebKitGTK,
+// a device that iwdp lists without a version), an unparsable text and
+// iwdp's 0.0.0 for the iOS Simulator do not: no list or form applies to
+// them, and messages must not name them as an iOS version.
+func KnownVersion(osVersion string) bool {
+	major, _, ok := parseVersion(osVersion)
+	return ok && major > 0
+}
+
 // Supported reports whether the backend of iOS osVersion accepts method.
 // It uses the newest command list at or below osVersion. known is false
 // when no list applies (empty or unparsable version, or older than every
 // list); ok is then true, because there is nothing to check against.
 func Supported(osVersion, method string) (known, ok bool) {
-	major, minor, parsed := parseVersion(osVersion)
-	if !parsed {
+	if !KnownVersion(osVersion) {
 		return false, true
 	}
+	major, minor, _ := parseVersion(osVersion)
 	setsOnce.Do(buildSets)
 	idx := -1
 	for i, l := range commandLists {
@@ -71,18 +80,14 @@ func Supported(osVersion, method string) (known, ok bool) {
 
 // EmulatedConditionsBandwidth reports whether Network.setEmulatedConditions
 // of iOS osVersion takes bandwidth and latency (27.3 and later, WebKit
-// commit c4a7ebcc295f; also an unknown version, such as WebKitGTK's, whose
-// WebKit is current) rather than bytesPerSecondLimit (16.4 to 17.x). The
-// CDP bridge and "emulate network" pick their parameters by it.
+// commit c4a7ebcc295f; also an unknown version (KnownVersion), such as
+// WebKitGTK's or the iOS Simulator's 0.0.0, whose WebKit is current) rather
+// than bytesPerSecondLimit (16.4 to 17.x). The CDP bridge and "emulate
+// network" pick their parameters by it.
 func EmulatedConditionsBandwidth(osVersion string) bool {
-	parts := strings.Split(osVersion, ".")
-	major, err := strconv.Atoi(parts[0])
-	if err != nil {
+	if !KnownVersion(osVersion) {
 		return true
 	}
-	minor := 0
-	if len(parts) > 1 {
-		minor, _ = strconv.Atoi(parts[1])
-	}
+	major, minor, _ := parseVersion(osVersion)
 	return major > 27 || major == 27 && minor >= 3
 }

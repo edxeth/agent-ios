@@ -53,6 +53,9 @@ func newNavFake(t *testing.T) *navFake {
 	h.f.Handle("Runtime.evaluate", func(c fakewebkit.Call) (any, *fakewebkit.Error) {
 		var p struct{ Expression string }
 		_ = json.Unmarshal(c.Params, &p)
+		if res, ok := fakewebkit.ArmedPromise(p.Expression); ok {
+			return res, nil
+		}
 		if m := fakewebkit.RuntimeCallPattern.FindStringSubmatch(p.Expression); m != nil {
 			var v any
 			if m[1] == "dialogs" {

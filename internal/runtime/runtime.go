@@ -319,7 +319,7 @@ func (r *Runtime) Release(ctx context.Context, c webkit.Caller, epoch uint64) er
 	if err != nil {
 		return err
 	}
-	v, err := r.eval(ctx, c, "release", expr, false)
+	v, err := r.eval(ctx, c, "release", expr, nil)
 	if err != nil {
 		return err
 	}
@@ -377,10 +377,14 @@ func (r *Runtime) Generation() uint64 {
 }
 
 // asyncFns are the runtime functions that the attempt loop calls (through
-// RuntimeCaller) and that answer with a promise: "act" dispatches the
-// events of an action step in separate tasks (design 3.5, W3b), so its
-// envelope comes from Runtime.awaitPromise.
-var asyncFns = map[string]bool{"act": true, "actGesture": true, "actProbe": true}
+// RuntimeCaller) and that may answer with a promise: "act" dispatches the
+// events of an action step in separate tasks (design 3.5, W3b), so the
+// envelope of such a step comes from Runtime.awaitPromise; a reply that
+// act computes in the task of the call comes by value with the call
+// (arm).
+// actProbe is not one: a probe dispatches nothing, so it always answers at
+// once.
+var asyncFns = map[string]bool{"act": true, "actGesture": true}
 
 // gestureFns are the runtime functions whose Runtime.evaluate carries
 // emulateUserGesture. actGesture is act for click --new-tab, whose
@@ -449,9 +453,10 @@ func (r *Runtime) CallWarn(ctx context.Context, fn string, args, out any) ([]str
 	return r.callVia(ctx, r.c, fn, args, false, out)
 }
 
-// CallAsync runs a runtime function that returns a promise: Runtime.evaluate
-// by reference, then Runtime.awaitPromise (WIP Runtime.evaluate has no
-// awaitPromise parameter).
+// CallAsync runs a runtime function that may return a promise: its reply
+// is armed first, a result that is not a promise comes by value with the
+// call's Runtime.evaluate, and a promise's value with Runtime.awaitPromise
+// (WIP Runtime.evaluate has no awaitPromise parameter; arm).
 func (r *Runtime) CallAsync(ctx context.Context, fn string, args, out any) error {
 	_, err := r.callVia(ctx, r.c, fn, args, true, out)
 	return err
@@ -490,9 +495,18 @@ func (r *Runtime) call(ctx context.Context, c webkit.Caller, fn string, args any
 		return nil, err
 	}
 	name, mods, _ := splitFn(fn) // ownedExpression checked fn
+	var armed *armedReply
+	if async {
+		// One armed reply serves the retries after an install: the page
+		// leaves it armed when it answers a missing sentinel.
+		if armed, err = r.arm(ctx, c, name); err != nil {
+			return nil, err
+		}
+		defer armed.cancel()
+	}
 	coreSent, modsSent := false, false
 	for {
-		v, err := r.eval(ctx, c, name, expr, async)
+		v, err := r.eval(ctx, c, name, expr, armed)
 		if err != nil {
 			return nil, err
 		}
@@ -586,8 +600,64 @@ func install(ctx context.Context, c webkit.Caller, withCore bool, mods []Module)
 	return nil
 }
 
-func (r *Runtime) eval(ctx context.Context, c webkit.Caller, fn, expr string, async bool) (json.RawMessage, error) {
-	params := map[string]any{"expression": expr, "returnByValue": !async}
+// PendingSentinel is what the call expression of an async call returns,
+// by value, when the runtime function answered a promise (settleExpression);
+// its value then comes from the armed promise (armExpression).
+const PendingSentinel = "__IWDP_PENDING__"
+
+// ErrResultLost marks an error of an async call after its call expression
+// ran in the page and answered a promise: awaiting the promise failed (its
+// document was destroyed before the promise settled, or the connection
+// ended). Something of the call may have run.
+var ErrResultLost = errors.New("the call ran in the page, and its pending result was lost")
+
+// armExpression makes a promise of the engine's Promise (the constructor of
+// an async function's result, also when the page replaced window.Promise,
+// so that Runtime.awaitPromise accepts it), keeps its resolve function
+// under id in window.__iwdpQ, and returns the promise by reference.
+func armExpression(id string) string {
+	return fmt.Sprintf(`(function (w) { var q = w.__iwdpQ || Object.defineProperty(w, "__iwdpQ", { value: {} }).__iwdpQ, P = Object.getPrototypeOf((async function () {})()).constructor; return new P(function (f) { q[%q] = f; }); })(window)`, id)
+}
+
+// settleExpression wraps the call expression expr of an async call: it
+// resolves the promise armed under id with the result (with a promise:
+// with its outcome) and returns the result, or PendingSentinel for a
+// promise, so a result that is not a promise (an envelope) comes by value
+// with this Runtime.evaluate. A missing sentinel, which the page answers
+// before it runs anything, leaves the armed promise for the retry after
+// the install. A promise in a document that has no promise armed under id
+// (the call reached a newer document than the arm) answers
+// UnarmedSentinel: its result cannot be awaited.
+func settleExpression(expr, id string) string {
+	return fmt.Sprintf(`(function (r) { if (r === %q || r === %q) { return r; } var q = window.__iwdpQ, f = q && q[%q]; if (f) { delete q[%q]; f(r); } return r && typeof r.then === "function" ? (f ? %q : %q) : r; })(%s)`,
+		MissingSentinel, ModuleMissingSentinel, id, id, PendingSentinel, UnarmedSentinel, expr)
+}
+
+// UnarmedSentinel is what settleExpression answers for a promise in a
+// document without the armed promise of the call.
+const UnarmedSentinel = "__IWDP_UNARMED__"
+
+// armedReply is the reply of an async call armed in the page (arm): the
+// await of the armed promise, written to the page before the call.
+type armedReply struct {
+	id      string
+	awaited chan armedResult
+	cancel  context.CancelFunc
+}
+
+type armedResult struct {
+	raw json.RawMessage
+	err error
+}
+
+// eval runs the call expression expr and returns its value: one
+// Runtime.evaluate by value; with an armed reply (async calls), wrapped by
+// settleExpression, and the value of a promise comes from the armed await.
+func (r *Runtime) eval(ctx context.Context, c webkit.Caller, fn, expr string, armed *armedReply) (json.RawMessage, error) {
+	if armed != nil {
+		expr = settleExpression(expr, armed.id)
+	}
+	params := map[string]any{"expression": expr, "returnByValue": true}
 	if gestureFns[fn] {
 		params["emulateUserGesture"] = true
 	}
@@ -602,33 +672,72 @@ func (r *Runtime) eval(ctx context.Context, c webkit.Caller, fn, expr string, as
 	if res.WasThrown {
 		return nil, fmt.Errorf("runtime call %s: page threw %s", fn, res.Result.Desc)
 	}
-	if !async || res.Result.ObjectID == "" {
+	var s string
+	if armed == nil || json.Unmarshal(res.Result.Value, &s) != nil {
 		return res.Result.Value, nil
 	}
-	if cn := res.Result.ClassName; cn != "" && cn != "Promise" {
-		// The page answered at once with an object, not a promise (the
-		// call contract answers a refused owner synchronously): read it
-		// by value instead of awaiting it.
-		raw, err = c.Send(ctx, "Runtime.callFunctionOn", map[string]any{
-			"objectId":            res.Result.ObjectID,
-			"functionDeclaration": "function () { return this; }", "returnByValue": true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("runtime call %s: reading the result: %w", fn, err)
-		}
-	} else {
-		raw, err = c.Send(ctx, "Runtime.awaitPromise", map[string]any{"promiseObjectId": res.Result.ObjectID, "returnByValue": true})
-		if err != nil {
-			return nil, fmt.Errorf("runtime call %s: awaiting promise: %w", fn, err)
-		}
+	switch s {
+	case UnarmedSentinel:
+		return nil, fmt.Errorf("runtime call %s: %w: the call ran in a newer document than the one its reply was armed in", fn, ErrResultLost)
+	case PendingSentinel:
+	default:
+		return res.Result.Value, nil
 	}
-	if err := json.Unmarshal(raw, &res); err != nil {
-		return nil, fmt.Errorf("runtime call %s: decoding awaited reply: %w", fn, err)
+	a := <-armed.awaited // Send ends with ctx
+	if a.err != nil {
+		return nil, fmt.Errorf("runtime call %s: awaiting promise: %w: %w", fn, ErrResultLost, a.err)
+	}
+	if err := json.Unmarshal(a.raw, &res); err != nil {
+		return nil, fmt.Errorf("runtime call %s: decoding awaited reply: %w: %w", fn, ErrResultLost, err)
 	}
 	if res.WasThrown {
 		return nil, fmt.Errorf("runtime call %s: promise rejected: %s", fn, res.Result.Desc)
 	}
 	return res.Result.Value, nil
+}
+
+// arm arms the reply of an async call, a call of a runtime function that
+// may answer a promise, so that the reply of a call that ran is not lost
+// when the call itself starts a navigation (a change handler, a link's
+// click, a submit) that destroys the document after the call (FIX-K): a
+// promise is armed in the document (armExpression, one round trip that
+// runs nothing of the call), and Runtime.awaitPromise on it is written
+// before arm returns; the call expression (settleExpression) is sent
+// after it. WebKit runs a target's commands in the order they arrive, so
+// the await is registered before the call runs, and answered as soon as
+// the call's promise settles, before a navigation that the call started
+// can commit. Its errors wrap ErrNothingRan. The caller cancels the
+// returned reply when the call ends.
+func (r *Runtime) arm(ctx context.Context, c webkit.Caller, fn string) (*armedReply, error) {
+	id := randomID()
+	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": armExpression(id), "returnByValue": false})
+	if err != nil {
+		return nil, fmt.Errorf("runtime call %s: arming its reply: %w (%w)", fn, err, ErrNothingRan)
+	}
+	var res evalResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return nil, fmt.Errorf("runtime call %s: arming its reply: decoding reply: %w (%w)", fn, err, ErrNothingRan)
+	}
+	if res.WasThrown || res.Result.ObjectID == "" {
+		return nil, fmt.Errorf("runtime call %s: arming its reply: the page gave no promise (%s) (%w)", fn, res.Result.Desc, ErrNothingRan)
+	}
+	actx, cancel := context.WithCancel(ctx)
+	a := &armedReply{id: id, awaited: make(chan armedResult, 1), cancel: cancel}
+	written := make(chan struct{})
+	go func() {
+		raw, err := c.Send(webkit.WithWriteSignal(actx, written), "Runtime.awaitPromise", map[string]any{"promiseObjectId": res.Result.ObjectID, "returnByValue": true})
+		a.awaited <- armedResult{raw, err}
+	}()
+	select {
+	case <-written:
+		return a, nil
+	case res := <-a.awaited:
+		cancel()
+		if res.err == nil {
+			res.err = errors.New("Runtime.awaitPromise was answered without a write notice")
+		}
+		return nil, fmt.Errorf("runtime call %s: arming its reply: %w (%w)", fn, res.err, ErrNothingRan)
+	}
 }
 
 func (r *Runtime) decodeEnvelope(fn string, raw json.RawMessage, out any) ([]string, error) {

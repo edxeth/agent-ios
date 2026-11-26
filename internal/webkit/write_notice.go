@@ -2,6 +2,7 @@ package webkit
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 )
 
@@ -25,4 +26,25 @@ func MarkWritten(ctx context.Context) {
 	if w, ok := ctx.Value(writeNoticeKey{}).(*atomic.Bool); ok {
 		w.Store(true)
 	}
+	if s, ok := ctx.Value(writeSignalKey{}).(*writeSignal); ok {
+		s.once.Do(func() { close(s.ch) })
+	}
+}
+
+// writeSignalKey is the context key of WithWriteSignal.
+type writeSignalKey struct{}
+
+type writeSignal struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+// WithWriteSignal returns ctx with written, which MarkWritten closes once
+// the message of a call sent with the returned context, or one derived
+// from it, was written to the connection: the positive evidence that a
+// later call on the same connection reaches the page after it (WebKit runs
+// a target's commands in the order they arrive). written must be open and
+// used for one call.
+func WithWriteSignal(ctx context.Context, written chan struct{}) context.Context {
+	return context.WithValue(ctx, writeSignalKey{}, &writeSignal{ch: written})
 }

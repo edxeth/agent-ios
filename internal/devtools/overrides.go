@@ -437,15 +437,29 @@ func (p *Page) EmulateNetworkRate(ctx context.Context, c webkit.Caller, session 
 	})
 	if wd := (*webkit.ErrorData)(nil); errors.As(err, &wd) && wd.Code == -32601 {
 		// The command list could not refuse first: the iOS version is
-		// unknown (iwdp lists none for the iOS Simulator).
+		// unknown (iwdp lists 0.0.0 for the iOS Simulator).
 		ver := p.ps.Device.OSVersion
-		if ver == "" {
+		if !wip.KnownVersion(ver) {
 			ver = "version unknown"
 		}
-		return fmt.Errorf("emulate network: %w: this WebKit (iOS %s) has no Network.setEmulatedConditions; iOS 18.0 to 27.2 lack it: %w", ErrUnsupported, ver, wd)
+		return &unsupportedMethodError{
+			msg: fmt.Sprintf("emulate network: %v: this WebKit (iOS %s) has no Network.setEmulatedConditions; iOS 18.0 to 27.2 lack it", ErrUnsupported, ver),
+			err: wd,
+		}
 	}
 	return err
 }
+
+// unsupportedMethodError is an ErrUnsupported refusal of a method that
+// WebKit answered as not found: its text gives the reason without WebKit's
+// raw error, which stays in the chain (errors.As, the daemon log).
+type unsupportedMethodError struct {
+	msg string
+	err error
+}
+
+func (e *unsupportedMethodError) Error() string   { return e.msg }
+func (e *unsupportedMethodError) Unwrap() []error { return []error{ErrUnsupported, e.err} }
 
 func presetNames() []string { return []string{"slow-3g", "fast-3g", "4g"} }
 
