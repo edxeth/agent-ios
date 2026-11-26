@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/edxeth/agent-ios/internal/devtools/cssrules"
 )
 
 // cssStyleJSON builds a WIP CSSStyle with source ranges: each "name:value"
@@ -33,9 +35,7 @@ func cssStyleJSON(decls ...string) wipCSSStyle {
 func ruleMatch(selector, origin string, line int, style wipCSSStyle, groupings ...wipCSSGrouping) wipRuleMatch {
 	var m wipRuleMatch
 	m.Rule.SelectorList.Text = selector
-	m.Rule.SelectorList.Selectors = append(m.Rule.SelectorList.Selectors, struct {
-		Text string `json:"text"`
-	}{selector})
+	m.Rule.SelectorList.Selectors = append(m.Rule.SelectorList.Selectors, cssrules.Selector{Text: selector})
 	m.Rule.Origin, m.Rule.SourceLine, m.Rule.Style, m.Rule.Groupings = origin, line, style, groupings
 	m.Rule.SourceURL = "https://example.test/css/site.css"
 	return m
@@ -231,10 +231,11 @@ func TestPropertyLine(t *testing.T) {
 	}
 }
 
-// TestCSSMatchedChecksPaging: a negative page size or index is a usage
+// TestCSSMatchedChecksPaging: a page size below 1 (chrome-devtools-mcp's
+// pageSize is a positive integer) or a negative page index is a usage
 // error before any connection.
 func TestCSSMatchedChecksPaging(t *testing.T) {
-	for _, flags := range []map[string]any{{"page-size": -1}, {"page-index": -2}} {
+	for _, flags := range []map[string]any{{"page-size": -1}, {"page-size": 0}, {"page-index": -2}} {
 		if err := checkCSSMatched(Input{Flags: flags}); err == nil {
 			t.Errorf("%v: no usage error", flags)
 		}

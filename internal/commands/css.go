@@ -10,9 +10,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
-	"github.com/edxeth/agent-ios/internal/webkit"
+	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/devtools/cssrules"
 )
 
 // css: the CSS rules that match an element and its computed style, read
@@ -21,11 +21,15 @@ import (
 //
 // Only the node methods CSS.getMatchedStylesForNode,
 // CSS.getInlineStylesForNode and CSS.getComputedStyleForNode are sent, each
-// with its own deadline (cssCallDeadline). They answer without CSS.enable,
-// which is never sent: through ios-webkit-debug-proxy CSS.enable,
-// CSS.getAllStyleSheets and CSS.getStyleSheetText hang and stall the page
-// connection (docs/webkit-protocol.md). The node id comes from
-// DOM.requestNode on the element that the runtime resolves.
+// with its own deadline (cssrules.CallDeadline). They answer without
+// CSS.enable, which is never sent: through ios-webkit-debug-proxy
+// CSS.enable, CSS.getAllStyleSheets and CSS.getStyleSheetText hang and
+// stall the page connection (docs/webkit-protocol.md). The node id comes
+// from DOM.requestNode on the element that the runtime resolves
+// (cssrules.Open). Both commands are serialized on the page (Mutates):
+// they only read, but a WIP node id lives only until the next
+// DOM.getDocument, so no other work of the page runs between the lookup
+// and the reads.
 //
 // The cascade (which declaration wins) is computed here as DevTools'
 // CSSMatchedStyles does it, because WebKit marks only declarations that a
@@ -41,6 +45,7 @@ func init() {
 			{Name: "page-index", Type: FlagInt, Default: "0", Help: "page to show, from 0"},
 		},
 		Page:      LeasedPage,
+		Mutates:   true, // runs alone: see above
 		RetrySafe: true,
 		Output:    OutputText,
 		Check:     checkCSSMatched,
@@ -54,19 +59,17 @@ func init() {
 			{Name: "properties", Help: "properties to show; a shorthand such as margin also shows each property whose name starts with it and - (margin-top, margin-block-start); custom properties after --; default: all", Variadic: true},
 		},
 		Page:      LeasedPage,
+		Mutates:   true, // runs alone: see above
 		RetrySafe: true,
 		Output:    OutputText,
 		Run:       runCSSComputed,
 	})
 }
 
-// cssCallDeadline bounds each CSS node call: on a healthy page it answers
-// in milliseconds, so a missing reply is reported as such long before the
-// command deadline (30 s).
-var cssCallDeadline = 5 * time.Second
-
 func checkCSSMatched(in Input) error {
-	if v, ok := in.Flags["page-size"].(int); ok && v < 0 {
+	// chrome-devtools-mcp's pageSize is a positive integer (zod
+	// .positive()), so 0 is refused like a negative size.
+	if v, ok := in.Flags["page-size"].(int); ok && v <= 0 {
 		return usagef("css matched --page-size %d: want a positive number", v)
 	}
 	if v, ok := in.Flags["page-index"].(int); ok && v < 0 {
@@ -77,8 +80,9 @@ func checkCSSMatched(in Input) error {
 
 // cssElement is the element a css command inspects.
 type cssElement struct {
-	caller webkit.Caller
-	nodeID int
+	// node is the element's WIP node, pinned to its target and document
+	// (cssrules.Node).
+	node *cssrules.Node
 	// chain holds DevTools' simple selector (DOMNode.simpleSelector) of
 	// the element, then of each parent element up to the root.
 	chain []string
@@ -97,14 +101,22 @@ const cssElementScript = `function(){var o=[];for(var e=this;e&&e.nodeType===1;e
 	`if(c&&c.trim())return(n==="div"?"":n)+"."+c.trim().split(/\s+/).map(function(x){return CSS.escape(x)}).join(".");return n}}`
 
 // openCSSElement resolves the target to an element and its protocol node
-// id: the runtime picks the element (as hover --css does, nodeOf), and
-// DOM.requestNode maps the object to a node.
+// (review findings F8 and F9): the runtime picks the element (as hover
+// --css does, nodeOf) into an object group of this read only, and
+// cssrules.Open maps the object to a node. Every send goes to the target
+// that was active at the start (in a frame's execution context, the
+// operation pins its sends to that context's target itself), so a node id
+// never reaches a target that a commit put in its place. The group is
+// released as soon as the node is known, also when the read fails or is
+// canceled: through the operation's cleanup caller, which the lease fences
+// and which still sends after the operation's context ended. The caller
+// closes the element.
 func openCSSElement(ctx context.Context, env Env, target string) (*cssElement, error) {
 	p, err := openRuntime(ctx, env)
 	if err != nil {
 		return nil, err
 	}
-	_, c, err := pageAndCaller(ctx, env)
+	ps, c, err := pageAndCaller(ctx, env)
 	if err != nil {
 		return nil, err
 	}
@@ -115,12 +127,29 @@ func openCSSElement(ctx context.Context, env Env, target string) (*cssElement, e
 	if err := p.rt.Call(ctx, "ping", nil, nil); err != nil {
 		return nil, err
 	}
+	conn := cssrules.Conn{C: c, Watch: ps.Caller}
+	cleanup := ps.Caller
+	if oe, ok := env.(interface{ Op() *core.Op }); ok && oe.Op() != nil {
+		cleanup = oe.Op().CleanupCaller()
+		if oe.Op().ExecutionContext().ID == 0 {
+			conn.Target = cssrules.ActiveTarget(ps.Caller)
+		}
+	} else {
+		conn.Target = cssrules.ActiveTarget(ps.Caller)
+	}
+	pinned := cssrules.Pin(ctx, conn.Target)
+	group := cssrules.ObjectGroup()
+	defer func() {
+		// The group holds the element; free it, also after a failure or a
+		// cancellation (cssrules.Release ignores ctx's end).
+		_ = cssrules.Release(ctx, cleanup, conn.Target, group)
+	}()
 	args, err := json.Marshal(map[string]any{"t": spec})
 	if err != nil {
 		return nil, err
 	}
 	expr := fmt.Sprintf(`(function(){var r=window.__iwdp.call("pick",%s);if(!r.ok){throw new Error(r.error.code+": "+r.error.message)}return r.value})()`, args)
-	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": expr, "objectGroup": "agent-ios-css"})
+	raw, err := c.Send(pinned, "Runtime.evaluate", map[string]any{"expression": expr, "objectGroup": group})
 	if err != nil {
 		return nil, err
 	}
@@ -137,12 +166,8 @@ func openCSSElement(ctx context.Context, env Env, target string) (*cssElement, e
 	if ev.WasThrown || ev.Result.ObjectID == "" {
 		return nil, fmt.Errorf("resolving the target: %s", strings.TrimPrefix(ev.Result.Description, "Error: "))
 	}
-	defer func() {
-		// The object group holds the element; free it, also after a failure.
-		_, _ = c.Send(context.WithoutCancel(ctx), "Runtime.releaseObjectGroup", map[string]any{"objectGroup": "agent-ios-css"})
-	}()
-	el := &cssElement{caller: c}
-	raw, err = c.Send(ctx, "Runtime.callFunctionOn", map[string]any{
+	el := &cssElement{}
+	raw, err = c.Send(pinned, "Runtime.callFunctionOn", map[string]any{
 		"objectId": ev.Result.ObjectID, "functionDeclaration": cssElementScript, "returnByValue": true,
 	})
 	if err != nil {
@@ -165,115 +190,33 @@ func openCSSElement(ctx context.Context, env Env, target string) (*cssElement, e
 		return nil, fmt.Errorf("reading the element's selectors: %s", chain.Result.Description)
 	}
 	el.chain, el.docURL = chain.Result.Value.Chain, chain.Result.Value.URL
-	// WIP pushes a node only after DOM.getDocument on the connection, and
-	// DOM.getDocument forgets the node ids given before (also those of a
-	// CDP client on the same page), so it is sent only after WIP refused
-	// the push failed. WebKit refuses it with "Document must have been
-	// requested" (iOS) or an error without a message (WebKitGTK 2.54), so
-	// any failure gets one retry after DOM.getDocument; both calls only
-	// read.
-	req := map[string]any{"objectId": ev.Result.ObjectID}
-	raw, err = c.Send(ctx, "DOM.requestNode", req)
-	if err != nil && ctx.Err() == nil {
-		if _, err := c.Send(ctx, "DOM.getDocument", map[string]any{"depth": 0}); err != nil {
-			return nil, err
-		}
-		raw, err = c.Send(ctx, "DOM.requestNode", req)
-	}
-	if err != nil {
+	if el.node, err = cssrules.Open(ctx, conn, ev.Result.ObjectID); err != nil {
 		return nil, err
 	}
-	var n struct {
-		NodeID int `json:"nodeId"`
-	}
-	if err := json.Unmarshal(raw, &n); err != nil || n.NodeID == 0 {
-		return nil, fmt.Errorf("DOM.requestNode gave no node id: %s", raw)
-	}
-	el.nodeID = n.NodeID
 	return el, nil
 }
 
-// call sends one CSS node method under cssCallDeadline and decodes its
-// reply into out.
+// close ends the element's document watch.
+func (e *cssElement) close() { e.node.Close() }
+
+// call sends one CSS node method with the element's node id and params
+// under cssrules.CallDeadline and decodes its reply into out.
 func (e *cssElement) call(ctx context.Context, method string, params map[string]any, out any) error {
-	cctx, cancel := context.WithTimeout(ctx, cssCallDeadline)
-	defer cancel()
-	raw, err := e.caller.Send(cctx, method, params)
-	if err != nil {
-		if cctx.Err() != nil && ctx.Err() == nil {
-			return fmt.Errorf("%s got no reply within %s; the page's CSS domain did not answer", method, cssCallDeadline)
-		}
-		return fmt.Errorf("%s: %w", method, err)
-	}
-	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("%s: decoding the reply: %w", method, err)
-	}
-	return nil
+	return e.node.CallInto(ctx, method, params, out)
 }
 
-// WebKit Inspector Protocol shapes (CSS.json, iOS 16 to 27).
-type wipCSSProperty struct {
-	Name     string          `json:"name"`
-	Value    string          `json:"value"`
-	Priority string          `json:"priority"`
-	Implicit bool            `json:"implicit"`
-	ParsedOk *bool           `json:"parsedOk"`
-	Status   string          `json:"status"`
-	Range    json.RawMessage `json:"range"`
-}
-
-type wipCSSStyle struct {
-	CSSProperties []wipCSSProperty `json:"cssProperties"`
-	Range         json.RawMessage  `json:"range"`
-}
-
-type wipCSSGrouping struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type wipCSSRule struct {
-	SelectorList struct {
-		Selectors []struct {
-			Text string `json:"text"`
-		} `json:"selectors"`
-		Text string `json:"text"`
-	} `json:"selectorList"`
-	SourceURL  string           `json:"sourceURL"`
-	SourceLine int              `json:"sourceLine"`
-	Origin     string           `json:"origin"`
-	Style      wipCSSStyle      `json:"style"`
-	Groupings  []wipCSSGrouping `json:"groupings"`
-}
-
-type wipRuleMatch struct {
-	Rule              wipCSSRule `json:"rule"`
-	MatchingSelectors []int      `json:"matchingSelectors"`
-}
-
-type wipMatchedStyles struct {
-	MatchedCSSRules []wipRuleMatch `json:"matchedCSSRules"`
-	PseudoElements  []struct {
-		PseudoID string         `json:"pseudoId"`
-		Matches  []wipRuleMatch `json:"matches"`
-	} `json:"pseudoElements"`
-	Inherited []struct {
-		InlineStyle     *wipCSSStyle   `json:"inlineStyle"`
-		MatchedCSSRules []wipRuleMatch `json:"matchedCSSRules"`
-	} `json:"inherited"`
-}
-
-type wipInlineStyles struct {
-	InlineStyle     *wipCSSStyle `json:"inlineStyle"`
-	AttributesStyle *wipCSSStyle `json:"attributesStyle"`
-}
-
-type wipComputedStyle struct {
-	ComputedStyle []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-	} `json:"computedStyle"`
-}
+// WebKit Inspector Protocol shapes (cssrules, shared with the CDP
+// endpoint's CSS domain).
+type (
+	wipCSSProperty   = cssrules.Property
+	wipCSSStyle      = cssrules.Style
+	wipCSSGrouping   = cssrules.Grouping
+	wipCSSRule       = cssrules.Rule
+	wipRuleMatch     = cssrules.RuleMatch
+	wipMatchedStyles = cssrules.Matched
+	wipInlineStyles  = cssrules.Inline
+	wipComputedStyle = cssrules.Computed
+)
 
 // The output, in chrome-devtools-mcp's StructuredCssStyles form
 // (CssFormatter.ts).
@@ -391,7 +334,8 @@ func (cs *cStyle) layer() string {
 
 // computeLevel runs DevTools' NodeCascade.computeActiveProperties on one
 // element's styles, ordered from the highest precedence down.
-func computeLevel(styles []*cStyle, inherited bool) []*cProp {
+// key gives the name that two declarations conflict by (cascadeKey).
+func computeLevel(styles []*cStyle, inherited bool, key func(string) string) []*cProp {
 	active := map[string]*cProp{}
 	var order []*cProp
 	set := func(cp *cProp, name string) {
@@ -428,9 +372,9 @@ func computeLevel(styles []*cStyle, inherited bool) []*cProp {
 				cp.state = stOverloaded
 				continue
 			}
-			set(cp, cp.p.Name)
+			set(cp, key(cp.p.Name))
 			for _, l := range cp.longhands {
-				set(l, l.p.Name)
+				set(l, key(l.p.Name))
 			}
 		}
 	}
@@ -457,18 +401,19 @@ func shouldOverload(active, higher *cProp) bool {
 // (the element first, then each ancestor): a property active at a nearer
 // level overloads the same property further up, and a shorthand none of
 // whose longhands won is overloaded.
-func computeCascade(levels [][]*cStyle) {
+func computeCascade(levels [][]*cStyle, key func(string) string) {
 	winners := map[string]*cProp{}
 	for i, styles := range levels {
-		for _, cp := range computeLevel(styles, i > 0) {
+		for _, cp := range computeLevel(styles, i > 0, key) {
 			if cp.state != stActive {
 				continue
 			}
-			if winners[cp.p.Name] != nil {
+			k := key(cp.p.Name)
+			if winners[k] != nil {
 				cp.state = stOverloaded
 				continue
 			}
-			winners[cp.p.Name] = cp
+			winners[k] = cp
 		}
 	}
 	for _, cp := range winners {
@@ -477,7 +422,7 @@ func computeCascade(levels [][]*cStyle) {
 		}
 		own := false
 		for _, l := range cp.longhands {
-			if w := winners[l.p.Name]; w != nil && w.st == cp.st {
+			if w := winners[key(l.p.Name)]; w != nil && w.st == cp.st {
 				own = true
 				break
 			}
@@ -485,6 +430,93 @@ func computeCascade(levels [][]*cStyle) {
 		if !own {
 			cp.state = stOverloaded
 		}
+	}
+}
+
+// computedValue is the element's computed value of name, or "".
+func computedValue(comp *wipComputedStyle, name string) string {
+	for _, c := range comp.ComputedStyle {
+		if c.Name == name {
+			return strings.TrimSpace(c.Value)
+		}
+	}
+	return ""
+}
+
+// cascadeKey returns the name by which two declarations of an element
+// conflict (review finding F10): a flow-relative (logical) property
+// names the physical property that it sets in the element's writing mode
+// and direction, so margin-inline-start and margin-left conflict in a
+// horizontal left-to-right element, as in the browser's cascade. Other
+// names are themselves. An unknown writing mode is horizontal-tb, an
+// unknown direction ltr.
+func cascadeKey(writingMode, direction string) func(string) string {
+	vertical := writingMode != "" && writingMode != "horizontal-tb" && !strings.HasPrefix(writingMode, "lr") && !strings.HasPrefix(writingMode, "rl")
+	side := map[string]string{"block-start": "top", "block-end": "bottom", "inline-start": "left", "inline-end": "right"}
+	switch writingMode {
+	case "vertical-rl", "sideways-rl", "tb", "tb-rl":
+		side = map[string]string{"block-start": "right", "block-end": "left", "inline-start": "top", "inline-end": "bottom"}
+	case "vertical-lr", "tb-lr":
+		side = map[string]string{"block-start": "left", "block-end": "right", "inline-start": "top", "inline-end": "bottom"}
+	case "sideways-lr":
+		side = map[string]string{"block-start": "left", "block-end": "right", "inline-start": "bottom", "inline-end": "top"}
+	}
+	if direction == "rtl" {
+		side["inline-start"], side["inline-end"] = side["inline-end"], side["inline-start"]
+	}
+	size := map[string]string{"inline": "width", "block": "height"}
+	axis := map[string]string{"inline": "x", "block": "y"}
+	if vertical {
+		size = map[string]string{"inline": "height", "block": "width"}
+		axis = map[string]string{"inline": "y", "block": "x"}
+	}
+	corner := func(block, inline string) string {
+		v, h := side["block-"+block], side["inline-"+inline]
+		if v == "left" || v == "right" { // vertical: the block side is horizontal
+			v, h = h, v
+		}
+		return v + "-" + h
+	}
+	return func(name string) string {
+		if strings.HasPrefix(name, "--") {
+			return name
+		}
+		for _, f := range []string{"margin-", "padding-", "scroll-margin-", "scroll-padding-", "border-"} {
+			rest, ok := strings.CutPrefix(name, f)
+			if !ok {
+				continue
+			}
+			for _, l := range []string{"block-start", "block-end", "inline-start", "inline-end"} {
+				if tail, ok := strings.CutPrefix(rest, l); ok && (tail == "" || f == "border-" && (tail == "-width" || tail == "-style" || tail == "-color")) {
+					return f + side[l] + tail
+				}
+			}
+			if f == "border-" {
+				for _, b := range []string{"start", "end"} {
+					for _, i := range []string{"start", "end"} {
+						if rest == b+"-"+i+"-radius" {
+							return "border-" + corner(b, i) + "-radius"
+						}
+					}
+				}
+			}
+		}
+		if l, ok := strings.CutPrefix(name, "inset-"); ok && side[l] != "" {
+			return side[l]
+		}
+		for _, d := range []string{"inline", "block"} {
+			switch name {
+			case d + "-size", "min-" + d + "-size", "max-" + d + "-size":
+				return strings.Replace(name, d+"-size", size[d], 1)
+			case "contain-intrinsic-" + d + "-size":
+				return "contain-intrinsic-" + size[d]
+			case "overflow-" + d:
+				return "overflow-" + axis[d]
+			case "overscroll-behavior-" + d:
+				return "overscroll-behavior-" + axis[d]
+			}
+		}
+		return name
 	}
 }
 
@@ -550,16 +582,17 @@ func runCSSMatched(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	defer el.close()
 	var matched wipMatchedStyles
-	if err := el.call(ctx, "CSS.getMatchedStylesForNode", map[string]any{"nodeId": el.nodeID, "includePseudo": true, "includeInherited": true}, &matched); err != nil {
+	if err := el.call(ctx, "CSS.getMatchedStylesForNode", cssrules.MatchedParams, &matched); err != nil {
 		return Result{}, err
 	}
 	var inline wipInlineStyles
-	if err := el.call(ctx, "CSS.getInlineStylesForNode", map[string]any{"nodeId": el.nodeID}, &inline); err != nil {
+	if err := el.call(ctx, "CSS.getInlineStylesForNode", nil, &inline); err != nil {
 		return Result{}, err
 	}
 	var computed wipComputedStyle
-	if err := el.call(ctx, "CSS.getComputedStyleForNode", map[string]any{"nodeId": el.nodeID}, &computed); err != nil {
+	if err := el.call(ctx, "CSS.getComputedStyleForNode", nil, &computed); err != nil {
 		return Result{}, err
 	}
 	rep := buildCSSMatched(target, el, &matched, &inline, &computed, splitList(flagString(in, "computed")))
@@ -626,7 +659,8 @@ func buildCSSMatched(target string, el *cssElement, m *wipMatchedStyles, in *wip
 		}
 		levels = append(levels, lv)
 	}
-	computeCascade(levels)
+	key := cascadeKey(computedValue(comp, "writing-mode"), computedValue(comp, "direction"))
+	computeCascade(levels, key)
 
 	vars := map[string]string{}
 	for _, c := range comp.ComputedStyle {
@@ -668,7 +702,7 @@ func buildCSSMatched(target string, el *cssElement, m *wipMatchedStyles, in *wip
 			rm := &pe.Matches[j]
 			lv = append(lv, newCStyle("matched", rm, &rm.Rule.Style))
 		}
-		computeCascade([][]*cStyle{lv})
+		computeCascade([][]*cStyle{lv}, key)
 		for _, st := range lv {
 			if r, ok := styleRule(st, false, nil, el.docURL); ok {
 				r.Type, r.PseudoType = "pseudo", "::"+pe.PseudoID
@@ -799,7 +833,7 @@ func cssPropertyOut(cp *cProp, vars map[string]string) cssProperty {
 	case cp.state == stOverloaded:
 		p.Status = "overloaded"
 	}
-	if vars != nil && p.Status != "invalid" && p.Status != "disabled" && strings.Contains(p.Value, "var(") {
+	if vars != nil && p.Status != "invalid" && p.Status != "disabled" && strings.Contains(strings.ToLower(p.Value), "var(") {
 		if v, ok := resolveVars(p.Value, vars, 0); ok && strings.TrimSpace(v) != p.Value {
 			p.ResolvedValue = strings.TrimSpace(v)
 		}
@@ -809,52 +843,140 @@ func cssPropertyOut(cp *cProp, vars map[string]string) cssProperty {
 
 // resolveVars replaces each var(--name[, fallback]) in s with the custom
 // property's computed value on the element, or its resolved fallback. ok
-// is false when a reference cannot be resolved.
+// is false when a reference cannot be resolved. It reads s as CSS tokens
+// (review finding F11): var( inside a string or a comment, or as the end
+// of a longer name (myvar(), is text and stays as it is; a function name
+// is case-insensitive; parentheses and commas inside strings do not end
+// a reference or its fallback.
 func resolveVars(s string, vars map[string]string, depth int) (string, bool) {
 	if depth > 16 {
 		return "", false
 	}
 	var b strings.Builder
-	for {
-		i := strings.Index(s, "var(")
-		if i < 0 {
-			b.WriteString(s)
-			return b.String(), true
+	for i := 0; i < len(s); {
+		if n := cssSkip(s, i); n > i {
+			b.WriteString(s[i:n])
+			i = n
+			continue
 		}
-		b.WriteString(s[:i])
-		// Find the matching parenthesis.
-		level, end := 0, -1
-		for j := i + 3; j < len(s); j++ {
-			switch s[j] {
-			case '(':
-				level++
-			case ')':
-				level--
-			}
-			if level == 0 {
-				end = j
-				break
-			}
+		if !cssFuncAt(s, i, "var") {
+			b.WriteByte(s[i])
+			i++
+			continue
 		}
+		end := cssClose(s, i+4)
 		if end < 0 {
 			return "", false
 		}
 		inner := s[i+4 : end]
-		name, fallback, hasFallback := strings.Cut(inner, ",")
+		name, fallback, hasFallback := inner, "", false
+		if c := cssTopComma(inner); c >= 0 {
+			name, fallback, hasFallback = inner[:c], inner[c+1:], true
+		}
 		name = strings.TrimSpace(name)
+		if !strings.HasPrefix(name, "--") {
+			return "", false
+		}
 		v, ok := vars[name]
 		if !ok || v == "" {
 			if !hasFallback {
 				return "", false
 			}
-			v, ok = resolveVars(strings.TrimSpace(fallback), vars, depth+1)
-			if !ok {
+			if v, ok = resolveVars(strings.TrimSpace(fallback), vars, depth+1); !ok {
 				return "", false
 			}
 		}
 		b.WriteString(v)
-		s = s[end+1:]
+		i = end + 1
 	}
+	return b.String(), true
+}
+
+// cssSkip returns the end of the string, comment or escape that starts at
+// i in s, or i when none starts there. An unterminated string or comment
+// ends at the end of s, as in CSS.
+func cssSkip(s string, i int) int {
+	switch {
+	case s[i] == '"' || s[i] == '\'':
+		q := s[i]
+		for j := i + 1; j < len(s); j++ {
+			switch s[j] {
+			case '\\':
+				j++
+			case q:
+				return j + 1
+			}
+		}
+		return len(s)
+	case strings.HasPrefix(s[i:], "/*"):
+		if e := strings.Index(s[i+2:], "*/"); e >= 0 {
+			return i + 2 + e + 2
+		}
+		return len(s)
+	case s[i] == '\\':
+		return min(i+2, len(s))
+	}
+	return i
+}
+
+// cssFuncAt reports whether the function token name( starts at i: the
+// name, case aside, and no name character (or escape) right before it.
+func cssFuncAt(s string, i int, name string) bool {
+	if len(s)-i < len(name)+1 || !strings.EqualFold(s[i:i+len(name)], name) || s[i+len(name)] != '(' {
+		return false
+	}
+	if i == 0 {
+		return true
+	}
+	c := s[i-1]
+	nameChar := c == '-' || c == '_' || c == '\\' || c >= 0x80 || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+	return !nameChar
+}
+
+// cssClose returns the index of the parenthesis that closes the one open
+// before i, skipping strings, comments and escapes; -1 when none does.
+func cssClose(s string, i int) int {
+	level := 1
+	for i < len(s) {
+		if n := cssSkip(s, i); n > i {
+			i = n
+			continue
+		}
+		switch s[i] {
+		case '(':
+			level++
+		case ')':
+			if level--; level == 0 {
+				return i
+			}
+		}
+		i++
+	}
+	return -1
+}
+
+// cssTopComma returns the index of the first comma of s outside
+// parentheses, strings and comments, or -1.
+func cssTopComma(s string) int {
+	level := 0
+	for i := 0; i < len(s); {
+		if n := cssSkip(s, i); n > i {
+			i = n
+			continue
+		}
+		switch s[i] {
+		case '(':
+			level++
+		case ')':
+			level--
+		case ',':
+			if level == 0 {
+				return i
+			}
+		}
+		i++
+	}
+	return -1
 }
 
 // cssSource is the rule's source as chrome-devtools-mcp writes it
@@ -1087,8 +1209,9 @@ func runCSSComputed(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	defer el.close()
 	var computed wipComputedStyle
-	if err := el.call(ctx, "CSS.getComputedStyleForNode", map[string]any{"nodeId": el.nodeID}, &computed); err != nil {
+	if err := el.call(ctx, "CSS.getComputedStyleForNode", nil, &computed); err != nil {
 		return Result{}, err
 	}
 	names := in.Args[1:]

@@ -155,7 +155,8 @@ type pageState struct {
 	idleWait    uint64
 	idleReached uint64
 
-	worldState // execution contexts and aliases (worlds.go)
+	worldState          // execution contexts and aliases (worlds.go)
+	css        cssState // CSS opt-in: own node ids, announced style sheets (css_domain.go)
 
 	net   netState   // requests and their CDP ids (network_domain.go)
 	dbg   dbgState   // parsed scripts and Debugger events (debugger_domain.go)
@@ -454,6 +455,7 @@ func (ps *pageState) newDocumentLocked(target string, f wipFrame, announce bool)
 		ps.lifecycleLocked("init")
 		ps.emitLocked(domPage, "Page.frameNavigated", map[string]any{"frame": ps.cdpFrame(ps.main), "type": "Navigation"})
 	}
+	ps.cssNewDocumentLocked()
 	ps.noteNavigationLocked(ps.main.loader)
 }
 

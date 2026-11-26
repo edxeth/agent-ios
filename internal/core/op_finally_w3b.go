@@ -43,6 +43,14 @@ func (op *Op) Finally(budget time.Duration, fn func(ctx context.Context, c webki
 	return nil
 }
 
+// CleanupCaller returns the caller of Finally's cleanups for a cleanup
+// that cannot wait for the operation's end: the release of temporary page
+// state that the operation made (a remote object group), which must also
+// happen after the operation was canceled or its deadline passed. It sends
+// on the control lane while the operation's lease epoch is current, also
+// before End; use it for cleanup only.
+func (op *Op) CleanupCaller() webkit.Caller { return leaseCaller{op} }
+
 // runFinally runs the cleanups registered with Finally, in order.
 func (op *Op) runFinally(fs []opFinally) {
 	for _, f := range fs {

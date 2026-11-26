@@ -91,8 +91,8 @@ const cssMatchedCascade = `  element.style {
 
   p (user agent stylesheet) {
     display: block;
-    margin-block-start: 1em;
-    margin-inline-start: 0px;
+    [overloaded] margin-block-start: 1em;
+    [overloaded] margin-inline-start: 0px;
   }
 
   Inherited from div#wrap:

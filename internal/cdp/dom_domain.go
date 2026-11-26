@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"mime"
 	"path/filepath"
-	"strings"
 
 	"github.com/edxeth/agent-ios/internal/core"
+	"github.com/edxeth/agent-ios/internal/devtools/cssrules"
 	"github.com/edxeth/agent-ios/internal/logcause"
 	"github.com/edxeth/agent-ios/internal/logsafe"
 	"github.com/edxeth/agent-ios/internal/runtime"
@@ -28,29 +28,31 @@ import (
 // The code that needs the runtime's state (handles, the snapshot walk,
 // the event dispatchers) is in the bundle (internal/runtime/js/65-cdp.js).
 // The domain sends no events (W5b-2 brief; DOM.documentUpdated and
-// setChildNodes are not emitted).
+// setChildNodes are not emitted), except to an attachment that enabled
+// CSS, whose DOM domain uses its own node ids (css_domain.go: ownNodeIDs
+// and wipNodeIDs below).
 
 func init() {
 	register(
 		// WIP has no DOM.enable; the domain needs no enabling.
 		Method{Name: "DOM.enable", Levels: OnPage},
 		Method{Name: "DOM.disable", Levels: OnPage},
-		Method{Name: "DOM.getDocument", Levels: OnPage, Handle: domGetDocument},
-		Method{Name: "DOM.querySelector", Levels: OnPage, Handle: passCall(core.ClassRead)},
-		Method{Name: "DOM.querySelectorAll", Levels: OnPage, Handle: passCall(core.ClassRead)},
-		Method{Name: "DOM.describeNode", Levels: OnPage, Handle: domDescribeNode},
-		Method{Name: "DOM.resolveNode", Levels: OnPage, Handle: domResolveNode},
-		Method{Name: "DOM.requestNode", Levels: OnPage, Handle: domRequestNode},
-		Method{Name: "DOM.getBoxModel", Levels: OnPage, Handle: nodeFunc(core.ClassRead, jsBoxModel, "model")},
-		Method{Name: "DOM.getContentQuads", Levels: OnPage, Handle: nodeFunc(core.ClassRead, jsContentQuads, "quads")},
-		Method{Name: "DOM.scrollIntoViewIfNeeded", Levels: OnPage, Handle: nodeFunc(core.ClassMutate, jsScrollIntoView, "")},
-		Method{Name: "DOM.focus", Levels: OnPage, Handle: byNodeID(core.ClassMutate, jsFocus, "")},
-		Method{Name: "DOM.getOuterHTML", Levels: OnPage, Handle: byNodeID(core.ClassRead, jsOuterHTML, "outerHTML")},
-		Method{Name: "DOM.setAttributeValue", Levels: OnPage, Handle: passCall(core.ClassMutate)},
-		Method{Name: "DOM.removeNode", Levels: OnPage, Handle: passCall(core.ClassMutate)},
+		Method{Name: "DOM.getDocument", Levels: OnPage, Handle: ownNodeIDs(domGetDocument, cssGetDocument)},
+		Method{Name: "DOM.querySelector", Levels: OnPage, Handle: wipNodeIDs(passCall(core.ClassRead))},
+		Method{Name: "DOM.querySelectorAll", Levels: OnPage, Handle: wipNodeIDs(passCall(core.ClassRead))},
+		Method{Name: "DOM.describeNode", Levels: OnPage, Handle: ownNodeIDs(domDescribeNode, nil)},
+		Method{Name: "DOM.resolveNode", Levels: OnPage, Handle: ownNodeIDs(domResolveNode, nil)},
+		Method{Name: "DOM.requestNode", Levels: OnPage, Handle: ownNodeIDs(domRequestNode, cssRequestNode)},
+		Method{Name: "DOM.getBoxModel", Levels: OnPage, Handle: ownNodeIDs(nodeFunc(core.ClassRead, jsBoxModel, "model"), nil)},
+		Method{Name: "DOM.getContentQuads", Levels: OnPage, Handle: ownNodeIDs(nodeFunc(core.ClassRead, jsContentQuads, "quads"), nil)},
+		Method{Name: "DOM.scrollIntoViewIfNeeded", Levels: OnPage, Handle: ownNodeIDs(nodeFunc(core.ClassMutate, jsScrollIntoView, ""), nil)},
+		Method{Name: "DOM.focus", Levels: OnPage, Handle: ownNodeIDs(byNodeID(core.ClassMutate, jsFocus, ""), nil)},
+		Method{Name: "DOM.getOuterHTML", Levels: OnPage, Handle: ownNodeIDs(byNodeID(core.ClassRead, jsOuterHTML, "outerHTML"), nil)},
+		Method{Name: "DOM.setAttributeValue", Levels: OnPage, Handle: wipNodeIDs(passCall(core.ClassMutate))},
+		Method{Name: "DOM.removeNode", Levels: OnPage, Handle: wipNodeIDs(passCall(core.ClassMutate))},
 		Method{Name: "DOM.getFrameOwner", Levels: OnPage, Handle: domGetFrameOwner},
 		Method{Name: "DOM.getNodeForLocation", Levels: OnPage, Handle: domGetNodeForLocation},
-		Method{Name: "DOM.setFileInputFiles", Levels: OnPage, Handle: domSetFileInputFiles},
+		Method{Name: "DOM.setFileInputFiles", Levels: OnPage, Handle: ownNodeIDs(domSetFileInputFiles, nil)},
 	)
 }
 
@@ -418,20 +420,6 @@ func domGetDocument(ctx context.Context, call *Call) (any, Later, error) {
 
 // ---- requestNode and resolveNode ----
 
-// wipNoDocument is WIP's refusal to push a node before the client asked
-// for the document (WebKit InspectorDOMAgent::pushNodePathToFrontend).
-const wipNoDocument = "Document must have been requested"
-
-// wipPushRefused reports whether err is WIP's refusal to push a node for
-// want of the document: wipNoDocument, or the same refusal with an empty
-// message, which is what WebKit sends (pushNodePathToFrontend takes its
-// error string by value, WebKit 7615.3.12.11.2; webkit.Session reports
-// an error reply without a message as malformed, with the reply quoted).
-func wipPushRefused(err error) bool {
-	s := err.Error()
-	return strings.Contains(s, wipNoDocument) || strings.Contains(s, "malformed error reply") && strings.Contains(s, `\"message\":\"\"`)
-}
-
 // domRequestNode maps a remote object to a WIP nodeId. WIP pushes a node
 // only after DOM.getDocument on its connection, and DOM.getDocument
 // forgets the node ids given before, so it is sent only after WIP refused
@@ -447,7 +435,7 @@ func domRequestNode(ctx context.Context, call *Call) (any, Later, error) {
 	err := call.session.withPage(ctx, call.Method, core.ClassRead, func(p *pageCall) error {
 		var err error
 		raw, err = p.send("DOM.requestNode", map[string]any{"objectId": np.ObjectID})
-		if err != nil && wipPushRefused(err) {
+		if err != nil && cssrules.PushRefused(err) {
 			if _, err = p.send("DOM.getDocument", nil); err == nil {
 				raw, err = p.send("DOM.requestNode", map[string]any{"objectId": np.ObjectID})
 			}
