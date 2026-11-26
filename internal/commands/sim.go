@@ -254,10 +254,26 @@ func (h hostIWDP) State(ctx context.Context) (sim.IWDPState, error) {
 	return st, nil
 }
 
-func (h hostIWDP) Start(ctx context.Context) error { return withUSBMuxHint(proxy.Start(ctx)) }
+func (h hostIWDP) Start(ctx context.Context) error { return iwdpStartError(proxy.Start(ctx)) }
 
 // Restart restarts iwdp (proxy.Restart: only the one that agent-ios started).
-func (h hostIWDP) Restart(ctx context.Context) error { return withUSBMuxHint(proxy.Restart(ctx)) }
+func (h hostIWDP) Restart(ctx context.Context) error { return iwdpStartError(proxy.Restart(ctx)) }
+
+// iwdpStartError is the error of an iwdp start or restart for sim: a kept,
+// still connecting iwdp (proxy.ErrStillConnecting) also matches
+// sim.ErrIWDPKept; another failure gets the usbmuxd hint.
+func iwdpStartError(err error) error {
+	if errors.Is(err, proxy.ErrStillConnecting) {
+		return keptError{err}
+	}
+	return withUSBMuxHint(err)
+}
+
+// keptError is a kept start's error that also matches sim.ErrIWDPKept.
+type keptError struct{ error }
+
+func (e keptError) Unwrap() error      { return e.error }
+func (keptError) Is(target error) bool { return target == sim.ErrIWDPKept }
 
 func (h hostIWDP) ActiveLeases(ctx context.Context) (int, error) {
 	if ActiveLeases == nil {

@@ -28,8 +28,9 @@ const maxStartLog = 64 << 10
 // unlocked. An iwdp that exited (exited) while usbmuxd reports no device
 // may have found no usbmuxd: iwdp exits when it cannot subscribe to
 // usbmuxd, and some systems run usbmuxd only while a device is plugged in.
-// An iwdp that did not answer while usbmuxd reports a device may still be
-// connecting to it: iwdp connects a device inside its one event loop.
+// An iwdp that did not listen (a start whose iwdp listens is waited for
+// or kept, launch) while usbmuxd reports a device is not slowed down by
+// that device: iwdp listens before it connects any device.
 func (s *Starter) startAdvice(ctx context.Context, path string, start int64, exited bool) string {
 	if strings.Contains(readFrom(path, start), inspectorRefused) {
 		return "; a device did not accept the Web Inspector connection (the iwdp log has \"" + inspectorRefused + "...\"): " + DeviceAdvice + ", then run the command again"
@@ -43,10 +44,9 @@ func (s *Starter) startAdvice(ctx context.Context, path string, start int64, exi
 	case exited && attached == 0:
 		return "; usbmuxd reports no USB device, and ios_webkit_debug_proxy exits when usbmuxd does not run, which some systems start only while a device is plugged in: connect the device with a cable and unlock it"
 	case !exited && attached > 0:
-		// Device check of 2026-11-11: a restart right after a replug did
-		// not answer for 5 s and logged nothing about the device; the
-		// start 30 s later answered at once.
-		return "; ios_webkit_debug_proxy does not answer while it connects to a USB device, which can take long right after the device is plugged in: keep the device unlocked and run the command again after the start back-off (" + StartBackoff.String() + ")"
+		// Restart of 2026-11-26 with an iPhone X: iwdp 1.9.2 listened at
+		// once and answered after its device connection (review F5).
+		return "; it did not open its listing port, which ios_webkit_debug_proxy does before it connects any USB device, so the attached device does not explain the wait"
 	}
 	return ""
 }

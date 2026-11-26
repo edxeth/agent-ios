@@ -199,7 +199,7 @@ func runDevices(ctx context.Context, _ Env, _ Input) (Result, error) {
 	err := proxy.CheckListing(ctx, addr)
 	if errors.Is(err, proxy.ErrNotListening) {
 		if serr := devicesStart(ctx); serr != nil {
-			return Result{}, fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", serr)
+			return Result{}, proxy.AutoStartError(serr)
 		}
 		if _, aerr := devicesAwait(ctx); aerr != nil {
 			return Result{}, &core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("agent-ios started ios_webkit_debug_proxy, and its listing failed: %w", aerr)}

@@ -835,9 +835,10 @@ func TestRecoverDecisionProperty(t *testing.T) {
 
 // A failed start explains a device that refused the inspector connection
 // (the iwdp log line of a locked device), an iwdp that exited while
-// usbmuxd reports no device, and an iwdp that does not answer while
-// usbmuxd reports one; a failed read of usbmuxd's devices gives no device
-// advice.
+// usbmuxd reports no device, and an iwdp that did not listen while
+// usbmuxd reports one, without blaming that device's connection, which
+// iwdp makes only after it listens (review F5 of 2026-11-26); a failed
+// read of usbmuxd's devices gives no device advice.
 func TestStartAdviceNamesTheDeviceOrUsbmuxd(t *testing.T) {
 	failedRead := func(context.Context) ([]string, error) { return nil, errors.New("idevice_id: exit status 1") }
 	for _, tc := range []struct {
@@ -850,7 +851,7 @@ func TestStartAdviceNamesTheDeviceOrUsbmuxd(t *testing.T) {
 	}{
 		{"locked device", fakeLocked, 2 * time.Second, oneAttached, []string{"did not answer", "did not accept the Web Inspector connection", "Unlock the device"}, nil},
 		{"no usbmuxd device", fakeFail, 5 * time.Second, noneAttached, []string{"exited during its start", "usbmuxd reports no USB device", "connect the device"}, nil},
-		{"slow device connection", fakeHang, time.Second, oneAttached, []string{"did not answer", "while it connects to a USB device", "keep the device unlocked"}, nil},
+		{"no listener with a device", fakeHang, time.Second, oneAttached, []string{"did not answer", "did not open its listing port"}, []string{"connects to a USB device", "keep the device unlocked", "back-off"}},
 		{"exit with a device", fakeFail, 5 * time.Second, oneAttached, []string{"exited during its start"}, []string{"usbmuxd", "Web Inspector"}},
 		{"exit, devices unknown", fakeFail, 5 * time.Second, failedRead, []string{"exited during its start"}, []string{"usbmuxd reports"}},
 		{"no answer, devices unknown", fakeHang, time.Second, failedRead, []string{"did not answer"}, []string{"connects to a USB device"}},

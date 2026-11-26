@@ -23,10 +23,12 @@ type IWDP interface {
 	// State reads iwdp's state; it starts nothing.
 	State(ctx context.Context) (IWDPState, error)
 	// Start starts iwdp when none runs; a new iwdp connects to
-	// InspectorAddr at its start.
+	// InspectorAddr at its start. An error that wraps ErrIWDPKept says
+	// that the started iwdp listens but has not answered yet, and runs on.
 	Start(ctx context.Context) error
 	// Restart restarts the iwdp that agent-ios started, so that it connects
 	// to InspectorAddr again: iwdp connects to a simulator only at its start.
+	// Its errors are those of Start.
 	Restart(ctx context.Context) error
 	// ActiveLeases counts the daemon's active page leases on every device,
 	// the simulator's too: a restart of iwdp, and a new forward, end their
@@ -108,6 +110,11 @@ type UpReport struct {
 // ErrNoURLTab is Up's error when Safari shows no tab of its URL within
 // PageWait, mostly a server that does not answer the simulator.
 var ErrNoURLTab = errors.New("safari in the simulator shows no tab of the --url")
+
+// ErrIWDPKept marks a start or restart of iwdp whose new iwdp listens but
+// has not answered yet (it connects its USB devices first), and that
+// agent-ios kept running and recorded instead of stopping it.
+var ErrIWDPKept = errors.New("the started ios_webkit_debug_proxy was kept running while it connects its devices")
 
 var ErrNotOwnIWDP = errors.New("the ios_webkit_debug_proxy on its listing address was not started by agent-ios, so sim up cannot tell where it looks for a simulator or restart it: ask whoever started it to stop it, then run sim up again")
 
@@ -460,6 +467,7 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 			return err
 		}
 	}
+	var startErr error
 	if restart {
 		// Again right before the restart: a session may have taken a
 		// lease since the first check. A lease taken between this check
@@ -467,30 +475,53 @@ func (s *Sim) connect(ctx context.Context, sock string, r *UpReport) error {
 		if err := s.leaseCheck(ctx, "sim up", "restarting ios_webkit_debug_proxy to reach the simulator"); err != nil {
 			return err
 		}
-		if err := s.IWDP.Restart(ctx); err != nil {
-			return err
-		}
-		r.IWDPRestarted = true
+		startErr = s.IWDP.Restart(ctx)
+		r.IWDPRestarted = startErr == nil || errors.Is(startErr, ErrIWDPKept)
 	} else {
-		if err := s.IWDP.Start(ctx); err != nil {
+		startErr = s.IWDP.Start(ctx)
+		r.IWDPStarted = startErr == nil || errors.Is(startErr, ErrIWDPKept)
+	}
+	kept := errors.Is(startErr, ErrIWDPKept)
+	if startErr != nil && !kept {
+		return startErr
+	}
+	if kept {
+		// The kept iwdp is the one that this start spawned and recorded,
+		// after the forward listened: it is synced, also when the command
+		// ended at the keep, so that the next Up does not restart it in
+		// the middle of its device connection (review F4 of 2026-11-26).
+		mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markKeptWait)
+		err := s.Forward.MarkSynced(mctx)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("%w; recording that it started after the forward failed: %w", startErr, err)
+		}
+		if ctx.Err() != nil {
+			return startErr
+		}
+	} else {
+		// Another program may have started an iwdp of its own first.
+		if st, err := s.IWDP.State(ctx); err != nil {
+			return err
+		} else if !st.Own {
+			return ErrNotOwnIWDP
+		}
+		if err := s.Forward.MarkSynced(ctx); err != nil {
 			return err
 		}
-		r.IWDPStarted = true
-	}
-	// Another program may have started an iwdp of its own first.
-	if st, err := s.IWDP.State(ctx); err != nil {
-		return err
-	} else if !st.Own {
-		return ErrNotOwnIWDP
-	}
-	if err := s.Forward.MarkSynced(ctx); err != nil {
-		return err
 	}
 	return s.until(ctx, "ios_webkit_debug_proxy lists the simulator", func() (bool, error) {
 		st, err := s.IWDP.State(ctx)
+		if kept && err != nil && st.Running && st.Own {
+			return false, nil // the kept iwdp answers once its devices are connected
+		}
 		return st.Listed && st.Own, err
 	})
 }
+
+// markKeptWait bounds the forward record's update after a kept iwdp start,
+// which runs also when the command's deadline has ended.
+const markKeptWait = 5 * time.Second
 
 // leaseCheck refuses a restart of iwdp while it would end active leases,
 // unless RestartAnyway.

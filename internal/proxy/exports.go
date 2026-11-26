@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 )
@@ -14,6 +15,22 @@ import (
 // StartTokenEnv is the environment variable whose value marks a process
 // that agent-ios started (ProcessIdentity).
 const StartTokenEnv = tokenEnv
+
+// ErrStillConnecting marks the error of a start or restart whose new iwdp
+// listens but has not answered yet: it was kept running and recorded
+// (Start).
+var ErrStillConnecting = errStillConnecting
+
+// AutoStartError is the error of an automatic start of iwdp on a listing
+// address where none ran (the daemon, devices): a start that kept its
+// still connecting iwdp says that agent-ios started it, since it runs on;
+// any other says that the start failed.
+func AutoStartError(err error) error {
+	if errors.Is(err, errStillConnecting) {
+		return fmt.Errorf("ios_webkit_debug_proxy was not running, so agent-ios started it: %w", err)
+	}
+	return fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", err)
+}
 
 // NewStartToken returns a fresh random start token.
 func NewStartToken() string { return newToken() }

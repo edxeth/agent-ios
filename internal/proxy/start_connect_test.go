@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,43 @@ func TestStartKeepsAListeningIWDPWhenTheCallerGivesUp(t *testing.T) {
 		t.Fatalf("Start = %v, want context.Canceled and that the iwdp was kept running", err)
 	}
 	keptAndRecorded(t, s, f, addr)
+}
+
+// Review F1 of 2026-11-26: a caller that gives up while the started iwdp
+// listens and its GET /json waits keeps that iwdp, every time. The GET
+// blocks past a poll interval, so a readiness tick is pending when the
+// context ends; a check on the ended context must not count as "not
+// listening" and stop the iwdp. Each run hits that race with even odds
+// before the fix, so the test runs it keptRuns times.
+func TestStartKeepsAListeningIWDPWhenTheCallerGivesUpDuringItsGET(t *testing.T) {
+	const keptRuns = 8
+	for i := range keptRuns {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			addr := freeAddr(t)
+			f := installFakeIWDP(t, fakeStuck, addr)
+			s := connectStarter(addr, time.Minute)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() { result <- s.Start(ctx) }()
+			waitFile(t, filepath.Join(f.dir, "requests.log"))
+			// Past one poll interval of the blocked GET, a tick is pending:
+			// the race of the finding needs it, so this wait is the
+			// condition under test.
+			time.Sleep(startPoll + startPoll/2)
+			cancel()
+			var err error
+			select {
+			case err = <-result:
+			case <-time.After(30 * time.Second):
+				t.Fatal("Start did not return after its context ended")
+			}
+			if !errors.Is(err, context.Canceled) || !errors.Is(err, errStillConnecting) {
+				t.Fatalf("Start = %v, want context.Canceled and the kept iwdp", err)
+			}
+			keptAndRecorded(t, s, f, addr)
+		})
+	}
 }
 
 // The advice of a start that did not answer comes from what the started

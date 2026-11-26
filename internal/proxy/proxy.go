@@ -464,7 +464,11 @@ func (s *Starter) launch(ctx context.Context) error {
 	pid := cmd.Process.Pid
 	spawned := time.Now()
 	readyBy := spawned.Add(s.readyWait)
-	// listens: the last readiness check found the group's own listener.
+	// listens: a readiness check found the group's own listener. It stays
+	// set: a later check that fails only because the wait's context or
+	// deadline ended does not mean the listener went away (review F1 of
+	// 2026-11-26), another process's listener fails the start
+	// (errPortTaken), and an exit ends it (exited).
 	listens := false
 	// keep records the listening iwdp and returns errStillConnecting with
 	// why it is not ready; when the record fails, the iwdp is stopped.
@@ -480,6 +484,14 @@ func (s *Starter) launch(ctx context.Context) error {
 		}
 		return fmt.Errorf("%w: %s", errStillConnecting, msg)
 	}
+	// ended ends the start when ctx ended: a listening iwdp is kept.
+	ended := func() error {
+		if listens {
+			return keep("did not answer before the command ended", ctx.Err())
+		}
+		stopGroup(pid, exited)
+		return fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
+	}
 	poll := time.NewTicker(startPoll)
 	defer poll.Stop()
 	for {
@@ -488,12 +500,13 @@ func (s *Starter) launch(ctx context.Context) error {
 			stopGroup(pid, exited)
 			return logcause.Errorf("ios_webkit_debug_proxy exited during its start (%v)%s; run '%s' to see why", waitErr, s.startAdvice(ctx, log.Name(), logStart, true), ManualCommand())
 		case <-ctx.Done():
-			if listens {
-				return keep("did not answer before the command ended", ctx.Err())
-			}
-			stopGroup(pid, exited)
-			return fmt.Errorf("starting ios_webkit_debug_proxy: %w; the started process was stopped", ctx.Err())
+			return ended()
 		case <-poll.C:
+			// A tick and the end of ctx can be ready together (select picks
+			// either): a check on the ended ctx would find nothing.
+			if ctx.Err() != nil {
+				return ended()
+			}
 			st, err := s.ready(ctx, readyBy, pid)
 			if err != nil {
 				if listens && ctx.Err() != nil {
@@ -502,20 +515,16 @@ func (s *Starter) launch(ctx context.Context) error {
 				stopGroup(pid, exited)
 				return err
 			}
-			switch st {
-			case startAnswers:
+			switch {
+			case st == startAnswers:
 				if err := s.saveRecord(pid, token); err != nil {
 					stopGroup(pid, exited)
 					return err
 				}
 				return nil
-			case startListens:
-				if !listens {
-					readyBy = spawned.Add(max(s.readyWait, s.connectWait))
-				}
+			case st == startListens && !listens:
+				readyBy = spawned.Add(max(s.readyWait, s.connectWait))
 				listens = true
-			default:
-				listens = false
 			}
 			if time.Now().Before(readyBy) {
 				continue

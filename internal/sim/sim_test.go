@@ -438,13 +438,47 @@ type fakeIWDP struct {
 	foreign  bool     // a start or restart leaves another program's iwdp
 	urls     []string // the simulator's page URLs, page i with id "p<i>"; nil: one page
 	pages    []Page   // the simulator's pages, when not nil (instead of urls)
+	// keep makes a start or restart keep a still connecting iwdp: it
+	// returns an ErrIWDPKept error (wrapping keptCause when set), and
+	// State fails keep times to read the listing, then lists the
+	// simulator.
+	keep      int
+	keptCause error
+	connected int    // State calls left that fail to read the listing
+	onStart   func() // runs at the start of a start or restart
 }
 
-func (f *fakeIWDP) State(context.Context) (IWDPState, error) { return f.st, nil }
+func (f *fakeIWDP) State(context.Context) (IWDPState, error) {
+	if f.connected > 0 {
+		f.connected--
+		if f.connected == 0 {
+			f.st.Listed = true
+		}
+		return f.st, errors.New("reading ios_webkit_debug_proxy's device list: timeout")
+	}
+	return f.st, nil
+}
+
+// started sets the state after a start or restart and returns its error.
+func (f *fakeIWDP) started(own bool) error {
+	if f.onStart != nil {
+		f.onStart()
+	}
+	if f.keep > 0 {
+		f.st = IWDPState{Running: true, Own: own}
+		f.connected = f.keep
+		if f.keptCause != nil {
+			return fmt.Errorf("%w: listens but did not answer (%w)", ErrIWDPKept, f.keptCause)
+		}
+		return fmt.Errorf("%w: listens but did not answer", ErrIWDPKept)
+	}
+	f.st = IWDPState{Running: true, Own: own, Listed: true}
+	return nil
+}
+
 func (f *fakeIWDP) Start(context.Context) error {
 	f.starts++
-	f.st = IWDPState{Running: true, Own: !f.foreign, Listed: true}
-	return nil
+	return f.started(!f.foreign)
 }
 
 func (f *fakeIWDP) Restart(context.Context) error {
@@ -452,8 +486,7 @@ func (f *fakeIWDP) Restart(context.Context) error {
 	if f.events != nil {
 		*f.events = append(*f.events, "restart")
 	}
-	f.st = IWDPState{Running: true, Own: true, Listed: true}
-	return nil
+	return f.started(true)
 }
 
 func (f *fakeIWDP) ActiveLeases(context.Context) (int, error) {
@@ -558,6 +591,42 @@ func TestUpIdempotent(t *testing.T) {
 	if err != nil || !r.ForwardStarted || !r.IWDPRestarted || len(p.spawned) != 2 || p.liveSpawned() != 1 {
 		t.Fatalf("after a new socket: %+v, %v, %d forwards, %d live", r, err, len(p.spawned), p.liveSpawned())
 	}
+}
+
+// Review F4 of 2026-11-26: a start that keeps a still connecting iwdp
+// (it listens, has not answered) started it after the forward listened.
+// Up marks the forward synced and waits for the listing, also when the
+// command ended at the keep, so the next Up does not restart that iwdp in
+// the middle of its device connection.
+func TestUpKeepsAStillConnectingIWDP(t *testing.T) {
+	t.Run("waits", func(t *testing.T) {
+		fm := readyMac()
+		iw := &fakeIWDP{keep: 3}
+		s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+		r, err := s.Up(context.Background(), "", "", false)
+		if err != nil || !r.IWDPStarted {
+			t.Fatalf("Up with a kept iwdp = %+v, %v; want a start that waits for the listing", r, err)
+		}
+		iw.keep = 0
+		if r, err := s.Up(context.Background(), "", "", false); err != nil || r.IWDPRestarted || iw.restarts != 0 || iw.starts != 1 {
+			t.Fatalf("second Up = %+v, %v (%d starts, %d restarts); want none", r, err, iw.starts, iw.restarts)
+		}
+	})
+	t.Run("command ended", func(t *testing.T) {
+		fm := readyMac()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		iw := &fakeIWDP{keep: 1, keptCause: context.Canceled, onStart: cancel}
+		s, _ := newTestSim(t, fm, iw, Config{SSH: "mac", Device: udidA})
+		if _, err := s.Up(ctx, "", "", false); !errors.Is(err, ErrIWDPKept) || !errors.Is(err, context.Canceled) {
+			t.Fatalf("Up that ended at the keep = %v; want the kept start's error", err)
+		}
+		iw.keep, iw.connected, iw.onStart = 0, 0, nil
+		iw.st.Listed = true
+		if r, err := s.Up(context.Background(), "", "", false); err != nil || r.IWDPRestarted || iw.restarts != 0 || iw.starts != 1 {
+			t.Fatalf("Up after the kept start = %+v, %v (%d starts, %d restarts); want none", r, err, iw.starts, iw.restarts)
+		}
+	})
 }
 
 // A forward that serves the socket while iwdp still lists the simulator

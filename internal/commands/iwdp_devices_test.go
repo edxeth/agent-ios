@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,16 @@ func TestDevicesStartsAndRecoversIWDP(t *testing.T) {
 		}
 		if s.starts.Load() != 1 {
 			t.Errorf("devices ran %d starts, want 1", s.starts.Load())
+		}
+	})
+	// Review F6 of 2026-11-26: a kept, still connecting iwdp is no failed
+	// start; devices still exits 1 with the start's explanation.
+	t.Run("start kept", func(t *testing.T) {
+		kept := func() error { return fmt.Errorf("%w: it was kept running and recorded", proxy.ErrStillConnecting) }
+		useDevicesSeams(t, freeListingAddr(t), kept, ok, nil, nil)
+		code, stdout, stderr, _ := runCLI("devices")
+		if code != 1 || strings.Contains(stderr, "starting it failed") || !strings.Contains(stderr, "agent-ios started it") || !strings.Contains(stderr, "kept running") {
+			t.Fatalf("devices with a kept start: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 	})
 	t.Run("recovery refused", func(t *testing.T) {

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -168,6 +169,30 @@ func TestEnsureIWDPStartsOnceForConcurrentCalls(t *testing.T) {
 	}
 	if n := starts.Load(); n != 1 {
 		t.Fatalf("%d concurrent calls started iwdp %d times, want 1", callers, n)
+	}
+}
+
+// Review F6 of 2026-11-26: a start that kept a listening, still
+// connecting iwdp did not fail to start it: the daemon's error says that
+// it started iwdp and keeps the start's "kept running" explanation.
+func TestEnsureIWDPWordsAKeptStart(t *testing.T) {
+	addr := deadListing(t)
+	kept := func(context.Context) error {
+		return fmt.Errorf("%w: the started ios_webkit_debug_proxy (pid 7) listens on %s but did not answer. It was kept running and recorded", proxy.ErrStillConnecting, addr)
+	}
+	ts := &transports{o: RunOptions{Transport: "iwdp", StartIWDP: kept}, logf: t.Logf}
+	err := ts.ensureIWDP(ctxFor(t, 10*time.Second), addr, true)
+	if err == nil || strings.Contains(err.Error(), "starting it failed") || !strings.Contains(err.Error(), "agent-ios started it") || !strings.Contains(err.Error(), "kept running") || !errors.Is(err, proxy.ErrStillConnecting) {
+		t.Fatalf("ensureIWDP after a kept start = %v; want that agent-ios started it and kept it running", err)
+	}
+	// docs/guide.md: a kept start exits 1, or 124 when the command's
+	// deadline ended it.
+	if code := toErrorReply(err).Code; code != 1 {
+		t.Errorf("exit code of a kept start = %d, want 1", code)
+	}
+	ended := proxy.AutoStartError(fmt.Errorf("%w: kept running and recorded (%w)", proxy.ErrStillConnecting, context.DeadlineExceeded))
+	if code := toErrorReply(ended).Code; code != 124 {
+		t.Errorf("exit code of a kept start that the deadline ended = %d, want 124", code)
 	}
 }
 

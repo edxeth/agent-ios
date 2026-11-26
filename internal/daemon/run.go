@@ -385,7 +385,7 @@ func (ts *transports) ensureIWDP(ctx context.Context, listing string, isDefault 
 	}
 	ts.logf("ios_webkit_debug_proxy is not running; starting it")
 	if err := ts.o.StartIWDP(ctx); err != nil {
-		return fmt.Errorf("ios_webkit_debug_proxy is not running and starting it failed: %w", err)
+		return proxy.AutoStartError(err)
 	}
 	ts.awaitPages(ctx, listing)
 	return nil
