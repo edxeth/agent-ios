@@ -28,10 +28,13 @@ import (
 // as iOS Safari without site isolation does.
 
 // frames045Ready: every frame of frames045.html has loaded; a cross-origin
-// frame has loaded once the parent cannot reach its document.
-const frames045Ready = "document.querySelector('.xo').contentDocument === null && " +
+// frame has loaded once the parent cannot reach its window (whose
+// prototype is then null; reading contentDocument of a cross-origin frame
+// would log "Blocked a frame" to the console that
+// TestConsole045NoCrossOriginAccessErrors checks).
+const frames045Ready = "Object.getPrototypeOf(document.querySelector('.xo').contentWindow) === null && " +
 	"document.querySelector('iframe[title=Outer]').contentDocument.querySelector('iframe') !== null && " +
-	"document.querySelector('iframe[title=Outer]').contentDocument.querySelector('iframe').contentDocument === null && " +
+	"Object.getPrototypeOf(document.querySelector('iframe[title=Outer]').contentDocument.querySelector('iframe').contentWindow) === null && " +
 	"document.getElementById('scrolled').contentDocument.getElementById('inside') !== null && " +
 	"document.getElementById('scaled').contentDocument.getElementById('inside') !== null"
 
@@ -209,6 +212,40 @@ func TestConsole045AndErrorsCaptureCrossOriginFrames(t *testing.T) {
 		if time.Now().After(end) {
 			t.Fatalf("errors does not show the frames' uncaught errors:\n%s", out)
 		}
+	}
+}
+
+// FIX-Q (iphone-verify Gaps: "Blocked a frame with origin ... from
+// accessing a frame with origin ..." after snapshot -i): agent-ios's own
+// reads, snapshots, finds, actions and annotations on a page with
+// cross-origin frames leave no cross-origin access error in the page's
+// console. WebKit logs that error, without throwing, when a script reads
+// contentDocument of a cross-origin frame (or frameElement under a
+// cross-origin parent); the runtime checks the frame's window first.
+func TestConsole045NoCrossOriginAccessErrors(t *testing.T) {
+	e := newFrames045(t)
+	e.must(agentA, "console", "clear")
+	snap := e.must(agentA, "snapshot", "-i")
+	e.must(agentA, "snapshot")
+	inside := regexp.MustCompile(`button "Inside" \[ref=(e\d+)\]`).FindStringSubmatch(snap)
+	if inside == nil {
+		t.Fatalf("snapshot -i has no Inside button of the same-origin frames:\n%s", snap)
+	}
+	e.must(agentA, "find", "text", "Top 045")
+	e.must(agentA, "click", "@"+inside[1])
+	e.must(agentA, "hover", "@"+inside[1])
+	e.must(agentA, "is", "visible", "@"+inside[1])
+	e.must(agentA, "screenshot", "--annotate", filepath.Join(t.TempDir(), "a.png"))
+	e.must(agentA, "eval", "document.querySelector('.xo').focus(); 1")
+	if _, code, msg := e.run(agentA, "press", "x"); code == 0 || !strings.Contains(msg, "cross-origin frame") {
+		t.Fatalf("press with focus in the cross-origin frame: exit %d, %q; want the refusal", code, msg)
+	}
+	e.must(agentA, "frame", ".xo")
+	e.must(agentA, "snapshot", "-i")
+	e.must(agentA, "check", "#agree")
+	e.must(agentA, "frame", "main")
+	if out := e.must(agentA, "console"); strings.Contains(out, "Blocked a frame") {
+		t.Fatalf("the console has cross-origin access errors after agent-ios commands:\n%s", out)
 	}
 }
 

@@ -272,7 +272,7 @@ Click an element with synthetic pointer and mouse events after the actionability
 | `--button` | text | mouse button: left, right, middle, back or forward (default left); right ends with contextmenu, the others but left with auxclick |
 | `--modifiers` | text | modifier keys held during the click: alt, control (ctrl), meta (cmd, command), shift, joined by , or +; every event carries them |
 | `--count` | integer | number of clicks (detail 1..n) |
-| `--new-tab` | none | open the link's href with window.open (emulated user gesture) instead of clicking; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds; not with --button or --modifiers |
+| `--new-tab` | none | open the link's href with window.open (emulated user gesture) instead of clicking, and make the new tab the session's current page as tab new does; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds; not with --button or --modifiers |
 | `--force` | none | skip the actionability checks (attached, visible, stable, enabled, receives events) |
 
 ### `close`

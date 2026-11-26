@@ -154,8 +154,7 @@
       for (var i = 0; i < opts.length; i++) { walkElement(opts[i], ctx, children); }
     } else if (tag === "iframe") {
       if (ctx.frameDepth < FRAME_DEPTH) {
-        var doc = null;
-        try { doc = el.contentDocument; } catch (e) { doc = null; } // cross-origin
+        var doc = B.contentDocument(el); // null when cross-origin
         if (doc && doc.body) {
           var frame = ctx.frame;
           ctx.frameDepth++;

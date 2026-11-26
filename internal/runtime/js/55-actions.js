@@ -40,8 +40,7 @@
     var a = document.activeElement, s, d;
     for (;;) {
       while (a && (s = B.shadowRoot(a)) && s.activeElement) { a = s.activeElement; }
-      d = null;
-      try { d = a && a.localName === "iframe" ? B.contentDocument(a) : null; } catch (y) { /* cross-origin */ }
+      d = a ? B.contentDocument(a) : null; // null for a cross-origin frame
       if (!d) { return a; }
       a = d.activeElement || d.body;
     }
@@ -126,12 +125,12 @@
   // window.open(href). The attempt function is actGesture, whose
   // Runtime.evaluate carries emulateUserGesture; window.open runs
   // synchronously inside that evaluation, so the page sees the gesture.
+  // opened: window.open returned a window (no popup blocker stopped it).
   A.newtab = function (e, g, a, r, x) {
     var h = e.href;
     if (typeof h !== "string" || !h) { r.err = "the element has no href; --new-tab works for links"; return; }
     if (!x.live()) { x.interrupt("attempt end"); return; }
-    w.open(h);
-    r.v = { href: h };
+    r.v = { href: h, opened: !!w.open(h) };
   };
   A.newtab.as = "click";
   A.hover = function (e, g, a, r, x) { return over(x, e, center(e), g); };

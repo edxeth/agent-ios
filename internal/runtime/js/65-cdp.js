@@ -112,9 +112,9 @@
   // fto: the mapping of node n's frame's client points to the main
   // frame's (fx through every frame element up to the main window).
   _.fto = function (n) {
-    var t = { sx: 1, sy: 1, x: 0, y: 0 }, v = n.ownerDocument.defaultView, m;
-    for (; v && v !== w && v.frameElement; v = v.parent) {
-      m = fx(v.frameElement);
+    var t = { sx: 1, sy: 1, x: 0, y: 0 }, v = n.ownerDocument.defaultView, m, f;
+    for (; v && v !== w && (f = B.frameEl(v)); v = v.parent) {
+      m = fx(f);
       t = { sx: t.sx * m.sx, sy: t.sy * m.sy, x: t.x * m.sx + m.x, y: t.y * m.sy + m.y };
     }
     return t;
@@ -125,7 +125,7 @@
   function deep(x, y) {
     var h = _.at(x, y), d, m;
     while (h && /^I?FRAME$/.test(h.nodeName)) {
-      try { d = h.contentDocument; } catch (y2) { d = null; }
+      d = B.contentDocument(h); // null for a cross-origin frame
       if (!d) { break; }
       m = fx(h); x = (x - m.x) / m.sx; y = (y - m.y) / m.sy;
       h = _.at(x, y, d) || d.documentElement;

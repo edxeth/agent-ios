@@ -118,13 +118,14 @@ func (ps *pageState) cssNewDocumentLocked() {
 
 // jsTree describes nodes for DOMModel: d(n, depth) as jsDescribe, plus an
 // open shadow root (shadowRoots) and a same-origin frame's document
-// (contentDocument) of each element, at depth 0. With a.path, it answers
+// (contentDocument) of each element, at depth 0, read without the console
+// error that a cross-origin frame's contentDocument logs (10-core.js). With a.path, it answers
 // the path of this node from the main document: for each ancestor whose
 // next node on the path is one of its child nodes, the ancestor's handle
 // and its children (DOM.setChildNodes); else the tree of the main
 // document to a.depth.
 const jsTree = `function(a,_){
-function sub(n){var o=[];try{if(n.nodeType===1&&n.shadowRoot)o.push(["shadowRoots",n.shadowRoot])}catch(e){}try{if(n.nodeType===1&&n.contentDocument)o.push(["contentDocument",n.contentDocument])}catch(e){}return o}
+function sub(n){var o=[];try{if(n.nodeType===1&&n.shadowRoot)o.push(["shadowRoots",n.shadowRoot])}catch(e){}if(n.nodeType===1){var c=_.B.contentDocument(n);if(c)o.push(["contentDocument",c])}return o}
 function d(n,depth){var o={h:_.handle(n),nodeType:n.nodeType,nodeName:n.nodeName,localName:n.localName||"",nodeValue:n.nodeValue||"",childNodeCount:n.childNodes.length},i,s;
 if(n.attributes){o.attributes=[];for(i=0;i<n.attributes.length;i++)o.attributes.push(n.attributes[i].name,n.attributes[i].value)}
 if(n.nodeType===9){o.documentURL=n.URL;o.baseURL=n.baseURI;o.xmlVersion=""}
@@ -133,7 +134,7 @@ if(n.nodeType===11&&n.host){o.shadowRootType=n.mode==="closed"?"closed":"open"}
 s=sub(n);for(i=0;i<s.length;i++){if(s[i][0]==="shadowRoots")o.shadowRoots=[d(s[i][1],0)];else o.contentDocument=d(s[i][1],0)}
 if(depth!==0&&n.childNodes.length){o.children=[];for(i=0;i<n.childNodes.length;i++)o.children.push(d(n.childNodes[i],depth-1))}
 return o}
-function up(n){if(n.nodeType===11&&n.host)return [n.host,0];if(n.parentNode)return [n.parentNode,1];if(n.nodeType===9){try{if(n.defaultView&&n.defaultView.frameElement)return [n.defaultView.frameElement,0]}catch(e){}}return null}
+function up(n){if(n.nodeType===11&&n.host)return [n.host,0];if(n.parentNode)return [n.parentNode,1];if(n.nodeType===9){var f=_.B.frameEl(n.defaultView);if(f)return [f,0]}return null}
 if(!a.path)return {doc:_.doc(),n:d(W.document,a.depth)};
 var steps=[],n=this,p;if(!n||!n.isConnected)throw new Error("Node is detached from document");
 while((p=up(n))){if(p[1]){var k=[],i;for(i=0;i<p[0].childNodes.length;i++)k.push(d(p[0].childNodes[i],0));steps.unshift({h:_.handle(p[0]),kids:k})}n=p[0]}

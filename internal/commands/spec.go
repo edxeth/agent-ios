@@ -146,4 +146,10 @@ type Input struct {
 type Result struct {
 	Text string
 	Data any
+	// After, when set, runs once the command's page operation has ended
+	// (the daemon's run calls it after core.Manager.Do returned, before it
+	// sends the result): work that must not run inside that operation,
+	// such as moving the session to another page and ending its lease on
+	// this one (click --new-tab). It may change the result.
+	After func(ctx context.Context, r *Result)
 }

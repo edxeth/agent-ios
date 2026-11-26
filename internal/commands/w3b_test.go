@@ -463,7 +463,7 @@ func TestFillStdinReadsTheValueInTheClient(t *testing.T) {
 func TestClickNewTabIsAFencedGestureAttempt(t *testing.T) {
 	h := newActionHarness(t)
 	h.page.set("actProbe", attempt("retry", "ready to dispatch", nil))
-	h.page.set("actGesture", attempt("dispatched", "", map[string]any{"v": map[string]any{"href": "https://example.test/next"}}))
+	h.page.set("actGesture", attempt("dispatched", "", map[string]any{"v": map[string]any{"href": "https://example.test/next", "opened": true}}))
 	out := h.mustRun(t, "click", "#link", "--new-tab", "--force")
 	if !strings.Contains(out, "opened https://example.test/next with window.open") {
 		t.Fatalf("click --new-tab output %q", out)

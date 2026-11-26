@@ -55,7 +55,7 @@ func init() {
 			buttonFlag,
 			modifiersFlag,
 			{Name: "count", Type: FlagInt, Help: "number of clicks (detail 1..n)"},
-			{Name: "new-tab", Type: FlagBool, Help: "open the link's href with window.open (emulated user gesture) instead of clicking; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds; not with --button or --modifiers"},
+			{Name: "new-tab", Type: FlagBool, Help: "open the link's href with window.open (emulated user gesture) instead of clicking, and make the new tab the session's current page as tab new does; a gesture call delivered after its window opens nothing, but the page may then hold a transient user activation for a few seconds; not with --button or --modifiers"},
 			forceFlag,
 		},
 		Run: runClick,
@@ -306,7 +306,7 @@ func runClick(ctx context.Context, env Env, in Input) (Result, error) {
 	defer w.close()
 	t := arg(in, 0)
 	if flagBool(in, "new-tab") {
-		return w.openInNewTab(ctx, t, flagBool(in, "force"))
+		return w.openInNewTab(ctx, env, in, t)
 	}
 	r, err := w.run(ctx, action{
 		Name: "click", Kind: "click", Target: t, Force: flagBool(in, "force"),
@@ -345,18 +345,63 @@ func runDblclick(ctx context.Context, env Env, in Input) (Result, error) {
 // --new-tab): one fenced attempt step with click's checks, whose runtime
 // call carries emulateUserGesture (runtime function actGesture, kind
 // newtab), so popup blocking sees a user gesture.
-func (w *w3bPage) openInNewTab(ctx context.Context, t string, force bool) (Result, error) {
-	r, err := w.run(ctx, action{Name: "click --new-tab", Kind: "newtab", Target: t, Force: force, Gesture: true})
+//
+// In the daemon the session then follows the new tab, as after "tab new"
+// and as agent-browser 0.45, whose click --new-tab makes the new tab the
+// active one: Safari shows the new tab and hides the opener, whose
+// animation frames stop. That runs in the result's After, once the
+// command's operation on the opener has ended, because following ends
+// the session's lease on the opener.
+func (w *w3bPage) openInNewTab(ctx context.Context, env Env, in Input, t string) (Result, error) {
+	m, _ := managerOf(env) // nil outside the daemon: no tabs to follow
+	var known map[string]bool
+	if m != nil {
+		var err error
+		if known, err = knownTabs(ctx, m, in); err != nil {
+			return Result{}, fmt.Errorf("click --new-tab: listing the tabs before window.open: %w", err)
+		}
+	}
+	r, err := w.run(ctx, action{Name: "click --new-tab", Kind: "newtab", Target: t, Force: flagBool(in, "force"), Gesture: true})
 	if err != nil {
 		return Result{}, err
 	}
 	var v struct {
-		Href string `json:"href"`
+		Href   string `json:"href"`
+		Opened bool   `json:"opened"`
 	}
 	if err := json.Unmarshal(r.Value, &v); err != nil {
 		return Result{}, fmt.Errorf("click --new-tab: decoding the page's result %s: %w", r.Value, err)
 	}
-	return w.result("opened "+v.Href+" with window.open (popup blocking can stop it; run tab list)", r), nil
+	if !v.Opened {
+		return w.result("called window.open("+v.Href+"), which returned no window: the browser blocked the popup, or the page replaced window.open; the session stays on this page", r), nil
+	}
+	res := w.result("opened "+v.Href+" with window.open", r)
+	if m == nil {
+		return res, nil
+	}
+	res.After = func(ctx context.Context, res *Result) {
+		start := time.Now()
+		end := start.Add(tabNewWait)
+		if d, ok := ctx.Deadline(); ok && d.Before(end) {
+			end = d
+		}
+		nt, found, err := waitNewTab(ctx, m, in, known, end)
+		var lines []string
+		switch {
+		case err != nil:
+			lines = []string{fmt.Sprintf("warning: the session stays on this page: listing the tabs after window.open failed: %v", err)}
+		case !found:
+			lines = []string{fmt.Sprintf("warning: the session stays on this page: no new tab appeared in the page list within %s; run 'tab list'", end.Sub(start).Round(time.Millisecond))}
+		default:
+			r.Tab = nt.ID
+			lines = followTab(ctx, m, in, nt, fmt.Sprintf("the new tab is tab %s (%s)", nt.ID, v.Href))
+		}
+		// The tab lines follow the first line, before the notes.
+		head, notes, _ := strings.Cut(res.Text, "\n")
+		res.Text = strings.Join(append(append([]string{head}, lines...), notes), "\n")
+		res.Text = strings.TrimSuffix(res.Text, "\n")
+	}
+	return res, nil
 }
 
 // evalValue decodes the value of a Runtime.evaluate reply with returnByValue.

@@ -18,8 +18,7 @@
         var sr = B.shadowRoot(el);
         if (sr) { add(sr, depth); }
         if (frames && depth === 0 && el.localName === "iframe") {
-          var d = null;
-          try { d = el.contentDocument; } catch (e) { d = null; }
+          var d = B.contentDocument(el);
           if (d) { add(d, 1); }
         }
       }
@@ -123,8 +122,7 @@
   // isConnected alone does not prove that the frame still shows it.
   function docCurrent(d) {
     while (d !== document) {
-      var win = B.defaultView(d), fe = null;
-      try { fe = win ? win.frameElement : null; } catch (e) { fe = null; } // cross-origin parent
+      var fe = B.frameEl(B.defaultView(d)); // null under a cross-origin parent
       if (!fe || B.contentDocument(fe) !== d || !B.connected(fe)) { return false; }
       d = B.ownerDoc(fe);
     }

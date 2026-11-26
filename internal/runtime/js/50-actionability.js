@@ -67,10 +67,7 @@
     return { x: r.left + (f.clientLeft + (parseFloat(_.css(f, "padding-left")) || 0) + x) * sx,
       y: r.top + (f.clientTop + (parseFloat(_.css(f, "padding-top")) || 0) + y) * sy, sx: sx, sy: sy };
   }
-  function frameOf(d) {
-    var v = B.defaultView(d);
-    try { return v && v.frameElement; } catch (err) { return null; } // cross-origin parent
-  }
+  function frameOf(d) { return B.frameEl(B.defaultView(d)); }
   // reaches: the hit h takes e's press: h is e or inside it, or h is in a
   // label that activates e (its control, or a label around e) and neither h
   // nor an element between h and that label is interactive (agent-browser
@@ -130,17 +127,18 @@
   }
   // stable: same rect in two consecutive animation frames, recorded by
   // frame callbacks between attempts (the checks of an attempt run in one
-  // task, before its events).
+  // task, before its events). frame() ends after FRAME_MS when no frame
+  // comes first: a hidden page (a Safari tab behind another) runs no
+  // animation frames.
   function stable(e, key) {
     var s = ST[key], k = rk(e);
     if (s && s.el === e && s.n >= 2 && s.a === k && s.b === k) { return ""; }
     if (!s || s.el !== e || !s.busy) {
       s = ST[key] = { el: e, n: 0, busy: 1 };
-      var f = function () {
-        s.a = s.b; s.b = rk(e); s.n++;
-        if (s.n < 2) { raf(f); } else { s.busy = 0; }
-      };
-      raf(f);
+      (async function () {
+        for (; s.n < 2; s.n++) { await frame(); s.a = s.b; s.b = rk(e); }
+        s.busy = 0;
+      })();
     }
     return "waiting for the element to be stable";
   }

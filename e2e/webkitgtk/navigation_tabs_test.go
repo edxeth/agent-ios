@@ -313,3 +313,34 @@ func TestAnnotatedCaptureCleanupPrecedesQueuedSuccessorOnWebKitGTK(t *testing.T)
 		t.Fatal("the read queued behind the failed capture saw its overlay")
 	}
 }
+
+// Design 3.5 click --new-tab, agent-browser 0.45 contract (actions.rs
+// ClickPlan::NewTab opens the href with tab_new, which makes the new tab
+// the active one): the session follows the tab that click --new-tab
+// opened, as after "tab new", so the next command runs there and not on
+// the opener, which iOS Safari hides behind the new tab (iphone-verify
+// C1o: the next click on the hidden opener timed out). Clicked again from
+// the opener after "tab t1", it follows the next new tab too.
+func TestClickNewTabFollowsTheNewTab(t *testing.T) {
+	e := newNavEnv(t, "dialog.html", false)
+	e.js(agentA, "document.body.insertAdjacentHTML('beforeend', '<a id=\"nt\" href=\"second.html\">next</a>'); 1")
+	for i, want := range []string{"t2", "t3"} {
+		out := e.must(agentA, "click", "--new-tab", "#nt")
+		if !strings.Contains(out, "tab "+want+" (") || !strings.Contains(out, "is now the current page of session") {
+			t.Fatalf("click %d --new-tab: output %q; want the new tab %s named as the session's current page", i+1, out, want)
+		}
+		if title := e.js(agentA, "document.title"); title != "\"Second\"" {
+			t.Fatalf("after click %d --new-tab the session runs on %s, want the new tab", i+1, title)
+		}
+		if list := e.must(agentA, "tab", "list"); !strings.Contains(list, "* "+want+" ") {
+			t.Fatalf("after click %d --new-tab tab list does not mark %s current:\n%s", i+1, want, list)
+		}
+		e.must(agentA, "tab", "t1")
+		if title := e.js(agentA, "document.title"); title != "\"Dialogs\"" {
+			t.Fatalf("tab t1 after click %d: the session runs on %s", i+1, title)
+		}
+	}
+	for _, id := range []string{"t2", "t3"} {
+		e.must(agentA, "tab", "close", id)
+	}
+}

@@ -279,13 +279,9 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 			return Result{}, usagef("tab new --label %q: a tab has this label already", label)
 		}
 	}
-	before, _, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
+	known, err := knownTabs(ctx, m, in)
 	if err != nil {
 		return Result{}, err
-	}
-	known := map[string]bool{}
-	for _, t := range before {
-		known[t.Key] = true
 	}
 	session := in.Global.Session
 	u := arg(in, 0)
@@ -334,39 +330,73 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, failed(err)
 	}
-	end := time.Now().Add(tabNewWait)
+	t, found, err := waitNewTab(ctx, m, in, known, time.Now().Add(tabNewWait))
+	switch {
+	case err != nil:
+		return Result{}, failed(err)
+	case !found:
+		return Result{}, failed(&core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("tab new: no new tab appeared in the page list within %s; the browser may have blocked the popup or may not list script-opened windows", tabNewWait)})
+	}
+	if label != "" {
+		if err := m.LabelTab(t.Key, label); err != nil {
+			return Result{}, failed(usagef("tab new --label: %v", err))
+		}
+	}
+	lines := followTab(ctx, m, in, t, fmt.Sprintf("opened tab %s (%s)", t.ID, u))
+	return Result{
+		Text: strings.Join(lines, "\n"),
+		Data: map[string]any{"tab": t.ID, "key": t.Key, "label": label},
+	}, nil
+}
+
+// knownTabs are the page keys of the tabs listed now, before a command
+// opens a tab (tab new, click --new-tab), for waitNewTab.
+func knownTabs(ctx context.Context, m *core.Manager, in Input) (map[string]bool, error) {
+	tabs, _, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, t := range tabs {
+		known[t.Key] = true
+	}
+	return known, nil
+}
+
+// waitNewTab polls the page list every tabPollEvery until it lists a tab
+// that known has not, and returns it; found is false when none appeared
+// by end.
+func waitNewTab(ctx context.Context, m *core.Manager, in Input, known map[string]bool, end time.Time) (t core.Tab, found bool, err error) {
 	for {
 		tabs, _, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
 		if err != nil {
-			return Result{}, failed(err)
+			return core.Tab{}, false, err
 		}
 		for _, t := range tabs {
-			if known[t.Key] {
-				continue
+			if !known[t.Key] {
+				return t, true, nil
 			}
-			if label != "" {
-				if err := m.LabelTab(t.Key, label); err != nil {
-					return Result{}, failed(usagef("tab new --label: %v", err))
-				}
-			}
-			m.SelectPage(session, tabRequest(in, t.Key))
-			// The session moves its lease with its current page, as for
-			// "tab <id>": its lease on the opener ends with its cleanup.
-			lines := []string{fmt.Sprintf("opened tab %s (%s); it is now the current page of session %q", t.ID, u, session)}
-			lines = append(lines, releaseOtherLeases(ctx, m, session, t.Key)...)
-			return Result{
-				Text: strings.Join(lines, "\n"),
-				Data: map[string]any{"tab": t.ID, "key": t.Key, "label": label},
-			}, nil
 		}
 		if time.Now().After(end) {
-			return Result{}, failed(&core.CodedError{Code: core.CodeNoPage, Err: fmt.Errorf("tab new: no new tab appeared in the page list within %s; the browser may have blocked the popup or may not list script-opened windows", tabNewWait)})
+			return core.Tab{}, false, nil
 		}
 		sleepUntil(ctx, time.Now().Add(tabPollEvery))
 		if ctx.Err() != nil {
-			return Result{}, failed(ctx.Err())
+			return core.Tab{}, false, ctx.Err()
 		}
 	}
+}
+
+// followTab makes the new tab t the session's current page, as "tab <id>"
+// does: the session moves its lease with its current page, so its leases
+// on other pages (the opener's too) end with their cleanup. It returns
+// the result lines: opened, which names the tab, with the session, and a
+// warning for each release that failed.
+func followTab(ctx context.Context, m *core.Manager, in Input, t core.Tab, opened string) []string {
+	session := in.Global.Session
+	m.SelectPage(session, tabRequest(in, t.Key))
+	lines := []string{fmt.Sprintf("%s; it is now the current page of session %q", opened, session)}
+	return append(lines, releaseOtherLeases(ctx, m, session, t.Key)...)
 }
 
 // closedPageGone reports whether err, a failed release of a tab that is

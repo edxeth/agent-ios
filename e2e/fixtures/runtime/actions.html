@@ -116,7 +116,7 @@
   btn.addEventListener("keydown", function (e) { if (T.cancelKey) { e.preventDefault(); } });
   window.open = function (url) {
     T.opened.push({ url: String(url), gesture: navigator.userActivation ? navigator.userActivation.isActive : null });
-    return null;
+    return T.blockOpen ? null : {}; // T.blockOpen: a popup blocker's null; else a stand-in window
   };
   ["pick", "multi", "file"].forEach(function (id) {
     ["input", "change"].forEach(function (type) {

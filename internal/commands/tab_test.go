@@ -180,6 +180,9 @@ func runInCtx(t *testing.T, parent context.Context, m *core.Manager, session str
 			res, err = inv.Cmd.Run(ctx, env, inv.Input)
 			return err
 		})
+	if err == nil && res.After != nil {
+		res.After(ctx, &res)
+	}
 	return res, err
 }
 

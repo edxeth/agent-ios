@@ -196,6 +196,7 @@ type actResult struct {
 	Value    json.RawMessage `json:"value,omitempty"`
 	Dialogs  []dialogUse     `json:"dialogs,omitempty"`
 	Warnings []string        `json:"warnings,omitempty"`
+	Tab      string          `json:"tab,omitempty"` // click --new-tab: the new tab that the session follows
 }
 
 // failedPrefix is how core.RunSteps reports a page reply with a status it

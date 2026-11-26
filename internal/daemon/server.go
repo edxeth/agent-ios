@@ -350,6 +350,9 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		_ = st.send(Item{Type: "error", Error: toErrorReply(err)})
 		return
 	}
+	if after := res.After; after != nil {
+		after(ctx, &res)
+	}
 	var data json.RawMessage
 	if res.Data != nil {
 		if data, err = json.Marshal(res.Data); err != nil {

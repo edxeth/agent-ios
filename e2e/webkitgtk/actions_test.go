@@ -577,6 +577,12 @@ func TestActionNewTabChecksAndGesture(t *testing.T) {
 	if code == 0 || !strings.Contains(errOut, "no href") || pageInt(t, "T.clicks") != 0 || pageInt(t, "T.opened.length") != 2 {
 		t.Fatalf("click --new-tab on a button: exit %d, stderr %q, clicks %d; want a failure without a click or window.open", code, errOut, pageInt(t, "T.clicks"))
 	}
+	// FIX-Q: window.open that returns no window (a popup blocker) is
+	// reported, and the session stays on the page.
+	eval(t, "T.blockOpen = true; 1")
+	if out = mustAct(t, ps, "click", "#link", "--new-tab"); !strings.Contains(out, "returned no window") || pageInt(t, "T.opened.length") != 3 {
+		t.Fatalf("click --new-tab with window.open blocked: output %q, %d calls; want the blocked popup reported after one more call", out, pageInt(t, "T.opened.length"))
+	}
 }
 
 // Review finding 1, lost reply: the hook drops the reply of the attempt
@@ -1079,5 +1085,22 @@ func TestActionHighlightByTarget(t *testing.T) {
 	}
 	if _, err := sess.Send(ctx, "DOM.hideHighlight", nil); err != nil {
 		t.Fatalf("DOM.hideHighlight: %v", err)
+	}
+}
+
+// FIX-Q (iphone-verify C1o): a page that runs no animation frames, as a
+// hidden Safari tab behind the tab that click --new-tab opened, still
+// passes the stable check: it samples the element's box after a timer
+// when no frame comes, instead of waiting for frames until the deadline
+// ("waiting for the element to be stable"). The page's
+// requestAnimationFrame never calls back here; the runtime installs after
+// it and takes it, as it takes the browser's stalled one.
+func TestActionStableWithoutAnimationFrames(t *testing.T) {
+	loadActions(t)
+	eval(t, "window.requestAnimationFrame = function () { return 0; }; !window.__iwdp")
+	ps, _ := actionSession(t, hooks{})
+	code, _, errOut := act(context.Background(), ps, "--timeout", "3s", "click", "#btn")
+	if code != 0 || pageInt(t, "T.clicks") != 1 {
+		t.Fatalf("click on a page without animation frames: exit %d, stderr %q, clicks %d; want one click", code, errOut, pageInt(t, "T.clicks"))
 	}
 }
