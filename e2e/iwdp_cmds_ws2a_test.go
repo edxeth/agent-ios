@@ -183,14 +183,18 @@ func wantDeadlineMessage(t *testing.T, command, stdout, stderr string, code int)
 // Review ws2a-a F3 (WS2a round 2): devices reads the device list under
 // the command deadline. The listing answers the check, then stalls the
 // read past --timeout: exit 124 with the CLI's deadline message.
+//
+// The deadline is 2 s, below the read's own 5 s limit: it also covers the
+// daemon start, which took longer than 100 ms on GitHub's macOS runners
+// (the last wait was then the daemon start).
 func TestDevicesHonorsTheDeadline(t *testing.T) {
 	bin := buildCLIFor(t, stalledListing(t, 1))
-	stdout, stderr, code := runBinIn(t, bin, "devices", "--timeout", "100ms")
+	stdout, stderr, code := runBinIn(t, bin, "devices", "--timeout", "2s")
 	wantDeadlineMessage(t, "devices", stdout, stderr, code)
 	// Review ws2a-r2-a F7: the last wait names the command deadline that
 	// ended the read, not the read's own 5 s limit.
 	if strings.Contains(stderr, "within 5s") || !strings.Contains(stderr, "before the command deadline") {
-		t.Errorf("devices --timeout 100ms: stderr %q; want the last wait to name the command deadline, not 5s", stderr)
+		t.Errorf("devices --timeout 2s: stderr %q; want the last wait to name the command deadline, not 5s", stderr)
 	}
 }
 

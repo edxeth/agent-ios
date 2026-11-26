@@ -135,8 +135,14 @@ func (fp *fakePage) navigate(u string) {
 	fp.ctxID++
 	frame, id := fp.mainFrame(), fp.ctxID
 	fp.mu.Unlock()
-	fp.f.Emit("Page.frameNavigated", map[string]any{"frame": frame})
-	fp.f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": id, "type": "normal", "name": "", "frameId": "main"}})
+	// One write: WebKit answers no call between a navigation's
+	// frameNavigated and its executionContextCreated. Two Emits let the
+	// reply to the session's context barrier (webkit refreshContexts) slip
+	// between them, and the session then rightly replays the contexts.
+	fp.f.EmitSeq(
+		"Page.frameNavigated", map[string]any{"frame": frame},
+		"Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": id, "type": "normal", "name": "", "frameId": "main"}},
+	)
 }
 
 // consoleDebug emits a console.debug message of the page.

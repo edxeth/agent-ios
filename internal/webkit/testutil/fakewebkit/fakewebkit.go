@@ -417,6 +417,33 @@ func (s *Server) EmitFrom(target, method string, params any) {
 	s.broadcast(data)
 }
 
+// EmitSeq sends page events of the active target (method, params pairs)
+// to every connection back to back: no reply to a call goes out between
+// them on a connection.
+func (s *Server) EmitSeq(events ...any) {
+	s.mu.Lock()
+	target := s.active
+	conns := append([]*conn(nil), s.conns...)
+	s.mu.Unlock()
+	var msgs [][]byte
+	for i := 0; i+1 < len(events); i += 2 {
+		method, params := events[i].(string), events[i+1]
+		inner := mustJSON(map[string]any{"method": method, "params": params})
+		msgs = append(msgs, mustJSON(map[string]any{
+			"method": "Target.dispatchMessageFromTarget",
+			"params": map[string]string{"targetId": target, "message": string(inner)},
+		}))
+		s.record(false, method, mustJSON(params), target, 0)
+	}
+	for _, c := range conns {
+		c.wmu.Lock()
+		for _, m := range msgs {
+			_ = c.ws.WriteMessage(websocket.TextMessage, m)
+		}
+		c.wmu.Unlock()
+	}
+}
+
 // EmitOuter sends an unwrapped event (Target domain) to every connection.
 func (s *Server) EmitOuter(method string, params any) {
 	s.record(false, method, mustJSON(params), "", 0)
