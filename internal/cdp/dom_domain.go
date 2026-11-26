@@ -730,10 +730,12 @@ func domGetFrameOwner(ctx context.Context, call *Call) (any, Later, error) {
 	return map[string]any{"backendNodeId": id}, nil, nil
 }
 
-// domGetNodeForLocation hit-tests a client point in the main document
+// domGetNodeForLocation hit-tests a client point of the main frame
 // (runtime elementFromPoint through open shadow roots, 50-actionability.js
-// at). includeUserAgentShadowDOM and ignorePointerEventsNone are ignored:
-// the hit test is the page's own.
+// at), and inside same-origin frames as the mouse input does (65-cdp.js
+// deep); the frame id is the hit node's frame, as in Chrome.
+// includeUserAgentShadowDOM and ignorePointerEventsNone are ignored: the
+// hit test is the page's own.
 func domGetNodeForLocation(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
 		X float64 `json:"x"`
@@ -748,7 +750,10 @@ func domGetNodeForLocation(ctx context.Context, call *Call) (any, Later, error) 
 		if err != nil {
 			return err
 		}
-		var h pageHandle
+		var h struct {
+			pageHandle
+			FP []any `json:"fp"`
+		}
 		if err := json.Unmarshal(raw, &h); err != nil {
 			return fmt.Errorf("decoding a hit test: %w", err)
 		}
@@ -756,7 +761,11 @@ func domGetNodeForLocation(ctx context.Context, call *Call) (any, Later, error) 
 		if err != nil {
 			return err
 		}
-		out = map[string]any{"backendNodeId": pc.backendID(h.Doc, h.H), "frameId": ft.Frame.ID}
+		f := ft.at(h.FP)
+		if f == nil {
+			return serverError("%s: the node at (%v, %v) is in a frame that is not in the page's frame tree (frame path %v)", call.Method, p.X, p.Y, h.FP)
+		}
+		out = map[string]any{"backendNodeId": pc.backendID(h.Doc, h.H), "frameId": f.Frame.ID}
 		return nil
 	})
 	if err != nil {
@@ -890,5 +899,11 @@ const jsFrameOwner = `function(a,_){var w=W,i;for(i=0;i<a.path.length;i++){w=w.f
 var fs=w.parent.document.querySelectorAll("iframe,frame,object,embed");for(i=0;i<fs.length;i++){if(fs[i].contentWindow===w)return {doc:_.doc(),h:_.handle(fs[i])}}
 throw new Error("Frame with the given id was not found.")}`
 
-// jsNodeAt is the handle of the element at client point (a.x, a.y).
-const jsNodeAt = `function(a,_){var e=_.at(a.x,a.y);if(!e)throw new Error("No node found at given location");return {doc:_.doc(),h:_.handle(e)}}`
+// jsNodeAt is the handle of the element at client point (a.x, a.y) of the
+// main frame, also inside same-origin frames (65-cdp.js deep), and fp, the
+// path of frame indexes from the main window to the element's window.
+const jsNodeAt = `function(a,_){var x=a.x,y=a.y,e=_.at(x,y),d,r,w,u,i,p=[];
+while(e&&/^I?FRAME$/.test(e.nodeName)){try{d=e.contentDocument}catch(z){d=null}if(!d)break;r=e.getBoundingClientRect();x-=r.left+e.clientLeft;y-=r.top+e.clientTop;e=_.at(x,y,d)||d.documentElement}
+if(!e)throw new Error("No node found at given location");
+for(w=e.ownerDocument.defaultView;w&&w!==W;w=u){u=w.parent;i=0;while(i<u.frames.length&&u.frames[i]!==w)i++;if(u===w||i===u.frames.length)throw new Error("No node found at given location");p.unshift(i)}
+return {doc:_.doc(),h:_.handle(e),fp:p}}`

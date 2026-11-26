@@ -416,6 +416,40 @@ func TestDOMGetNodeForLocation(t *testing.T) {
 	}
 }
 
+// DOM.getNodeForLocation at a point inside a same-origin iframe names the
+// iframe's node and the iframe's frame id (the page's hit test descends
+// into the frame and gives its path of frame indexes, fp), as Chrome does:
+// agent-browser 0.45.0 refuses a click in a frame when the hit test names
+// another frame (cli/src/native/click_point.rs lines 127-131). A path that
+// leaves WIP's frame tree fails.
+func TestDOMGetNodeForLocationInFrame(t *testing.T) {
+	w := newW5b2Page(t)
+	w.f.Result("Page.getResourceTree", map[string]any{"frameTree": map[string]any{
+		"frame": map[string]any{"id": "main-frame"},
+		"childFrames": []any{
+			map[string]any{"frame": map[string]any{"id": "a"}},
+			map[string]any{"frame": map[string]any{"id": "b"}, "childFrames": []any{map[string]any{"frame": map[string]any{"id": "c"}}}},
+		},
+	}})
+	pageScript{{jsNodeAt, func(_ string, a json.RawMessage) any {
+		if string(a) == `{"x":1,"y":1}` {
+			return map[string]any{"v": map[string]any{"doc": "doc-1", "h": 31, "fp": []any{5}}}
+		}
+		return map[string]any{"v": map[string]any{"doc": "doc-1", "h": 30, "fp": []any{1, 0}}}
+	}}}.on(w.pf)
+	if e := w.fail(t, "DOM.getNodeForLocation", map[string]any{"x": 1, "y": 1}); !strings.Contains(e.Message, "not in the page's frame tree") {
+		t.Fatalf("a frame path outside the tree: %+v", e)
+	}
+	got := decode[struct {
+		BackendNodeID int64
+		FrameID       string
+	}](t, w.call(t, "DOM.getNodeForLocation", map[string]any{"x": 65, "y": 314}))
+	// backendOf replaces the page script, so it runs last.
+	if got.FrameID != "c" || got.BackendNodeID != w.backendOf(t, "doc-1", 30) {
+		t.Fatalf("getNodeForLocation in frame c = %+v", got)
+	}
+}
+
 // Design 5.3 DOM setFileInputFiles: the host files are read and set on the
 // input by W3b's upload dispatcher (one forced upload step on the node's
 // handle with name, MIME type by extension and base64 content). A node by

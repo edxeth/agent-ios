@@ -256,8 +256,9 @@ func agentBrowserScenario(t *testing.T, bin string) {
 // changed, through the printed ws URL. The script checks each tool's
 // answer and its effect in the page; the driver checks that the mock kept
 // the first fetch of /resource from the fixture server and the second one
-// reached it, and reports whether the endpoint applied or refused network
-// throttling and logpoints.
+// reached it (the offline fetch did not), that the endpoint refused the
+// Slow 3G preset for its upload limit, and that the logpoint bound and
+// logged.
 func devtoolsMCPFeatures(t *testing.T) {
 	g := startGTK(t, startPage)
 	u := g.clientSession(t, "chrome-devtools-mcp")
@@ -269,37 +270,32 @@ func devtoolsMCPFeatures(t *testing.T) {
 		}
 	}
 	if n := g.site.resourceRequests(); n != 1 {
-		t.Errorf("the fixture server got %d requests for /resource, want 1 (the mock answered the first fetch, the second came after remove_network_mock)", n)
+		t.Errorf("the fixture server got %d requests for /resource, want 1 (the offline fetch failed before the server, the mock answered the next one, the last came after remove_network_mock)", n)
 	}
-	// Network throttling: applied, or refused by the endpoint with an error
-	// that names the CDP method (Puppeteer's "Protocol error (<method>)").
-	var network struct {
-		Applied     bool
-		Text, Error string
-	}
+	// Network throttling: every preset of chrome-devtools-mcp's emulate has
+	// an upload limit (Puppeteer 25.18.1 PredefinedNetworkConditions), which
+	// no WebKit target can emulate. The endpoint refuses it before any
+	// change and before the WIP Network.setEmulatedConditions, on WebKitGTK
+	// as on iOS (internal/cdp/network_conditions.go throttleParams), and
+	// Puppeteer passes the error on (it swallows only "Not supported" and
+	// "wasn't found").
+	var network struct{ Error string }
 	stepValue(t, run.result, "emulate networkConditions", &network)
-	switch {
-	case network.Applied:
-		t.Logf("emulate networkConditions: applied")
-	case strings.Contains(network.Error, "Network.overrideNetworkState") || strings.Contains(network.Error, "Network.emulateNetworkConditionsByRule"):
-		t.Logf("emulate networkConditions: refused: %s", network.Error)
-	default:
-		t.Errorf("emulate networkConditions failed without naming the refused method: %s", network.Error)
+	if want := "Network.emulateNetworkConditionsByRule: upload throttling cannot be emulated on iOS WebKit"; !strings.Contains(network.Error, want) {
+		t.Errorf("emulate networkConditions Slow 3G answered %q, want the endpoint's refusal %q", network.Error, want)
 	}
-	// Logpoints need the endpoint's Debugger domain: bound and logged, or
-	// refused with the server's reason.
+	var offline string
+	stepValue(t, run.result, "emulate Offline", &offline)
+	if offline != "failed: TypeError" {
+		t.Errorf("the fetch of /resource while offline: %q, want failed: TypeError", offline)
+	}
 	var logpoint struct {
-		Bound               bool
-		Logged, Text, Error string
+		Bound  bool
+		Logged string
 	}
 	stepValue(t, run.result, "set_logpoints", &logpoint)
-	switch {
-	case logpoint.Bound:
-		t.Logf("set_logpoints: bound, logged %q", logpoint.Logged)
-	case logpoint.Error != "" || strings.Contains(logpoint.Text, "not bound"):
-		t.Logf("set_logpoints: refused: %s%s", logpoint.Error, logpoint.Text)
-	default:
-		t.Errorf("set_logpoints: neither bound nor refused: %+v", logpoint)
+	if !logpoint.Bound || logpoint.Logged != "logpoint 21" {
+		t.Errorf("set_logpoints: %+v, want the logpoint bound and \"logpoint 21\" logged", logpoint)
 	}
 	var url string
 	if err := json.Unmarshal([]byte(cli(t, "--session", "chrome-devtools-mcp", "eval", "JSON.stringify(location.href)")), &url); err != nil || url != g.site.origin+"/console.html" {

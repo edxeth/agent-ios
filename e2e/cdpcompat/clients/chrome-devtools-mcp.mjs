@@ -16,11 +16,13 @@
 //     includeStackTraces (the message of console.js has its frame),
 //     get_console_message, emulate (colorScheme dark, geolocation,
 //     cpuThrottlingRate 1; the page sees dark and the position), emulate
-//     with networkConditions (the step records whether the endpoint applied
-//     or refused it), mock_network on /resource with a body file (a fetch
-//     gets the file), remove_network_mock (a fetch reaches the server), and
-//     set_logpoints (the step records whether the logpoint was bound and
-//     logged, or refused).
+//     with networkConditions Slow 3G (the step records the endpoint's
+//     refusal: the preset has an upload limit, which WebKit cannot
+//     emulate), emulate with networkConditions Offline (a fetch of
+//     /resource fails) and without it (offline ends), mock_network on
+//     /resource with a body file (a fetch gets the file),
+//     remove_network_mock (a fetch reaches the server), and set_logpoints
+//     (the logpoint binds, and doubled(21) logs "logpoint 21").
 // Method recording: the server's bundled Puppeteer logs every CDP command
 // it sends ("puppeteer:protocol:SEND ►", enabled by NODE_DEBUG) to the
 // server's --logFile; the script reads the commands from that file when
@@ -256,16 +258,17 @@ async function evaluate(server, pageId, fn) {
   return JSON.parse(m[1]);
 }
 
-// outcome calls a tool whose result depends on the endpoint (a feature
-// that a translation may not have reached yet) and returns which way it
-// went: {applied: true, text} or {applied: false, error}.
-async function outcome(server, name, args) {
+// refusal calls a tool that the endpoint must refuse and returns the
+// error of its answer; a tool that answers without an error throws, with
+// its text.
+async function refusal(server, name, args) {
+  let text;
   try {
-    const { text } = await server.callTool(name, args);
-    return { applied: true, text };
+    ({ text } = await server.callTool(name, args));
   } catch (e) {
-    return { applied: false, error: String(e.message || e) };
+    return String(e.message || e);
   }
+  throw new Error(`${name} answered without an error:\n${text}`);
 }
 
 const scenarios = {
@@ -383,14 +386,37 @@ scenarios.features = async function features() {
       expect('the position', seen.position, [52.52, 13.405]);
       return seen;
     });
-    // Network throttling: the endpoint either applies the conditions or
-    // refuses them; the driver checks which (README.md, "Scenarios").
-    await observe(out, 'emulate networkConditions', async () => {
-      const r = await outcome(server, 'emulate', { pageId, networkConditions: 'Slow 3G' });
-      if (r.applied && !r.text.includes('Emulation configured successfully')) {
-        throw new Error(`emulate answered without "Emulation configured successfully":\n${r.text}`);
+    // Network throttling: every preset of the tool (Puppeteer's
+    // PredefinedNetworkConditions) has an upload limit, which WebKit cannot
+    // emulate, so the endpoint refuses it before any change; the step
+    // records the error and the driver checks its reason (README.md,
+    // "Scenarios"). A success text alone would prove nothing: Puppeteer
+    // also answers success when the endpoint says "Not supported".
+    await observe(out, 'emulate networkConditions', async () => ({
+      error: await refusal(server, 'emulate', { pageId, networkConditions: 'Slow 3G' }),
+    }));
+    // Offline: the endpoint fails every request through interception, so a
+    // fetch of /resource rejects and never reaches the fixture server (the
+    // driver checks its count); emulate without networkConditions ends it
+    // (the fetch of remove_network_mock reaches the server).
+    await observe(out, 'emulate Offline', async () => {
+      const { text } = await server.callTool('emulate', { pageId, networkConditions: 'Offline' });
+      if (!text.includes('Emulation configured successfully')) {
+        throw new Error(`emulate answered without "Emulation configured successfully":\n${text}`);
       }
-      return r;
+      const fetched = await evaluate(server, pageId, `async () => {
+        try {
+          return 'fetched: ' + (await (await fetch('/resource')).text());
+        } catch (e) {
+          return 'failed: ' + e.name;
+        }
+      }`);
+      expect('the fetch of /resource while offline', fetched, 'failed: TypeError');
+      const cleared = await server.callTool('emulate', { pageId });
+      if (!cleared.text.includes('Emulation configured successfully')) {
+        throw new Error(`emulate without settings answered without "Emulation configured successfully":\n${cleared.text}`);
+      }
+      return fetched;
     });
     await observe(out, 'mock_network', async () => {
       const { text } = await server.callTool('mock_network', { pageId, route: resource, body: bodyFile });
@@ -410,16 +436,13 @@ scenarios.features = async function features() {
       expect('/resource without the mock', body, 'from the server');
       return body;
     });
-    // set_logpoints needs the endpoint's Debugger domain: the step records
-    // whether the logpoint was bound and logged, or how the server refused
-    // it.
+    // set_logpoints goes through the endpoint's Debugger subset: the
+    // logpoint binds, and a call of doubled logs its message. Any error
+    // fails the step.
     await observe(out, 'set_logpoints', async () => {
-      const r = await outcome(server, 'set_logpoints', { pageId, logpoints: [`${origin()}/console.js:6 'logpoint', n`] });
-      if (!r.applied) {
-        return { bound: false, error: r.error };
-      }
-      if (!r.text.includes('[bound]')) {
-        return { bound: false, text: r.text };
+      const { text: answer } = await server.callTool('set_logpoints', { pageId, logpoints: [`${origin()}/console.js:6 'logpoint', n`] });
+      if (!answer.includes('[bound]')) {
+        throw new Error(`set_logpoints answered without a bound logpoint:\n${answer}`);
       }
       expect('doubled(21)', await evaluate(server, pageId, '() => doubled(21)'), 42);
       const { text } = await server.callTool('list_console_messages', { pageId });
