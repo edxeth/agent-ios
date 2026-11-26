@@ -7,6 +7,11 @@ expected values are WebKitGTK's native `Element.prototype.checkVisibility`.
 `cdp.html` is the page of the CDP domain test e2e/webkitgtk/cdp_w5b2_test.go
 (W5b-2); its expected values are hand-written in that test.
 
+`cdp045.html` and its iframe `cdp045-child.html` are the pages of
+e2e/webkitgtk/cdp045_test.go (parity 0.45: iframe nodes, emulation and
+network conditions); the expected geometry is hand-written there from their
+CSS.
+
 Pages for the WebKitGTK suite e2e/webkitgtk/runtime_test.go (design
 docs/design/agentic-parity.md, section 7.5). Each `<name>.html` that has a
 `<name>.snapshot.txt` or `<name>.interactive.txt` comes with a

@@ -12,7 +12,6 @@ import (
 	"github.com/edxeth/agent-ios/internal/core"
 	"github.com/edxeth/agent-ios/internal/devtools"
 	"github.com/edxeth/agent-ios/internal/webkit"
-	"github.com/edxeth/agent-ios/internal/wip"
 )
 
 // The Network domain (design docs/design/agentic-parity.md, sections 5.2
@@ -110,7 +109,6 @@ func init() {
 		// The same override as Emulation.setUserAgentOverride (W5b-2): one
 		// value per attachment, Page.overrideUserAgent.
 		Method{Name: "Network.setUserAgentOverride", Levels: OnPage, Handle: emuUserAgent},
-		Method{Name: "Network.emulateNetworkConditions", Levels: OnPage, Handle: emulateNetworkConditions},
 	)
 	registerEvents(domNetwork, "requestWillBeSent", "responseReceived", "dataReceived", "loadingFinished",
 		"loadingFailed", "requestServedFromCache")
@@ -746,6 +744,9 @@ func networkDisable(ctx context.Context, call *Call) (any, Later, error) {
 	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
 		return s.owned(ctx, mo, "Network.disable", nil)
 	})
+	if err == nil {
+		s.dropConditions() // network_conditions.go
+	}
 	return nil, nil, err
 }
 
@@ -848,46 +849,6 @@ func setCacheDisabled(ctx context.Context, call *Call) (any, Later, error) {
 	s := call.session
 	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
 		return s.owned(ctx, mo, "Network.setResourceCachingDisabled", map[string]bool{"disabled": p.CacheDisabled})
-	})
-	return nil, nil, err
-}
-
-// emulateNetworkConditions limits the download rate with WIP
-// Network.setEmulatedConditions, where the device's iOS command list has
-// it. WIP has no latency, upload or offline emulation: a positive
-// latency or upload limit and offline are refused (agent-ios set offline
-// emulates offline by interception).
-func emulateNetworkConditions(ctx context.Context, call *Call) (any, Later, error) {
-	var p struct {
-		Offline            bool    `json:"offline"`
-		Latency            float64 `json:"latency"`
-		DownloadThroughput float64 `json:"downloadThroughput"`
-		UploadThroughput   float64 `json:"uploadThroughput"`
-	}
-	if err := call.decode(&p); err != nil {
-		return nil, nil, err
-	}
-	s := call.session
-	if p.Offline {
-		return nil, nil, serverError("offline emulation through Network.emulateNetworkConditions is not supported on iOS WebKit; use agent-ios set offline on")
-	}
-	// A positive latency or upload limit turns throttling on in Chrome;
-	// WIP cannot emulate either, so it is refused before any change. 0 and
-	// -1 (no limit, what clients send to clear throttling) are accepted.
-	if p.Latency > 0 || p.UploadThroughput > 0 {
-		return nil, nil, serverError("latency and upload throttling cannot be emulated on iOS WebKit (latency %v ms, uploadThroughput %v); only downloadThroughput is supported", p.Latency, p.UploadThroughput)
-	}
-	if v := s.t.osVersion; v != "" {
-		if known, ok := wip.Supported(v, "Network.setEmulatedConditions"); known && !ok {
-			return nil, nil, serverError("network conditions cannot be emulated on iOS %s: Network.setEmulatedConditions is not in its command list", v)
-		}
-	}
-	params := map[string]any{}
-	if p.DownloadThroughput > 0 {
-		params["bytesPerSecondLimit"] = int64(p.DownloadThroughput)
-	}
-	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
-		return s.owned(ctx, mo, "Network.setEmulatedConditions", params)
 	})
 	return nil, nil, err
 }

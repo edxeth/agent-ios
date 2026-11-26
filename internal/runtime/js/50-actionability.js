@@ -41,8 +41,10 @@
     var r = B.gbcr(e);
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }
-  function at(x, y) {
-    var h = B.fromPoint(document, x, y), s;
+  // at: the element at client point (x, y) of document d (default: this
+  // window's document), through open shadow roots.
+  function at(x, y, d) {
+    var h = B.fromPoint(d || document, x, y), s;
     while (h && B.shadowFromPoint && (s = B.shadowRoot(h))) {
       var d = B.shadowFromPoint(s, x, y);
       if (!d || d === h) { break; }

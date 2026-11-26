@@ -222,10 +222,10 @@ func TestNetworkMethodsMapToWIP(t *testing.T) {
 	call(t, c, sid, "Network.setCacheDisabled", map[string]any{"cacheDisabled": true})
 	call(t, c, sid, "Network.setUserAgentOverride", map[string]any{"userAgent": "UA/1"})
 	call(t, c, sid, "Network.emulateNetworkConditions", map[string]any{"offline": false, "latency": 0, "downloadThroughput": 1000, "uploadThroughput": -1})
-	if e := callErr(t, c, sid, "Network.emulateNetworkConditions", map[string]any{"offline": true}); !strings.Contains(e.Message, "offline") {
-		t.Fatalf("offline: %v", e)
-	}
-	for _, m := range []string{"Network.enable", "Network.setResourceCachingDisabled", "Page.overrideUserAgent", "Network.setEmulatedConditions"} {
+	// Offline is emulated through interception (parity 0.45,
+	// network_conditions.go).
+	call(t, c, sid, "Network.emulateNetworkConditions", map[string]any{"offline": true})
+	for _, m := range []string{"Network.enable", "Network.setResourceCachingDisabled", "Page.overrideUserAgent", "Network.setEmulatedConditions", "Network.addInterception"} {
 		if len(f.ReceivedMethod(m)) == 0 {
 			t.Fatalf("WIP %s not sent; received %v", m, received(f))
 		}

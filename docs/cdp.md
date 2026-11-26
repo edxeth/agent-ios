@@ -40,12 +40,13 @@ Sessions: "browser" is the browser session of a `/devtools/browser/...` connecti
 | Accessibility | `getFullAXTree`, `getPartialAXTree`, `queryAXTree` | done | page | |
 | Accessibility | `enable`, `disable` | no effect | page | |
 | Input | `dispatchMouseEvent`, `dispatchKeyEvent`, `dispatchTouchEvent`, `emulateTouchFromMouseEvent`, `insertText`, `synthesizeTapGesture` (all synthetic, `isTrusted=false`) | done | page | |
-| Emulation | `setEmulatedMedia`, `setUserAgentOverride`, `setGeolocationOverride` | done | page | |
-| Emulation | `setDeviceMetricsOverride` | partial | page | |
+| Emulation | `setEmulatedMedia`, `setUserAgentOverride`, `setGeolocationOverride`, `clearGeolocationOverride` | done | page | |
+| Emulation | `setDeviceMetricsOverride`, `setCPUThrottlingRate` (rate 1 only), `setDefaultBackgroundColorOverride` (a clear only) | partial | page | |
 | Emulation | `setFocusEmulationEnabled`, `setTouchEmulationEnabled` | no effect | page | |
 | Emulation | `clearDeviceMetricsOverride` | error | page | |
 | Network | `enable`, `disable`, `getResponseBody`, `getRequestPostData`, `setExtraHTTPHeaders`, `setCacheDisabled`, `setUserAgentOverride`, `getCookies`, `setCookie`, `setCookies`, `deleteCookies`, `clearBrowserCookies` | done | page | `requestWillBeSent`, `responseReceived`, `dataReceived`, `loadingFinished`, `loadingFailed`, `requestServedFromCache` |
-| Network | `emulateNetworkConditions` | partial | page | |
+| Network | `emulateNetworkConditions`, `emulateNetworkConditionsByRule` | partial | page | |
+| Network | `overrideNetworkState` | no effect | page | |
 | Fetch | `enable`, `disable`, `continueRequest`, `fulfillRequest`, `failRequest` | done (see the limits) | page | `requestPaused` |
 | Fetch | `continueWithAuth` | error | page | |
 | Storage | `getCookies`, `setCookies`, `clearCookies` | done | browser, page | |
@@ -200,6 +201,7 @@ Target and Browser:
 Runtime:
 
 - The utility worlds are not isolated (see "Client notes").
+- **Stack traces.** `consoleAPICalled`, `exceptionThrown` and `Log.entryAdded` carry WIP's call frames with 0-based positions, and WIP's async parent stacks as `stackTrace.parent`. A parent that starts at the native function that scheduled the work (WIP `topCallFrameIsBoundary`, for example `setTimeout`) has that name as its `description`. Not checked on a device: which iOS versions fill the async parents.
 - **Oversized sources.** A `Runtime.evaluate` expression or `Runtime.callFunctionOn` declaration whose message is above the page connection's limit is staged in the page in parts and run with indirect eval. Limits as configured: WebKitGTK 127 KiB (measured), iwdp 64 MiB and the direct transport 16 MiB (not measured on a device). A source that must be staged is refused (invalid params) when it is above 16 MiB; a source of any size that the connection's limit accepts is sent as one message, as before. A staged call sends one message per part plus one (about 25 messages for a 330 KB source on WebKitGTK).
   - WebKit allows this eval on a page whose Content-Security-Policy forbids eval (checked on WebKitGTK).
   - The page can replace `eval`, so the bridge reads it once, checks it with two random probes and runs the source with that same function. A replacement that throws, or that does not give both probe values, makes the call fail with an error that names the refusal; nothing is evaluated.
@@ -222,6 +224,8 @@ DOM:
 - No DOM events (`DOM.documentUpdated`, `DOM.setChildNodes`) are sent.
 - `DOM.getDocument` nodes have `backendNodeId` 0, and `DOM.describeNode` gives `nodeId` 0 unless the client named the node by `nodeId`. The pinned clients do not read these values.
 - `setFileInputFiles` reads at most 8 MiB of regular files from the host and skips the actionability checks.
+- **Nodes in iframes.** A node of a same-origin iframe, named by an `objectId` from the iframe's context, its `nodeId` or its `backendNodeId`, works in every DOM method. Its `backendNodeId` belongs to the main document's numbering, and `getBoxModel` and `getContentQuads` give main-frame coordinates, as Chrome does. A node of a cross-origin iframe works only through its `nodeId` and `objectId`.
+- `requestNode` sends `DOM.getDocument` first when WIP refuses the push because the document was not requested. WebKit sends that refusal without a message (its error string is passed by value in `pushNodePathToFrontend`), so an empty refusal counts too.
 
 Accessibility:
 
@@ -231,10 +235,19 @@ Input and Emulation:
 
 - All input is synthetic (`isTrusted=false`); see [synthetic-input.md](synthetic-input.md).
 - `setDeviceMetricsOverride` succeeds only for the real viewport (or 0/0/0); `clearDeviceMetricsOverride` always fails with "viewport is fixed by the device".
+- **Mouse and touch in iframes.** `Input.dispatchMouseEvent` and `dispatchTouchEvent` take main-frame points, as in Chrome, and reach the element under the point inside same-origin iframes. The events' coordinates stay main-frame coordinates. A cross-origin iframe gets the event on its iframe element.
+- **CPU throttling.** WIP has no CPU throttling: `setCPUThrottlingRate` accepts rate 1 (no throttling, which chrome-devtools-mcp's `emulate` sends on every call) and changes nothing; any other rate fails with "CPU throttling cannot be emulated on iOS WebKit".
+- **Background color.** WIP has no default background color override, and the page snapshot is always opaque: `setDefaultBackgroundColorOverride` without a color has no effect, and with a color fails. So Puppeteer's `omitBackground` (and chrome-devtools-mcp's `take_screenshot` `omitBackground`) fails with the reason.
+- **Geolocation.** `clearGeolocationOverride` removes only this attachment's override (the page's own geolocation, or the session's `set geo`, comes back); without one it sends nothing.
 
 Network:
 
-- **emulateNetworkConditions: download limit only.** `downloadThroughput` is applied through WIP `Network.setEmulatedConditions` when the device's command list has it, else the call fails. `offline: true` fails and points to `agent-ios set offline on`; a positive `latency` or `uploadThroughput` fails before any change. The unthrottled values that clients send (latency 0, throughput -1 or 0) are accepted.
+- **Network conditions** (`emulateNetworkConditions`, `emulateNetworkConditionsByRule`; Puppeteer 25.18 sends `overrideNetworkState` and then `emulateNetworkConditionsByRule` with one rule for all URLs):
+  - Throttling is WIP `Network.setEmulatedConditions`, which iOS 16.4 to 17.x have with a download limit only (`bytesPerSecondLimit`), iOS 18.0 to 27.2 lack, and iOS 27.3 has with a download limit and latency (`bandwidth`, `latency`). A throttle that the device cannot emulate fails before any change and names the reason: a positive `latency` before iOS 27.3, any throttle on iOS 18.0 to 27.2, a positive `uploadThroughput` everywhere.
+  - The unthrottled values (latency 0, throughput -1 or 0) clear only a throttle that this attachment set, and otherwise send nothing, so a client's clear succeeds on every iOS version.
+  - `offline: true` is emulated through interception, as `agent-ios set offline on` does: every request fails (WIP's General error; a `fetch` rejects with a `TypeError` on WebKitGTK) until offline is turned off, `Network.disable` or the detach. A request that the session's CLI interception (`network route`, `set offline`, `set credentials`) handles is left to it. A request that a Fetch pattern also pauses is reported to that client too; its answer then gets "Invalid InterceptionId.".
+  - `emulateNetworkConditionsByRule` applies the first rule with an empty `urlPattern`; a rule for some URLs only fails unless it changes nothing, and `emulateOfflineServiceWorker` fails. `ruleIds` are "1", "2" and so on.
+  - `overrideNetworkState` has no effect: `navigator.onLine` and `navigator.connection` are not emulated.
 - Post data comes only from WIP's `requestWillBeSent`: post data above 64 KiB is left out of the event, and `getRequestPostData` keeps at most 1 MiB per request and 16 MiB in total.
 - A request in flight ends with `loadingFailed` (`net::ERR_ABORTED`, canceled) when its target is replaced or destroyed, when the record bound (2000 requests) pushes it out, or at a reset of the attachment's events.
   - **Reset on the same connection** (for example after lost or overflowed events): a request that the attachment holds paused through Fetch (`Fetch.requestPaused` without an answer) stays paused, because WebKit still holds it. It still needs an answer (`continueRequest`, `fulfillRequest` or `failRequest`); every other request in flight ends.

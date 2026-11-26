@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/edxeth/agent-ios/internal/core"
 	"github.com/edxeth/agent-ios/internal/devtools"
@@ -31,6 +32,9 @@ func init() {
 		Method{Name: "Emulation.setTouchEmulationEnabled", Levels: OnPage},
 		Method{Name: "Emulation.setDeviceMetricsOverride", Levels: OnPage, Handle: emuDeviceMetrics},
 		Method{Name: "Emulation.clearDeviceMetricsOverride", Levels: OnPage, Handle: emuClearDeviceMetrics},
+		Method{Name: "Emulation.clearGeolocationOverride", Levels: OnPage, Handle: emuClearGeolocation},
+		Method{Name: "Emulation.setCPUThrottlingRate", Levels: OnPage, Handle: emuCPUThrottling},
+		Method{Name: "Emulation.setDefaultBackgroundColorOverride", Levels: OnPage, Handle: emuBackgroundColor},
 	)
 }
 
@@ -41,6 +45,10 @@ type emuState struct {
 	media bool
 	prefs map[string]bool
 	ua    bool
+	net   condState // network conditions (network_conditions.go)
+	// offline is the attachment's offline emulation, read by the event
+	// translation without mu.
+	offline atomic.Bool
 }
 
 // mediaFeatures maps CDP media features to WIP user preferences
@@ -245,6 +253,78 @@ func emuGeolocation(ctx context.Context, call *Call) (any, Later, error) {
 		return nil, nil, err
 	}
 	return map[string]any{}, nil, nil
+}
+
+// emuClearGeolocation removes the attachment's geolocation shim: its
+// bootstrap part, and in the current document through the entry's release
+// (devtools.GeoRelease: the page's own geolocation, or another owner's
+// surviving override, such as the session's CLI "set geo"). Without an
+// override of this attachment it sends nothing (chrome-devtools-mcp's
+// emulate clears on every call without a geolocation).
+func emuClearGeolocation(ctx context.Context, call *Call) (any, Later, error) {
+	s := call.session
+	err := s.do(ctx, call.Method, core.ClassExclusive, func(ctx context.Context, mo *core.ManagedOp) error {
+		ps := s.pg.PS
+		key := "cdp:geo:" + string(s.owner)
+		return ps.State.Change(ctx, mo.Op.Caller(), func(c webkit.Caller) error {
+			e, ok := ps.State.Remove(key)
+			if !ok {
+				return nil
+			}
+			ps.State.RemovePart(devtools.GeoPartPrefix + string(s.owner))
+			if _, err := c.Send(ctx, "Page.setBootstrapScript", map[string]string{"source": ps.State.Boot.Script()}); err != nil {
+				ps.State.Put(e) // the detach still restores the current document
+				return fmt.Errorf("Page.setBootstrapScript: %w", err)
+			}
+			if e.Release != nil {
+				return e.Release(ctx, c)
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return map[string]any{}, nil, nil
+}
+
+// emuCPUThrottling accepts rate 1 (no throttling, which chrome-devtools-mcp's
+// emulate sends on every call) with no effect; WIP has no CPU throttling,
+// so any other rate fails with the reason.
+func emuCPUThrottling(_ context.Context, call *Call) (any, Later, error) {
+	var p struct {
+		Rate *float64 `json:"rate"`
+	}
+	if err := call.decode(&p); err != nil {
+		return nil, nil, err
+	}
+	if p.Rate == nil {
+		return nil, nil, invalidParam("rate: number value expected")
+	}
+	if *p.Rate != 1 {
+		return nil, nil, serverError("%s: CPU throttling cannot be emulated on iOS WebKit (rate %v); only rate 1, no throttling, is accepted", call.Method, *p.Rate)
+	}
+	return map[string]any{}, nil, nil
+}
+
+// emuBackgroundColor: WIP has no default background color override (no
+// command in any iOS command list or in WebKit main), and the page
+// snapshot always has an opaque background. A clear (no color) has no
+// effect; a color fails with the reason (Puppeteer's omitBackground).
+func emuBackgroundColor(_ context.Context, call *Call) (any, Later, error) {
+	var p struct {
+		Color *struct {
+			R, G, B float64
+			A       *float64
+		} `json:"color"`
+	}
+	if err := call.decode(&p); err != nil {
+		return nil, nil, err
+	}
+	if p.Color == nil {
+		return map[string]any{}, nil, nil
+	}
+	return nil, nil, serverError("%s: the default background color cannot be overridden on iOS WebKit, so a screenshot cannot have a transparent background", call.Method)
 }
 
 // errFixedViewport is the reply to a viewport change (design 5.3).

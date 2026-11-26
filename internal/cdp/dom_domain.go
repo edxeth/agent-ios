@@ -153,7 +153,15 @@ var errMissing = errors.New("the agent runtime is not installed in the page")
 // function (a, _), with this = THIS, its argument ARGS and the runtime
 // internals _; it answers {v: value} or {e: message}, or the missing
 // sentinel when the runtime of this version is not installed.
-const jsCall = `var I=window.__iwdp;if(!I||I.v!==%q)return %q;try{return {v:(%s).call(%s,%s,I._)}}catch(e){return {e:String(e&&e.message||e)}}`
+//
+// W is the main frame's window, also when the call runs on a node of a
+// same-origin iframe (Runtime.callFunctionOn runs in the node's own
+// window): the main frame's runtime gives the handles, so a
+// backendNodeId of an iframe node resolves in the main world as every
+// other (byHandle checks the document of the main frame's runtime), and
+// the page functions measure from the main frame's viewport. A
+// cross-origin frame cannot reach the main window and keeps its own.
+const jsCall = `var W=window;try{if(W.top.document)W=W.top}catch(e){}var I=W.__iwdp;if(!I||I.v!==%q)return %q;try{return {v:(%s).call(%s,%s,I._)}}catch(e){return {e:String(e&&e.message||e)}}`
 
 // run runs decl in the page: on the node np (nil: with this = null), with
 // args. The runtime is installed once when the page has none.
@@ -414,6 +422,16 @@ func domGetDocument(ctx context.Context, call *Call) (any, Later, error) {
 // for the document (WebKit InspectorDOMAgent::pushNodePathToFrontend).
 const wipNoDocument = "Document must have been requested"
 
+// wipPushRefused reports whether err is WIP's refusal to push a node for
+// want of the document: wipNoDocument, or the same refusal with an empty
+// message, which is what WebKit sends (pushNodePathToFrontend takes its
+// error string by value, WebKit 7615.3.12.11.2; webkit.Session reports
+// an error reply without a message as malformed, with the reply quoted).
+func wipPushRefused(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, wipNoDocument) || strings.Contains(s, "malformed error reply") && strings.Contains(s, `\"message\":\"\"`)
+}
+
 // domRequestNode maps a remote object to a WIP nodeId. WIP pushes a node
 // only after DOM.getDocument on its connection, and DOM.getDocument
 // forgets the node ids given before, so it is sent only after WIP refused
@@ -429,7 +447,7 @@ func domRequestNode(ctx context.Context, call *Call) (any, Later, error) {
 	err := call.session.withPage(ctx, call.Method, core.ClassRead, func(p *pageCall) error {
 		var err error
 		raw, err = p.send("DOM.requestNode", map[string]any{"objectId": np.ObjectID})
-		if err != nil && strings.Contains(err.Error(), wipNoDocument) {
+		if err != nil && wipPushRefused(err) {
 			if _, err = p.send("DOM.getDocument", nil); err == nil {
 				raw, err = p.send("DOM.requestNode", map[string]any{"objectId": np.ObjectID})
 			}
@@ -806,8 +824,8 @@ func domSetFileInputFiles(ctx context.Context, call *Call) (any, Later, error) {
 // ---- page functions ----
 
 // jsFrameOffset is offset(n): the client point of n's frame's viewport
-// origin in the main frame (0, 0 in the main document).
-const jsFrameOffset = `function offset(n){var w=n.ownerDocument.defaultView,x=0,y=0;for(;w&&w!==window&&w.frameElement;w=w.parent){var f=w.frameElement,r=f.getBoundingClientRect();x+=r.left+f.clientLeft;y+=r.top+f.clientTop}return {x:x,y:y}}`
+// origin in the main frame W (jsCall; 0, 0 in the main document).
+const jsFrameOffset = `function offset(n){var w=n.ownerDocument.defaultView,x=0,y=0;for(;w&&w!==W&&w.frameElement;w=w.parent){var f=w.frameElement,r=f.getBoundingClientRect();x+=r.left+f.clientLeft;y+=r.top+f.clientTop}return {x:x,y:y}}`
 
 // jsBoxModel is CDP's BoxModel from the border box and computed style;
 // quads are client points of the main frame.
@@ -856,7 +874,7 @@ const jsHandle = `function(a,_){return {doc:_.doc(),h:_.handle(this)}}`
 // its frame's window among its ancestors' frames from the main window.
 const jsDescribe = `function(a,_){
 function fp(n){var w=n.contentWindow,p=[];if(!w)return null;
-for(;w!==window;){var u=w.parent,i=0;if(u===w)return null;while(i<u.frames.length&&u.frames[i]!==w)i++;if(i===u.frames.length)return null;p.unshift(i);w=u}return p}
+for(;w!==W;){var u=w.parent,i=0;if(u===w)return null;while(i<u.frames.length&&u.frames[i]!==w)i++;if(i===u.frames.length)return null;p.unshift(i);w=u}return p}
 function d(n,depth){var o={h:_.handle(n),nodeType:n.nodeType,nodeName:n.nodeName,localName:n.localName||"",nodeValue:n.nodeValue||"",childNodeCount:n.childNodes.length},i;
 if(n.attributes){o.attributes=[];for(i=0;i<n.attributes.length;i++)o.attributes.push(n.attributes[i].name,n.attributes[i].value)}
 if(n.nodeType===9){o.documentURL=n.URL;o.baseURL=n.baseURI;o.xmlVersion=""}
@@ -868,7 +886,7 @@ return {doc:_.doc(),n:d(this,a.depth)}}`
 
 // jsFrameOwner is the handle of the element that shows the frame at
 // a.path (child-frame indexes from the main window).
-const jsFrameOwner = `function(a,_){var w=window,i;for(i=0;i<a.path.length;i++){w=w.frames[a.path[i]];if(!w)throw new Error("Frame with the given id was not found.")}
+const jsFrameOwner = `function(a,_){var w=W,i;for(i=0;i<a.path.length;i++){w=w.frames[a.path[i]];if(!w)throw new Error("Frame with the given id was not found.")}
 var fs=w.parent.document.querySelectorAll("iframe,frame,object,embed");for(i=0;i<fs.length;i++){if(fs[i].contentWindow===w)return {doc:_.doc(),h:_.handle(fs[i])}}
 throw new Error("Frame with the given id was not found.")}`
 

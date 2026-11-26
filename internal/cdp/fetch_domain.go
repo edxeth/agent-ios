@@ -685,6 +685,10 @@ func (ps *pageState) continueUnreported(ev wipEvent) {
 		stage = stageResponse
 	}
 	_, claimed := ps.s.c.s.claims.take(ev.claim, ps.s.fetchOwner(), false) // decided in the read loop (onWire)
+	if stage == stageRequest && e.Request != nil && ps.s.emu.offline.Load() {
+		ps.failOfflineSoon(ev.target, e.RequestID, e.Request.URL) // the attachment's offline rule (network_conditions.go)
+		return
+	}
 	if _, others := ps.otherRules(stage, e.url()); !claimed && !others {
 		ps.continueNow(ev.target, e.RequestID, stage)
 	}

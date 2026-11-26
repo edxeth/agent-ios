@@ -92,8 +92,24 @@ func (d *DesiredState) SetCachingDisabled(owner Owner, disabled bool) *bool {
 	return nil
 }
 
+// conditionKeys are the parameters of WIP Network.setEmulatedConditions
+// that set a condition: bytesPerSecondLimit (iOS 16.4 to 17.x), bandwidth
+// and latency (iOS 27.3 and WebKit main; WebKit commit c4a7ebcc295f).
+var conditionKeys = []string{"bytesPerSecondLimit", "bandwidth", "latency"}
+
+// limitsConditions reports whether Network.setEmulatedConditions params p
+// set a condition.
+func limitsConditions[V any](p map[string]V) bool {
+	for _, k := range conditionKeys {
+		if _, ok := p[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // SetEmulatedConditions records owner's Network.setEmulatedConditions
-// parameters; parameters without bytesPerSecondLimit remove owner's
+// parameters; parameters without a condition (conditionKeys) remove owner's
 // conditions. The latest owner's conditions are effective. It returns the
 // parameters to send when the effective conditions changed ({} for none).
 func (d *DesiredState) SetEmulatedConditions(owner Owner, params json.RawMessage) json.RawMessage {
@@ -105,7 +121,7 @@ func (d *DesiredState) SetEmulatedConditions(owner Owner, params json.RawMessage
 	d.ver++
 	before := d.effectiveCondsLocked()
 	var v map[string]json.RawMessage
-	if json.Unmarshal(params, &v) == nil && v["bytesPerSecondLimit"] != nil {
+	if json.Unmarshal(params, &v) == nil && limitsConditions(v) {
 		d.condSeq++
 		d.conds[owner] = condEntry{seq: d.condSeq, params: append(json.RawMessage(nil), params...)}
 	} else {
@@ -491,7 +507,7 @@ func legacyStateCall(ctx context.Context, ps *PageSession, owner Owner, c webkit
 		}
 		return empty, true, nil
 	case "Network.setEmulatedConditions":
-		_, limited := p["bytesPerSecondLimit"]
+		limited := limitsConditions(p)
 		if err := acquireNetworkFor(ctx, ps, owner, c, limited); err != nil {
 			return nil, true, err
 		}

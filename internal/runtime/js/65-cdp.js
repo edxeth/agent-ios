@@ -88,12 +88,25 @@
     o.altKey = !!(m & 1); o.ctrlKey = !!(m & 2); o.metaKey = !!(m & 4); o.shiftKey = !!(m & 8);
     return o;
   }
+  // deep: the element at client point (x, y), also inside same-origin
+  // frames (a CDP client gives main-frame points, as Chrome takes them); a
+  // cross-origin frame is the element itself.
+  function deep(x, y) {
+    var h = _.at(x, y), d, r;
+    while (h && /^I?FRAME$/.test(h.nodeName)) {
+      try { d = h.contentDocument; } catch (y2) { d = null; }
+      if (!d) { break; }
+      r = B.gbcr(h); x -= r.left + h.clientLeft; y -= r.top + h.clientTop;
+      h = _.at(x, y, d) || d.documentElement;
+    }
+    return h;
+  }
   function common(a, b) {
     while (a && !a.contains(b)) { a = a.parentNode; }
     return a;
   }
   A.cdpMouse = async function (e, g, a, r, x) {
-    var c = { x: g.x, y: g.y }, h = _.at(c.x, c.y) || document.documentElement, b = g.b || 0, k = g.op, o = mods(pi(c, g, g.bs), g.m);
+    var c = { x: g.x, y: g.y }, h = deep(c.x, c.y) || document.documentElement, b = g.b || 0, k = g.op, o = mods(pi(c, g, g.bs), g.m);
     await gap(x);
     if (k === "wheel") {
       o.deltaX = g.dx; o.deltaY = g.dy; o.deltaMode = 0;
@@ -130,7 +143,7 @@
   var SLOP = 10;
   A.cdpTouch = async function (e, g, a, r, x) {
     var k = g.op, ps = g.p || [], ts = [];
-    if (k === "start") { TS[g.a] = { t: _.at(ps[0].x, ps[0].y) || document.documentElement, s: ps[0], l: [], ok: true }; }
+    if (k === "start") { TS[g.a] = { t: deep(ps[0].x, ps[0].y) || document.documentElement, s: ps[0], l: [], ok: true }; }
     var T = TS[g.a];
     if (!T) { r.err = "no touch is active"; return; }
     try {

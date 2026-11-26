@@ -619,28 +619,63 @@ func consoleType(m wipConsoleMessage) string {
 }
 
 // cdpStack converts a WIP stack trace (an object with callFrames, or the
-// older bare array) to a CDP StackTrace with 0-based positions.
+// older bare array) to a CDP StackTrace with 0-based positions. WIP's
+// parentStackTrace (async frames, Console.json in WebKit 7615.3.12.11.2
+// and main) becomes CDP's parent; when its topCallFrameIsBoundary is true,
+// its first frame is the native function that scheduled the work (such as
+// setTimeout), which becomes the parent's description, as Chrome names
+// async boundaries. At most maxParentStacks parents are kept.
 func cdpStack(raw json.RawMessage) map[string]any {
-	type frame struct {
-		FunctionName string `json:"functionName"`
-		URL          string `json:"url"`
-		ScriptID     string `json:"scriptId"`
-		LineNumber   int    `json:"lineNumber"`
-		ColumnNumber int    `json:"columnNumber"`
-	}
-	var frames []frame
 	if len(raw) > 0 && raw[0] == '[' {
+		var frames []wipCallFrame
 		_ = json.Unmarshal(raw, &frames)
-	} else {
-		var st struct {
-			CallFrames []frame `json:"callFrames"`
+		if len(frames) == 0 {
+			return nil
 		}
-		_ = json.Unmarshal(raw, &st)
-		frames = st.CallFrames
+		return map[string]any{"callFrames": cdpFrames(frames)}
 	}
-	if len(frames) == 0 {
+	var st wipStackTrace
+	if json.Unmarshal(raw, &st) != nil || len(st.CallFrames) == 0 {
 		return nil
 	}
+	out := map[string]any{"callFrames": cdpFrames(st.CallFrames)}
+	cur := out
+	for p, n := st.Parent, 0; p != nil && n < maxParentStacks; p, n = p.Parent, n+1 {
+		frames, desc := p.CallFrames, ""
+		if p.TopCallFrameIsBoundary && len(frames) > 0 {
+			desc, frames = frames[0].FunctionName, frames[1:]
+		}
+		parent := map[string]any{"callFrames": cdpFrames(frames)}
+		if desc != "" {
+			parent["description"] = desc
+		}
+		cur["parent"] = parent
+		cur = parent
+	}
+	return out
+}
+
+// maxParentStacks bounds the async parents of one CDP stack trace.
+const maxParentStacks = 32
+
+// wipCallFrame and wipStackTrace are WIP's Console.CallFrame and
+// Console.StackTrace.
+type wipCallFrame struct {
+	FunctionName string `json:"functionName"`
+	URL          string `json:"url"`
+	ScriptID     string `json:"scriptId"`
+	LineNumber   int    `json:"lineNumber"`
+	ColumnNumber int    `json:"columnNumber"`
+}
+
+type wipStackTrace struct {
+	CallFrames             []wipCallFrame `json:"callFrames"`
+	TopCallFrameIsBoundary bool           `json:"topCallFrameIsBoundary"`
+	Parent                 *wipStackTrace `json:"parentStackTrace"`
+}
+
+// cdpFrames converts WIP call frames (1-based positions) to CDP's.
+func cdpFrames(frames []wipCallFrame) []map[string]any {
 	out := make([]map[string]any, len(frames))
 	for i, f := range frames {
 		out[i] = map[string]any{
@@ -648,7 +683,7 @@ func cdpStack(raw json.RawMessage) map[string]any {
 			"lineNumber": max(f.LineNumber-1, 0), "columnNumber": max(f.ColumnNumber-1, 0),
 		}
 	}
-	return map[string]any{"callFrames": out}
+	return out
 }
 
 // nowMillis is a CDP Runtime.Timestamp: milliseconds since the epoch.
