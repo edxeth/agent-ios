@@ -83,7 +83,7 @@ var (
 func TestFrameMainFailedDisableStaysPending(t *testing.T) {
 	fh := newFrameHarness(t)
 	h := fh.h
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, _, msg := fh.run("frame", "#kid"); code != 0 {
 		t.Fatalf("frame #kid: %s", msg)
 	}

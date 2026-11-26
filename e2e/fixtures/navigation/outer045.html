@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><title>Outer 045</title></head>
+<body>
+<h1>Outer 045</h1>
+<iframe></iframe>
+<script>
+var o = new URLSearchParams(location.search).get("other");
+if (o) { document.querySelector("iframe").src = o + "/child045.html?nested=1"; }
+</script>
+</body></html>

@@ -21,8 +21,8 @@ import (
 // section 3.8; agent-browser "frame"). "frame <iframe>" makes the frame's
 // execution context the scope of the session's later commands on this
 // page: the runtime is installed and called there (core.Op
-// SetExecutionContext), so snapshot, get, is, find, wait and the actions
-// work in the frame's document, same-origin or cross-origin. The scope
+// SetExecutionContext), so snapshot, get, is, find, wait, eval and the
+// actions work in the frame's document, same-origin or cross-origin. The scope
 // belongs to the session, its lease epoch and the top document: a new
 // lease or a navigation of the top document ends it, and "frame main"
 // returns to the top document. Navigation commands and screenshot always
@@ -41,11 +41,16 @@ import (
 // The runtime state that the session leaves in frame contexts is released
 // with the lease (core.Scheduler.ReleaseExecutionContexts), or at the next
 // owner's first runtime command when that release did not reach it
-// (releaseEarlierFrames). The iframe element becomes a frame id through its index in
-// window.frames, which is the order of the frame's children in
-// Page.getResourceTree. A frame without a context in this page's target
-// (iOS 26 and later can put cross-origin frames in their own targets) is
-// not supported (design 3.8, 4.3).
+// (releaseEarlierFrames). The iframe element becomes a frame id through the
+// path of its window's indexes in window.frames from the current window
+// (one step for an iframe of the current document, more for a ref into a
+// same-origin frame), which is the order of the frames' children in
+// Page.getResourceTree. Unnamed, nested and cross-origin frames that run
+// in the page's process are found this way. A frame without a context in
+// this page's target (WebKit with site isolation puts cross-site frames in
+// their own targets) is not supported (design 3.8, 4.3); iOS 26.5 Safari
+// in the Simulator still runs cross-site frames in the page's target
+// (checked 2026-11-26).
 func init() {
 	Register(&Command{
 		Name:    "frame",
@@ -154,15 +159,25 @@ func leaveFrame(ps *core.PageSession, op *core.Op, end bool) {
 
 // frameInfo is what the page reports about a frame element.
 type frameInfo struct {
-	Tag    string `json:"tag"`
-	Src    string `json:"src"`
-	Index  int    `json:"index"`  // in window.frames; -1: not found
-	Frames int    `json:"frames"` // window.frames.length
+	Tag  string      `json:"tag"`
+	Src  string      `json:"src"`
+	Path []frameStep `json:"path"` // from the current window down to the frame; null: not found
+}
+
+// frameStep is one level of a frame's path: the index of the next window
+// in its parent's window.frames, and that parent's window.frames.length.
+type frameStep struct {
+	Index  int `json:"index"`
+	Frames int `json:"frames"`
 }
 
 // frameExpr resolves a target with the runtime's resolver (pick) in the
-// current scope and finds its window among window.frames.
-const frameExpr = `(function(){var r=window.__iwdp.call("pick",%s);if(!r.ok){throw new Error(r.error.code+": "+r.error.message)}var e=r.value,t=e.localName,i=-1;if(t==="iframe"||t==="frame"){for(var k=0;k<window.frames.length;k++){if(window.frames[k]===e.contentWindow){i=k;break}}}return {tag:t,src:e.getAttribute("src")||"",index:i,frames:window.frames.length}})()`
+// current scope and finds the path of its window through window.frames
+// from the current window: one step for an iframe of the current
+// document, more for an iframe in a same-origin frame of it (a ref of a
+// snapshot that walked that frame). A window's parent and its frames are
+// readable also across origins.
+const frameExpr = `(function(){var r=window.__iwdp.call("pick",%s);if(!r.ok){throw new Error(r.error.code+": "+r.error.message)}var e=r.value,t=e.localName,p=[],w=(t==="iframe"||t==="frame")?e.contentWindow:null;while(w&&w!==window){var u=w.parent,i=-1;for(var k=0;u!==w&&k<u.frames.length;k++){if(u.frames[k]===w){i=k;break}}if(i<0){w=null;break}p.unshift({index:i,frames:u.frames.length});w=u}return {tag:t,src:e.getAttribute("src")||"",path:w?p:null}})()`
 
 // frameNode is one frame of Page.getResourceTree.
 type frameNode struct {
@@ -245,7 +260,7 @@ func runFrame(ctx context.Context, env Env, in Input) (Result, error) {
 	if info.Tag != "iframe" && info.Tag != "frame" {
 		return Result{}, usagef("frame %s: the target is a <%s>, not an iframe", t, info.Tag)
 	}
-	if info.Index < 0 {
+	if len(info.Path) == 0 {
 		return Result{}, fmt.Errorf("frame %s: the iframe has no window (it is not in the document, or has no content yet)", t)
 	}
 	f := framesOf(ps, true)
@@ -263,10 +278,13 @@ func runFrame(ctx context.Context, env Env, in Input) (Result, error) {
 		return Result{}, fmt.Errorf("frame %s: decoding Page.getResourceTree: %w", t, err)
 	}
 	at := tree.FrameTree.find(parent)
-	if at == nil || len(at.ChildFrames) != info.Frames {
-		return Result{}, &runtime.Error{Code: "unsupported", Message: fmt.Sprintf("frame %s: the page lists %d frames here and the protocol another number; a frame in its own target (iOS 26 and later) or inside a shadow root is not supported (design 3.8, 4.3)", t, info.Frames)}
+	for _, s := range info.Path {
+		if at == nil || len(at.ChildFrames) != s.Frames || s.Index >= len(at.ChildFrames) {
+			return Result{}, &runtime.Error{Code: "unsupported", Message: fmt.Sprintf("frame %s: the page lists %d frames here and the protocol another number; a frame in its own target (iOS 26 and later) or inside a shadow root is not supported (design 3.8, 4.3)", t, s.Frames)}
+		}
+		at = &at.ChildFrames[s.Index]
 	}
-	frameID := at.ChildFrames[info.Index].Frame.ID
+	frameID := at.Frame.ID
 	var ec core.ExecContext
 	for end := time.Now().Add(frameContextWait); ; sleepUntil(ctx, time.Now().Add(20*time.Millisecond)) {
 		if ec = ps.Sched.FrameContext(frameID); ec.ID != 0 || time.Now().After(end) || ctx.Err() != nil {

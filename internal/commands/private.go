@@ -166,7 +166,10 @@ var privateReads = map[string]privateRead{
 		"the caller's path and the labels of --annotate",
 		object(fields{
 			"path": scalar, "sha256": scalar, "unchanged": scalar,
-			"labels": listOf(object(fields{"n": scalar, "ref": scalar, "role": scalar, "name": scalar})),
+			"labels": listOf(object(fields{
+				"n": scalar, "ref": scalar, "role": scalar, "name": scalar,
+				"box": object(fields{"x": scalar, "y": scalar, "width": scalar, "height": scalar}),
+			})),
 		}),
 		screenshotShown,
 	},

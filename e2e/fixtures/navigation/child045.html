@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><title>Child 045</title></head>
+<body>
+<h1>Child 045</h1>
+<input type="checkbox" id="agree" aria-label="Agree">
+<button id="later" onclick="setTimeout(function () { var p = document.createElement('p'); p.id = 'late'; p.textContent = 'Late text'; document.body.appendChild(p); }, 300)">Later</button>
+<button id="log" onclick="var tag = location.search ? 'nested' : 'child'; console.log('hello from ' + tag + ' ' + location.origin); setTimeout(function () { throw new Error('boom in ' + tag); }, 0)">Log</button>
+</body></html>

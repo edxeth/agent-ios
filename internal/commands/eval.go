@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/edxeth/agent-ios/internal/core"
 	"github.com/edxeth/agent-ios/internal/tools"
 	"github.com/edxeth/agent-ios/internal/webkit"
 )
@@ -16,7 +17,10 @@ import (
 // number or a boolean prints raw on one line. A returned Promise is
 // awaited. A thrown value or a rejected Promise is the command's error,
 // with its message and the JavaScript stack where WebKit gives one
-// (tools.JSException), and exits 1.
+// (tools.JSException), and exits 1. After "frame <iframe>" the expression
+// runs in the selected frame's execution context (frame.go), also in a
+// cross-origin frame, and the JSON data's "origin" is that frame's URL, as
+// agent-browser's data.origin; without a frame it is the page's URL.
 func init() {
 	Register(&Command{
 		Name:    "eval",
@@ -39,12 +43,26 @@ type evalData struct {
 	Subtype     string          `json:"subtype,omitempty"`
 	Value       json.RawMessage `json:"value,omitempty"`
 	Description string          `json:"description,omitempty"`
+	// Origin is the URL of the document the expression ran in, read
+	// after the evaluation; omitted when it could not be read (the
+	// content boundary then names the origin "unknown").
+	Origin string `json:"origin,omitempty"`
 }
 
+// evalOriginExpr reads the URL of the evaluation's document.
+const evalOriginExpr = "location.href"
+
 func runEval(ctx context.Context, env Env, in Input) (Result, error) {
-	_, c, err := pageAndCaller(ctx, env)
+	ps, c, err := pageAndCaller(ctx, env)
 	if err != nil {
 		return Result{}, err
+	}
+	if oe, ok := env.(interface{ Op() *core.Op }); ok && oe.Op() != nil && ps.Runtime != nil && ps.Refs != nil {
+		// The session's frame scope (frame.go): the operation's caller
+		// sends the evaluation to the frame's execution context.
+		if _, err := openRuntime(ctx, env); err != nil {
+			return Result{}, err
+		}
 	}
 	res, err := tools.EvaluateScriptWithOptions(ctx, c, in.Args[0], tools.EvalOptions{ReturnByValue: true, AwaitPromise: true})
 	if err != nil {
@@ -58,7 +76,22 @@ func runEval(ctx context.Context, env Env, in Input) (Result, error) {
 	if res.Result.Value == nil {
 		data.Description = res.Result.Description
 	}
+	data.Origin = evalOrigin(ctx, c)
 	return Result{Text: text, Data: data}, nil
+}
+
+// evalOrigin returns the URL of the document that c evaluates in, or ""
+// when it cannot be read (the expression navigated, or the frame went).
+func evalOrigin(ctx context.Context, c webkit.Caller) string {
+	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": evalOriginExpr, "returnByValue": true})
+	if err != nil {
+		return ""
+	}
+	s, err := evalValue[string](raw)
+	if err != nil {
+		return ""
+	}
+	return s
 }
 
 // evalText renders a result as the legacy eval printed it.

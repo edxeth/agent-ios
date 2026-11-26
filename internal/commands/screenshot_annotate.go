@@ -95,12 +95,25 @@ type captureArea struct {
 	Height float64 `json:"height"`
 }
 
-// shotLabel is one label of an annotated capture.
+// shotLabel is one label of an annotated capture. Box is the ref's box
+// in whole CSS pixels, as agent-browser's annotation box: in document
+// coordinates, or relative to the element of a --selector capture. A ref
+// inside a same-origin frame has its box in the top document's
+// coordinates too (90-overlay.js).
 type shotLabel struct {
-	N    int    `json:"n"`
-	Ref  string `json:"ref"`
-	Role string `json:"role"`
-	Name string `json:"name"`
+	N    int       `json:"n"`
+	Ref  string    `json:"ref"`
+	Role string    `json:"role"`
+	Name string    `json:"name"`
+	Box  *labelBox `json:"box,omitempty"`
+}
+
+// labelBox is the box of an annotation label.
+type labelBox struct {
+	X      int64 `json:"x"`
+	Y      int64 `json:"y"`
+	Width  int64 `json:"width"`
+	Height int64 `json:"height"`
 }
 
 // line is the label in the text of screenshot; private mode makes it from
@@ -209,16 +222,25 @@ func (w *w3bPage) drawOverlay(ctx context.Context, full bool, sel string) ([]sho
 	}
 	args["refs"] = ids
 	var drawn struct {
-		Refs []string    `json:"refs"`
-		Area captureArea `json:"area"`
+		Refs  []string      `json:"refs"`
+		Boxes []captureArea `json:"boxes"`
+		Area  captureArea   `json:"area"`
 	}
 	if err := w.rt.Call(ctx, "overlay", args, &drawn); err != nil {
 		// A failed draw can leave a partial overlay.
 		return nil, nil, errors.Join(fmt.Errorf("screenshot --annotate: drawing the overlay: %w", err), w.removeOverlay(ctx, nil))
 	}
 	out := make([]shotLabel, 0, len(drawn.Refs))
-	for _, r := range drawn.Refs {
-		out = append(out, byRef[r])
+	for i, r := range drawn.Refs {
+		l := byRef[r]
+		if i < len(drawn.Boxes) {
+			b := drawn.Boxes[i]
+			if sel != "" {
+				b.X, b.Y = b.X-drawn.Area.X, b.Y-drawn.Area.Y
+			}
+			l.Box = &labelBox{X: int64(math.Round(b.X)), Y: int64(math.Round(b.Y)), Width: int64(math.Round(b.Width)), Height: int64(math.Round(b.Height))}
+		}
+		out = append(out, l)
 	}
 	if sel == "" {
 		return out, nil, nil

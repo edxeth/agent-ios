@@ -102,7 +102,7 @@ func runBehindChange(t *testing.T, h *rtHarness, blocked func() string, args ...
 func TestW3bFrameOwnerChangesWaitForARunningChange(t *testing.T) {
 	fh := newFrameHarness(t)
 	h := fh.h
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	owner := frameOwner("agent")
 	r := runBehindChange(t, h, func() string {
 		if n := ownerCalls(h, "Runtime.enable"); n != 0 || h.ps.State.Needs("Runtime") {

@@ -22,7 +22,7 @@ func TestOwnerChangeKeepsRefusedFrameCleanup(t *testing.T) {
 	h := fh.h
 	h.page.set("get", okEnv("Title"))
 	h.page.set("release", okEnv(true))
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, _, msg := fh.run("frame", "#kid"); code != 0 {
 		t.Fatalf("frame: %s", msg)
 	}
@@ -89,7 +89,7 @@ func TestOwnerChangeForgetsAFrameCleanupThatReachedThePageAndFailed(t *testing.T
 	h := fh.h
 	h.page.set("get", okEnv("Title"))
 	h.page.set("release", errEnv("busy", "the frame is busy"))
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, _, msg := fh.run("frame", "#kid"); code != 0 {
 		t.Fatalf("frame: %s", msg)
 	}
@@ -124,7 +124,7 @@ func TestOwnerChangeKeepsARefusedFrameAcrossARetryThatSendsNothing(t *testing.T)
 			h := fh.h
 			h.page.set("get", okEnv("Title"))
 			h.page.set("release", okEnv(true))
-			fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+			fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 			if code, _, msg := fh.run("frame", "#kid"); code != 0 {
 				t.Fatalf("frame: %s", msg)
 			}
@@ -185,7 +185,7 @@ func TestOwnerChangeKeepsAFrameContextWhenTheBudgetEndedFirst(t *testing.T) {
 	h := fh.h
 	h.page.set("get", okEnv("Title"))
 	h.page.set("release", okEnv(true))
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, _, msg := fh.run("frame", "#kid"); code != 0 {
 		t.Fatalf("frame: %s", msg)
 	}

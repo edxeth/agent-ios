@@ -137,11 +137,15 @@ func newFrameHarness(t *testing.T) *frameHarness {
 		h.f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 1, "type": "normal", "frameId": "main"}})
 		h.f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 7, "type": "normal", "frameId": "f-kid"}})
 		h.f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 8, "type": "user", "frameId": "f-kid"}})
+		h.f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 9, "type": "normal", "frameId": "f-deep"}})
 		return map[string]any{}, nil
 	})
 	h.f.Result("Page.getResourceTree", map[string]any{"frameTree": map[string]any{
-		"frame":       map[string]any{"id": "main"},
-		"childFrames": []any{map[string]any{"frame": map[string]any{"id": "f-same"}}, map[string]any{"frame": map[string]any{"id": "f-kid"}}},
+		"frame": map[string]any{"id": "main"},
+		"childFrames": []any{
+			map[string]any{"frame": map[string]any{"id": "f-same"}, "childFrames": []any{map[string]any{"frame": map[string]any{"id": "f-deep"}}}},
+			map[string]any{"frame": map[string]any{"id": "f-kid"}},
+		},
 	}})
 	return fh
 }
@@ -207,7 +211,7 @@ func TestFrame(t *testing.T) {
 	if code, out, _ := run("frame", "main"); code != 0 || out != "commands run in the main document" {
 		t.Fatalf("frame main: %d %q", code, out)
 	}
-	setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, out, errOut := run("frame", "#kid"); code != 0 || !strings.Contains(out, "frame #kid (child.html): later commands") {
 		t.Fatalf("frame #kid: %d %q %q", code, out, errOut)
 	}
@@ -259,19 +263,19 @@ func TestFrame(t *testing.T) {
 		t.Fatalf("after frame main the scope is %q", id)
 	}
 
-	setInfo(map[string]any{"tag": "iframe", "src": "https://other.test/", "index": 0, "frames": 2})
+	setInfo(map[string]any{"tag": "iframe", "src": "https://other.test/", "path": []any{map[string]any{"index": 0, "frames": 2}}})
 	if code, _, errOut := run("frame", "#ad"); code != ExitError || !strings.Contains(errOut, "unsupported") || !strings.Contains(errOut, "no execution context for this frame") {
 		t.Fatalf("frame without a context: exit %d, %q", code, errOut)
 	}
-	setInfo(map[string]any{"tag": "iframe", "src": "x.html", "index": 0, "frames": 3})
+	setInfo(map[string]any{"tag": "iframe", "src": "x.html", "path": []any{map[string]any{"index": 0, "frames": 3}}})
 	if code, _, errOut := run("frame", "#x"); code != ExitError || !strings.Contains(errOut, "the page lists 3 frames here") {
 		t.Fatalf("frame list mismatch: exit %d, %q", code, errOut)
 	}
-	setInfo(map[string]any{"tag": "iframe", "src": "", "index": -1, "frames": 2})
+	setInfo(map[string]any{"tag": "iframe", "src": "", "path": nil})
 	if code, _, errOut := run("frame", "#detached"); code != ExitError || !strings.Contains(errOut, "has no window") {
 		t.Fatalf("frame without a window: exit %d, %q", code, errOut)
 	}
-	setInfo(map[string]any{"tag": "div", "src": "", "index": -1, "frames": 2})
+	setInfo(map[string]any{"tag": "div", "src": "", "path": nil})
 	if code, _, errOut := run("frame", "#box"); code != ExitUsage || !strings.Contains(errOut, "not an iframe") {
 		t.Fatalf("frame on a div: exit %d, %q", code, errOut)
 	}
@@ -281,11 +285,30 @@ func TestFrame(t *testing.T) {
 	}
 }
 
+// Contract 9 (agent-browser 0.45 frame): an iframe inside a same-origin
+// frame of the current document (a ref of a snapshot that walked that
+// frame) is found through the path of window indexes, level by level of
+// Page.getResourceTree; a level whose frame count differs is unsupported.
+func TestFrameFollowsANestedPath(t *testing.T) {
+	fh := newFrameHarness(t)
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "deep.html", "path": []any{map[string]any{"index": 0, "frames": 2}, map[string]any{"index": 0, "frames": 1}}})
+	if code, out, errOut := fh.run("frame", "#deep"); code != 0 || !strings.Contains(out, "frame #deep (deep.html)") {
+		t.Fatalf("frame of a nested iframe: %d %q %q", code, out, errOut)
+	}
+	if id, ctxID, _ := fh.scopeOf(); id != "f-deep" || ctxID != 9 {
+		t.Fatalf("nested frame scope %q, context %d; want f-deep, 9", id, ctxID)
+	}
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "deep.html", "path": []any{map[string]any{"index": 0, "frames": 2}, map[string]any{"index": 0, "frames": 2}}})
+	if code, _, errOut := fh.run("frame", "#deep"); code != ExitError || !strings.Contains(errOut, "unsupported") || !strings.Contains(errOut, "the page lists 2 frames here") {
+		t.Fatalf("nested frame list mismatch: exit %d, %q", code, errOut)
+	}
+}
+
 // A frame without a src (srcdoc, or filled by a script) is named without
 // an empty "()" (device check of 2026-11-11).
 func TestFrameWithoutASrc(t *testing.T) {
 	fh := newFrameHarness(t)
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, out, errOut := fh.run("frame", "#doc"); code != 0 || !strings.HasPrefix(out, "frame #doc: later commands") {
 		t.Fatalf("frame #doc without a src: %d %q %q", code, out, errOut)
 	}
@@ -311,7 +334,7 @@ func TestFrameKeepsAnotherRuntimeOwnersDomain(t *testing.T) {
 			t.Fatal("the page's context reports did not reach the scheduler")
 		}
 	}
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, out, errOut := fh.run("frame", "#kid"); code != 0 || !strings.Contains(out, "frame #kid (child.html)") {
 		t.Fatalf("frame #kid: %d %q %q", code, out, errOut)
 	}
@@ -344,7 +367,7 @@ func TestOwnerChangeReleasesEarlierFrameContexts(t *testing.T) {
 	h := fh.h
 	h.page.set("get", okEnv("Title"))
 	h.page.set("release", okEnv(true))
-	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "index": 1, "frames": 2})
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "child.html", "path": []any{map[string]any{"index": 1, "frames": 2}}})
 	if code, _, errOut := fh.run("frame", "#kid"); code != 0 {
 		t.Fatalf("frame #kid: %q", errOut)
 	}

@@ -14,7 +14,8 @@ import (
 
 // evalPage is a fake page whose Runtime.evaluate answers each expression
 // with the result in results (a Runtime.evaluate reply); an expression
-// that results does not name fails the test.
+// that results does not name fails the test. The read of the document's
+// URL after each evaluation (evalOriginExpr) answers https://eval.test/.
 func evalPage(t *testing.T, results map[string]any) *devtoolstest.Page {
 	t.Helper()
 	p := devtoolstest.New(t, "https://eval.test")
@@ -26,6 +27,9 @@ func evalPage(t *testing.T, results map[string]any) *devtoolstest.Page {
 			t.Errorf("Runtime.evaluate params %s: %v", c.Params, err)
 		}
 		r, ok := results[params.Expression]
+		if !ok && params.Expression == evalOriginExpr {
+			return evalResult(map[string]any{"type": "string", "value": "https://eval.test/"}), nil
+		}
 		if !ok {
 			t.Errorf("unexpected Runtime.evaluate of %q", params.Expression)
 			return nil, &fakewebkit.Error{Code: -32000, Message: "unexpected expression"}
@@ -79,7 +83,8 @@ func TestEvalPrintsTheLegacyOutput(t *testing.T) {
 }
 
 // --json prints the result's type and value (or its description when the
-// value has no JSON form), so that agents read it without guessing.
+// value has no JSON form), so that agents read it without guessing, and
+// the URL of the document it ran in as origin (agent-browser data.origin).
 func TestEvalJSONData(t *testing.T) {
 	p := evalPage(t, map[string]any{
 		"n":   evalResult(map[string]any{"type": "number", "value": 42, "description": "42"}),
@@ -88,10 +93,10 @@ func TestEvalJSONData(t *testing.T) {
 		"sym": evalResult(map[string]any{"type": "symbol", "description": "Symbol(x)"}),
 	})
 	for expr, want := range map[string]string{
-		"n":   `{"type":"number","value":42}`,
-		"s":   `{"type":"string","value":"x"}`,
-		"u":   `{"type":"undefined"}`,
-		"sym": `{"type":"symbol","description":"Symbol(x)"}`,
+		"n":   `{"type":"number","value":42,"origin":"https://eval.test/"}`,
+		"s":   `{"type":"string","value":"x","origin":"https://eval.test/"}`,
+		"u":   `{"type":"undefined","origin":"https://eval.test/"}`,
+		"sym": `{"type":"symbol","description":"Symbol(x)","origin":"https://eval.test/"}`,
 	} {
 		res, err := evalCmd(t, p, expr)
 		if err != nil {

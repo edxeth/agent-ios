@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><title>Frames 045</title>
+<style>
+body { margin: 0; }
+iframe { border: 0; }
+#scrolled { position: absolute; left: 37px; top: 253px; width: 300px; height: 150px; border: 5px solid #000; padding: 7px; }
+#scaled { position: absolute; left: 400px; top: 253px; width: 200px; height: 100px; border: 3px solid #000; padding: 2px; transform: scale(2); transform-origin: 0 0; }
+</style></head>
+<body>
+<h1>Top 045</h1>
+<iframe title="Outer" src="outer045.html"></iframe>
+<iframe class="xo"></iframe>
+<iframe id="scrolled" src="scroll045.html"></iframe>
+<iframe id="scaled" src="scroll045.html"></iframe>
+<script>
+// ?other=<origin> puts the child page of the other site into the unnamed
+// .xo frame and into the frame nested in outer045.html.
+var o = new URLSearchParams(location.search).get("other");
+if (o) {
+  document.querySelector(".xo").src = o + "/child045.html";
+  document.querySelector("iframe[title=Outer]").src = "outer045.html?other=" + encodeURIComponent(o);
+}
+</script>
+</body></html>
