@@ -165,13 +165,13 @@ func TestEvalLinesAllGoToTheRegistry(t *testing.T) {
 		want string // the stdout of a run that exits 0
 	}{
 		{"page flag before the expression", []string{"eval", "--page", f.URL, "6*7"}, "evaluated:6*7\n"},
-		{"page flag after the expression", []string{"eval", "6*7", "--page", f.URL, "--json"}, `{"type":"string","value":"evaluated:6*7"}` + "\n"},
-		{"negative expression before --json", []string{"eval", "-1", "--json"}, `{"type":"string","value":"evaluated:-1"}` + "\n"},
-		{"negative expression after --json", []string{"eval", "--json", "-1"}, `{"type":"string","value":"evaluated:-1"}` + "\n"},
+		{"page flag after the expression", []string{"eval", "6*7", "--page", f.URL, "--json"}, `{"type":"string","value":"evaluated:6*7","origin":"evaluated:location.href"}` + "\n"},
+		{"negative expression before --json", []string{"eval", "-1", "--json"}, `{"type":"string","value":"evaluated:-1","origin":"evaluated:location.href"}` + "\n"},
+		{"negative expression after --json", []string{"eval", "--json", "-1"}, `{"type":"string","value":"evaluated:-1","origin":"evaluated:location.href"}` + "\n"},
 		{"negative fraction", []string{"eval", "-.5"}, "evaluated:-.5\n"},
 		// Review ws2a-r2-a F5: only known flags are flags (WS2a round 4).
 		{"unary minus on a call", []string{"eval", "-Math.abs(2)"}, "evaluated:-Math.abs(2)\n"},
-		{"unary minus on a property", []string{"eval", "-window.scrollY", "--json"}, `{"type":"string","value":"evaluated:-window.scrollY"}` + "\n"},
+		{"unary minus on a property", []string{"eval", "-window.scrollY", "--json"}, `{"type":"string","value":"evaluated:-window.scrollY","origin":"evaluated:location.href"}` + "\n"},
 		{"expression after --", []string{"eval", "--", "--x"}, "evaluated:--x\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
