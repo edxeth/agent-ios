@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -338,11 +339,24 @@ func TestDevtoolsStateLoadThatFailsChangesNothing(t *testing.T) {
 	}
 }
 
+// storageFence is the key that storageEventRecorder writes and removes to
+// mark how far WebKit has delivered the storage events.
+const storageFence = "__iwdp-storage-fence"
+
 // storageEventRecorder adds a same-origin iframe to the page that records
 // the storage events it gets (W4 repair round 3, brief item 5): other
 // documents of the origin see every write of a state load. It returns a
-// function that returns the events recorded since the last call, as
-// "<area> <key> <oldValue> -> <newValue>" (a value as JSON, null for none).
+// function that returns the events of the writes made since the last call,
+// as "<area> <key> <oldValue> -> <newValue>" (a value as JSON, null for
+// none).
+//
+// WebKit delivers storage events to other documents asynchronously, in the
+// order of the writes of each storage area, and on a loaded host often
+// later than 200 ms (FIX-Z): a fixed wait read too early, or took the
+// late events of the setup's writes for the load's. So the function writes
+// and removes a fence key in both areas and waits, until the test's
+// deadline, for the iframe to get both removals; every event before them
+// belongs to the earlier writes, and the fence's own events are dropped.
 func storageEventRecorder(t *testing.T) func() []string {
 	t.Helper()
 	eval(t, `(function () {
@@ -356,19 +370,41 @@ func storageEventRecorder(t *testing.T) func() []string {
   });
 })()`)
 	t.Cleanup(func() { eval(t, `document.getElementById("iwdp-storage-events").remove()`) })
+	fences := 0
 	return func() []string {
-		// Events reach the iframe in a later task of the page.
-		time.Sleep(200 * time.Millisecond)
+		fences++
+		mark := strconv.Itoa(fences)
+		eval(t, fmt.Sprintf(`[localStorage, sessionStorage].forEach(function (s) { s.setItem(%q, %q); s.removeItem(%q); })`, storageFence, mark, storageFence))
+		ends := map[string]bool{}
+		for _, area := range []string{"local", "session"} {
+			ends[area+" "+storageFence+" "+strconv.Quote(mark)+" -> null"] = true
+		}
 		var events []string
-		raw := eval(t, "JSON.stringify(window.__iwdpEvents.splice(0))")
-		var text string
-		if err := json.Unmarshal(raw, &text); err != nil {
-			t.Fatal(err)
+		for {
+			raw := eval(t, "JSON.stringify(window.__iwdpEvents.splice(0))")
+			var text string
+			if err := json.Unmarshal(raw, &text); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range got {
+				if f := strings.Fields(e); len(f) > 1 && f[1] == storageFence {
+					delete(ends, e)
+					continue
+				}
+				events = append(events, e)
+			}
+			if len(ends) == 0 {
+				return events
+			}
+			if d, ok := t.Deadline(); ok && time.Now().After(d) {
+				t.Fatalf("the page got no storage event of the fence %s by the test's deadline; events so far %q", mark, events)
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
-		if err := json.Unmarshal([]byte(text), &events); err != nil {
-			t.Fatal(err)
-		}
-		return events
 	}
 }
 
