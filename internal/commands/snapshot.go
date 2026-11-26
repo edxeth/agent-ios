@@ -16,7 +16,7 @@ func init() {
 			{Name: "interactive", Short: "i", Type: FlagBool, Help: "show only elements with refs"},
 			{Name: "compact", Short: "c", Type: FlagBool, Help: "keep lines with refs, values or text and their ancestors"},
 			{Name: "depth", Short: "d", Type: FlagInt, Help: "deepest level shown (0 = top level only)"},
-			{Name: "selector", Short: "s", Type: FlagString, Help: "snapshot only this element: CSS selector, locator or @ref"},
+			{Name: "selector", Short: "s", Type: FlagString, Help: "scope the snapshot to every element matching a CSS selector or locator, or to a @ref"},
 			{Name: "urls", Short: "u", Type: FlagBool, Help: "add url= to links"},
 		},
 		Page:    LeasedPage,

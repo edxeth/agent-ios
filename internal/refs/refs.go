@@ -157,7 +157,7 @@ func (t *Table) Lookup(n int, gen uint64) (Entry, error) {
 	case !ok:
 		return Entry{}, &Error{Code: "unknown_ref", Ref: n, Message: "no snapshot produced " + ref}
 	case e.Generation < gen:
-		return Entry{}, &Error{Code: "stale_ref", Ref: n, Message: "page navigated since the snapshot that produced " + ref + "; run snapshot"}
+		return Entry{}, &Error{Code: "stale_ref", Ref: n, Message: "Ref " + ref + " is from a document that is no longer loaded (the page navigated or the frame was removed). Take a new snapshot and use a fresh ref."}
 	}
 	return e, nil
 }

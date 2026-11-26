@@ -138,21 +138,27 @@
     return "no snapshot produced " + at;
   }
 
+  // replaced: agent-browser 0.45.0's message for a ref whose document is
+  // gone (element.rs; internal/refs Lookup has the same text).
+  function replaced(at) {
+    return "Ref " + at + " is from a document that is no longer loaded (the page navigated or the frame was removed). Take a new snapshot and use a fresh ref.";
+  }
+
   // resolveRef: resolve order steps 3 to 5 of design 3.3. A ref that a
   // reset of the page maps dropped belongs to an earlier owner: it is
   // unknown, never found again by role and name (design 3.1). A ref into a
-  // frame that shows another document now is stale.
+  // frame that shows another document now, or that was removed, is stale.
   function resolveRef(spec, call) {
     var at = "@" + spec.ref;
     if (spec.doc && spec.doc !== _.doc()) {
-      throw fail("stale_ref", "page navigated since the snapshot that produced " + at + "; run snapshot");
+      throw fail("stale_ref", replaced(at));
     }
     var el = _.refGet(spec.ref);
     if (!el) {
       var dropped = _.resetFrom(Number(String(spec.ref).slice(1)));
       if (dropped) { throw fail("unknown_ref", droppedRef(dropped, at)); }
     } else if (!docCurrent(B.ownerDoc(el))) {
-      throw fail("stale_ref", "frame navigated since the snapshot that produced " + at + "; run snapshot");
+      throw fail("stale_ref", replaced(at));
     }
     if (el && B.connected(el)) { return el; }
     if (spec.unique && spec.role) {

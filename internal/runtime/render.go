@@ -3,25 +3,32 @@ package runtime
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Node is one node of the snapshot tree that the runtime's snapshot
 // function returns (design 3.2). Go renders the text, so the format has
 // golden tests without a browser.
 type Node struct {
-	Ref      string  `json:"ref,omitempty"`
-	Role     string  `json:"role"`
-	Name     string  `json:"name,omitempty"`
-	Level    int     `json:"level,omitempty"`
-	Checked  string  `json:"checked,omitempty"` // "true", "false" or "mixed"
-	Expanded *bool   `json:"expanded,omitempty"`
-	Selected bool    `json:"selected,omitempty"`
-	Disabled bool    `json:"disabled,omitempty"`
-	Required bool    `json:"required,omitempty"`
-	Value    string  `json:"value,omitempty"`
-	URL      string  `json:"url,omitempty"`
-	Cursor   *Cursor `json:"cursor,omitempty"`
-	Children []Node  `json:"children,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Role     string `json:"role"`
+	Name     string `json:"name,omitempty"`
+	Level    int    `json:"level,omitempty"`
+	Checked  string `json:"checked,omitempty"` // "true", "false" or "mixed"
+	Expanded *bool  `json:"expanded,omitempty"`
+	Selected bool   `json:"selected,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Required bool   `json:"required,omitempty"`
+	Value    string `json:"value,omitempty"`
+	URL      string `json:"url,omitempty"`
+	// Hint describes a control whose label is empty or shared with another
+	// ref of its document (icon, image file, stable attribute, row text).
+	Hint string `json:"hint,omitempty"`
+	// DisplayName is the label an Iframe without a name prints: its title,
+	// else its name attribute. Presentation only: the ref keeps the name.
+	DisplayName string  `json:"displayName,omitempty"`
+	Cursor      *Cursor `json:"cursor,omitempty"`
+	Children    []Node  `json:"children,omitempty"`
 }
 
 // Cursor marks an element without an interactive role that reacts to the
@@ -45,7 +52,7 @@ type RenderOptions struct {
 const textRole = "StaticText"
 
 // Render returns the snapshot text in agent-browser's format (renderer of
-// agent-browser 0.41.2, snapshot.rs render_tree and compact_tree; behavior
+// agent-browser 0.45.0, snapshot.rs render_tree and compact_tree; behavior
 // only, no code copied).
 func Render(nodes []Node, o RenderOptions) string {
 	nodes = normalizeText(nodes, "")
@@ -144,6 +151,36 @@ func quote(s string) string {
 	return b.String()
 }
 
+// debugQuote returns s in double quotes as Rust's Debug format for str
+// prints it (agent-browser's hint={:?}): \t, \r, \n, \0, \" and \\ get
+// their escapes; other control, format and unassigned characters and
+// combining marks get \u{hex}.
+func debugQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\t':
+			b.WriteString("\\t")
+		case r == '\r':
+			b.WriteString("\\r")
+		case r == '\n':
+			b.WriteString("\\n")
+		case r == 0:
+			b.WriteString("\\0")
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case !unicode.IsGraphic(r) || unicode.In(r, unicode.Mn, unicode.Me):
+			fmt.Fprintf(&b, "\\u{%x}", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 func render(b *strings.Builder, n *Node, indent int, o RenderOptions) {
 	children := func(indent int) {
 		for i := range n.Children {
@@ -167,7 +204,10 @@ func render(b *strings.Builder, n *Node, indent int, o RenderOptions) {
 	b.WriteString("- ")
 	b.WriteString(n.Role)
 	name := n.Name
-	if name == "" && o.Interactive && n.Cursor != nil {
+	switch {
+	case name == "" && n.Role == "Iframe":
+		name = n.DisplayName
+	case name == "" && o.Interactive && n.Cursor != nil:
 		name = n.Cursor.Text
 	}
 	if name != "" {
@@ -199,6 +239,9 @@ func render(b *strings.Builder, n *Node, indent int, o RenderOptions) {
 	}
 	if len(attrs) > 0 {
 		b.WriteString(" [" + strings.Join(attrs, ", ") + "]")
+	}
+	if n.Hint != "" {
+		b.WriteString(" hint=" + debugQuote(n.Hint))
 	}
 	if n.Cursor != nil {
 		b.WriteString(" " + n.Cursor.Kind + " [" + strings.Join(n.Cursor.Hints, ", ") + "]")

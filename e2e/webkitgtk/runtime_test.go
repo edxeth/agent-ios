@@ -112,13 +112,14 @@ func TestRefLifetime(t *testing.T) {
 	if code, _, errOut := run(t, ps, "get", "text", "@e14"); code == 0 || !strings.Contains(errOut, "stale_ref") {
 		t.Fatalf("replaced duplicate: exit %d, %q", code, errOut)
 	}
-	// After a navigation the old ref fails with the "page navigated" message.
+	// After a navigation the old ref fails with agent-browser 0.45.0's
+	// replaced-document message.
 	before := sess.Generation()
 	navigate(t, "forms.html", "")
 	if sess.Generation() == before {
 		t.Fatal("the navigation did not change the document generation")
 	}
-	if code, _, errOut := run(t, ps, "get", "text", "@e1"); code == 0 || !strings.Contains(errOut, "page navigated since the snapshot that produced @e1; run snapshot") {
+	if code, _, errOut := run(t, ps, "get", "text", "@e1"); code == 0 || !strings.Contains(errOut, "stale_ref: Ref @e1 is from a document that is no longer loaded (the page navigated or the frame was removed). Take a new snapshot and use a fresh ref.") {
 		t.Fatalf("ref after navigation: exit %d, %q", code, errOut)
 	}
 	// Ids never repeat in a session, also across navigations.
@@ -510,7 +511,7 @@ func TestFrameNavigationMakesRefsStale(t *testing.T) {
 			eval(t, "window.__oldFrameButton.isConnected"), sess.Generation(), gen)
 	}
 	code, out, errOut := run(t, ps, "get", "html", "@"+ref)
-	if code == 0 || !strings.Contains(errOut, "stale_ref: frame navigated since the snapshot that produced @"+ref+"; run snapshot") {
+	if code == 0 || !strings.Contains(errOut, "stale_ref: Ref @"+ref+" is from a document that is no longer loaded (the page navigated or the frame was removed). Take a new snapshot and use a fresh ref.") {
 		t.Fatalf("ref into the navigated frame: exit %d, %q, %q", code, out, errOut)
 	}
 	if got := mustRun(t, ps, "snapshot", "-i"); !strings.Contains(got, `button "New frame"`) {

@@ -9,9 +9,11 @@ import (
 	"testing/quick"
 )
 
-// The expected texts below follow agent-browser 0.41.2's renderer
-// (analysis/sources/agent-browser/snapshot.rs; line numbers cited per case),
-// not its output: they were written from the rules, never captured.
+// The expected texts below follow agent-browser's renderer: 0.41.2's
+// (analysis/sources/agent-browser/snapshot.rs; line numbers cited per case)
+// for the cases without hints and iframe labels, which 0.45.0 renders the
+// same, and 0.45.0's for those two (the test or document each cites). They
+// were written from the rules and the cited expectations, never captured.
 
 func tf(b bool) *bool { return &b }
 
@@ -262,17 +264,84 @@ func TestRenderedNameDecodesAsJSON(t *testing.T) {
 
 // The page sends the tree as JSON; the model decodes it unchanged.
 func TestNodeJSONModel(t *testing.T) {
-	raw := `[{"ref":"e1","role":"checkbox","name":"A","checked":"true","expanded":false,"selected":true,"disabled":true,"required":true,"level":3,"value":"v","url":"/u","cursor":{"kind":"clickable","hints":["onclick"],"text":"t"},"children":[{"role":"StaticText","name":"x"}]}]`
+	raw := `[{"ref":"e1","role":"checkbox","name":"A","checked":"true","expanded":false,"selected":true,"disabled":true,"required":true,"level":3,"value":"v","url":"/u","hint":"id:a","displayName":"d","cursor":{"kind":"clickable","hints":["onclick"],"text":"t"},"children":[{"role":"StaticText","name":"x"}]}]`
 	var nodes []Node
 	if err := json.Unmarshal([]byte(raw), &nodes); err != nil {
 		t.Fatal(err)
 	}
 	n := nodes[0]
 	if n.Ref != "e1" || n.Checked != "true" || n.Expanded == nil || *n.Expanded || !n.Selected || !n.Disabled || !n.Required ||
-		n.Level != 3 || n.Value != "v" || n.URL != "/u" || n.Cursor == nil || n.Cursor.Hints[0] != "onclick" || len(n.Children) != 1 {
+		n.Level != 3 || n.Value != "v" || n.URL != "/u" || n.Cursor == nil || n.Cursor.Hints[0] != "onclick" || len(n.Children) != 1 ||
+		n.Hint != "id:a" || n.DisplayName != "d" {
 		t.Fatalf("decoded %+v", n)
 	}
 	if !strings.Contains(Render(nodes, RenderOptions{}), "[level=3, checked=true, expanded=false, selected, disabled, required, ref=e1]") {
 		t.Fatalf("render of decoded node: %s", Render(nodes, RenderOptions{}))
+	}
+}
+
+// agent-browser 0.45.0 (#2578): a hint follows the attribute group and
+// precedes the cursor-interactive part. The lines are the example of
+// docs/content/docs/snapshots.mdx "Control hints" (v0.45.0), whose values
+// e2e_tests.rs e2e_snapshot_hints_ambiguous_controls asserts; the last line
+// is that test's "in:Invoice 1" control, ordered as render_tree prints it.
+func TestRenderHints(t *testing.T) {
+	click := &Cursor{Kind: "clickable", Hints: []string{"onclick"}, Text: "Edit"}
+	nodes := []Node{
+		{Role: "link", Ref: "e1", Hint: "img:cart"},
+		{Role: "list", Children: []Node{{Role: "listitem", Children: []Node{
+			{Role: "StaticText", Name: "Blue mug"},
+			{Role: "button", Ref: "e2", Hint: "icon:icon-trash; in:Blue mug"},
+			{Role: "button", Ref: "e3", Hint: "icon:fa-heart; in:Blue mug"},
+			{Role: "button", Ref: "e4", Hint: "img:pencil; id:edit-btn; in:Blue mug"},
+		}}}},
+		{Role: "textbox", Name: "Email", Ref: "e5", Hint: "name:login-email"},
+		{Role: "textbox", Name: "Email", Ref: "e6", Hint: "name:newsletter-email"},
+		{Role: "generic", Ref: "e7", Hint: "in:Invoice 1", Cursor: click},
+	}
+	want := `- link [ref=e1] hint="img:cart"
+- button [ref=e2] hint="icon:icon-trash; in:Blue mug"
+- button [ref=e3] hint="icon:fa-heart; in:Blue mug"
+- button [ref=e4] hint="img:pencil; id:edit-btn; in:Blue mug"
+- textbox "Email" [ref=e5] hint="name:login-email"
+- textbox "Email" [ref=e6] hint="name:newsletter-email"
+- generic "Edit" [ref=e7] hint="in:Invoice 1" clickable [onclick]`
+	if got := Render(nodes, RenderOptions{Interactive: true}); got != want {
+		t.Fatalf("Render -i:\n%s\nwant:\n%s", got, want)
+	}
+	// "On in every mode": the full tree prints the same hint suffixes.
+	full := Render(nodes, RenderOptions{})
+	for _, l := range strings.Split(want, "\n")[:6] {
+		if !strings.Contains(full, strings.TrimPrefix(l, "- ")) {
+			t.Fatalf("full snapshot lacks %q:\n%s", l, full)
+		}
+	}
+}
+
+// render_tree prints the hint with Rust's {:?}: double quotes, with \", \\
+// and control characters escaped (std's Debug for str: \t \r \n \0 and
+// \u{hex} for the other control characters).
+func TestRenderHintEscapes(t *testing.T) {
+	got := Render([]Node{{Role: "button", Ref: "e1", Hint: "in:a \"b\" \\ c\nd\te\x01"}}, RenderOptions{})
+	if want := `- button [ref=e1] hint="in:a \"b\" \\ c\nd\te\u{1}"`; got != want {
+		t.Fatalf("Render = %s, want %s", got, want)
+	}
+}
+
+// agent-browser 0.45.0 (#2739) snapshot.rs test
+// test_iframe_display_name_is_presentation_only: an Iframe without a name
+// prints its display name (title, else name attribute); an accessible
+// name wins; an iframe with neither prints no label; in both modes.
+func TestRenderIframeDisplayName(t *testing.T) {
+	nodes := []Node{
+		{Role: "Iframe", Ref: "e1", DisplayName: "results"},
+		{Role: "Iframe", Name: "Accessible frame", Ref: "e2", DisplayName: "dom-name"},
+		{Role: "Iframe", Ref: "e3"},
+	}
+	for _, interactive := range []bool{false, true} {
+		got := Render(nodes, RenderOptions{Interactive: interactive})
+		if want := "- Iframe \"results\" [ref=e1]\n- Iframe \"Accessible frame\" [ref=e2]\n- Iframe [ref=e3]"; got != want {
+			t.Fatalf("interactive=%t:\n%s\nwant:\n%s", interactive, got, want)
+		}
 	}
 }

@@ -46,13 +46,16 @@ func TestSourcesAreES2017Syntax(t *testing.T) {
 	}
 }
 
-// Budget with headroom (W3b decision 4): the installed bundle stays at or
-// below 80% of the 64 KiB budget of design 3.1, so the later runtime files
-// of W3b and W5 fit.
+// Budget with headroom: the installed bundle stays at or below 90% of the
+// 64 KiB budget of design 3.1, so later runtime changes still fit. W3b
+// decision 4 reserved 20% for the runtime files of W3b and W5; those landed,
+// and the agent-browser 0.45 parity update (parity-045 decision D4) moved
+// the reserve to 10%. The hard limits stay: TestBundleWithinSourceBudget and
+// the per-transport install and bootstrap test.
 func TestBundleLeavesHeadroom(t *testing.T) {
-	const headroomLimit = MaxSourceBytes * 80 / 100
+	const headroomLimit = MaxSourceBytes * 90 / 100
 	if n := len(Source()); n > headroomLimit {
-		t.Fatalf("installed bundle is %d bytes; keep it at or below %d (80%% of %d) for the later runtime files", n, headroomLimit, MaxSourceBytes)
+		t.Fatalf("installed bundle is %d bytes; keep it at or below %d (90%% of %d) for later runtime changes", n, headroomLimit, MaxSourceBytes)
 	}
 	t.Logf("installed bundle: %d bytes of %d (%d%%)", len(Source()), MaxSourceBytes, len(Source())*100/MaxSourceBytes)
 }

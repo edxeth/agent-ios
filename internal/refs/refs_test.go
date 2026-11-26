@@ -55,7 +55,7 @@ func TestLookupOrder(t *testing.T) {
 		t.Fatalf("unknown ref gave %v", err)
 	}
 	if _, err := tb.Lookup(refs[0], 2); !errors.As(err, &re) || re.Code != "stale_ref" ||
-		!strings.Contains(err.Error(), "page navigated since the snapshot that produced @e1; run snapshot") {
+		!strings.Contains(err.Error(), "Ref @e1 is from a document that is no longer loaded (the page navigated or the frame was removed). Take a new snapshot and use a fresh ref.") {
 		t.Fatalf("old generation gave %v", err)
 	}
 }

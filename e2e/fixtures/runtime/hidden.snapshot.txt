@@ -5,9 +5,9 @@
 - StaticText "offscreen"
 - StaticText "child"
 - StaticText "text only"
-- listbox [ref=e1]
+- listbox [ref=e1] hint="id:v-listbox"
   - option "a" [ref=e2]
-- combobox [expanded=false, ref=e3]: b
+- combobox [expanded=false, ref=e3] hint="id:v-dropdown": b
   - option "b" [selected, ref=e4]
 - group
   - button "more" [expanded=false, ref=e5]

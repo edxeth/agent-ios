@@ -290,7 +290,7 @@ func TestRefLookupErrors(t *testing.T) {
 	h.mustRun(t, "snapshot")
 	h.setGen(2)
 	before := len(h.page.fns())
-	if code, _, errOut := h.run("is", "visible", "@e1"); code != ExitError || !strings.Contains(errOut, "stale_ref: page navigated since the snapshot that produced @e1; run snapshot") {
+	if code, _, errOut := h.run("is", "visible", "@e1"); code != ExitError || !strings.Contains(errOut, "stale_ref: Ref @e1 is from a document that is no longer loaded (the page navigated or the frame was removed). Take a new snapshot and use a fresh ref.") {
 		t.Fatalf("ref after navigation: exit %d, %q", code, errOut)
 	}
 	if len(h.page.fns()) != before {

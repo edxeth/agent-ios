@@ -1,0 +1,67 @@
+<!doctype html>
+<html><head><title>Snapshot 0.45</title></head>
+<body>
+<!-- Hints: the page of agent-browser 0.45.0 e2e_snapshot_hints_ambiguous_controls (e2e_tests.rs, f88c40b7). -->
+<section id="hints">
+<a href="/cart"><img src="/img/cart.png"></a>
+<ul><li>Blue mug
+<button><svg width="16" height="16"><use href="#icon-trash"/></svg></button>
+<button><i class="fa fa-heart"></i></button>
+<button id="edit-btn"><img src="/img/pencil.png"></button>
+</li></ul>
+<input type="email" name="login-email" placeholder="Email">
+<label>Email <input type="email" name="newsletter-email"></label>
+<button>Save</button>
+<ul><li>Invoice 1 <div onclick="void 0">Edit</div></li><li>Invoice 2 <div onclick="void 0">Edit</div></li></ul>
+<div onclick="void 0">Archive</div>
+</section>
+<!-- Cursor scan: the page of e2e_snapshot_cursor_scan_covers_native_and_shadow_elements (34360255). -->
+<section id="scan">
+<details><summary>Advanced</summary><p>Body</p></details>
+<button type="button" role="menu" tabindex="0" style="cursor:pointer">Menu button</button>
+<a href="x" role="menu" tabindex="0" style="cursor:pointer">Menu link</a>
+<button type="button" style="cursor:pointer">Plain button</button>
+<details role="group" style="cursor:pointer"><summary>Grouped</summary></details>
+<input type="color" aria-label="Pick colour">
+<my-el></my-el>
+</section>
+<!-- e2e_snapshot_cursor_scan_ignores_inherited_pointer_and_body and _skips_hrefless_link_wrapping_control. -->
+<section id="inherit">
+<host-ptr style="cursor:pointer;display:block"></host-ptr>
+<host-slot><span>Slotted text</span></host-slot>
+<a style="cursor:pointer;display:block"><button>Wrapped</button></a>
+<a style="cursor:pointer;display:block">Bare anchor</a>
+</section>
+<!-- snapshot -s: e2e_snapshot_selector_scopes_to_all_matches and _matches_skip_nested. -->
+<section id="scope">
+<div class="item"><button>First</button></div>
+<div class="item"><button>Second</button></div>
+<div class="item"><div class="item"><button>Third</button></div></div>
+<div class="item" style="display:none"><button>Closed</button></div>
+<button>Outside</button>
+</section>
+<!-- Iframe labels (#2739) and nested iframes (#2737). -->
+<section id="frames">
+<iframe name="results-frame" srcdoc="<button>Save</button>" width="200" height="60"></iframe>
+<iframe srcdoc="<p>unnamed</p>" width="200" height="60"></iframe>
+<iframe id="nest" name="level1" width="300" height="200"></iframe>
+</section>
+<script>
+  customElements.define("my-el", class extends HTMLElement { constructor() {
+    super(); this.attachShadow({ mode: "open" }).innerHTML =
+      '<div onclick="void 0" style="cursor:pointer">Shadow clickable</div>'; } });
+  customElements.define("host-ptr", class extends HTMLElement { constructor() {
+    super(); this.attachShadow({ mode: "open" }).innerHTML = "<div>Inherited pointer inner</div>"; } });
+  customElements.define("host-slot", class extends HTMLElement { constructor() {
+    super(); this.attachShadow({ mode: "open" }).innerHTML = '<div style="cursor:pointer"><slot></slot></div>'; } });
+  // A chain of five nested same-origin iframes; level k shows "Level k".
+  function nest(k) {
+    var inner = k < 5 ? '<iframe name="level' + (k + 1) + '" srcdoc="' + nest(k + 1).replace(/&/g, "&amp;").replace(/"/g, "&quot;") + '"></iframe>' : "";
+    return "<button>Level " + k + "</button>" + inner;
+  }
+  document.getElementById("nest").srcdoc = nest(1);
+  window.__mutations = 0;
+  new MutationObserver(function (r) { window.__mutations += r.length; })
+    .observe(document, { attributes: true, childList: true, subtree: true });
+</script>
+</body></html>
