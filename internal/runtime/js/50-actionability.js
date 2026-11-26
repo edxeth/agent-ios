@@ -5,7 +5,7 @@
   "use strict";
   if (!I) { return; } // already installed (10-core.js)
   var _ = I._, B = _.B, w = window, E = Element.prototype;
-  var raf = w.requestAnimationFrame.bind(w), scrollIV = E.scrollIntoView;
+  var raf = w.requestAnimationFrame.bind(w), scrollIV = E.scrollIntoView, scrollIVN = E.scrollIntoViewIfNeeded;
   var TXT = { "": 1, text: 1, email: 1, password: 1, search: 1, tel: 1, url: 1, number: 1, date: 1, "datetime-local": 1, month: 1, time: 1, week: 1 };
   var ST = {}; // stability records by op and step
   I.onReset(function () { ST = {}; });
@@ -54,16 +54,30 @@
     for (var p = h; p; p = _.flatParent(p)) { if (p === e) { return true; } }
     return false;
   }
-  // hits: the receives-events check; it scrolls the center into view first.
+  function inView(c) { return c.x >= 0 && c.y >= 0 && c.x < w.innerWidth && c.y < w.innerHeight; }
+  // reaches: the hit h takes e's press: h is e or inside it, or h is in a
+  // label that activates e (its control, or a label around e) and is no
+  // other interactive element inside that label (agent-browser BLOCKER_AT_JS).
+  var IA = "a[href],button,input,select,textarea,summary,iframe,[role],[onclick],[tabindex]";
+  function reaches(h, e) {
+    if (within(h, e)) { return true; }
+    var l = B.closest(h, "label"), i = l && B.closest(h, IA);
+    return !!l && !(i && i !== l && within(i, l)) && (l.control === e || within(e, l));
+  }
+  // hits: the receives-events check. It first scrolls e into view (out of a
+  // clipping scroll container too, and fully when it straddles the
+  // viewport edge); when that moved e, it answers retry, so the next
+  // attempt checks again after scroll listeners, frames and reflow ran
+  // (stable waits for the new rect) and scrolls again when reflow moved e
+  // back out (agent-browser #2587: press the settled point).
   function hits(e) {
-    var c = center(e);
-    if (c.x < 0 || c.y < 0 || c.x >= w.innerWidth || c.y >= w.innerHeight) {
-      scrollIV.call(e, { block: "center", inline: "center" });
-      c = center(e);
-    }
-    var h = at(c.x, c.y);
+    var k = rk(e);
+    if (scrollIVN) { scrollIVN.call(e, true); }
+    if (!inView(center(e))) { scrollIV.call(e, { block: "center", inline: "center" }); }
+    if (rk(e) !== k) { return "waiting for the element to settle after scrolling"; }
+    var c = center(e), h = inView(c) && at(c.x, c.y);
     if (!h) { return "the element center (" + Math.round(c.x) + ", " + Math.round(c.y) + ") is outside the viewport"; }
-    return within(h, e) ? "" : "covered by " + desc(h);
+    return reaches(h, e) ? "" : "covered by " + desc(h);
   }
   function rk(e) {
     var r = B.gbcr(e);

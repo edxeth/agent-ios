@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>click045</title>
+<!-- Page of e2e/webkitgtk/click045_test.go: actionability at the viewport
+     edge, reflow after scrolling, a label over its control, and a cover
+     that appears after scrolling (agent-browser 0.45 #2587, #2611). -->
+<style>
+  /* No scroll anchoring: WebKit would otherwise scroll along with #moving. */
+  html, body { overflow-anchor: none; }
+  body { margin: 0; height: 4000px; width: 3000px; position: relative; }
+  .t { position: absolute; width: 120px; height: 40px; margin: 0; }
+  #banner { display: none; position: fixed; left: 0; right: 0; top: 30vh; height: 40vh; background: rgba(0, 0, 0, .3); z-index: 10; }
+</style>
+</head>
+<body>
+<!-- Half outside the viewport: the center is outside at the bottom and at
+     the right edge; #edge straddles the bottom edge with its center inside. -->
+<button id="bottom" class="t" style="left: 20px; top: calc(100vh - 10px)">Bottom</button>
+<button id="right" class="t" style="left: calc(100vw - 30px); top: 20px">Right</button>
+<button id="edge" class="t" style="left: 200px; top: calc(100vh - 10px); height: 16px">Edge</button>
+<!-- Clipped by its scroll container although its center is in the viewport. -->
+<div style="position: absolute; left: 300px; top: 300px; width: 200px; height: 60px; overflow: auto">
+  <div style="height: 200px"></div>
+  <button id="clipped" style="width: 120px; height: 40px">Clipped</button>
+</div>
+<!-- Moves 2000px down in the frame after a scroll past 1000px (content
+     loading above). Not focusable: the focus of a mousedown would scroll it
+     back into view. -->
+<div id="moving" class="t" style="left: 20px; top: 2500px; background: #cde">Moving</div>
+<!-- Covered by #banner, which a scroll past 1000px shows (a sticky header appearing). -->
+<button id="late" class="t" style="left: 300px; top: 2500px">Late</button>
+<div id="banner"></div>
+<!-- A visually hidden checkbox under the label that activates it. -->
+<div style="position: absolute; left: 20px; top: 200px; width: 240px; height: 30px">
+  <input type="checkbox" id="cb" style="position: absolute; left: 0; top: 0; width: 20px; height: 20px; margin: 0">
+  <label for="cb" id="cbl" style="position: absolute; left: 0; top: 0; width: 200px; height: 24px; background: #eee">Accept terms</label>
+</div>
+<!-- A link inside the label covers the checkbox: the link takes the press. -->
+<div style="position: absolute; left: 20px; top: 260px; width: 240px; height: 30px">
+  <input type="checkbox" id="cb2" style="position: absolute; left: 0; top: 0; width: 20px; height: 20px; margin: 0">
+  <label for="cb2" style="position: absolute; left: 0; top: 0; width: 200px; height: 24px; background: #eee">I agree to the
+    <a id="terms" href="#terms" style="position: absolute; left: 0; top: 0; width: 60px; height: 24px">terms</a></label>
+</div>
+<script>
+  history.scrollRestoration = "manual";
+  // T.hits lists every event on a target as "type id ok", where ok says
+  // whether the event's client point lies on the target (where a real press
+  // at that point would land). T.arm selects the scroll reaction.
+  window.T = { hits: [], arm: "" };
+  ["bottom", "right", "edge", "clipped", "moving", "late"].forEach(function (id) {
+    var e = document.getElementById(id);
+    ["click", "dblclick", "mouseover", "touchstart"].forEach(function (type) {
+      e.addEventListener(type, function (ev) {
+        var p = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+        T.hits.push(type + " " + id + " " + e.contains(document.elementFromPoint(p.clientX, p.clientY)));
+      });
+    });
+  });
+  addEventListener("scroll", function () {
+    if (!T.arm || scrollY < 1000) { return; }
+    var arm = T.arm;
+    T.arm = "";
+    requestAnimationFrame(function () {
+      if (arm === "moving") { document.getElementById("moving").style.top = "4500px"; document.body.style.height = "6000px"; }
+      if (arm === "late") { document.getElementById("banner").style.display = "block"; }
+    });
+  });
+</script>
+</body>
+</html>
