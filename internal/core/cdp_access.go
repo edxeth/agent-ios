@@ -40,10 +40,10 @@ func listedOf(t pageTarget) ListedPage {
 // resolves a page that another session holds. It applies the session's
 // page choice as every command does (sessionPage): a tab id in req.Page,
 // else the page chosen with "tab <id>", else the session's default page
-// while it is attached (without a listing read), else the listing's first
-// page. An explicit ws:// URL gives the record of that URL. Unlike a
-// command, it records no default page: issuing a URL does not act on the
-// page.
+// while it is attached (without a listing read), else the only tab of the
+// listing (sessionTarget; several tabs are an error, CodeNoPage). An
+// explicit ws:// URL gives the record of that URL. Unlike a command, it
+// records no default page: issuing a URL does not act on the page.
 //
 // listing is the transport and listing address that the resolved page
 // was found through (Page empty), taken from the page itself: the
@@ -57,12 +57,9 @@ func listedOf(t pageTarget) ListedPage {
 // reservation owner (device_admission.go), as for a command.
 func (m *Manager) ResolvePage(ctx context.Context, session, owner string, req PageRequest) (lp ListedPage, listing PageRequest, err error) {
 	ao := AcquireOptions{Session: session, Reservation: owner}.normalized()
-	sreq := m.sessionPage(ao.Session, req)
-	t, err := m.resolve(ctx, sreq)
+	req.Opener = false
+	_, t, _, err := m.sessionTarget(ctx, req, ao)
 	if err != nil {
-		return ListedPage{}, PageRequest{}, err
-	}
-	if err := m.admitTarget(ctx, sreq, t, ao.Reservation); err != nil {
 		return ListedPage{}, PageRequest{}, err
 	}
 	return listedOf(t), t.listing, nil

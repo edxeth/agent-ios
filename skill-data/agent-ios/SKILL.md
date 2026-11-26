@@ -213,7 +213,7 @@ agent-ios reload
 | 2 | usage error, before any connection | `agent-ios <command> --help` |
 | 3 | a wait timed out | record it; `sim reserve`: run it again |
 | 4 | the page is leased by another session, or its connection was lost | wait (`--wait-lease 30s`) or ask; never take over without the device owner's approval |
-| 5 | no device or page | select your tab; else check the device (`agent-ios skills get agent-ios-device`) |
+| 5 | no device or page; or your session chose no tab and the device shows several | select your tab (`tab <id>`) or open your own (`tab new <url>`); else check the device (`agent-ios skills get agent-ios-device`) |
 | 6 | device reservation missing or another's | reserve it; simulator: `sim reserve` |
 | 7 | no tab shows the target (`tab find`, `sim up`) | `tab find`: act on no tab; report it. `sim up`: check that your server answers; serve your page on a URL of your own |
 | 124 | the command deadline passed | one health probe, then safety rule 2 |

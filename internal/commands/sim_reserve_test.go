@@ -241,8 +241,9 @@ func TestSimReleaseClosesTheSession(t *testing.T) {
 // While the simulator is reserved (agents take turns), a session that
 // chose no tab gets no page of a simulator that shows several tabs: the
 // others may be other agents' work (live run, 2026-11-24: an agent's first
-// open navigated another run's tab). With one tab, once the session
-// selected its tab, or without a reservation (one agent), commands run.
+// open navigated another run's tab). With one tab, or once the session
+// selected its tab, commands run. Without a reservation, a session that
+// chose no tab gets no page of several either (any device: exit 5).
 func TestSimulatorNeedsAChosenTab(t *testing.T) {
 	res := &core.Reservations{Dir: t.TempDir()}
 	m, f := newTabManagerWith(t, res)
@@ -269,8 +270,8 @@ func TestSimulatorNeedsAChosenTab(t *testing.T) {
 	if err := res.Release(core.SimulatorDevice, "b"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runIn(t, m, "d", "eval", "1+1"); err != nil {
-		t.Fatalf("no reservation: the first page is the session's, as before: %v", err)
+	if _, err := runIn(t, m, "d", "eval", "1+1"); ExitCodeOf(err) != ExitNoPage || !strings.Contains(err.Error(), "tab new") {
+		t.Fatalf("no reservation, two tabs, none chosen: %v (exit %d); want exit 5 with the advice", err, ExitCodeOf(err))
 	}
 }
 

@@ -147,8 +147,7 @@ func TestCLIGetCDPURLWithoutTheSessionsPageExits5(t *testing.T) {
 // get cdp-url works on the iwdp that does not list pages while a page is
 // connected.
 func TestCLIGetCDPURLNeedsNoListingForTheAttachedPage(t *testing.T) {
-	env, l, _, _ := silentListingPages(t)
-	wantEval2(t, runCLI(t, "", env, "eval", "1+1"), "the first eval (cold attach)")
+	env, l, _, _ := silentListingPages(t, true)
 	mustRun(t, env, "cdp", "start", "--port", "0")
 	if listingAnswers(t, l) {
 		t.Fatal("the fake listing answers while a page is connected; the model is off")

@@ -98,9 +98,9 @@ func TestTabFindPrintsTheTabThatShowsTheWholeURL(t *testing.T) {
 	if got := leasedTitles(m, "a"); len(got) != 1 || got[0] != "Target" {
 		t.Errorf("after tab find session a holds %v; want only the target", got)
 	}
-	// It selects nothing: the session's page is still its default.
-	if got := pageOf(t, m, "b"); got != "Old state" {
-		t.Errorf("session b runs on %q; tab find of a must not take the first tab", got)
+	// It selects nothing: the session still has no current page.
+	if _, ok := m.CurrentPage("a"); ok {
+		t.Error("tab find selected a tab for session a")
 	}
 }
 

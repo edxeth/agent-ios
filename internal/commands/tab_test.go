@@ -222,15 +222,22 @@ func mustIn(t *testing.T, m *core.Manager, session string, argv ...string) strin
 // pageOf is the title of the page a page command of session runs on.
 func pageOf(t *testing.T, m *core.Manager, session string) string {
 	t.Helper()
-	var title string
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err := m.Do(ctx, core.PageRequest{}, core.AcquireOptions{Session: session}, "probe", core.ClassRead, false,
-		func(_ context.Context, mo *core.ManagedOp) error { title = mo.Page.Title(); return nil })
+	title, err := pageAt(m, session, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return title
+}
+
+// pageAt is the title of the page a page command of session with
+// --page page runs on, or its error.
+func pageAt(m *core.Manager, session, page string) (string, error) {
+	var title string
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := m.Do(ctx, core.PageRequest{Page: page}, core.AcquireOptions{Session: session}, "probe", core.ClassRead, false,
+		func(_ context.Context, mo *core.ManagedOp) error { title = mo.Page.Title(); return nil })
+	return title, err
 }
 
 // Design 3.8: tab list gives stable ids; "tab t2" moves the session's
@@ -243,8 +250,9 @@ func TestTabListAndSelect(t *testing.T) {
 	if out != "  t1  \"One\"  http://one.test/\n  t2  \"Two\"  http://two.test/" {
 		t.Fatalf("tab list:\n%s", out)
 	}
-	if got := pageOf(t, m, "a"); got != "One" {
-		t.Fatalf("before tab t2 session a runs on %q, want One", got)
+	// Two tabs and no choice: no page by order (exit 5).
+	if got, err := pageAt(m, "a", ""); ExitCodeOf(err) != ExitNoPage {
+		t.Fatalf("before tab t2 session a runs on %q (%v), want exit 5", got, err)
 	}
 	if out := mustIn(t, m, "a", "tab", "t2"); !strings.Contains(out, "tab t2 is now the current page") {
 		t.Fatalf("tab t2: %q", out)
@@ -253,8 +261,8 @@ func TestTabListAndSelect(t *testing.T) {
 		t.Fatalf("after tab t2 session a runs on %q, want Two", got)
 	}
 	// The lease moved: session b can take page One now.
-	if got := pageOf(t, m, "b"); got != "One" {
-		t.Fatalf("session b runs on %q, want One (its own default)", got)
+	if got, err := pageAt(m, "b", "t1"); err != nil || got != "One" {
+		t.Fatalf("session b with --page t1 runs on %q (%v), want One", got, err)
 	}
 	if out := mustIn(t, m, "a", "tab", "list"); !strings.Contains(out, "* t2") || !strings.Contains(out, "(leased by a)") {
 		t.Fatalf("tab list after the move:\n%s", out)
@@ -373,15 +381,16 @@ func TestClickNewTabTakesNoTabByURLWhenTheListingBeforeTheCallFails(t *testing.T
 	// for Manager.Tabs too.
 	f.kind, f.device = transport.KindIWDP, "SIMULATOR"
 	s := f.add("One", "http://one.test/")
-	f.add("Old", "http://next.test/page") // opened before the click, no lease
 	newTabOpener(s, func() {
 		f.failing.Store(false)
 		// The browser lists the new tab a moment after window.open.
 		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
 	})
+	// One is the session's default page: the only tab when it ran.
 	if got := pageOf(t, m, "a"); got != "One" {
 		t.Fatalf("fixture: session a runs on %q", got)
 	}
+	f.add("Old", "http://next.test/page") // opened before the click, no lease
 	f.failing.Store(true)
 	out := mustIn(t, m, "a", "click", "--new-tab", "#link")
 	if !strings.Contains(out, notFollowed) || strings.Contains(out, "the new tab is") {
@@ -400,14 +409,15 @@ func TestClickNewTabFollowsOnlyATabOfTheOpenersDevice(t *testing.T) {
 	m, f := newTabManager(t)
 	f.second = "other"
 	s := f.add("One", "http://one.test/")
-	f.addOn("other", "Other", "http://other.test/")
 	newTabOpener(s, func() {
 		f.secondFailing.Store(false)
 		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
 	})
+	// One is the session's default page: the only tab when it ran.
 	if got := pageOf(t, m, "a"); got != "One" {
 		t.Fatalf("fixture: session a runs on %q", got)
 	}
+	f.addOn("other", "Other", "http://other.test/")
 	f.secondFailing.Store(true) // the other device's list fails until the call
 	out := mustIn(t, m, "a", "click", "--new-tab", "#link")
 	if !strings.Contains(out, "(http://next.test/page?q=1#f); it is now the current page") || strings.Contains(out, "warning") {
@@ -480,7 +490,6 @@ func TestTabNewTakesNoTabWhenTheListingBeforeOpenFails(t *testing.T) {
 	// for Manager.Tabs too.
 	f.kind, f.device = transport.KindIWDP, "SIMULATOR"
 	s := f.add("One", "http://one.test/")
-	f.add("Old", "http://next.test/page") // opened before tab new, no lease
 	var opened atomic.Bool
 	onWindowOpen(s, func() {
 		opened.Store(true)
@@ -488,9 +497,11 @@ func TestTabNewTakesNoTabWhenTheListingBeforeOpenFails(t *testing.T) {
 		// The browser lists the new tab a moment after window.open.
 		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
 	})
+	// One is the session's default page: the only tab when it ran.
 	if got := pageOf(t, m, "a"); got != "One" {
 		t.Fatalf("fixture: session a runs on %q", got)
 	}
+	f.add("Old", "http://next.test/page") // opened before tab new, no lease
 	f.failing.Store(true)
 	r, err := runIn(t, m, "a", "tab", "new", "http://next.test/page")
 	if err != nil || !opened.Load() {
@@ -540,14 +551,15 @@ func TestTabNewFollowsOnlyATabOfTheOpenersDevice(t *testing.T) {
 	m, f := newTabManager(t)
 	f.second = "other"
 	s := f.add("One", "http://one.test/")
-	f.addOn("other", "Other", "http://other.test/")
 	onWindowOpen(s, func() {
 		f.secondFailing.Store(false)
 		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
 	})
+	// One is the session's default page: the only tab when it ran.
 	if got := pageOf(t, m, "a"); got != "One" {
 		t.Fatalf("fixture: session a runs on %q", got)
 	}
+	f.addOn("other", "Other", "http://other.test/")
 	f.secondFailing.Store(true) // the other device's list fails until window.open
 	out := mustIn(t, m, "a", "tab", "new", "http://next.test/page")
 	if !strings.Contains(out, "(http://next.test/page); it is now the current page") || strings.Contains(out, "warning") {

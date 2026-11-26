@@ -991,7 +991,7 @@ Reattach a lost page and take its lease for this session (needs the device reser
 
 | Argument | Required | Description |
 |---|---|---|
-| `<page>` | no | page key, ws:// URL, or part of its title or URL; default: the first page |
+| `<page>` | no | page key, ws:// URL, or part of its title or URL; default: the session's page (the only tab when it chose none) |
 
 ### `logpoint add`
 

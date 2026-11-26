@@ -288,8 +288,10 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	// window.open runs in the session's current page (the opener), which
-	// in a new session is the device's first tab, often the user's own.
+	// window.open runs in the session's current page (the opener); a
+	// session without one, on a listing of several tabs, gets the first
+	// debuggable tab only as the opener (PageRequest.Opener), often the
+	// user's own: only window.open runs there.
 	// The new tab is found as click --new-tab finds it (listBeforeOpen).
 	// borrowed records the lease that this call's acquisition granted on
 	// the opener (none when the session held it before), also when the
@@ -300,8 +302,14 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	var device string
 	var known map[string]bool
 	var listErr error
-	err = m.Do(ctx, tabRequest(in, in.Global.Page), ao, "tab new", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
-		device = mo.Page.PS.Device.ID
+	var byOrder bool // the opener is no page of the session (core.ManagedOp.ByOrder)
+	// A session without a page lets core pick the opener among several
+	// tabs (PageRequest.Opener): only window.open runs there, and the
+	// session does not keep it as its page.
+	req := tabRequest(in, in.Global.Page)
+	req.Opener = true
+	err = m.Do(ctx, req, ao, "tab new", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
+		device, byOrder = mo.Page.PS.Device.ID, mo.ByOrder
 		known, listErr = listBeforeOpen(ctx, m, in, device)
 		raw, err := mo.Op.Caller().Send(ctx, "Runtime.evaluate", map[string]any{"expression": "!!window.open(" + string(expr) + ")", "returnByValue": true, "emulateUserGesture": true})
 		if err != nil {
@@ -343,6 +351,9 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 		// from the tabs that were there (review 2 F9): the session stays
 		// on the opener, without the lease that tab new borrowed there.
 		warning := notFollowedWarning("window.open", listErr)
+		if byOrder {
+			warning = fmt.Sprintf("warning: the session still has no tab: the tab list right before window.open could not be read, so no tab is taken for the new one (%v); run 'tab list', then 'tab <id>'", listErr)
+		}
 		if label != "" {
 			warning += fmt.Sprintf("; the label %q was given to no tab", label)
 		}

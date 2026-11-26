@@ -170,10 +170,10 @@ func TestGetCDPURLUsesTheSessionsDefaultPage(t *testing.T) {
 	if e := d.mustIssue(t, "s3", ""); e.Page != "Other" {
 		t.Fatalf("get cdp-url of s3 selected %q, want its default page Other", e.Page)
 	}
-	// A session without a current or default page gets the listing's first
-	// debuggable page, as before.
-	if e := d.mustIssue(t, "s4", ""); e.Page != "Fixture" {
-		t.Fatalf("get cdp-url of a new session selected %q, want the listing's first page Fixture", e.Page)
+	// A session without a current or default page gets no page of the
+	// two: exit 5 with the advice, never the listing's first page.
+	if e, err := d.issue(t, "s4", ""); commands.ExitCodeOf(err) != 5 || !strings.Contains(err.Error(), "shows 2 tab(s)") {
+		t.Fatalf("get cdp-url of a new session = %+v, %v (exit %d); want exit 5 naming the 2 tabs", e, err, commands.ExitCodeOf(err))
 	}
 }
 

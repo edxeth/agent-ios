@@ -70,9 +70,15 @@ func (m *Manager) admitSimulator(ctx context.Context, sreq PageRequest, t pageTa
 		return err
 	}
 	if n > 1 {
-		return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the simulator shows %d tabs, and this session has chosen none; the others may be other agents' work: find yours with 'agent-ios tab find --device SIMULATOR --url-file <file>' and select it with 'agent-ios tab <id>', or pass --page <id>", ErrNoPage, n)}
+		return simulatorUnchosen(n)
 	}
 	return nil
+}
+
+// simulatorUnchosen is the error of an owner that holds the simulator's
+// turn and has chosen no tab of the n tabs that it shows.
+func simulatorUnchosen(n int) error {
+	return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the simulator shows %d tabs, and this session has chosen none; the others may be other agents' work: find yours with 'agent-ios tab find --device SIMULATOR --url-file <file>' and select it with 'agent-ios tab <id>', or pass --page <id>", ErrNoPage, n)}
 }
 
 // simulatorTabs counts the pages, debuggable or not, that the listing of

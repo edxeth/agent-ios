@@ -52,7 +52,7 @@ device reserve exit 0
 hidden 0
 ```
 
-`tab list` prints one line per tab, with `*` before the current tab of your session, then `hidden <n>`: the pages of devices that your owner has not reserved.
+`tab list` prints one line per tab, with `*` before the current tab of your session, then `hidden <n>`: the pages of devices that your owner has not reserved. Start with `tab <id>` or `tab new <url>`: a session that chose no tab gets exit 5 on page commands while the device shows more than one tab, and never acts on the first one.
 
 **Find the tab of the task before the first action.** `tab find` prints the id of the one tab whose URL equals the target exactly, query and fragment included. It only reads.
 

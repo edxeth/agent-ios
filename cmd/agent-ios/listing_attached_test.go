@@ -18,7 +18,10 @@ import (
 // silentListingPages is a daemon on a fake iwdp with two pages of one
 // reserved physical device ("Fixture" first, then "Other"); the listing
 // closes its requests without a reply while either page has a connection.
-func silentListingPages(t *testing.T) (env []string, l *fakewebkit.Listing, a, b *fakewebkit.Server) {
+// With coldAttach, "eval 1+1" attached Fixture as the session's default
+// page while it was the only page, and only then was Other listed: a
+// session without a tab gets no page of two.
+func silentListingPages(t *testing.T, coldAttach bool) (env []string, l *fakewebkit.Listing, a, b *fakewebkit.Server) {
 	t.Helper()
 	page := func() *fakewebkit.Server {
 		f := fakewebkit.New(fakewebkit.Options{})
@@ -31,7 +34,9 @@ func silentListingPages(t *testing.T) (env []string, l *fakewebkit.Listing, a, b
 	t.Cleanup(l.Close)
 	dev := l.AddDevice("00008020-0000000000000001", "iPhone X", "16.7.10")
 	dev.AddPage("Fixture", "https://fixture.example/", a.URL)
-	dev.AddPage("Other", "https://other.example/", b.URL)
+	if !coldAttach {
+		dev.AddPage("Other", "https://other.example/", b.URL)
+	}
 	l.EmptyReplyWhileConnected(a, b)
 	env = privateDaemon(t)
 	if res := runCLI(t, "", env, "daemon", "start", "--transport", "iwdp", "--addr", l.Addr()); res.code != 0 {
@@ -39,6 +44,10 @@ func silentListingPages(t *testing.T) (env []string, l *fakewebkit.Listing, a, b
 	}
 	if res := runCLI(t, "", env, "device", "reserve", "--owner", "default"); res.code != 0 {
 		t.Fatalf("device reserve: exit %d, stderr %q", res.code, res.stderr)
+	}
+	if coldAttach {
+		wantEval2(t, runCLI(t, "", env, "eval", "1+1"), "the first eval (cold attach)")
+		dev.AddPage("Other", "https://other.example/", b.URL)
 	}
 	return env, l, a, b
 }
@@ -67,8 +76,7 @@ func wantEval2(t *testing.T, res cliResult, what string) {
 // The session's page is attached, so later commands run without the
 // listing.
 func TestCLIAttachedPageCommandsNeedNoListing(t *testing.T) {
-	env, l, a, b := silentListingPages(t)
-	wantEval2(t, runCLI(t, "", env, "eval", "1+1"), "the first eval (cold attach)")
+	env, l, a, b := silentListingPages(t, true)
 	if listingAnswers(t, l) {
 		t.Fatal("the fake listing answers while a page is connected; the model is off")
 	}
@@ -89,7 +97,7 @@ func TestCLIAttachedPageCommandsNeedNoListing(t *testing.T) {
 // The session's current page chosen with "tab <id>" is used without the
 // listing while it is attached.
 func TestCLISelectedTabNeedsNoListing(t *testing.T) {
-	env, l, a, b := silentListingPages(t)
+	env, l, a, b := silentListingPages(t, false)
 	if res := runCLI(t, "", env, "tab", "list"); res.code != 0 || !strings.Contains(res.stdout, "t2") {
 		t.Fatalf("tab list before any attach: exit %d, stdout %q, stderr %q", res.code, res.stdout, res.stderr)
 	}
@@ -111,8 +119,7 @@ func TestCLISelectedTabNeedsNoListing(t *testing.T) {
 // window.open on the attached page and stays there with a warning
 // (TestTabNewTakesNoTabWhenTheListingBeforeOpenFails in internal/commands).
 func TestCLIListingCommandsWhileAPageIsConnected(t *testing.T) {
-	env, _, _, _ := silentListingPages(t)
-	wantEval2(t, runCLI(t, "", env, "eval", "1+1"), "the first eval (cold attach)")
+	env, _, _, _ := silentListingPages(t, true)
 	for _, args := range [][]string{
 		{"tab", "list"},
 		{"tab", "close", "t2"},

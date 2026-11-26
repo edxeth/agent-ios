@@ -133,13 +133,14 @@ func selfBusyRig(t *testing.T) *rig {
 func stallSecondCommand(t *testing.T, r *rig) *Page {
 	t.Helper()
 	ctx := ctxFor(t, 5*time.Second)
-	a, err := r.m.Begin(ctx, r.req, agent, "first", ClassRead)
+	// The listing has two pages: the first command names its page too.
+	byTitle := r.req
+	byTitle.Page = "Fixture"
+	a, err := r.m.Begin(ctx, byTitle, agent, "first", ClassRead)
 	if err != nil {
 		t.Fatalf("first command: %v", err)
 	}
 	r.m.End(a.ID)
-	byTitle := r.req
-	byTitle.Page = "Fixture"
 	mo, err := r.m.Begin(ctx, byTitle, agent, "second", ClassExclusive)
 	if err != nil {
 		t.Fatalf("second command on the daemon's own page: %v", err)

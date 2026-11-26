@@ -176,11 +176,16 @@ func (m *Manager) OnlyTab(ctx context.Context, req PageRequest, ao AcquireOption
 	if err != nil {
 		return "", err
 	}
-	if len(tabs) != 1 || hidden != 0 {
+	if !soleTab(tabs, hidden) {
 		return "", &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: --only-tab needs a listing of exactly one tab and no hidden page; it shows %d tab(s) and %d hidden page(s)", ErrNoPage, len(tabs), hidden)}
 	}
 	return tabs[0].Key, nil
 }
+
+// soleTab reports whether a listing of tabs, and hidden pages that it
+// hides from the caller, can mean only one page: exactly one tab and no
+// hidden page (--only-tab, and a session without a page, sessionTarget).
+func soleTab(tabs []Tab, hidden int) bool { return len(tabs) == 1 && hidden == 0 }
 
 // Logf writes to the daemon log (ManagerOptions.Logf); commands use it
 // for work that ends after their result, such as a cleanup operation.
@@ -287,7 +292,8 @@ func autoKind(kind string) string {
 // agree (an explicit --page always wins). Without such a current page, it
 // carries the session's default page (setDefaultPage) for the same
 // transport and address, which resolve uses while that page's connection
-// is open; otherwise the listing picks the first page, as before.
+// is open; otherwise sessionTarget resolves the page only when the listing
+// has a single tab.
 func (m *Manager) sessionPage(session string, req PageRequest) PageRequest {
 	if req.Page != "" {
 		if k, ok := m.TabKey(req.Page); ok {
@@ -308,6 +314,114 @@ func (m *Manager) sessionPage(session string, req PageRequest) PageRequest {
 	}
 	s.mu.Unlock()
 	return req
+}
+
+// sessionTarget resolves and admits the page of a command of ao's session
+// (touch, ResolvePage): sessionPage's request sreq, resolved, under the
+// reservation rule of the page's device (admitTarget). A request that
+// names no page, of a session without a current page and without an open
+// default page, resolves a page only when the listing can mean only one
+// (soleTab, as --only-tab): a page is never picked by its order, because
+// on a shared device the first tab can be another agent's or the user's.
+// Any other listing is an error (CodeNoPage) that says how to choose a
+// tab, except for req.Opener (tab new's window.open), which then gets the
+// listing's first debuggable tab that ao may use. implicit reports that
+// the page came from no choice of the session (sreq.Page is ""), and is
+// to become its default page; never for an opener picked by order.
+func (m *Manager) sessionTarget(ctx context.Context, req PageRequest, ao AcquireOptions) (sreq PageRequest, t pageTarget, implicit bool, err error) {
+	sreq = m.sessionPage(ao.Session, req)
+	implicit = sreq.Page == ""
+	switch {
+	case sreq.Page != "":
+		t, err = m.resolve(ctx, sreq)
+	default:
+		var ok bool
+		if t, ok = m.attachedTarget(sreq); !ok {
+			t, implicit, err = m.soleTarget(ctx, sreq, ao)
+		}
+	}
+	if err != nil {
+		return PageRequest{}, pageTarget{}, false, err
+	}
+	if err := m.admitTarget(ctx, sreq, t, ao.Reservation); err != nil {
+		return PageRequest{}, pageTarget{}, false, err
+	}
+	return sreq, t, implicit, nil
+}
+
+// soleTarget is the page of sreq (no page, no open default page) when the
+// listing that ao's reservation owner sees has a single tab (soleTab). A
+// listing of several tabs is an error (CodeNoPage), except for an opener
+// (sreq.Opener), which gets the first debuggable tab, with implicit false.
+// When every page is hidden, the error is the admission error of the
+// listing's first debuggable page (its device's reservation), which names
+// what to reserve; that page is only refused, never used.
+func (m *Manager) soleTarget(ctx context.Context, sreq PageRequest, ao AcquireOptions) (t pageTarget, implicit bool, err error) {
+	listing := PageRequest{Transport: sreq.Transport, Addr: sreq.Addr}
+	tabs, hidden, err := m.Tabs(ctx, listing, ao)
+	if err != nil {
+		return pageTarget{}, false, err
+	}
+	if len(tabs) == 0 && hidden > 0 {
+		t, err := m.resolve(ctx, listing)
+		if err == nil {
+			err = m.admitTarget(ctx, sreq, t, ao.Reservation)
+		}
+		if err == nil {
+			err = m.noSessionTab(tabs, hidden, ao)
+		}
+		return pageTarget{}, false, err
+	}
+	key := ""
+	switch {
+	case soleTab(tabs, hidden):
+		implicit = true
+		if tabs[0].Debuggable {
+			key = tabs[0].Key
+		}
+	case len(tabs) > 0 && !sreq.Opener:
+		return pageTarget{}, false, m.noSessionTab(tabs, hidden, ao)
+	default:
+		for _, tab := range tabs {
+			if tab.Debuggable {
+				key = tab.Key
+				break
+			}
+		}
+	}
+	if key == "" {
+		return pageTarget{}, false, &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: no debuggable page among %d listed; open a page in Safari on the device", ErrNoPage, len(tabs)+hidden)}
+	}
+	listing.Page = key
+	if t, ok := m.attachedTarget(listing); ok {
+		return t, implicit, nil
+	}
+	t, _, err = m.findListed(ctx, listing, func(k string, _ transport.Page) bool { return k == key })
+	if err == nil && t.key == "" {
+		err = &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the listing no longer has the page %q", ErrNoPage, key)}
+	}
+	return t, implicit, err
+}
+
+// noSessionTab is the error of a command of a session without a tab on a
+// listing of several pages (soleTarget). Tabs of the simulator only, in
+// the turn of ao's owner, get the simulator's advice (simulatorUnchosen).
+func (m *Manager) noSessionTab(tabs []Tab, hidden int, ao AcquireOptions) error {
+	simulator := len(tabs) > 1 && hidden == 0
+	for _, t := range tabs {
+		kind, _, _ := strings.Cut(t.Key, "|")
+		simulator = simulator && t.DeviceID == SimulatorDevice && !physicalDevice(transport.Kind(kind), t.DeviceID)
+	}
+	if simulator {
+		if mine, err := m.simulatorTurn(ao.Reservation); err == nil && mine {
+			return simulatorUnchosen(len(tabs))
+		}
+	}
+	shown := fmt.Sprintf("%d tab(s)", len(tabs))
+	if hidden > 0 {
+		shown += fmt.Sprintf(" and %d hidden page(s)", hidden)
+	}
+	return &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: this session has no tab, and the listing shows %s; agent-ios does not pick one by order, because another agent or the user may be using it: run 'agent-ios tab list', then 'agent-ios tab <id>' (or pass --page <id>), or open your own tab with 'agent-ios tab new [url]'", ErrNoPage, shown)}
 }
 
 // deviceListed calls visit for each page of the device id in the listing

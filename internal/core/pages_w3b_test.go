@@ -14,7 +14,8 @@ import (
 // Design 3.8 and 4.1: "tab" lists pages with stable ids t1, t2, ...;
 // "tab <id>" makes a page the session's current page, which the session's
 // later commands use; --page (also a tab id or label) overrides it for one
-// command; other sessions keep resolving as before.
+// command; other sessions keep resolving as before: without a choice, a
+// listing of two pages gives them none (exit 5, never the first page).
 func TestTabSelectionSteersOnlyTheSelectingSession(t *testing.T) {
 	r := newRig(t, fakewebkit.Options{}, false, ManagerOptions{})
 	f2 := fakewebkit.New(fakewebkit.Options{})
@@ -43,9 +44,18 @@ func TestTabSelectionSteersOnlyTheSelectingSession(t *testing.T) {
 		defer r.m.End(mo.ID)
 		return mo.Page.Key
 	}
-	if k := keyOf("s1", r.req); k != tabs[0].Key {
-		t.Fatalf("before a selection the session uses %s, want the first page %s", k, tabs[0].Key)
+	unchosen := func(session string) {
+		t.Helper()
+		mo, err := r.m.Begin(ctx, r.req, AcquireOptions{Session: session, Reservation: "agent"}, "probe", ClassRead)
+		if err == nil {
+			r.m.End(mo.ID)
+			t.Fatalf("%s without a selection runs on %s; want no page of the two", session, mo.Page.Key)
+		}
+		if exitCode(err) != CodeNoPage || !strings.Contains(err.Error(), "tab list") {
+			t.Fatalf("%s without a selection: %v (exit %d); want exit %d with the advice", session, err, exitCode(err), CodeNoPage)
+		}
 	}
+	unchosen("s1")
 	sel := r.req
 	sel.Page = tabs[1].Key
 	r.m.SelectPage("s1", sel)
@@ -69,9 +79,7 @@ func TestTabSelectionSteersOnlyTheSelectingSession(t *testing.T) {
 	if err := r.m.Release(ctx, "s2", tabs[1].Key); err != nil {
 		t.Fatal(err)
 	}
-	if k := keyOf("s2", r.req); k != tabs[0].Key {
-		t.Fatalf("session s2 without a selection uses %s, want the first page %s", k, tabs[0].Key)
-	}
+	unchosen("s2")
 
 	again, _, err := r.m.Tabs(ctx, r.req, AcquireOptions{Session: "s1", Reservation: "agent"})
 	if err != nil {

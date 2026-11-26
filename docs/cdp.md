@@ -90,8 +90,8 @@ Which page the URL selects:
 1. `--page`, when given: a tab id or label (`t2`, as `tab list` printed it), a page key (the first column of a page line in `agent-ios daemon status`, or `key` in `agent-ios tab list --json`), a part of a page's title or URL (the first listed page that matches), or a `ws://` page URL.
 2. Else the page chosen with `tab <id>`.
 3. Else the session's default page (the page that its last command without `--page` used), while the daemon holds that page's connection open. This step reads no listing.
-4. Else the listing's first debuggable page.
-5. When none of these gives a page (for example the chosen tab is gone, or the listing has no page), the command exits 5.
+4. Else the only tab of the listing, when it has exactly one tab and no hidden page (as `--only-tab`). A listing of several tabs gives no page: agent-ios never picks one by its order, because it can be another agent's or the user's.
+5. When none of these gives a page (for example the chosen tab is gone, the listing has no page, or the session chose no tab and the listing has several), the command exits 5; choose a tab with `agent-ios tab list` and `agent-ios tab <id>` (or `--page <id>`), or open your own with `agent-ios tab new [url]`.
 
 The transport of the request (`--transport` or `AGENT_IOS_TRANSPORT`) limits steps 2 and 3: step 2 skips a tab that was chosen with another explicit transport, and step 3 uses only a default page that a command with the same transport value set (no value counts as `auto`).
 
@@ -322,7 +322,7 @@ On the second device check, the user's iwdp closed every listing request without
 
 - The target list and every target lookup of a record of a listed page (an iwdp page of the listing) read the listing: `/json` and `/json/list` (HTTP 503 "listing the pages: ..."), a `/devtools/page/<targetId>` connection, `Target.setDiscoverTargets`, `getTargets`, `getTargetInfo`, `setAutoAttach`, `attachToTarget`, `createTarget`, `closeTarget`, `activateTarget`, the cookie methods on the browser session and `Storage.clearDataForOrigin`. On such an iwdp they fail with the listing error and its advice while the daemon holds a page connection, also the connection of an earlier CLI command.
 - The target discovery that runs every 2 s while a client discovers or auto-attaches logs the failure and announces nothing.
-- `get cdp-url` reads no listing when it selects a page that the daemon holds open: the session's `tab` choice, its default page, or `--page` with its tab id, label, key or `ws://` URL (steps 1 to 3 of "Which page the URL selects"). It reads the listing for a title or URL text, for the `ws://` URL of a page that the daemon does not hold open, and for the listing's first page.
+- `get cdp-url` reads no listing when it selects a page that the daemon holds open: the session's `tab` choice, its default page, or `--page` with its tab id, label, key or `ws://` URL (steps 1 to 3 of "Which page the URL selects"). It reads the listing for a title or URL text, for the `ws://` URL of a page that the daemon does not hold open, and for the only tab of step 4.
 
 Advice: run `agent-ios daemon stop` to close the page connections (this also stops the endpoint and revokes its URLs), or restart that iwdp (`agent-ios restart-iwdp` for an iwdp that agent-ios started; any other iwdp only whoever started it, and only when nobody else uses it: `scripts/iwdp-owner-check.sh --terminate <record>`, then `scripts/iwdp-owner-check.sh <record>` until it reports `gone`, as [Stopping an iwdp by hand](device-runbook.md#stopping-an-iwdp-by-hand) in device-runbook.md describes; otherwise ask whoever started it, or the user); then get a new URL. Not checked on a device: whether a CDP client can work on such an iwdp at all, because its own attachment opens a page connection.
 

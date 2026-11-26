@@ -29,7 +29,7 @@ func init() {
 	})
 	Register(&Command{
 		Name: "lease takeover", Summary: "Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval).",
-		Args:      []Arg{{Name: "page", Help: "page key, ws:// URL, or part of its title or URL; default: the first page", Page: true}},
+		Args:      []Arg{{Name: "page", Help: "page key, ws:// URL, or part of its title or URL; default: the session's page (the only tab when it chose none)", Page: true}},
 		ReadsPage: true,
 		Run: func(ctx context.Context, env Env, in Input) (Result, error) {
 			m, err := managerOf(env)

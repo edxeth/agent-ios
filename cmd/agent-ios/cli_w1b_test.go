@@ -85,14 +85,16 @@ func TestCLIBusyLostAndTakeoverExitCodes(t *testing.T) {
 	owned := with(env, "AGENT_IOS_DEVICE_RESERVATION=orchestrator")
 	// The hint needs iwdp's frontend: another page of the device lists its
 	// devtoolsFrontendUrl, so an empty one means busy.
+	// With two pages, the commands name theirs (a session without a tab
+	// gets no page of two).
 	dev.AddPage("Other", "https://other.example/", f.URL+"x")
 	dev.SetBusy(pg, true)
-	wantExit(t, runCLI(t, "", owned, "eval", "1+1"), 4, "held by another inspector client")
+	wantExit(t, runCLI(t, "", owned, "--page", "Fixture", "eval", "1+1"), 4, "held by another inspector client")
 	if n := f.ConnectionCount(); n != 0 {
 		t.Fatalf("the busy page was dialed %d times", n)
 	}
 	dev.SetBusy(pg, false)
-	if res := runCLI(t, "", owned, "eval", "1+1"); res.code != 0 {
+	if res := runCLI(t, "", owned, "--page", "Fixture", "eval", "1+1"); res.code != 0 {
 		t.Fatalf("eval: exit %d, stderr %q", res.code, res.stderr)
 	}
 	// Another inspector takes the page.
@@ -104,12 +106,12 @@ func TestCLIBusyLostAndTakeoverExitCodes(t *testing.T) {
 	eventually(t, 5*time.Second, "the lease to become lost", func() bool {
 		return strings.Contains(runCLI(t, "", env, "daemon", "status").stdout, "lease lost")
 	})
-	wantExit(t, runCLI(t, "", owned, "eval", "1+1"), 4, "ownership is unknown")
+	wantExit(t, runCLI(t, "", owned, "--page", "Fixture", "eval", "1+1"), 4, "ownership is unknown")
 	if n := f.ConnectionCount(); n != 2 {
 		t.Fatalf("connections %d, want 2 (the daemon's and the thief's): no automatic reconnect", n)
 	}
-	wantExit(t, runCLI(t, "", env, "--takeover", "eval", "1+1"), 6, "reserved by \"orchestrator\"")
-	res := runCLI(t, "", owned, "--takeover", "eval", "1+1")
+	wantExit(t, runCLI(t, "", env, "--takeover", "--page", "Fixture", "eval", "1+1"), 6, "reserved by \"orchestrator\"")
+	res := runCLI(t, "", owned, "--takeover", "--page", "Fixture", "eval", "1+1")
 	if res.code != 0 || strings.TrimSpace(res.stdout) != "2" || f.ConnectionCount() != 3 {
 		t.Fatalf("--takeover: exit %d, stdout %q, stderr %q, connections %d", res.code, res.stdout, res.stderr, f.ConnectionCount())
 	}

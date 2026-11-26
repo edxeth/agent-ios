@@ -117,7 +117,11 @@ func TestPageListFailureOfOneOfTwoDevices(t *testing.T) {
 		if _, err := r.res.Reserve(dev2.ID, "agent", time.Hour); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := r.m.Touch(ctxFor(t, 10*time.Second), r.req, agent); err != nil {
+		// Two pages: the request names its page (a session without a
+		// tab gets no page of several).
+		fixture := r.req
+		fixture.Page = "Fixture"
+		if _, _, err := r.m.Touch(ctxFor(t, 10*time.Second), fixture, agent); err != nil {
 			t.Fatalf("attach Fixture on the first device: %v", err)
 		}
 		return r, failPages, dev2

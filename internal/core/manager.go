@@ -77,7 +77,11 @@ type ManagerOptions struct {
 type PageRequest struct {
 	Transport string // auto, iwdp, direct, webkitgtk; "" = auto
 	Addr      string // listing or inspector address; "" = the transport's default
-	Page      string // ws:// URL, page id or key, or a substring of the title or URL; "" = first page
+	Page      string // ws:// URL, page id or key, or a substring of the title or URL; "" = the session's page (sessionTarget)
+	// Opener marks the request of tab new's window.open: when the session
+	// has no page and the listing has several tabs, it resolves the
+	// listing's first debuggable tab, only as the opener (sessionTarget).
+	Opener bool
 	// prefer is the session's default page for a request without a page
 	// (sessionPage): its record key, used while its connection is open
 	// (attachedTarget).
@@ -286,6 +290,9 @@ type ManagedOp struct {
 	Page    *Page
 	Session string
 	Epoch   uint64
+	// ByOrder: the session did not choose the page; it is the opener that
+	// the listing's order gave a request with PageRequest.Opener.
+	ByOrder bool
 }
 
 // Manager owns every page connection of the daemon: devices, pages,
@@ -1503,35 +1510,34 @@ func (m *Manager) HoldLease(pg *Page, ao AcquireOptions) func() {
 // Touch resolves and attaches the page and acquires (or renews) the lease
 // for the caller's session, without opening an operation.
 func (m *Manager) Touch(ctx context.Context, req PageRequest, ao AcquireOptions) (*Page, uint64, error) {
-	pg, epoch, _, err := m.touch(ctx, req, ao.normalized(), false)
+	pg, epoch, _, _, err := m.touch(ctx, req, ao.normalized(), false)
 	return pg, epoch, err
 }
 
-func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions, op bool) (*Page, uint64, time.Time, error) {
-	// The session's current page and tab ids (pages_w3b.go, design 3.8).
-	sreq := m.sessionPage(ao.Session, req)
-	t, err := m.resolve(ctx, sreq)
+// byOrder reports a page that the session did not choose: the opener that
+// the listing's order gave a request with Opener (sessionTarget).
+func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions, op bool) (_ *Page, _ uint64, _ time.Time, byOrder bool, _ error) {
+	// The session's current page and tab ids (pages_w3b.go, design 3.8),
+	// under the reservation rule of the page's device, also on a page
+	// that the daemon is attached to and on a lease that the session
+	// holds (device_admission.go). The admission runs before the
+	// observer, which streams the page's key and title to the client: a
+	// refused owner learns neither.
+	sreq, t, implicit, err := m.sessionTarget(ctx, req, ao)
 	if err != nil {
-		return nil, 0, time.Time{}, err
-	}
-	// The reservation rule of the page's device, also on a page that the
-	// daemon is attached to and on a lease that the session holds
-	// (device_admission.go). It runs before the observer, which streams
-	// the page's key and title to the client: a refused owner learns
-	// neither.
-	if err := m.admitTarget(ctx, sreq, t, ao.Reservation); err != nil {
-		return nil, 0, time.Time{}, err
+		return nil, 0, time.Time{}, false, err
 	}
 	if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
 		observe(t.key, t.title)
 	}
-	if sreq.Page == "" {
+	if implicit {
 		m.setDefaultPage(ao.Session, sreq, t.key)
 	}
+	byOrder = sreq.Page == "" && !implicit
 	for {
 		pg, err := m.page(t)
 		if err != nil {
-			return nil, 0, time.Time{}, err
+			return nil, 0, time.Time{}, false, err
 		}
 		err = m.ensureAttached(ctx, pg, t, ao)
 		var epoch uint64
@@ -1543,10 +1549,10 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 			continue // the sweeper closed the record meanwhile: look the page up again
 		}
 		if err != nil {
-			return nil, 0, time.Time{}, err
+			return nil, 0, time.Time{}, false, err
 		}
 		m.leaseStarted(ctx, pg, ao.Session, epoch)
-		return pg, epoch, prev, nil
+		return pg, epoch, prev, byOrder, nil
 	}
 }
 
@@ -1587,7 +1593,7 @@ func (m *Manager) LeaseEnded(pg *Page, session string, epoch uint64) (<-chan str
 // then queue in the page's scheduler. ctx must have the command deadline.
 func (m *Manager) Begin(ctx context.Context, req PageRequest, ao AcquireOptions, name string, class Class) (*ManagedOp, error) {
 	ao = ao.normalized()
-	pg, epoch, prev, err := m.touch(ctx, req, ao, true)
+	pg, epoch, prev, byOrder, err := m.touch(ctx, req, ao, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1626,7 +1632,7 @@ func (m *Manager) Begin(ctx context.Context, req PageRequest, ao AcquireOptions,
 	}
 	m.mu.Lock()
 	m.nextOp++
-	mo := &ManagedOp{ID: fmt.Sprintf("o%d", m.nextOp), Op: op, Page: pg, Session: ao.Session, Epoch: epoch}
+	mo := &ManagedOp{ID: fmt.Sprintf("o%d", m.nextOp), Op: op, Page: pg, Session: ao.Session, Epoch: epoch, ByOrder: byOrder}
 	m.ops[mo.ID] = mo
 	m.mu.Unlock()
 	return mo, nil
