@@ -58,8 +58,8 @@ func dialWebSocket(ctx context.Context, dialer *websocket.Dialer, wsURL string, 
 
 func (w *wsConn) Limits() transport.Limits { return w.limits }
 
-// Write sends one text message. Every write has a deadline: the ctx
-// deadline, or DefaultSendTimeout when ctx has none.
+// Write sends one text message as one WebSocket frame. Every write has a
+// deadline: the ctx deadline, or DefaultSendTimeout when ctx has none.
 func (w *wsConn) Write(ctx context.Context, msg []byte) error {
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -77,10 +77,12 @@ func (w *wsConn) Write(ctx context.Context, msg []byte) error {
 	if w.wire.cut.Load() {
 		return fmt.Errorf("%w: %w", transport.ErrNotWritten, errWritesCut)
 	}
-	if err := w.conn.SetWriteDeadline(deadline); err != nil {
-		return fmt.Errorf("%w: setting the write deadline: %w", transport.ErrNotWritten, err)
+	// One frame per message, never gorilla's fragments (wsframe.go).
+	started, err := w.wire.writeFrame(ctx, opText, msg, deadline)
+	if err != nil && !started {
+		return fmt.Errorf("%w: %w", transport.ErrNotWritten, err)
 	}
-	if err := w.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+	if err != nil {
 		return w.wire.failed(err)
 	}
 	return nil
@@ -187,10 +189,14 @@ func retiredBy(err error) error {
 // ends at once and every later write fails before writing anything
 // (interruptInProgress calls it only while a write is in progress). A
 // write deadline set from outside alone would not do: gorilla/websocket
-// sets the deadline it was given again before each frame, so the next frame
-// of a large message would wait again. A gorilla connection whose write
-// failed fails every later write too, so a failed write sets cut as well
-// (failed), and its owner ends the connection; the daemon replaces it.
+// set the deadline it was given again before each frame, so the next frame
+// of a large message would wait again. A connection whose write failed has
+// a broken frame stream, so a failed write sets cut as well (failed), and
+// its owner ends the connection; the daemon replaces it.
+//
+// frameSem holds one token while a whole frame is written: a data frame
+// (writeFrame) or a control frame that gorilla writes through Write and
+// SetWriteDeadline, so no frame lands inside another (FIX-V, wsframe.go).
 //
 // Reads acknowledge at once (quickAcker): ios_webkit_debug_proxy answers
 // each Target.sendMessageToTarget with two frames, its own empty result
@@ -199,8 +205,13 @@ func retiredBy(err error) error {
 // acknowledged the first frame, 40 ms later on Linux (FIX-R).
 type cutConn struct {
 	net.Conn
-	cut    atomic.Bool
-	ackNow func() // nil: not a TCP connection, or not Linux
+	cut      atomic.Bool
+	ackNow   func() // nil: not a TCP connection, or not Linux
+	frameSem chan struct{}
+}
+
+func newCutConn(c net.Conn) *cutConn {
+	return &cutConn{Conn: c, ackNow: quickAcker(c), frameSem: make(chan struct{}, 1)}
 }
 
 func (c *cutConn) Read(b []byte) (int, error) {
@@ -214,7 +225,12 @@ func (c *cutConn) Read(b []byte) (int, error) {
 // pastDeadline is a write deadline that has already passed.
 var pastDeadline = time.Unix(1, 0)
 
+// Write is gorilla's own write: since FIX-V only the close frame that
+// answers a protocol error, one Write call per frame. It waits for the
+// frame lock.
 func (c *cutConn) Write(b []byte) (int, error) {
+	c.frameSem <- struct{}{}
+	defer func() { <-c.frameSem }()
 	if c.cut.Load() {
 		return 0, errWritesCut
 	}
@@ -224,8 +240,12 @@ func (c *cutConn) Write(b []byte) (int, error) {
 // SetWriteDeadline keeps the passed deadline once the writes were
 // interrupted. cut is checked before the deadline is set, and interrupt
 // sets cut before its own deadline, so a deadline that a frame sets after
-// interrupt is followed by a Write that sees cut.
+// interrupt is followed by a Write that sees cut. It is gorilla's call
+// (writeFrame sets its deadline itself) and waits for the frame lock, so it
+// cannot change the deadline of a frame in progress.
 func (c *cutConn) SetWriteDeadline(t time.Time) error {
+	c.frameSem <- struct{}{}
+	defer func() { <-c.frameSem }()
 	if c.cut.Load() {
 		t = pastDeadline
 	}
@@ -267,7 +287,7 @@ func dialCuttable(ctx context.Context, d *websocket.Dialer, wsURL string) (*webs
 			if err != nil {
 				return nil, err
 			}
-			wire = &cutConn{Conn: c, ackNow: quickAcker(c)}
+			wire = newCutConn(c)
 			return wire, nil
 		}
 	}
@@ -280,5 +300,8 @@ func dialCuttable(ctx context.Context, d *websocket.Dialer, wsURL string) (*webs
 		dc.NetDialTLSContext = wrap(dc.NetDialTLSContext)
 	}
 	conn, resp, err := dc.DialContext(ctx, wsURL, nil)
+	if err == nil {
+		installControlHandlers(conn, wire)
+	}
 	return conn, wire, resp, err
 }

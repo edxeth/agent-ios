@@ -326,12 +326,13 @@ func (c *Client) Send(ctx context.Context, method string, params interface{}) (j
 		<-c.writeSem
 		return nil, notSent(fmt.Errorf("%s: not sent: %w", method, errWritesCut))
 	}
-	if err := c.conn.SetWriteDeadline(deadline); err != nil {
+	// One frame per message (wsframe.go). A failed write may have written
+	// part of the message: not marked.
+	started, err := c.wire.writeFrame(ctx, opText, wireData, deadline)
+	if err != nil && !started {
 		<-c.writeSem
 		return nil, notSent(fmt.Errorf("%s: writing message: %w", method, deadlineCaused(ctx, err)))
 	}
-	// A failed write may have written part of the message: not marked.
-	err := c.conn.WriteMessage(websocket.TextMessage, wireData)
 	if err != nil {
 		err = c.wire.failed(err) // before the next writer takes the slot
 	}

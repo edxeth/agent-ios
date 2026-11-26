@@ -241,7 +241,7 @@ func TestCutConnKeepsWritesCutAcrossFrames(t *testing.T) {
 	a, b := net.Pipe() // a write blocks until the other end reads; b never reads
 	defer func() { _ = a.Close() }()
 	defer func() { _ = b.Close() }()
-	c := &cutConn{Conn: a}
+	c := newCutConn(a)
 	blocked := make(chan error, 1)
 	go func() {
 		_, err := c.Write([]byte("frame 1"))
