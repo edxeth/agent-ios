@@ -67,6 +67,10 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`keyup`](#keyup) | Send keyup for a key on the focused element; a modifier key stops being held. |
 | [`lease break`](#lease-break) | End the lease on a page whoever holds it, with its cleanup. |
 | [`lease takeover`](#lease-takeover) | Reattach a lost page and take its lease for this session (needs the device reservation and the device owner's approval). |
+| [`logpoint add`](#logpoint-add) | Log an expression to the console each time a script location runs, without pausing; the location is \<url\>:\<line\>[:\<column\>] (1-based; the url is a script URL or an original source of a source map, exact or as a path suffix). Prints the bound location. |
+| [`logpoint clear`](#logpoint-clear) | Remove all logpoints of the session. |
+| [`logpoint list`](#logpoint-list) | List the session's logpoints with their bound locations. |
+| [`logpoint remove`](#logpoint-remove) | Remove a logpoint by the id that 'logpoint add' printed. |
 | [`mouse`](#mouse) | Low-level mouse: move \<x\> \<y\> [--steps n], down [button], up [button], wheel \<dy\> [dx]; the events carry the modifiers that keydown holds. |
 | [`network har start`](#network-har-start) | Start recording a HAR of the requests from now on; 'network har stop' writes it. |
 | [`network har stop`](#network-har-stop) | Stop the HAR recording and write it as HAR 1.2 JSON (mode 0600; secret values masked unless --show-secrets). |
@@ -988,6 +992,55 @@ Reattach a lost page and take its lease for this session (needs the device reser
 | Argument | Required | Description |
 |---|---|---|
 | `<page>` | no | page key, ws:// URL, or part of its title or URL; default: the first page |
+
+### `logpoint add`
+
+```
+agent-ios logpoint add <location> <expression>...
+```
+
+Log an expression to the console each time a script location runs, without pausing; the location is \<url\>:\<line\>[:\<column\>] (1-based; the url is a script URL or an original source of a source map, exact or as a path suffix). Prints the bound location.
+
+- Page: leases the session's page
+
+| Argument | Required | Description |
+|---|---|---|
+| `<location>` | yes | \<url\>:\<line\>[:\<column\>], for example app.js:42 or src/cart.ts:12:5 |
+| `<expression>...` | yes | what to log, like console.log arguments (several words are joined with spaces) |
+
+### `logpoint clear`
+
+```
+agent-ios logpoint clear
+```
+
+Remove all logpoints of the session.
+
+- Page: leases the session's page
+
+### `logpoint list`
+
+```
+agent-ios logpoint list
+```
+
+List the session's logpoints with their bound locations.
+
+- Page: leases the session's page
+
+### `logpoint remove`
+
+```
+agent-ios logpoint remove <id>
+```
+
+Remove a logpoint by the id that 'logpoint add' printed.
+
+- Page: leases the session's page
+
+| Argument | Required | Description |
+|---|---|---|
+| `<id>` | yes | logpoint id |
 
 ### `mouse`
 

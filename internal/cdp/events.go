@@ -158,6 +158,7 @@ type pageState struct {
 	worldState // execution contexts and aliases (worlds.go)
 
 	net   netState   // requests and their CDP ids (network_domain.go)
+	dbg   dbgState   // parsed scripts and Debugger events (debugger_domain.go)
 	fetch fetchState // interception (fetch_domain.go)
 
 	// The attachment's bootstrap part (page_domain.go, runtime_domain.go).

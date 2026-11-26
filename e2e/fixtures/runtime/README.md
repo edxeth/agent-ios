@@ -32,3 +32,10 @@ diff url tests, e2e/webkitgtk/diffstate045_test.go (agent-browser 0.45
 contract); their expected diffs are hand-written in that test from the
 snapshot rules above. diff045-b.html has a black background, so its
 screenshot differs from diff045-a.html's.
+
+`logpoint.html` is the page of the logpoint test e2e/webkitgtk/logpoint045_test.go:
+`logpoint.js` is a plain script; `logpoint-mapped.js` has an inline source map
+(data: URL) back to `src/cart.ts`, and `logpoint-mapped2.js` a map file
+(`maps/logpoint-mapped2.js.map`) back to `src/basket.ts`. The mappings were
+written by hand (original line 4 to generated line 2, 5 to 3, 6 to 4, 7 to 5,
+9 to 7, 1-based); the test's expected locations follow from them.

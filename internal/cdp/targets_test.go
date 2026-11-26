@@ -194,7 +194,7 @@ func TestUnknownMethodsAreNeverForwarded(t *testing.T) {
 	c := dial(t, r.issue(t, "s1", "One", ScopePage).WS)
 	call(t, c, "", "Target.setAutoAttach", map[string]any{"autoAttach": true, "flatten": true})
 	sid := decode[attached](t, eventsOf(c, "Target.attachedToTarget")[0].Params).SessionID
-	unknown := []string{"CSS.enable", "CSS.getAllStyleSheets", "Foo.bar", "Page.printToPDF", "DOM.getAttributes", "Debugger.enable"}
+	unknown := []string{"CSS.enable", "CSS.getAllStyleSheets", "Foo.bar", "Page.printToPDF", "DOM.getAttributes", "Debugger.pause"}
 	for i := 0; i < 2; i++ {
 		for _, m := range unknown {
 			_, err := c.Call(ctxFor(t, 5*time.Second), sid, m, map[string]any{})
