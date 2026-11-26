@@ -68,3 +68,21 @@ func Supported(osVersion, method string) (known, ok bool) {
 	}
 	return true, sets[idx][method]
 }
+
+// EmulatedConditionsBandwidth reports whether Network.setEmulatedConditions
+// of iOS osVersion takes bandwidth and latency (27.3 and later, WebKit
+// commit c4a7ebcc295f; also an unknown version, such as WebKitGTK's, whose
+// WebKit is current) rather than bytesPerSecondLimit (16.4 to 17.x). The
+// CDP bridge and "emulate network" pick their parameters by it.
+func EmulatedConditionsBandwidth(osVersion string) bool {
+	parts := strings.Split(osVersion, ".")
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return true
+	}
+	minor := 0
+	if len(parts) > 1 {
+		minor, _ = strconv.Atoi(parts[1])
+	}
+	return major > 27 || major == 27 && minor >= 3
+}

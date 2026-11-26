@@ -61,7 +61,7 @@ func init() {
 	registerAction(&Command{
 		Name: "press", Aliases: []string{"key"},
 		Summary: "Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused element, with its emulated default action; chord modifiers get their own key events, and modifiers held by keydown apply.",
-		Args:    []Arg{{Name: "key", Help: "key name or character, with optional Control+, Shift+, Alt+, Meta+ modifiers", Required: true}},
+		Args:    []Arg{{Name: "key", Help: "key name or character, with optional modifiers joined by + anywhere in it (Control, Shift, Alt, Meta, their Left/Right forms, ctrl, cmd, command)", Required: true}},
 		Flags:   []Flag{{Name: "phase", Type: FlagEnum, Enum: []string{"both", "down", "up"}, Default: "both", Help: "down sends a bare keydown (no keypress, insertion or default action; agent-ios only), up only keyup"}},
 		Run:     runPress(""),
 	})
@@ -203,33 +203,61 @@ func (m modifiers) mask() int {
 	return n
 }
 
-// parseKey parses "Enter", "a", "Shift+Tab" or "Control+a" (agent-browser
-// press form). The last part is the key; a "+" key is written "+" or as
-// the last part after a "+" (Control++).
+// keyModifierBit is the modifier bit of a chord part (agent-browser 0.45
+// key_modifier_bit): the names of click --modifiers and the Left and
+// Right modifier keys, case-insensitive.
+func keyModifierBit(part string) (int, bool) {
+	l := strings.ToLower(part)
+	if b, ok := modifierBits[l]; ok {
+		return b, true
+	}
+	b, ok := sideModifierBits[l]
+	return b, ok
+}
+
+var sideModifierBits = map[string]int{
+	"altleft": modAlt, "altright": modAlt, "controlleft": modControl, "controlright": modControl,
+	"metaleft": modMeta, "metaright": modMeta, "shiftleft": modShift, "shiftright": modShift,
+}
+
+// parseKey parses "Enter", "a", "Shift+Tab", "a+Shift" or "ShiftRight+a"
+// (agent-browser 0.45 parse_key_chord): the parts split on "+" that name a
+// modifier (keyModifierBit), wherever they are, are the chord's modifiers,
+// and the other parts, joined again with "+", are the key, so a "+" key is
+// "+" or "Control++". Without a modifier part the whole string is the key.
+// When every part names a modifier, the last one is the key ("Shift+Control"
+// presses Control with Shift), as agent-ios has always parsed it.
 func parseKey(s string) (keyDesc, modifiers, error) {
 	var m modifiers
 	if s == "" {
 		return keyDesc{}, m, usagef("press: empty key")
 	}
 	parts := strings.Split(s, "+")
-	key := parts[len(parts)-1]
-	mods := parts[:len(parts)-1]
-	if key == "" && len(parts) > 1 { // "Control++" or "+"
-		key, mods = "+", parts[:len(parts)-2]
-	}
-	for _, p := range mods {
-		switch strings.ToLower(p) {
-		case "shift":
-			m.S = true
-		case "control", "ctrl":
-			m.C = true
-		case "alt", "option":
-			m.A = true
-		case "meta", "command", "cmd":
-			m.M = true
-		default:
-			return keyDesc{}, m, usagef("press %q: unknown modifier %q (want Shift, Control, Alt or Meta)", s, p)
+	key, mask := s, 0
+	if len(parts) > 1 {
+		var rest []string
+		for _, p := range parts {
+			if b, ok := keyModifierBit(p); ok {
+				mask |= b
+			} else {
+				rest = append(rest, p)
+			}
 		}
+		switch {
+		case mask == 0:
+		case len(rest) == 0:
+			key, mask = parts[len(parts)-1], 0
+			for _, p := range parts[:len(parts)-1] {
+				b, _ := keyModifierBit(p)
+				mask |= b
+			}
+		default:
+			key = strings.Join(rest, "+")
+		}
+	}
+	m = modifiers{A: mask&modAlt != 0, C: mask&modControl != 0, M: mask&modMeta != 0, S: mask&modShift != 0}
+	if key == "" {
+		return keyDesc{}, m, usagef("press %q: empty key", s)
 	}
 	if utf8.RuneCountInString(key) == 1 {
 		r, _ := utf8.DecodeRuneInString(key)

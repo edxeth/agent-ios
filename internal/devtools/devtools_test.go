@@ -44,11 +44,17 @@ func newPausingRig(t *testing.T) *rig {
 
 func newRigWith(t *testing.T, so webkit.SessionOptions) *rig {
 	t.Helper()
+	return newRigOS(t, so, "16.7.10")
+}
+
+// newRigOS is newRigWith with a device of iOS osVersion.
+func newRigOS(t *testing.T, so webkit.SessionOptions, osVersion string) *rig {
+	t.Helper()
 	f := fakewebkit.New(fakewebkit.Options{})
 	t.Cleanup(f.Close)
 	l := fakewebkit.NewListing(false)
 	t.Cleanup(l.Close)
-	dev := l.AddDevice("00008020-0000000000000001", "iPhone X", "16.7.10")
+	dev := l.AddDevice("00008020-0000000000000001", "iPhone X", osVersion)
 	dev.AddPage("Fixture", "https://fixture.example/", f.URL)
 	res := &core.Reservations{Dir: t.TempDir()}
 	if _, err := res.Reserve(dev.ID, "agent", time.Hour); err != nil {

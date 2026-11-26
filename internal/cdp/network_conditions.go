@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
-	"strings"
 
 	"github.com/edxeth/agent-ios/internal/core"
 	"github.com/edxeth/agent-ios/internal/logsafe"
@@ -73,23 +72,6 @@ func (s *session) offlineRule() core.InterceptRule {
 	return core.InterceptRule{URL: globRegex("*", "offline-"+s.id[:8]), Stage: stageRequest, CaseSensitive: true, IsRegex: true}
 }
 
-// bandwidthNames reports whether the WIP Network.setEmulatedConditions of
-// iOS osVersion takes bandwidth and latency (27.3 and later; also an
-// unknown version, such as WebKitGTK's, whose WebKit is current) rather
-// than bytesPerSecondLimit (16.4 to 17.x).
-func bandwidthNames(osVersion string) bool {
-	parts := strings.Split(osVersion, ".")
-	major, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return true
-	}
-	minor := 0
-	if len(parts) > 1 {
-		minor, _ = strconv.Atoi(parts[1])
-	}
-	return major > 27 || major == 27 && minor >= 3
-}
-
 // throttleParams returns the WIP Network.setEmulatedConditions parameters
 // of c on iOS osVersion (nil: no throttle), or the reason the device
 // cannot emulate them.
@@ -103,7 +85,7 @@ func throttleParams(method, osVersion string, c netConditions) (map[string]any, 
 	if known, ok := wip.Supported(osVersion, "Network.setEmulatedConditions"); known && !ok {
 		return nil, serverError("%s: network conditions cannot be emulated on iOS %s: Network.setEmulatedConditions is not in its command list (it is in 16.4 to 17.x and from 27.3)", method, osVersion)
 	}
-	if !bandwidthNames(osVersion) {
+	if !wip.EmulatedConditionsBandwidth(osVersion) {
 		if c.latency > 0 {
 			return nil, serverError("%s: latency cannot be emulated on iOS %s (latency %v ms); only downloadThroughput is supported before iOS 27.3", method, osVersion, c.latency)
 		}

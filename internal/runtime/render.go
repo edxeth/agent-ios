@@ -152,9 +152,12 @@ func quote(s string) string {
 }
 
 // debugQuote returns s in double quotes as Rust's Debug format for str
-// prints it (agent-browser's hint={:?}): \t, \r, \n, \0, \" and \\ get
-// their escapes; other control, format and unassigned characters and
-// combining marks get \u{hex}.
+// prints it (agent-browser's hint={:?}, char::escape_debug): \t, \r, \n,
+// \0, \" and \\ get their escapes; the grapheme extenders (Mn, Me and
+// Other_Grapheme_Extend) and the characters that Rust does not print
+// (every category but letters, marks, numbers, punctuation and symbols,
+// and the space U+0020 itself: so NBSP and the other Unicode spaces too)
+// get \u{hex}. testdata/rust_debug_escapes.rs is the oracle of its tests.
 func debugQuote(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
@@ -171,7 +174,8 @@ func debugQuote(s string) string {
 		case r == '"' || r == '\\':
 			b.WriteByte('\\')
 			b.WriteRune(r)
-		case !unicode.IsGraphic(r) || unicode.In(r, unicode.Mn, unicode.Me):
+		case unicode.In(r, unicode.Mn, unicode.Me, unicode.Other_Grapheme_Extend) ||
+			r != ' ' && !unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S):
 			fmt.Fprintf(&b, "\\u{%x}", r)
 		default:
 			b.WriteRune(r)

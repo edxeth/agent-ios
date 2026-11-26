@@ -405,7 +405,9 @@ func (p *Page) EmulateNetwork(ctx context.Context, c webkit.Caller, session, pre
 }
 
 // EmulateNetworkRate throttles the page to bytesPerSecond, or removes the
-// throttle for 0 (WebKit: no positive bytesPerSecondLimit, no limit).
+// throttle for 0 (WebKit: no positive limit, no limit). The parameter is
+// bytesPerSecondLimit on iOS 16.4 to 17.x and bandwidth from 27.3
+// (wip.EmulatedConditionsBandwidth, as the CDP bridge sends it).
 func (p *Page) EmulateNetworkRate(ctx context.Context, c webkit.Caller, session string, bytesPerSecond int) error {
 	if !p.supported("Network.setEmulatedConditions") {
 		return fmt.Errorf("emulate network: %w: Network.setEmulatedConditions is not in the iOS %s command list", ErrUnsupported, p.ps.Device.OSVersion)
@@ -415,7 +417,11 @@ func (p *Page) EmulateNetworkRate(ctx context.Context, c webkit.Caller, session 
 	}
 	params := json.RawMessage("{}")
 	if bytesPerSecond > 0 {
-		params = json.RawMessage(fmt.Sprintf(`{"bytesPerSecondLimit":%d}`, bytesPerSecond))
+		name := "bytesPerSecondLimit"
+		if wip.EmulatedConditionsBandwidth(p.ps.Device.OSVersion) {
+			name = "bandwidth"
+		}
+		params = json.RawMessage(fmt.Sprintf(`{%q:%d}`, name, bytesPerSecond))
 	}
 	return p.ps.State.Change(ctx, c, func(c webkit.Caller) error {
 		if send := p.ps.State.SetEmulatedConditions(owner("emulate", session), params); send != nil {

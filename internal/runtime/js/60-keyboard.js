@@ -134,14 +134,19 @@
   // keyup (Space activates on keyup). ph "down" sends only keydown, ph "up"
   // only keyup. The CDP key events (internal/cdp input_domain.go) use ph
   // "kd", everything before keyup (CDP keyDown and rawKeyDown), and ph
-  // "ch", keypress and the insertion without keydown (CDP char).
-  async function key(x, t, k, m, r, ph) {
-    var ok, d = KD[k.key];
+  // "ch", keypress and the insertion without keydown (CDP char). T gives
+  // the target when an event is sent: keydown and keyup go to the element
+  // focused then, as WebKit sends them; keypress, insertion and default
+  // action stay with the keydown's target (WebKit's keypress of the same
+  // platform event), and Space activates only when keyup reaches it too.
+  async function key(x, T, k, m, r, ph) {
+    var ok, d = KD[k.key], t, u;
     if (ph !== "ch") { delete KD[k.key]; }
     if (ph === "up") {
-      ok = !!d && d.t === t && d.ok;
+      ok = !!d && d.ok; t = d && d.t;
     } else {
       await gap(x);
+      t = T();
       ok = ph === "ch" || await kev(x, t, "keydown", k, m);
       if (ph === "down") {
         KD[k.key] = { t: t, ok: ok };
@@ -157,7 +162,8 @@
       if (ph) { return; }
     }
     await gap(x);
-    if (await kev(x, t, "keyup", k, m) && ok && k.key === " " && !editable(t) && /^(button|submit|reset|checkbox|radio)$/.test(t.type)) {
+    u = T();
+    if (await kev(x, u, "keyup", k, m) && ok && u === t && k.key === " " && !editable(t) && /^(button|submit|reset|checkbox|radio)$/.test(t.type)) {
       await ev(x, function () { click.call(t); });
       r.d.push("click " + desc(t));
     }
@@ -165,8 +171,8 @@
   function target(e) { return e || _.deepActive() || document.body; }
   A.type = async function (e, g, a, r, x) {
     if (e && _.deepActive() !== e) { await ev(x, function () { e.focus(); }); }
-    var t = target(e);
-    for (var i = 0; i < g.keys.length; i++) { await key(x, t, g.keys[i], g.m || {}, r); }
+    var t = target(e), T = function () { return t; };
+    for (var i = 0; i < g.keys.length; i++) { await key(x, T, g.keys[i], g.m || {}, r); }
     r.v = t.value;
   };
   function mo(n) { return { a: n & 1, c: n & 2, m: n & 4, s: n & 8 }; }
@@ -191,7 +197,7 @@
   // first presses the chord modifiers not held (Control, Alt, Shift,
   // Meta), then the key, then releases them in reverse.
   A.press = async function (e, g, a, r, x) {
-    var t = target(e), k = g.keys[0], MK = g.mk;
+    var t = function () { return target(e); }, k = g.keys[0], MK = g.mk;
     if (g.c === undefined) { return key(x, t, k, g.m || {}, r, g.ph); }
     var own = k.mb || 0, held = H, cur = H, n, i, ch = [2, 1, 8, 4].filter(function (b) { return g.c & b & ~held; });
     if (g.ph === "up") {

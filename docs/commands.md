@@ -1203,7 +1203,7 @@ Press a key or combination (Enter, Tab, Shift+Tab, Control+a) on the focused ele
 
 | Argument | Required | Description |
 |---|---|---|
-| `<key>` | yes | key name or character, with optional Control+, Shift+, Alt+, Meta+ modifiers |
+| `<key>` | yes | key name or character, with optional modifiers joined by + anywhere in it (Control, Shift, Alt, Meta, their Left/Right forms, ctrl, cmd, command) |
 
 | Flag | Value | Description |
 |---|---|---|
