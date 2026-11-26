@@ -18,7 +18,9 @@ const globalOptionsHelp = `Global options (any position before "--"):
   -h, --help      Show help and exit 0. Never connects to a page or writes files.
                   An unknown option or command still exits 2.
   --page <p>      The page: a tab id from 'tab list' or a ws:// URL. Default: the
-                  session's tab, else the first debuggable page.
+                  session's tab ('tab <id>', 'tab new'), else its default page, else
+                  the only tab of a listing with one tab and no hidden page (exit 5
+                  otherwise: start with 'tab new <url>' or 'tab <id>').
   --only-tab      The page is the only tab of the listing; exit 5 unless the listing
                   shows exactly one tab and no hidden page. Not with --page or a page argument.
   --session <s>   Session that holds the page lease (AGENT_IOS_SESSION; default "default").

@@ -549,7 +549,7 @@ func runTabClose(ctx context.Context, env Env, in Input) (Result, error) {
 // refuseUnselectedSimulatorTab refuses "tab close" without a tab id in a
 // session that selected no tab, when the page it would close is the
 // simulator's and the caller holds the simulator's turn: that page is the
-// session's default page or the listing's first, which can be an earlier
+// session's default page or the listing's only tab, which can be an earlier
 // agent's tab (an agent ends its turn with "tab close" also after a failed
 // sim up or selection). Elsewhere, and on a free simulator, the current
 // page stays the default.

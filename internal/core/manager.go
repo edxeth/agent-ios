@@ -79,13 +79,18 @@ type PageRequest struct {
 	Addr      string // listing or inspector address; "" = the transport's default
 	Page      string // ws:// URL, page id or key, or a substring of the title or URL; "" = the session's page (sessionTarget)
 	// Opener marks the request of tab new's window.open: when the session
-	// has no page and the listing has several tabs, it resolves the
-	// listing's first debuggable tab, only as the opener (sessionTarget).
+	// has no page and the listing has several tabs, it resolves, only as
+	// the opener, the first debuggable tab in listing order that no other
+	// session leases and that answers a liveness probe (sessionTarget,
+	// touch; decision D21).
 	Opener bool
 	// prefer is the session's default page for a request without a page
 	// (sessionPage): its record key, used while its connection is open
 	// (attachedTarget).
 	prefer string
+	// skipped holds the openers that touch tried for this request and
+	// that could not be used (Opener); nil before the first try.
+	skipped *openerSkips
 }
 
 // AcquireOptions are a client's lease and ownership options (design 2.5).
@@ -1523,23 +1528,51 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 	// holds (device_admission.go). The admission runs before the
 	// observer, which streams the page's key and title to the client: a
 	// refused owner learns neither.
-	sreq, t, implicit, err := m.sessionTarget(ctx, req, ao)
-	if err != nil {
-		return nil, 0, time.Time{}, false, err
-	}
-	if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
-		observe(t.key, t.title)
-	}
-	if implicit {
-		m.setDefaultPage(ao.Session, sreq, t.key)
-	}
-	byOrder = sreq.Page == "" && !implicit
+	//
+	// An opener that the listing's order gave (byOrder) must answer the
+	// liveness probe before the session takes its lease; one that cannot
+	// be used (it does not answer, as a hidden Safari tab, or its attach
+	// or lease fails with exit 4) is skipped, and sessionTarget picks the
+	// next (decision D21) until none is left.
 	for {
-		pg, err := m.page(t)
+		sreq, t, implicit, err := m.sessionTarget(ctx, req, ao)
 		if err != nil {
 			return nil, 0, time.Time{}, false, err
 		}
+		if observe, ok := ctx.Value(pageObserverKey{}).(func(key, title string)); ok {
+			observe(t.key, t.title)
+		}
+		if implicit {
+			m.setDefaultPage(ao.Session, sreq, t.key)
+		}
+		byOrder = sreq.Page == "" && !implicit
+		pg, epoch, prev, err := m.attachTarget(ctx, t, ao, op, byOrder)
+		if byOrder && err != nil && ctx.Err() == nil && openerUnusable(err) {
+			req.skipped = req.skipped.add(t.key, err)
+			continue
+		}
+		if err != nil {
+			return nil, 0, time.Time{}, false, err
+		}
+		m.leaseStarted(ctx, pg, ao.Session, epoch)
+		return pg, epoch, prev, byOrder, nil
+	}
+}
+
+// attachTarget attaches the page of t and acquires its lease for ao's
+// session (touch). An opener by order (probe) gets the liveness probe
+// first (openerAnswers), so that no lease is taken on a tab that does
+// not answer.
+func (m *Manager) attachTarget(ctx context.Context, t pageTarget, ao AcquireOptions, op, probe bool) (*Page, uint64, time.Time, error) {
+	for {
+		pg, err := m.page(t)
+		if err != nil {
+			return nil, 0, time.Time{}, err
+		}
 		err = m.ensureAttached(ctx, pg, t, ao)
+		if err == nil && probe {
+			err = openerAnswers(ctx, pg)
+		}
 		var epoch uint64
 		var prev time.Time
 		if err == nil {
@@ -1549,10 +1582,9 @@ func (m *Manager) touch(ctx context.Context, req PageRequest, ao AcquireOptions,
 			continue // the sweeper closed the record meanwhile: look the page up again
 		}
 		if err != nil {
-			return nil, 0, time.Time{}, false, err
+			return nil, 0, time.Time{}, err
 		}
-		m.leaseStarted(ctx, pg, ao.Session, epoch)
-		return pg, epoch, prev, byOrder, nil
+		return pg, epoch, prev, nil
 	}
 }
 

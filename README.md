@@ -80,6 +80,11 @@ agent-ios device reserve --owner my-run
 # List the Safari tabs of the reserved devices (t1, t2, ...)
 agent-ios tab list
 
+# Open your own tab; it becomes the session's page. With several tabs listed,
+# a session that chose none gets no page (exit 5): agent-ios never takes the
+# first tab, which can be another agent's or yours. 'agent-ios tab t1' selects one.
+agent-ios tab new https://example.com
+
 # Evaluate JavaScript in the session's page, or in a tab named with --page
 # (a returned Promise is awaited; an exception prints message and stack and exits 1)
 agent-ios eval "document.title"
@@ -113,6 +118,7 @@ agent-ios close && agent-ios device release --owner my-run
 ```bash
 export AGENT_IOS_SESSION=my-agent                    # one stable session per agent
 agent-ios device reserve --owner my-agent        # physical devices need a reservation
+agent-ios tab new                                # your own tab: the session's page
 agent-ios open https://example.com/login         # navigate and wait for load
 agent-ios snapshot -i                            # accessibility tree with @eN refs
 agent-ios fill @e3 user@example.com

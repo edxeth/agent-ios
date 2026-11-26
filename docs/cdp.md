@@ -74,7 +74,7 @@ Not translated: every other method of these domains (for example `Network.getAll
    ```bash
    export AGENT_IOS_SESSION=pw-run
    agent-ios device reserve --owner pw-run        # physical devices only
-   agent-ios open https://example.com             # the session's page
+   agent-ios tab new https://example.com          # your own tab: the session's page
    agent-ios get cdp-url
    # ws://127.0.0.1:9230/t/<token>/e/<endpoint>/devtools/browser/<endpoint>
    ```

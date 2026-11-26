@@ -117,6 +117,50 @@ func TestCLIBusyLostAndTakeoverExitCodes(t *testing.T) {
 	}
 }
 
+// 7.3 item 7 (d) at the CLI for a session's default page (review F1 of the
+// tab choice): the page that the session got as the only tab stays its
+// page when it is lost and the listing shows another tab: the command
+// without --page exits 4 "ownership is unknown" (not 5, "no tab"),
+// --takeover needs the reservation (exit 6) and with it reattaches, and
+// so does lease takeover without a page after the next loss.
+func TestCLILostSessionPageAndTakeoverExitCodes(t *testing.T) {
+	env, f, dev, _ := physicalPage(t, true, fakewebkit.Options{Steal: true})
+	if res := runCLI(t, "", env, "device", "reserve", "--owner", "orchestrator"); res.code != 0 {
+		t.Fatalf("device reserve: exit %d, stderr %q", res.code, res.stderr)
+	}
+	owned := with(env, "AGENT_IOS_DEVICE_RESERVATION=orchestrator")
+	if res := runCLI(t, "", owned, "eval", "1+1"); res.code != 0 {
+		t.Fatalf("eval on the only tab: exit %d, stderr %q", res.code, res.stderr)
+	}
+	dev.AddPage("Other", "https://other.example/", f.URL+"x")
+	steal := func(conns int) {
+		thief, _, err := websocket.DefaultDialer.Dial(f.URL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = thief.Close() })
+		eventually(t, 5*time.Second, "the lease to become lost", func() bool {
+			return strings.Contains(runCLI(t, "", env, "daemon", "status").stdout, "lease lost")
+		})
+		if n := f.ConnectionCount(); n != conns {
+			t.Fatalf("connections %d, want %d: no automatic reconnect", n, conns)
+		}
+	}
+	steal(2)
+	wantExit(t, runCLI(t, "", owned, "eval", "1+1"), 4, "ownership is unknown")
+	wantExit(t, runCLI(t, "", env, "--takeover", "eval", "1+1"), 6, "reserved by \"orchestrator\"")
+	res := runCLI(t, "", owned, "--takeover", "eval", "1+1")
+	if res.code != 0 || strings.TrimSpace(res.stdout) != "2" || f.ConnectionCount() != 3 {
+		t.Fatalf("--takeover: exit %d, stdout %q, stderr %q, connections %d", res.code, res.stdout, res.stderr, f.ConnectionCount())
+	}
+	steal(4)
+	wantExit(t, runCLI(t, "", owned, "eval", "1+1"), 4, "ownership is unknown")
+	res = runCLI(t, "", owned, "lease", "takeover")
+	if res.code != 0 || !strings.Contains(res.stdout, `holds "Fixture"`) || f.ConnectionCount() != 5 {
+		t.Fatalf("lease takeover: exit %d, stdout %q, stderr %q, connections %d", res.code, res.stdout, res.stderr, f.ConnectionCount())
+	}
+}
+
 // 7.3 item 8 at the CLI: the lease error (exit 4) comes at once;
 // --wait-lease longer than the deadline exits 124 at the deadline (D9);
 // --wait-lease succeeds after the holder's close; close --all exits 2

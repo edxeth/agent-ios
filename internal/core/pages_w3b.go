@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/edxeth/agent-ios/internal/transport"
+	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
 // Tabs and the per-session current page (design
@@ -320,14 +322,19 @@ func (m *Manager) sessionPage(session string, req PageRequest) PageRequest {
 // (touch, ResolvePage): sessionPage's request sreq, resolved, under the
 // reservation rule of the page's device (admitTarget). A request that
 // names no page, of a session without a current page and without an open
-// default page, resolves a page only when the listing can mean only one
-// (soleTab, as --only-tab): a page is never picked by its order, because
-// on a shared device the first tab can be another agent's or the user's.
+// default page, gets that default page while it is lost and the session
+// still holds its lease (lostDefaultTarget: the lost error and --takeover
+// apply to it). Otherwise it resolves a page only when the listing can
+// mean only one (soleTab, as --only-tab): a page is never picked by its
+// order, because on a shared device the first tab can be another agent's
+// or the user's.
 // Any other listing is an error (CodeNoPage) that says how to choose a
 // tab, except for req.Opener (tab new's window.open), which then gets the
-// listing's first debuggable tab that ao may use. implicit reports that
-// the page came from no choice of the session (sreq.Page is ""), and is
-// to become its default page; never for an opener picked by order.
+// first debuggable tab in listing order that no other session leases and
+// that touch has not skipped (openerOf; touch probes it, decision D21).
+// implicit reports that the page came from no choice of the session
+// (sreq.Page is ""), and is to become its default page; never for an
+// opener picked by order.
 func (m *Manager) sessionTarget(ctx context.Context, req PageRequest, ao AcquireOptions) (sreq PageRequest, t pageTarget, implicit bool, err error) {
 	sreq = m.sessionPage(ao.Session, req)
 	implicit = sreq.Page == ""
@@ -337,7 +344,9 @@ func (m *Manager) sessionTarget(ctx context.Context, req PageRequest, ao Acquire
 	default:
 		var ok bool
 		if t, ok = m.attachedTarget(sreq); !ok {
-			t, implicit, err = m.soleTarget(ctx, sreq, ao)
+			if t, ok, err = m.lostDefaultTarget(ctx, sreq, ao.Session); err == nil && !ok {
+				t, implicit, err = m.soleTarget(ctx, sreq, ao)
+			}
 		}
 	}
 	if err != nil {
@@ -349,12 +358,46 @@ func (m *Manager) sessionTarget(ctx context.Context, req PageRequest, ao Acquire
 	return sreq, t, implicit, nil
 }
 
+// lostDefaultTarget resolves the default page of session (sreq.prefer)
+// while its connection is lost and session still holds its lease: the
+// page is still the session's, so the next command gets the lost error
+// (exit 4, "ownership is unknown") and --takeover or lease takeover
+// reattach it (docs/sessions.md, docs/device-runbook.md "When a page is
+// lost"), whatever the listing shows now. The page is looked up in the
+// listing by its key, as --page <key> does. ok is false for any other
+// default page: none, open (attachedTarget), closed by the daemon, its
+// lease ended (idle expiry, release, break) or another session's, or no
+// longer listed (the tab closed).
+func (m *Manager) lostDefaultTarget(ctx context.Context, sreq PageRequest, session string) (t pageTarget, ok bool, err error) {
+	key := sreq.prefer
+	if key == "" {
+		return pageTarget{}, false, nil
+	}
+	pg := m.lookup(key)
+	if pg == nil || pg.conn.State() != ConnLost {
+		return pageTarget{}, false, nil
+	}
+	pg.mu.Lock()
+	l := pg.lease
+	pg.mu.Unlock()
+	if session = (AcquireOptions{Session: session}).normalized().Session; l == nil || l.session != session {
+		return pageTarget{}, false, nil
+	}
+	listing := PageRequest{Transport: sreq.Transport, Addr: sreq.Addr, Page: key}
+	t, _, err = m.findListed(ctx, listing, func(k string, _ transport.Page) bool { return k == key })
+	if err != nil {
+		return pageTarget{}, false, err
+	}
+	return t, t.key != "", nil
+}
+
 // soleTarget is the page of sreq (no page, no open default page) when the
 // listing that ao's reservation owner sees has a single tab (soleTab). A
 // listing of several tabs is an error (CodeNoPage), except for an opener
-// (sreq.Opener), which gets the first debuggable tab, with implicit false.
-// When every page is hidden, the error is the admission error of the
-// listing's first debuggable page (its device's reservation), which names
+// (sreq.Opener), which gets the first debuggable tab that openerOf
+// passes, with implicit false; when it passes every tab over, the error
+// (CodeBusy) says why for each. When every page is hidden, the error is
+// the admission error of the listing's first debuggable page (its device's reservation), which names
 // what to reserve; that page is only refused, never used.
 func (m *Manager) soleTarget(ctx context.Context, sreq PageRequest, ao AcquireOptions) (t pageTarget, implicit bool, err error) {
 	listing := PageRequest{Transport: sreq.Transport, Addr: sreq.Addr}
@@ -382,11 +425,10 @@ func (m *Manager) soleTarget(ctx context.Context, sreq PageRequest, ao AcquireOp
 	case len(tabs) > 0 && !sreq.Opener:
 		return pageTarget{}, false, m.noSessionTab(tabs, hidden, ao)
 	default:
-		for _, tab := range tabs {
-			if tab.Debuggable {
-				key = tab.Key
-				break
-			}
+		var skipped []string
+		key, skipped = openerOf(tabs, sreq.skipped, ao.normalized().Session)
+		if key == "" && len(skipped) > 0 {
+			return pageTarget{}, false, &CodedError{Code: CodeBusy, Err: fmt.Errorf("no tab can run window.open for this session: %s; a hidden Safari tab does not answer, so bring a tab that no other session uses to the front on the device and run tab new again, or select a tab with 'agent-ios tab list' and 'agent-ios tab <id>'", strings.Join(skipped, "; "))}
 		}
 	}
 	if key == "" {
@@ -401,6 +443,93 @@ func (m *Manager) soleTarget(ctx context.Context, sreq PageRequest, ao AcquireOp
 		err = &CodedError{Code: CodeNoPage, Err: fmt.Errorf("%w: the listing no longer has the page %q", ErrNoPage, key)}
 	}
 	return t, implicit, err
+}
+
+// openerOf is the opener of tab new for session among tabs (decision
+// D21): the first debuggable tab in listing order that no other session
+// leases and that touch has not skipped yet (tried). skipped says, by tab
+// id, why each debuggable tab before it, or each one when key is "", was
+// passed over.
+func openerOf(tabs []Tab, tried *openerSkips, session string) (key string, skipped []string) {
+	for _, tab := range tabs {
+		switch {
+		case !tab.Debuggable:
+		case tab.LeasedBy != "" && tab.LeasedBy != session:
+			skipped = append(skipped, fmt.Sprintf("%s is leased by session %q", tab.ID, tab.LeasedBy))
+		case tried.has(tab.Key):
+			skipped = append(skipped, tab.ID+" "+tried.why(tab.Key))
+		default:
+			return tab.Key, skipped
+		}
+	}
+	return "", skipped
+}
+
+// openerSkips are the openers that touch tried for one request of tab new
+// and could not use (PageRequest.skipped), by page key.
+type openerSkips struct {
+	errs map[string]error
+}
+
+// add returns s, created when nil, with key skipped because of err.
+func (s *openerSkips) add(key string, err error) *openerSkips {
+	if s == nil {
+		s = &openerSkips{errs: map[string]error{}}
+	}
+	s.errs[key] = err
+	return s
+}
+
+func (s *openerSkips) has(key string) bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s.errs[key]
+	return ok
+}
+
+// why says why the opener of key was skipped, after its tab id.
+func (s *openerSkips) why(key string) string {
+	err := s.errs[key]
+	if errors.Is(err, errOpenerSilent) || errors.Is(err, context.DeadlineExceeded) {
+		// A deadline while the command's own context lives is a probe's
+		// or a call's budget (touch tries the next opener only then): the
+		// tab did not answer, as a hidden Safari tab (on a physical
+		// device, the first attach's own probe, openConn).
+		return "did not answer the liveness probe"
+	}
+	return fmt.Sprintf("could not be used (%v)", err)
+}
+
+// errOpenerSilent: the opener that the listing's order gave tab new did
+// not answer the liveness probe (openerAnswers).
+var errOpenerSilent = errors.New("the tab did not answer the liveness probe")
+
+// openerAnswers runs the liveness probe on pg, tab new's opener by order,
+// within webkit.DefaultProbeBudget (decision D21): Safari answers only in
+// the visible tab, and a hidden tab accepts commands and never answers. A
+// failed probe marks the page stalled, as for any command
+// (pageConn.probe).
+func openerAnswers(ctx context.Context, pg *Page) error {
+	pctx, cancel := context.WithTimeout(ctx, webkit.DefaultProbeBudget)
+	defer cancel()
+	err := pg.conn.probeNow(pctx)
+	if st := pg.conn.State(); err == nil && st != ConnOK {
+		err = fmt.Errorf("the page connection is %s", st)
+	}
+	if err != nil {
+		return &CodedError{Code: CodeBusy, Err: fmt.Errorf("page %q: %w (%w)", pg.Title(), errOpenerSilent, err)}
+	}
+	return nil
+}
+
+// openerUnusable reports whether err, the failed attach, probe or lease
+// of tab new's opener by order, lets touch try the next tab: a probe
+// that got no answer and any other exit-4 failure (a busy or lost tab, a
+// tab leased meanwhile by another session).
+func openerUnusable(err error) bool {
+	var ce *CodedError
+	return errors.Is(err, errOpenerSilent) || (errors.As(err, &ce) && ce.Code == CodeBusy)
 }
 
 // noSessionTab is the error of a command of a session without a tab on a
