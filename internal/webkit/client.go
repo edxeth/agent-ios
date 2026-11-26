@@ -151,7 +151,8 @@ func (c *Client) InterruptWrites() { interruptInProgress(c.writeSem, c.wire) }
 func (c *Client) Close() error { return c.end(ErrSessionClosed) }
 
 // end closes the connection once, with cause as the reason that Err
-// returns. It writes nothing to the socket.
+// returns. It writes no WebSocket close frame; on a wss:// connection that
+// is not cut, TLS sends its close_notify alert (cutConn.Close).
 func (c *Client) end(cause error) error {
 	var err error
 	c.closeOnce.Do(func() {

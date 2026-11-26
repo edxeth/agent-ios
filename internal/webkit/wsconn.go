@@ -309,6 +309,20 @@ func (c *cutConn) failed(err error) error {
 	return err
 }
 
+// Close closes the connection. A cut connection under TLS closes the TCP
+// connection under it: tls.Conn.Close sends a close_notify alert with its
+// own write deadline of 5 s, which replaces the passed deadline of the cut,
+// and on a page that stopped reading (when writes fail or are interrupted)
+// the alert waits that long. The TLS stream of a cut connection is broken
+// or abandoned anyway. A connection that is not cut closes normally, with
+// the close_notify.
+func (c *cutConn) Close() error {
+	if tc, ok := c.Conn.(*tls.Conn); ok && c.cut.Load() {
+		return tc.NetConn().Close()
+	}
+	return c.Conn.Close()
+}
+
 func (c *cutConn) interrupt() {
 	c.cut.Store(true)
 	// A write blocked in the kernel ends at a passed deadline. The error

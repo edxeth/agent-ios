@@ -258,7 +258,10 @@ func TestProtocolErrorCloseDoesNotInterleave(t *testing.T) {
 // send nothing after it: every message is either on the wire whole or
 // refused as not written with websocket.ErrCloseSent (RFC 6455 5.5.1). The
 // client reads the frames one by one and each pong waits for the data
-// frame in progress, so few pings keep last inside the writes.
+// frame in progress, so few pings keep last inside the writes. The server
+// sends last only after it has read the first messages (before), so every
+// run checks frames before the close, and some writes are still in
+// progress when it arrives.
 func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -266,6 +269,7 @@ func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 	const (
 		writers   = 4
 		perWriter = 3
+		before    = 2 // messages on the wire before the server sends last
 	)
 	type result struct {
 		messages map[int]int // message size -> count
@@ -276,6 +280,7 @@ func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 	done := make(chan result, 1)
 	url := newRawWSServer(t, func(c net.Conn, _ *bufio.Reader) {
 		var wmu sync.Mutex
+		firstOut := make(chan struct{}) // closed once before messages were read
 		go func() {
 			for i := range pings {
 				time.Sleep(2 * time.Millisecond)
@@ -283,7 +288,11 @@ func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 				_ = writeServerFrame(c, 0x9, fmt.Appendf(nil, "p%02d", i))
 				wmu.Unlock()
 			}
-			time.Sleep(20 * time.Millisecond)
+			select {
+			case <-firstOut:
+			case <-ctx.Done():
+				return
+			}
 			wmu.Lock()
 			_, _ = c.Write(last)
 			wmu.Unlock()
@@ -313,6 +322,9 @@ func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 				}
 				res.messages[len(f.data)]++
 				total++
+				if total == before {
+					close(firstOut)
+				}
 			case 0x8a:
 				res.pongs = append(res.pongs, string(f.data))
 			case 0x88:
@@ -379,6 +391,9 @@ func checkNoInterleave(t *testing.T, pings int, last []byte, wantClose uint16) {
 	}
 	if res.err != nil {
 		t.Fatal(res.err)
+	}
+	if len(want) < before {
+		t.Fatalf("%d messages written before the close, want at least %d: the run checked no frames before the close", len(want), before)
 	}
 	if fmt.Sprint(res.messages) != fmt.Sprint(want) {
 		t.Fatalf("messages by size: got %v, want %v", res.messages, want)
