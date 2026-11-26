@@ -1,11 +1,11 @@
 package webkit_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -475,11 +475,13 @@ func TestClient_TargetRoutedCSSGuard(t *testing.T) {
 
 // TestClient_SendDeadlineWhileAnotherWriteIsBlocked pins that a Send waiting
 // for the socket gives up at its own deadline and never transmits its command
-// late. gorilla/websocket allows one writer at a time, so a concurrent Send
-// waits while another command's write is stalled; that wait must honor ctx.
+// late. One frame is written at a time, so a concurrent Send waits while
+// another command's write is stalled; that wait must honor ctx. The stall is
+// a gate in the client's socket (gatedConn), not a peer that stops reading:
+// a receive buffer shrunk and grown again keeps its small TCP window clamp on
+// some kernels (Linux before b025461303d8, Ubuntu's 7.0 azure kernel), and
+// the release then took minutes.
 func TestClient_SendDeadlineWhileAnotherWriteIsBlocked(t *testing.T) {
-	started := make(chan struct{}) // the first frame of the large command arrived
-	release := make(chan struct{}) // the server may read again
 	var mu sync.Mutex
 	var received []string
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
@@ -489,29 +491,8 @@ func TestClient_SendDeadlineWhileAnotherWriteIsBlocked(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		// A small receive buffer keeps the blocked write independent of
-		// the host's TCP autotuning limits; a large one after release lets
-		// the rest of the command arrive quickly.
-		tcp, _ := conn.NetConn().(*net.TCPConn)
-		setReadBuffer := func(n int) {
-			if tcp != nil {
-				_ = tcp.SetReadBuffer(n)
-			}
-		}
-		setReadBuffer(4096)
-		for first := true; ; first = false {
-			_, rd, err := conn.NextReader()
-			if err != nil {
-				return
-			}
-			if first {
-				// Stop reading inside the first message: the client's write
-				// of the rest stays blocked until release.
-				close(started)
-				<-release
-				setReadBuffer(4 << 20)
-			}
-			data, err := io.ReadAll(rd)
+		for {
+			_, data, err := conn.ReadMessage()
 			if err != nil {
 				return
 			}
@@ -529,46 +510,57 @@ func TestClient_SendDeadlineWhileAnotherWriteIsBlocked(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	var releaseOnce sync.Once
-	defer releaseOnce.Do(func() { close(release) })
 
-	client, err := webkit.NewClient(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"))
+	gate := &writeGate{match: []byte("Large.method"), started: make(chan struct{}), release: make(chan struct{})}
+	defer gate.open()
+	dialer := &websocket.Dialer{NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var d net.Dialer
+		c, err := d.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return &gatedConn{Conn: c, gate: gate}, nil
+	}}
+	client, err := webkit.NewClientWithDialer(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"), dialer)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	defer func() { _ = client.Close() }()
 
-	// A command far larger than the socket buffers (send buffer at most 4 MB
-	// on common Linux defaults), so its write blocks while the server does not
-	// read. Its deadline is long: building and masking 16 MB is slow under
-	// the race detector.
 	largeDone := make(chan error, 1)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := client.Send(ctx, "Large.method", map[string]string{"blob": strings.Repeat("x", 16<<20)})
+		_, err := client.Send(ctx, "Large.method", map[string]string{"blob": strings.Repeat("x", 256<<10)})
 		largeDone <- err
 	}()
 	select {
-	case <-started:
+	case <-gate.started:
 	case <-time.After(30 * time.Second):
-		t.Fatal("the large command never reached the server")
+		t.Fatal("the large command never reached the socket")
 	}
 
 	const shortDeadline = 150 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), shortDeadline)
 	defer cancel()
-	start := time.Now()
-	_, err = client.Send(ctx, "Short.method", nil)
-	elapsed := time.Since(start)
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(fmt.Sprint(err), "Short.method") {
-		t.Errorf("err = %v, want a deadline error naming Short.method", err)
-	}
-	if elapsed > shortDeadline+time.Second {
-		t.Errorf("Send returned after %v with a %v deadline: it waited for the blocked write", elapsed, shortDeadline)
+	shortDone := make(chan error, 1)
+	go func() {
+		_, err := client.Send(ctx, "Short.method", nil)
+		shortDone <- err
+	}()
+	// The gate stays shut while Send waits: a Send that ignores its
+	// deadline would wait forever, so the gate opens after a bound.
+	select {
+	case err := <-shortDone:
+		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(fmt.Sprint(err), "Short.method") {
+			t.Errorf("err = %v, want a deadline error naming Short.method", err)
+		}
+	case <-time.After(shortDeadline + time.Second):
+		gate.open()
+		t.Fatalf("Send did not return within %v of its %v deadline: it waited for the blocked write", time.Second, shortDeadline)
 	}
 
-	releaseOnce.Do(func() { close(release) })
+	gate.open()
 	if err := <-largeDone; err != nil {
 		t.Fatalf("large command after release: %v", err)
 	}
@@ -583,6 +575,58 @@ func TestClient_SendDeadlineWhileAnotherWriteIsBlocked(t *testing.T) {
 	if want := []string{"Large.method", "Later.method"}; fmt.Sprint(received) != fmt.Sprint(want) {
 		t.Errorf("server received %v, want %v", received, want)
 	}
+}
+
+// writeGate holds the first socket write that contains match until open.
+// A client frame is masked, so match is looked for in the unmasked payload.
+type writeGate struct {
+	match    []byte
+	once     sync.Once
+	started  chan struct{} // the gated write began
+	release  chan struct{}
+	openOnce sync.Once
+}
+
+func (g *writeGate) open() { g.openOnce.Do(func() { close(g.release) }) }
+
+type gatedConn struct {
+	net.Conn
+	gate *writeGate
+}
+
+func (c *gatedConn) Write(b []byte) (int, error) {
+	if bytes.Contains(unmaskFrame(b), c.gate.match) {
+		c.gate.once.Do(func() {
+			close(c.gate.started)
+			<-c.gate.release
+		})
+	}
+	return c.Conn.Write(b)
+}
+
+// unmaskFrame returns the unmasked payload bytes of the masked client frame
+// that starts b (RFC 6455 5.2), cut at the end of b; nil when b does not
+// start with a masked frame header.
+func unmaskFrame(b []byte) []byte {
+	if len(b) < 2 || b[1]&0x80 == 0 {
+		return nil
+	}
+	pos := 2
+	switch b[1] & 0x7f {
+	case 126:
+		pos = 4
+	case 127:
+		pos = 10
+	}
+	if len(b) < pos+4 {
+		return nil
+	}
+	key, data := b[pos:pos+4], b[pos+4:]
+	out := make([]byte, len(data))
+	for i := range data {
+		out[i] = data[i] ^ key[i%4]
+	}
+	return out
 }
 
 // TestClient_SendWithExpiredContextSendsNothing pins that Send never
