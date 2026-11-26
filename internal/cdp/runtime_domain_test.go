@@ -9,8 +9,9 @@ import (
 )
 
 // Runtime.callFunctionOn (design 5.3): an objectId goes to WIP
-// callFunctionOn; an execution context first turns the declaration into a
-// function object by evaluate and calls it through a trampoline, then
+// callFunctionOn; an execution context with an objectGroup (else see
+// TestCallFunctionOnInContextRoundTrips) first turns the declaration into
+// a function object by evaluate and calls it through a trampoline, then
 // releases it; unserializable arguments are set in a wrapper; awaitPromise
 // goes through Runtime.awaitPromise; a call without a target is refused.
 func TestCallFunctionOn(t *testing.T) {
@@ -51,6 +52,7 @@ func TestCallFunctionOn(t *testing.T) {
 	f.Result("Runtime.awaitPromise", map[string]any{"result": map[string]any{"type": "string", "value": "done"}})
 	res = decode[struct{ Result map[string]any }](t, call(t, c, sid, "Runtime.callFunctionOn", map[string]any{
 		"executionContextId": main, "functionDeclaration": "function() { return Promise.resolve('done'); }", "awaitPromise": true, "returnByValue": true,
+		"objectGroup": "g1",
 	}))
 	if res.Result["value"] != "done" {
 		t.Fatalf("awaited callFunctionOn = %v", res.Result)
@@ -428,5 +430,133 @@ func TestBindingCalledFromChildFrame(t *testing.T) {
 		if b.Name != name || b.Payload != `{"seq":1}` || b.ExecutionContextID != tc.want {
 			t.Errorf("call with tag %q: bindingCalled %+v, want context %d (main util %d, child util %d)", tc.from, b, tc.want, mainUtil, childUtil)
 		}
+	}
+}
+
+// FIX-O: Runtime.callFunctionOn with an executionContextId costs one WIP
+// round trip (chrome-devtools-mcp wait_for on the iOS Simulator, where a
+// round trip takes about 40 ms, timed out at 3 per call): with only value
+// arguments it is one Runtime.evaluate in the context that applies the
+// declaration to them; with an argument object of the context it is one
+// WIP callFunctionOn on that object. An argument object of another context
+// keeps the evaluate and trampoline path, where WebKit refuses it as
+// before; a thrown exception and an awaited promise keep their results.
+func TestCallFunctionOnInContextRoundTrips(t *testing.T) {
+	r, fp, c, sid, _ := attachPage(t)
+	f := r.fake["One"]
+	call(t, c, sid, "Page.enable", nil)
+	fp.mu.Lock()
+	fp.replay = true
+	fp.mu.Unlock()
+	call(t, c, sid, "Runtime.enable", nil)
+	main := contextsOf(t, c, 0, sid)[0].ID
+	methods := []string{"Runtime.evaluate", "Runtime.callFunctionOn", "Runtime.releaseObject", "Runtime.awaitPromise", "Runtime.getProperties"}
+	counts := func() map[string]int {
+		m := map[string]int{}
+		for _, n := range methods {
+			m[n] = len(f.ReceivedMethod(n))
+		}
+		return m
+	}
+	sent := func(before map[string]int) map[string]int {
+		d := map[string]int{}
+		for n, v := range counts() {
+			if v != before[n] {
+				d[n] = v - before[n]
+			}
+		}
+		return d
+	}
+	fp.eval = func(expr string) (any, bool) {
+		switch {
+		case strings.Contains(expr, "throwIt"):
+			return map[string]any{"result": map[string]any{"type": "object", "className": "Error", "description": "Error: boom", "objectId": "err-1"}, "wasThrown": true}, true
+		case strings.HasPrefix(expr, "(function"):
+			return map[string]any{"result": map[string]any{"type": "function", "objectId": "fn-1"}}, true
+		case strings.Contains(expr, ".apply(undefined, ["):
+			return map[string]any{"result": map[string]any{"type": "number", "value": 3, "description": "3"}}, true
+		}
+		return nil, false
+	}
+
+	// Value arguments: one evaluate in the context with the arguments in it.
+	before := counts()
+	res := decode[struct{ Result map[string]any }](t, call(t, c, sid, "Runtime.callFunctionOn", map[string]any{
+		"executionContextId": main, "functionDeclaration": "(a, b) => a + b.length\n//# sourceURL=pptr:x\n",
+		"arguments": []any{map[string]any{"value": 1}, map[string]any{"value": "xy"}}, "returnByValue": true,
+	}))
+	if res.Result["value"] != float64(3) {
+		t.Fatalf("callFunctionOn with values = %v", res.Result)
+	}
+	if d := sent(before); len(d) != 1 || d["Runtime.evaluate"] != 1 {
+		t.Fatalf("callFunctionOn with values sent %v, want one Runtime.evaluate", d)
+	}
+	ev := f.ReceivedMethod("Runtime.evaluate")
+	var ep struct {
+		Expression    string `json:"expression"`
+		ContextID     int    `json:"contextId"`
+		ReturnByValue bool   `json:"returnByValue"`
+	}
+	_ = json.Unmarshal(ev[len(ev)-1].Params, &ep)
+	if ep.Expression != "((a, b) => a + b.length\n//# sourceURL=pptr:x\n\n).apply(undefined, [1, \"xy\"])" || ep.ContextID != 1 || !ep.ReturnByValue {
+		t.Fatalf("callFunctionOn with values evaluated %s", ev[len(ev)-1].Params)
+	}
+
+	// An argument object of the context: one callFunctionOn on it.
+	own := `{"injectedScriptId":1,"id":5}`
+	f.Result("Runtime.callFunctionOn", map[string]any{"result": map[string]any{"type": "object", "objectId": `{"injectedScriptId":1,"id":6}`}})
+	before = counts()
+	res = decode[struct{ Result map[string]any }](t, call(t, c, sid, "Runtime.callFunctionOn", map[string]any{
+		"executionContextId": main, "functionDeclaration": "r => r.result()",
+		"arguments": []any{map[string]any{"value": "v"}, map[string]any{"objectId": own}},
+	}))
+	if res.Result["objectId"] != `{"injectedScriptId":1,"id":6}` {
+		t.Fatalf("callFunctionOn with an object = %v", res.Result)
+	}
+	if d := sent(before); len(d) != 1 || d["Runtime.callFunctionOn"] != 1 {
+		t.Fatalf("callFunctionOn with an object of the context sent %v, want one Runtime.callFunctionOn", d)
+	}
+	cf := f.ReceivedMethod("Runtime.callFunctionOn")
+	var p struct {
+		ObjectID            string           `json:"objectId"`
+		FunctionDeclaration string           `json:"functionDeclaration"`
+		Arguments           []map[string]any `json:"arguments"`
+	}
+	_ = json.Unmarshal(cf[len(cf)-1].Params, &p)
+	if p.ObjectID != own || !strings.Contains(p.FunctionDeclaration, "(r => r.result()\n)") || p.Arguments[0]["value"] != "v" || p.Arguments[1]["objectId"] != own {
+		t.Fatalf("callFunctionOn with an object of the context sent %s", cf[len(cf)-1].Params)
+	}
+
+	// An argument object of another context: the trampoline path, so
+	// WebKit's same-world check refuses it as before.
+	other := `{"injectedScriptId":9,"id":5}`
+	f.Result("Runtime.callFunctionOn", map[string]any{"result": map[string]any{"type": "number", "value": 1, "description": "1"}})
+	before = counts()
+	call(t, c, sid, "Runtime.callFunctionOn", map[string]any{
+		"executionContextId": main, "functionDeclaration": "function(x) { return 1; }", "arguments": []any{map[string]any{"objectId": other}},
+	})
+	cf = f.ReceivedMethod("Runtime.callFunctionOn")
+	_ = json.Unmarshal(cf[len(cf)-1].Params, &p)
+	if d := sent(before); d["Runtime.evaluate"] != 1 || d["Runtime.callFunctionOn"] != 1 || d["Runtime.releaseObject"] != 1 || p.ObjectID != "fn-1" || p.Arguments[0]["objectId"] != other {
+		t.Fatalf("callFunctionOn with another context's object sent %v, last %s; want the trampoline path", d, cf[len(cf)-1].Params)
+	}
+
+	// A thrown exception is the call's exceptionDetails.
+	ex := decode[struct {
+		ExceptionDetails map[string]any `json:"exceptionDetails"`
+	}](t, call(t, c, sid, "Runtime.callFunctionOn", map[string]any{"executionContextId": main, "functionDeclaration": "function throwIt() { throw new Error('boom'); }"}))
+	if ex.ExceptionDetails == nil {
+		t.Fatal("a thrown callFunctionOn has no exceptionDetails")
+	}
+
+	// An awaited promise: the call, then Runtime.awaitPromise.
+	f.Result("Runtime.callFunctionOn", map[string]any{"result": map[string]any{"type": "object", "className": "Promise", "objectId": "p-2"}})
+	f.Result("Runtime.awaitPromise", map[string]any{"result": map[string]any{"type": "string", "value": "done"}})
+	before = counts()
+	res = decode[struct{ Result map[string]any }](t, call(t, c, sid, "Runtime.callFunctionOn", map[string]any{
+		"executionContextId": main, "functionDeclaration": "async r => r", "arguments": []any{map[string]any{"objectId": own}}, "awaitPromise": true, "returnByValue": true,
+	}))
+	if d := sent(before); res.Result["value"] != "done" || len(d) != 2 || d["Runtime.callFunctionOn"] != 1 || d["Runtime.awaitPromise"] != 1 {
+		t.Fatalf("awaited callFunctionOn = %v, sent %v", res.Result, d)
 	}
 }

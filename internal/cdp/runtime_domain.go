@@ -1,10 +1,12 @@
 package cdp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -96,6 +98,7 @@ type boundOp struct {
 	ctx    context.Context
 	follow bool // no context: the first send goes to the target active then
 	sent   bool
+	wipID  int64 // the bound context's WIP id; 0 without one
 }
 
 // bind binds the admitted operation mo to the CDP execution context id or
@@ -112,6 +115,7 @@ func (s *session) bind(mo *core.ManagedOp, id int, unique string) (*boundOp, err
 		return nil, err
 	}
 	mo.Op.SetExecutionContext(ec)
+	b.wipID = ec.ID
 	return b, nil
 }
 
@@ -245,9 +249,10 @@ var unserializable = regexp.MustCompile(`^(undefined|NaN|Infinity|-Infinity|-0|-
 const applyFunction = "function(...a) { return this.apply(undefined, a); }"
 
 // callFunctionOn: with an objectId the call goes to WIP
-// Runtime.callFunctionOn; with an execution context the declaration is
-// first turned into a function object by Runtime.evaluate in that context
-// and then called through applyFunction. awaitPromise uses
+// Runtime.callFunctionOn; with an execution context it is one WIP call
+// (directCall) when it can be, else the declaration is first turned into
+// a function object by Runtime.evaluate in that context and then called
+// through applyFunction. awaitPromise uses
 // Runtime.awaitPromise (WIP callFunctionOn has no awaitPromise on 16.6).
 func callFunctionOn(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
@@ -301,6 +306,15 @@ func callFunctionOn(ctx context.Context, call *Call) (any, Later, error) {
 		return nil, nil, err
 	}
 	this := p.ObjectID
+	if this == "" && p.ObjectGroup == "" {
+		opts := map[string]any{
+			"returnByValue": p.ReturnByValue && !p.AwaitPromise, "emulateUserGesture": p.UserGesture,
+			"doNotPauseOnExceptionsAndMuteConsole": p.Silent,
+		}
+		if r, ok, err := b.directCall(decl, p.Arguments, args, opts); ok {
+			return b.finish(end, r, err, p.ReturnByValue, p.AwaitPromise)
+		}
+	}
 	if this == "" {
 		ev := map[string]any{"expression": "(" + decl + ")", "objectGroup": cmpOr(p.ObjectGroup, "iwdp-cdp-call")}
 		fr, err := b.call("Runtime.evaluate", ev)
@@ -336,6 +350,84 @@ func callFunctionOn(ctx context.Context, call *Call) (any, Later, error) {
 	}
 	return b.finish(end, r, err, p.ReturnByValue, p.AwaitPromise)
 }
+
+// directCall makes a callFunctionOn with an execution context one WIP
+// round trip (FIX-O; through iwdp each takes about 40 ms on the iOS
+// Simulator): with an argument object of the bound context, a WIP
+// callFunctionOn on that object with the declaration bound to an
+// undefined receiver; with only value arguments, a Runtime.evaluate in the
+// context that applies the declaration to them as literals. Both evaluate
+// the declaration at the context's global scope with an undefined
+// receiver, as the evaluate and trampoline path does. ok is false, and
+// no message was written, when that path must run instead: an argument object
+// of another context (WebKit refuses it there, as Chrome does), a value
+// that a literal does not keep (__proto__), or a message above the
+// transport's limit. The result object of the call on an argument object
+// belongs to that object's group, so a call with an objectGroup never
+// comes here.
+func (b *boundOp) directCall(decl string, in []callArg, args []map[string]any, opts map[string]any) (wipResult, bool, error) {
+	if b.wipID == 0 {
+		return wipResult{}, false, nil
+	}
+	target := ""
+	lits := make([]string, len(in))
+	for i, a := range in {
+		switch {
+		case a.ObjectID != "":
+			id, ok := objectContext(a.ObjectID)
+			if !ok || id != b.wipID {
+				return wipResult{}, false, nil
+			}
+			if target == "" {
+				target = a.ObjectID
+			}
+		case a.UnserializableValue == "" && a.Value != nil:
+			if bytes.Contains(a.Value, []byte("__proto__")) {
+				return wipResult{}, false, nil
+			}
+			lits[i] = string(a.Value)
+		default:
+			lits[i] = "undefined" // unserializable values are set in decl
+		}
+	}
+	method, params := "Runtime.evaluate", map[string]any{}
+	if target != "" {
+		method = "Runtime.callFunctionOn"
+		params["objectId"] = target
+		params["functionDeclaration"] = "(" + decl + "\n).bind(undefined)"
+		params["arguments"] = args
+	} else {
+		params["expression"] = "(" + decl + "\n).apply(undefined, [" + strings.Join(lits, ", ") + "])"
+		params["objectGroup"] = "iwdp-cdp-call"
+	}
+	maps.Copy(params, opts)
+	r, err := b.call(method, params)
+	if wireLimit(err) != nil {
+		return wipResult{}, false, nil
+	}
+	var e *webkit.ErrorData
+	if errors.As(err, &e) && strings.Contains(e.Message, wipNoObjectContext) {
+		err = errNoContext // the argument's context, the bound one, is gone
+	}
+	return r, true, boundErr(err)
+}
+
+// objectContext returns the context of a WIP remote object id: WebKit's
+// ids are JSON objects that name their injected script, whose id is the
+// context's (InjectedScriptManager).
+func objectContext(objectID string) (int64, bool) {
+	var o struct {
+		InjectedScriptID *int64 `json:"injectedScriptId"`
+	}
+	if json.Unmarshal([]byte(objectID), &o) != nil || o.InjectedScriptID == nil {
+		return 0, false
+	}
+	return *o.InjectedScriptID, true
+}
+
+// wipNoObjectContext is the WebKit error text for a call on an object
+// whose context is gone (InspectorRuntimeAgent::callFunctionOn).
+const wipNoObjectContext = "Missing injected script for given objectId"
 
 func cmpOr(a, b string) string {
 	if a != "" {
