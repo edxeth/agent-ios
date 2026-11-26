@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-26
+
+### Fixes
+
+- The release binaries are built with Go 1.27.4. The 0.2.0 binaries were built with Go 1.26.0, whose Unicode 15 tables escaped characters added in Unicode 16 and 17 in snapshot hints (for example `\u{16ea0}`), where agent-browser 0.45 prints them as they are. `go.mod` keeps Go 1.26.0 as the minimum and names the go1.27.4 toolchain, which `go install` downloads when needed.
+
 ## [0.2.0] - 2026-11-26
 
 Parity with agent-browser 0.45.0 and chrome-devtools-mcp 1.14.0 wherever iOS WebKit allows; see [known limits](docs/known-limits.md#agent-browser-045-and-chrome-devtools-mcp-114-features) for the rest.
