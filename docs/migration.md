@@ -121,6 +121,8 @@ The MCP server (`iwdp-mcp`), its tool profiles (`IWDP_MCP_TOOLS`, `--tools`), th
 ## Changes after 0.1.0
 
 - **BREAKING: state names.** `state save`, `state load` and `state show` take a state name or a path. A name is 1 to 128 letters, digits, `_` and `-`, stored as `<name>.json` under `$XDG_STATE_HOME/agent-ios/states`; anything else is a path. So `state save login` now writes the named state `login`, where 0.1.0 wrote the file `./login`. Write `./login` or `login.json` for a file in the current directory.
+- **`state rename` and `state clear` take names only** (both are new after 0.1.0; builds before the release accepted `<name>.json`). `state clear login.json` is a usage error (exit 2) that names the state `login`; pass `state clear login`. `state list` prints names (`login`), not file names (`login.json`), so every name it prints works in every state command; its JSON keeps `filename` and adds `name`.
+- **`press` chords.** 0.1.0's undocumented `Option+` alias is gone (agent-browser 0.45 has none): `press Option+a` is a usage error (unknown key). Write `Alt+a`. Modifier parts may now stand anywhere in a chord (`press a+Shift`) and take the Left/Right forms (`press ShiftRight+a`).
 - **keydown** follows agent-browser 0.45: keydown, then keypress and the insertion or default action unless the page cancels the keydown. 0.1.0 sent a bare keydown; `press <key> --phase down` still does.
 - **diff snapshot** compares with the session's last snapshot of the page (with its options) or with `--baseline <file>`; 0.1.0 compared the last two snapshots.
 - **Stale refs** fail with agent-browser 0.45's message "Ref @eN is from a document that is no longer loaded ..." (code `stale_ref` unchanged).

@@ -61,4 +61,4 @@ rm -f -- "$EVIDENCE/state-before.json" || exit "$?"
 
 - `cookies set` reads the cookie back and exits 1 when WebKit stored something else.
 - `state save` and `state load` cover the cookies, localStorage and sessionStorage of the current origin; load on a page of the same origin. When `state load` fails, the block keeps the file: run `state load` again, and delete the file before the run ends.
-- A bare name is a named state, not a file: `state save before` writes `$XDG_STATE_HOME/agent-ios/states/before.json`; `state list`, `state show before` (counts only), `state clear before`. Anything with a dot or slash (`./before`, `before.json`) is a path.
+- A bare name is a named state, not a file: `state save before` writes `$XDG_STATE_HOME/agent-ios/states/before.json`; `state list` (prints names), `state show before` (counts only), `state clear before`. Anything with a dot or slash (`./before`, `before.json`) is a path; `state rename` and `state clear` take names only (`state clear before`, never `before.json`).

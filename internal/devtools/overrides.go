@@ -368,7 +368,9 @@ func (p *Page) SetGeolocation(ctx context.Context, c webkit.Caller, session stri
 func (p *Page) setGeolocation(ctx context.Context, c webkit.Caller, session string, lat, lng, accuracy float64) error {
 	src := GeoShim(lat, lng, accuracy)
 	o := owner("geo", session)
-	if err := p.ps.State.SetPart(o, GeoPartPrefix+session, core.RankShim, src); err != nil {
+	// The last set wins (as the CDP bridge's emuGeolocation): a replaced
+	// override becomes the latest in script order (parity-045 review F5).
+	if err := p.ps.State.SetLatestPart(o, GeoPartPrefix+session, core.RankShim, src); err != nil {
 		return err
 	}
 	p.ps.State.Put(core.Entry{Key: "devtools:geo:" + session, Owner: o, Apply: noop, Release: GeoRelease(p.ps.Boot)})

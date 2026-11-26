@@ -278,6 +278,23 @@ func (d *DesiredState) SetPart(owner Owner, name string, rank int, source string
 	return nil
 }
 
+// SetLatestPart is SetPart for a part whose replacement must become the
+// latest (BootstrapParts.SetLatest), as a geolocation override: the last
+// set wins, also when it replaces an earlier one of the same owner.
+func (d *DesiredState) SetLatestPart(owner Owner, name string, rank int, source string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.refusedLocked() {
+		return nil
+	}
+	if err := d.Boot.SetLatest(name, rank, source); err != nil {
+		return err
+	}
+	d.ver++
+	d.partOwner[name] = owner
+	return nil
+}
+
 // RemovePart removes the bootstrap part name. It reports whether that ended
 // the last requirement of Page (Needs), that is, whether Page.disable must
 // be sent.

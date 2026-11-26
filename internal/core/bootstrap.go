@@ -63,6 +63,19 @@ func (b *BootstrapParts) Set(name string, rank int, source string) error {
 	return nil
 }
 
+// SetLatest adds or replaces the part name as the last of its rank: a
+// replaced part moves to the end of the script order (last set wins).
+func (b *BootstrapParts) SetLatest(name string, rank int, source string) error {
+	if name == "" || strings.ContainsAny(name, "\r\n") {
+		return fmt.Errorf("bootstrap part name %q: must be one non-empty line", name)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.seq++
+	b.parts[name] = bootPart{rank: rank, seq: b.seq, source: source}
+	return nil
+}
+
 // Remove deletes the part name and reports whether it existed.
 func (b *BootstrapParts) Remove(name string) bool {
 	b.mu.Lock()

@@ -6,46 +6,49 @@ Parity with agent-browser 0.45.0 and chrome-devtools-mcp 1.14.0 wherever iOS Web
 
 ### Features
 
-- Added `heap snapshot [path]` (a JavaScriptCore heap snapshot written as is, with a summary by class), `heap gc` and `heap diff <a> <b>` (class deltas computed on the host). See [DevTools extras](docs/guide.md#devtools-extras).
-- Added `css matched <target>` and `css computed <target>`: the matched CSS rules with the cascade, in chrome-devtools-mcp's `get_css_styles` format, and the computed style from the CSS domain, without `CSS.enable`.
-- Added `logpoint add|list|remove|clear`: logpoints that never pause, on script URLs or on original sources through source maps (inline and file maps), kept across reloads, navigations and reconnects.
+- Added `heap snapshot [path]` (a JavaScriptCore heap snapshot written as is, with a summary by class; the path is checked before the snapshot, and the snapshot is held once in memory), `heap gc` and `heap diff <a> <b>` (class deltas computed on the host; regular files up to 512 MiB). See [DevTools extras](docs/guide.md#devtools-extras).
+- Added `css matched <target>` and `css computed <target>`: the matched CSS rules with the cascade, in chrome-devtools-mcp's `get_css_styles` format, and the computed style from the CSS domain, without `CSS.enable`. Node ids are pinned to their target and document, logical and physical properties conflict in the cascade, and var() is read as CSS tokens; `--page-size 0` is refused.
+- Added `logpoint add|list|remove|clear`: logpoints that never pause, on script URLs or on original sources through source maps (inline and file maps), kept across reloads, navigations and reconnects. Debugger is enabled only after the pauses on `debugger` statements and exceptions are off, on every path; source maps have budgets (16 MiB and 2 million segments per map, 32 maps or 4 million segments per page); a location that two loaded scripts map equally fails as ambiguous.
 - Added `diff url <url1> <url2> [--screenshot [--full]]`, and `diff snapshot --baseline <file>`.
-- Added `state list`, `state show`, `state rename` and `state clear`, and named states under `$XDG_STATE_HOME/agent-ios/states` (directory 0700, files 0600).
+- Added `state list`, `state show`, `state rename` and `state clear`, and named states under `$XDG_STATE_HOME/agent-ios/states` (directory 0700, files 0600). `state rename` and `state clear` take names only (`state clear login`, not `login.json`), `state list` prints names, `state show` prints "Origins with localStorage: M" (agent-browser's label and count), and `state save <name>` writes atomically and refuses a symlink at the state file.
 - Added `click` and `dblclick` `--button left|right|middle|back|forward` and `--modifiers alt,control,meta,shift`; every event carries them, and `--new-tab` refuses both. `mouse down|up` take back and forward. `keydown` of a modifier key holds it for later `press`, `keydown`, `keyup` and `mouse` commands; key events carry `code`, `keyCode` and `location`.
-- Added `select --by value|label`, and `select` on ARIA comboboxes and listboxes. `fill` sets date, time, color and range inputs. `upload` expands `~`.
-- Added snapshot hints for controls with an empty or shared name; `snapshot -s` covers every match; the cursor scan covers `<summary>`, native controls with non-control roles and shadow-root clickables; iframes are labelled by title, else name, and nested same-origin iframes are walked four levels deep.
-- `eval` runs in the frame that `frame` selected, also a cross-origin one, and `eval --json` reports the document's URL as `origin`. `frame` resolves unnamed, cross-origin and nested iframes and refs of iframes inside same-origin frames. `console` and `errors` capture iframe messages.
-- `screenshot --annotate --json` gives each label a `box`; refs inside iframes are boxed through scrolled, offset and scaled frames.
+- Added `select --by value|label`, and `select` on ARIA comboboxes and listboxes; a refused combobox select closes the list it opened. A native `<select>` is selected and read back in one step, so a change handler that navigates or removes it does not fail the command, and options that share a value count once. `fill` sets date, time, color and range inputs. `upload` expands `~`.
+- Added snapshot hints for controls with an empty or shared name, escaped exactly as Rust's `{:?}` (as agent-browser prints them); `snapshot -s` covers every match; the cursor scan covers `<summary>`, native controls with non-control roles and shadow-root clickables; iframes are labelled by title, else name, and nested same-origin iframes are walked four levels deep.
+- `eval` runs in the frame that `frame` selected, also a cross-origin one, and `eval --json` reports the document's URL as `origin` (read only when printed, within 1 s). `frame` resolves unnamed, cross-origin and nested iframes and refs of iframes inside same-origin frames. `console` and `errors` capture iframe messages.
+- `screenshot --annotate --json` gives each label a `box` in the coordinates of the captured image (viewport, full page or `--selector` element); refs inside iframes are boxed through scrolled, offset and scaled frames, and `--selector` with a ref inside a frame captures the right area.
 - Added `tab keep live|throttled|frozen`, which always fails on iOS WebKit with the reason.
 
 ### Behavior changes
 
 - **BREAKING:** `state save`, `state load` and `state show` take a state name (letters, digits, `_` and `-`) or a path: `state save login` now writes the named state `login`, not the file `./login`. Write `./login` or `login.json` for a file. See [migration.md](docs/migration.md#changes-after-010).
-- `keydown` follows agent-browser 0.45 (#2734): keydown, then keypress and the insertion or default action unless the page cancels it. `press <key> --phase down` keeps the bare keydown. `press` chords send the modifier key events, apply the US Shift mapping and insert no text with Alt, Control or Meta.
+- `keydown` follows agent-browser 0.45 (#2734): keydown, then keypress and the insertion or default action unless the page cancels it. `press <key> --phase down` keeps the bare keydown. `press` chords send the modifier key events, apply the US Shift mapping and insert no text with Alt, Control or Meta; modifier parts may stand anywhere in a chord and take the Left/Right forms (`press a+Shift`, `press ShiftRight+a`), and every keydown and keyup goes to the element that has focus when it is sent (after `Shift+Tab`, the newly focused element gets the keyups). 0.1.0's undocumented `Option+` alias is gone: `press Option+a` is a usage error (unknown key); use `Alt+a`.
 - `diff snapshot` compares with the session's last snapshot of the page (with its options) or with `--baseline`, ignores refs, and fails with `no_baseline`, `baseline_mismatch` or `file_not_found`; it used to compare the last two snapshots.
-- fill, type, check, uncheck, select and upload refuse an impossible target at once, change nothing and start the error with agent-browser 0.45's stable code (`read_only`, `disabled`, `not_editable`, `option_not_found`, ...). fill and select warn when the page changes the value.
+- fill, type, check, uncheck, select and upload refuse an impossible target at once and start the error with agent-browser 0.45's stable code (`read_only`, `disabled`, `not_editable`, `option_not_found`, ...). fill and select warn when the page changes the value. A refusal changes nothing, except that a refused combobox `select` closes the list it opened first, and `type` refused mid-way (the page disabled the field) says how many characters were typed before the refusal. The option list of `option_not_found` is bounded, then "... and N more".
 - A ref from a replaced document fails with agent-browser 0.45's message "Ref @eN is from a document that is no longer loaded ..." (code `stale_ref` unchanged).
 - `click --count 2` and `dblclick` end with dblclick only for the left button.
 - `network har stop` without a recording fails with `no_har_recording` and writes no file.
+- `set geo` follows "last set wins" also when it replaces the session's earlier override: repeated after a CDP client's geolocation override, it runs after that override in new documents, and the release of another owner brings it back.
 
 ### Fixes
 
-- click, dblclick, tap, hover, check and drag scroll a clipped or edge-straddling target fully into view and wait for the layout to settle before the receives-events check, so a cover that appears on scroll fails the action as `covered by`, and the events carry the settled point; a press that lands on a label that activates the target is accepted (agent-browser 0.45 #2587, #2611).
+- click, dblclick, tap, hover, check and drag scroll a clipped or edge-straddling target fully into view and wait for the layout to settle before the receives-events check, so a cover that appears on scroll fails the action as `covered by`, and the events carry the settled point; a press that lands on a label that activates the target is accepted unless it lands on a control inside that label (agent-browser 0.45's interactive list, #2587, #2611). Targets inside nested same-origin frames are hit-tested through every frame, and a ref whose element was replaced is found again only in the document that held it.
+- `emulate network` on iOS 27.3 and later sends `bandwidth` (the form that version takes) instead of `bytesPerSecondLimit`.
 - The WebKitGTK test suite builds the CLI outside the daemon's socket directory, so its daemon-based tests run again.
 
 ### CDP endpoint
 
-- chrome-devtools-mcp 1.14's `emulate` works: `Emulation.setCPUThrottlingRate` (rate 1), `Emulation.clearGeolocationOverride`, `Network.overrideNetworkState` and `Network.emulateNetworkConditionsByRule`; offline through interception; iOS 27.3 throttling with bandwidth and latency.
-- A Debugger subset for logpoints (chrome-devtools-mcp `set_logpoints`): `enable`, `disable`, logpoint-only `setBreakpointByUrl`, `removeBreakpoint`, `getScriptSource`, `getPossibleBreakpoints`, `scriptParsed` and `breakpointResolved`; anything that could pause is refused.
+- chrome-devtools-mcp 1.14's `emulate` works: `Emulation.setCPUThrottlingRate` (rate 1), `Emulation.clearGeolocationOverride`, `Network.overrideNetworkState` and `Network.emulateNetworkConditionsByRule` (URL rules only when every URL gets the same conditions); offline through interception; iOS 27.3 throttling with bandwidth and latency. Its network presets all carry an upload limit, which WIP cannot emulate, so they are refused as a whole; `Offline` works. Between geolocation overrides the last set wins, also a replaced one.
+- A Debugger subset for logpoints (chrome-devtools-mcp `set_logpoints`): `enable`, `disable`, logpoint-only `setBreakpointByUrl`, `removeBreakpoint`, `getScriptSource`, `getPossibleBreakpoints`, `scriptParsed` and `breakpointResolved`; anything that could pause is refused. Breakpoints belong to their attachment: `breakpointResolved` goes only to it with the id it got, also after a replay, and removing another attachment's breakpoint is refused.
 - Nodes of same-origin iframes work in the DOM methods with main-frame coordinates, and mouse and touch input reaches elements inside same-origin iframes.
 - `DOM.requestNode` works before `DOM.getDocument`, also on WebKit's empty refusal.
 - Console stack traces carry async parents (`stackTrace.parent`).
-- HeapProfiler and CSS are still not translated. See [cdp.md](docs/cdp.md#limits-per-domain).
+- CSS for chrome-devtools-mcp's `get_css_styles`: `CSS.enable` and `CSS.disable` (answered by the endpoint), `CSS.getMatchedStylesForNode`, `getInlineStylesForNode`, `getComputedStyleForNode` and `DOM.pushNodesByBackendIdsToFrontend` for sessions that send `CSS.enable`. A shorthand's `longhandProperties` are given only when its declaration block has no other shorthand.
+- HeapProfiler and the other CSS methods are still not translated. See [cdp.md](docs/cdp.md#limits-per-domain).
 
 ### Docs
 
 - The guide, known limits, CDP limits, design and migration pages describe the new commands, their deadlines and exit codes, and the limits of iOS WebKit against agent-browser 0.45 and chrome-devtools-mcp 1.14. The skill guides name the new commands.
-- Internal: the injected runtime is split into a core and on-demand modules (forms, gestures, overlay); the first form, gesture or annotate command in a document costs one extra install message.
+- Internal: the injected runtime is split into a core and on-demand modules (forms, gestures, overlay); the first form, gesture or annotate command in a document costs one extra install message. An install of the core with modules that does not fit one 64 KiB message is split (the core first, then the modules joined while they fit).
 
 ## [0.1.0] - 2026-11-26
 

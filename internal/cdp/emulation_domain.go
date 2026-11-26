@@ -231,8 +231,7 @@ func emuGeolocation(ctx context.Context, call *Call) (any, Later, error) {
 		return ps.State.Change(ctx, mo.Op.Caller(), func(c webkit.Caller) error {
 			first := !ps.State.Needs("Page")
 			name := devtools.GeoPartPrefix + string(s.owner)
-			ps.State.RemovePart(name) // the replaced part becomes the latest
-			if err := ps.State.SetPart(s.owner, name, core.RankShim, src); err != nil {
+			if err := ps.State.SetLatestPart(s.owner, name, core.RankShim, src); err != nil {
 				return err
 			}
 			ps.State.Put(core.Entry{

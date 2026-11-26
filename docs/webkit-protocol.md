@@ -33,6 +33,8 @@ Some `<Domain>.enable` methods work through Target routing (for example `Debugge
 
 Checked 2026-11-26 on the iOS 26.5 Simulator through iwdp: `CSS.getMatchedStylesForNode`, `CSS.getInlineStylesForNode` and `CSS.getComputedStyleForNode` answer in about 42 ms without `CSS.enable`, and the connection stays usable (`css matched` and `css computed` use only these). `DOM.requestNode` before `DOM.getDocument` fails with "Document must have been requested" on iOS and with an empty error message on WebKitGTK 2.54.
 
+The pause on `debugger` statements and on exceptions live in JSC::Debugger, not in the Debugger agent: they survive `Debugger.disable` and a new inspector connection, and they act as soon as `Debugger.enable` attaches the debugger. WebKit has no getter for them. A new JSC::Debugger pauses on neither (Debugger.h: the three pause breakpoints start null; Web Inspector's frontend turns the debugger statements on itself). `setPauseOnDebuggerStatements` and `setPauseOnExceptions` are accepted without `Debugger.enable`. agent-ios therefore sends both, turned off, before every `Debugger.enable` that it makes for an owner that must not pause (logpoints, the CDP Debugger subset), and its agent reset uses that baseline (no pause on `debugger` statements; earlier versions reset it to on).
+
 ## Known limitations
 
 - `CSS.enable`, `CSS.getAllStyleSheets` and `CSS.getStyleSheetText` hang through iwdp Target routing. The command is sent but no response comes back, and the hang corrupts the connection: every later command on the same connection hangs too. `webkit.Client.Send` refuses these three methods when Target-routed (`ErrHangsThroughTarget`; `TestClient_TargetRoutedCSSGuard` in internal/webkit/client_test.go).

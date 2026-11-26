@@ -296,3 +296,27 @@ func TestEmulationViewportIsFixed(t *testing.T) {
 		t.Fatalf("clearDeviceMetricsOverride: %+v", e)
 	}
 }
+
+// set geo follows the bridge's rule (parity-045 review F5): the last set
+// wins, also for a replaced override. A CLI override set again after a CDP
+// override must run last in the bootstrap script, so new documents get
+// the CLI's newer position.
+func TestCLIGeoReplacedOverrideBecomesLatest(t *testing.T) {
+	w := newW5b2Page(t)
+	w.cliGeo(t, 1, 0)
+	w.call(t, "Emulation.setGeolocationOverride", map[string]any{"latitude": 2, "longitude": 0})
+	m := w.mark()
+	w.cliGeo(t, 3, 0)
+	boot := ""
+	for _, rec := range w.f.Received()[m:] {
+		if rec.Method == "Page.setBootstrapScript" {
+			var p struct{ Source string }
+			_ = json.Unmarshal(rec.Params, &p)
+			boot = p.Source
+		}
+	}
+	cdp, cli := strings.Index(boot, devtools.GeoShim(2, 0, 1)), strings.Index(boot, devtools.GeoShim(3, 0, 1))
+	if cdp < 0 || cli < 0 || cli < cdp || strings.Contains(boot, devtools.GeoShim(1, 0, 1)) {
+		t.Fatalf("the bootstrap script after set geo 3 0:\n%s\nwant the CDP shim (latitude 2), then the replaced CLI shim (latitude 3)", boot)
+	}
+}
