@@ -242,6 +242,12 @@ const CodeStaleOwner = "stale_owner"
 // ErrNotInstalled: the bundle did not define this Version's __iwdp.
 var ErrNotInstalled = errors.New("the agent runtime is not installed in the page after an install attempt")
 
+// ErrNothingRan marks an error of a call that ran nothing of the called
+// function in the page: the page answered a missing sentinel, which it
+// does before it runs anything, and then the install failed or the retry
+// answered a sentinel again. An attempt with this error did not run.
+var ErrNothingRan = errors.New("nothing of the call ran in the page")
+
 // Envelope is the result of every runtime function.
 type Envelope struct {
 	OK       bool            `json:"ok"`
@@ -494,21 +500,23 @@ func (r *Runtime) call(ctx context.Context, c webkit.Caller, fn string, args any
 		if json.Unmarshal(v, &s) != nil || (s != MissingSentinel && s != ModuleMissingSentinel) {
 			return v, nil
 		}
+		// From here on, every error is ErrNothingRan: the page answered
+		// a sentinel, so nothing of the call ran.
 		switch {
 		case s == MissingSentinel && !coreSent:
 			coreSent, modsSent = true, true
 			if err := install(ctx, c, true, mods); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("runtime call %s: %w (%w)", name, err, ErrNothingRan)
 			}
 		case s == ModuleMissingSentinel && !modsSent:
 			modsSent = true
 			if err := install(ctx, c, false, mods); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("runtime call %s: %w (%w)", name, err, ErrNothingRan)
 			}
 		case s == MissingSentinel:
-			return nil, fmt.Errorf("runtime call %s: %w", name, ErrNotInstalled)
+			return nil, fmt.Errorf("runtime call %s: %w (%w)", name, ErrNotInstalled, ErrNothingRan)
 		default:
-			return nil, fmt.Errorf("runtime call %s: modules %v: %w", name, mods, ErrNotInstalled)
+			return nil, fmt.Errorf("runtime call %s: modules %v: %w (%w)", name, mods, ErrNotInstalled, ErrNothingRan)
 		}
 	}
 }

@@ -177,3 +177,60 @@ func TestFrames045ModuleInstalledInTheSelectedFrame(t *testing.T) {
 		t.Fatalf("check in the frame installed the forms module in the top document: %s", got)
 	}
 }
+
+// dragProbe runs step of a drag of operation op from #src to #dst through
+// the gestures module's dispatcher and returns "kept" when the page still
+// held the drag state of op, else the step's error.
+const dragProbe = `window.__dragProbe = function (op, step) {
+  var r = { d: [] }, x = { live: function () { return true; }, interrupt: function () {} };
+  window.__probe = null;
+  window.__iwdp._.A.drag(document.querySelector("#src"), { el2: document.querySelector("#dst") }, { opId: op, step: step, steps: 10 }, r, x)
+    .then(function () { window.__probe = r.err || "kept"; }, function (e) { window.__probe = "threw " + e; });
+  return true;
+}; true`
+
+func probeDrag(t *testing.T, op string, step int) string {
+	t.Helper()
+	eval(t, fmt.Sprintf("window.__dragProbe(%q, %d)", op, step))
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		var s *string
+		if err := json.Unmarshal(eval(t, "window.__probe"), &s); err != nil {
+			t.Fatal(err)
+		}
+		if s != nil {
+			return *s
+		}
+	}
+	t.Fatalf("drag step %d of %s did not settle", step, op)
+	return ""
+}
+
+// Review-split F3: the state of a drag that was interrupted after its
+// first steps (its later steps never came) ends with the lease epoch that
+// started it and with a release, as all other module state does; it does
+// not survive until the document is gone.
+func TestModules045DragStateEndsWithTheLeaseEpoch(t *testing.T) {
+	loadActions(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := iwdpruntime.New(sess, sess.Generation).Call(ctx, iwdpruntime.With("ping", iwdpruntime.ModGestures), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	eval(t, dragProbe)
+	eval(t, `window.__iwdp.own({ daemon: "f3-probe", session: "f3", epoch: 1 })`)
+	if a, b := probeDrag(t, "op1", 1), probeDrag(t, "op1", 2); a != "kept" || b != "kept" {
+		t.Fatalf("steps 1 and 2 of one drag answered %q and %q; want the state kept within the epoch", a, b)
+	}
+	eval(t, `window.__iwdp.own({ daemon: "f3-probe", session: "f3", epoch: 2 })`)
+	const lost = "the page lost the drag state (it navigated or reset)"
+	if got := probeDrag(t, "op1", 3); got != lost {
+		t.Fatalf("step 3 after a lease epoch change answered %q; want %q", got, lost)
+	}
+	if got := probeDrag(t, "op2", 1); got != "kept" {
+		t.Fatalf("step 1 of a new drag answered %q", got)
+	}
+	eval(t, `window.__iwdp.release(2)`)
+	if got := probeDrag(t, "op2", 2); got != lost {
+		t.Fatalf("step 2 after a release answered %q; want %q", got, lost)
+	}
+}

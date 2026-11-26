@@ -8,6 +8,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/edxeth/agent-ios/internal/runtime"
 	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
@@ -406,13 +407,17 @@ func (op *Op) sendAttempt(a Action, fn string, step int, probed bool) (AttemptRe
 	op.mu.Unlock()
 	replyAt := s.o.Clock.Now()
 	if r.err != nil {
+		// runtime.ErrNothingRan: the page answered a missing sentinel,
+		// which it does before it runs anything of the call, also when
+		// the install that followed then lost its reply.
+		notRun := !inf.isCommitted() || errors.Is(r.err, webkit.ErrNotSent) || errors.Is(r.err, runtime.ErrNothingRan)
 		if errors.Is(r.err, context.DeadlineExceeded) && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
 			// The call's own reply wait (boundary plus ReplyGrace) ended
 			// it before the lost timer fired: the same lost reply, not the
 			// operation's deadline (which would exit 124).
 			r.err = ErrReplyLost
 		}
-		if !inf.isCommitted() || errors.Is(r.err, webkit.ErrNotSent) {
+		if notRun {
 			return AttemptReply{}, attemptStopped, r.err
 		}
 		return AttemptReply{}, attemptAmbiguous, r.err

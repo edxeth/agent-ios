@@ -158,8 +158,8 @@ func TestModuleThatDoesNotInstallFailsTheCall(t *testing.T) {
 	p, r := newModulePage(t, true)
 	p.neverMods = true
 	err := r.Call(context.Background(), With("overlay", ModOverlay), nil, nil)
-	if !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "overlay") {
-		t.Fatalf("err = %v, want ErrNotInstalled naming the module", err)
+	if !errors.Is(err, ErrNotInstalled) || !errors.Is(err, ErrNothingRan) || !strings.Contains(err.Error(), "overlay") {
+		t.Fatalf("err = %v, want ErrNotInstalled and ErrNothingRan naming the module", err)
 	}
 	if len(p.installs) != 1 || p.calls != 2 {
 		t.Fatalf("installs %v, calls %d; want one install and one retry", p.installs, p.calls)

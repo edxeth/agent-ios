@@ -71,8 +71,8 @@ func TestCallInstallsOnceWhenMissing(t *testing.T) {
 		return map[string]any{"result": map[string]any{"type": "string", "value": MissingSentinel}}, nil
 	})
 	err := New(session(t, f), nil).Call(context.Background(), "echo", nil, nil)
-	if !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("err = %v, want ErrNotInstalled", err)
+	if !errors.Is(err, ErrNotInstalled) || !errors.Is(err, ErrNothingRan) {
+		t.Fatalf("err = %v, want ErrNotInstalled and ErrNothingRan", err)
 	}
 	evals := f.ReceivedMethod("Runtime.evaluate")
 	if len(evals) != 3 || !strings.Contains(string(evals[1].Params), "agent-ios agent runtime bundle") {

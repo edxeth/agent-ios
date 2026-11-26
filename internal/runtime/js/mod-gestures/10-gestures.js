@@ -26,6 +26,7 @@
   // moves toward the target; the last one drops (only when the last
   // dragover was canceled, as in HTML drag and drop) and releases.
   var DR = {};
+  I.onReset(function () { DR = {}; }); // release resets too
   function dinit(c, dt) {
     var o = pi(c, {}, 1);
     o.dataTransfer = dt;
