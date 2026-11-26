@@ -107,13 +107,14 @@ func TestCLISelectedTabNeedsNoListing(t *testing.T) {
 
 // Commands that need the listing fail with advice while a page connection
 // is open: what happened, what still works, and what to do. None of them
-// takes iwdp for dead.
+// takes iwdp for dead. tab new is not among them: it still calls
+// window.open on the attached page and stays there with a warning
+// (TestTabNewTakesNoTabWhenTheListingBeforeOpenFails in internal/commands).
 func TestCLIListingCommandsWhileAPageIsConnected(t *testing.T) {
 	env, _, _, _ := silentListingPages(t)
 	wantEval2(t, runCLI(t, "", env, "eval", "1+1"), "the first eval (cold attach)")
 	for _, args := range [][]string{
 		{"tab", "list"},
-		{"tab", "new", "https://new.example/"},
 		{"tab", "close", "t2"},
 		{"tab", "t2"},
 		{"get", "url", "--page", "Other"},

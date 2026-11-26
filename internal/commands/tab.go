@@ -279,10 +279,6 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 			return Result{}, usagef("tab new --label %q: a tab has this label already", label)
 		}
 	}
-	known, err := knownTabs(ctx, m, in)
-	if err != nil {
-		return Result{}, err
-	}
 	session := in.Global.Session
 	u := arg(in, 0)
 	if u == "" {
@@ -294,13 +290,19 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	// window.open runs in the session's current page (the opener), which
 	// in a new session is the device's first tab, often the user's own.
+	// The new tab is found as click --new-tab finds it (listBeforeOpen).
 	// borrowed records the lease that this call's acquisition granted on
 	// the opener (none when the session held it before), also when the
 	// operation's admission fails after the grant (core.LeaseClaim).
 	var borrowed core.LeaseClaim
 	ao := acquireFor(in)
 	ao.Claim = &borrowed
+	var device string
+	var known map[string]bool
+	var listErr error
 	err = m.Do(ctx, tabRequest(in, in.Global.Page), ao, "tab new", core.ClassMutate, false, func(ctx context.Context, mo *core.ManagedOp) error {
+		device = mo.Page.PS.Device.ID
+		known, listErr = listBeforeOpen(ctx, m, in, device)
 		raw, err := mo.Op.Caller().Send(ctx, "Runtime.evaluate", map[string]any{"expression": "!!window.open(" + string(expr) + ")", "returnByValue": true, "emulateUserGesture": true})
 		if err != nil {
 			return fmt.Errorf("tab new: window.open: %w", err)
@@ -317,20 +319,37 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	// session used meanwhile stay. The release gets its own budget,
 	// because a canceled or expired command must still end the lease and
 	// send its cleanup.
-	failed := func(err error) error {
+	release := func() (warnings []string) {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tabReleaseBudget)
 		defer cancel()
 		for _, key := range borrowed.Keys() {
 			if w := releaseWarning(m, session, "the page that ran window.open", m.ReleaseClaimed(rctx, &borrowed, key)); w != "" {
-				err = fmt.Errorf("%w; %s", err, w)
+				warnings = append(warnings, w)
 			}
+		}
+		return warnings
+	}
+	failed := func(err error) error {
+		for _, w := range release() {
+			err = fmt.Errorf("%w; %s", err, w)
 		}
 		return err
 	}
 	if err != nil {
 		return Result{}, failed(err)
 	}
-	t, found, err := waitNewTab(ctx, m, in, "", newKeyIn(known), time.Now().Add(tabNewWait))
+	if listErr != nil {
+		// window.open returned a window, but nothing tells the new tab
+		// from the tabs that were there (review 2 F9): the session stays
+		// on the opener, without the lease that tab new borrowed there.
+		warning := notFollowedWarning("window.open", listErr)
+		if label != "" {
+			warning += fmt.Sprintf("; the label %q was given to no tab", label)
+		}
+		lines := append([]string{"opened " + u + " with window.open", warning}, release()...)
+		return Result{Text: strings.Join(lines, "\n"), Data: map[string]any{"tab": "", "key": "", "label": ""}}, nil
+	}
+	t, found, err := waitNewTab(ctx, m, in, device, newKeyIn(known), time.Now().Add(tabNewWait))
 	switch {
 	case err != nil:
 		return Result{}, failed(err)
@@ -349,22 +368,27 @@ func runTabNew(ctx context.Context, env Env, in Input) (Result, error) {
 	}, nil
 }
 
-// knownTabs are the page keys of the tabs listed now, before a command
-// opens a tab (tab new, click --new-tab), for waitNewTab.
-func knownTabs(ctx context.Context, m *core.Manager, in Input) (map[string]bool, error) {
-	tabs, _, err := m.Tabs(ctx, tabRequest(in, ""), acquireFor(in))
-	if err != nil {
-		return nil, err
-	}
-	known := map[string]bool{}
-	for _, t := range tabs {
-		known[t.Key] = true
-	}
-	return known, nil
+// listBeforeOpen is the listing that tab new and click --new-tab take of
+// the opener's device right before their window.open call, within
+// newTabListBudget: the new tab is a tab of that device that it does not
+// have (newKeyIn, waitNewTab on device). When it fails, the caller still
+// calls window.open, but takes no tab for the new one and keeps the
+// session on the opener with notFollowedWarning (review 2 F9).
+func listBeforeOpen(ctx context.Context, m *core.Manager, in Input, device string) (map[string]bool, error) {
+	lctx, cancel := context.WithTimeout(ctx, newTabListBudget)
+	defer cancel()
+	return deviceKnownTabs(lctx, m, in, device)
+}
+
+// notFollowedWarning is the result line of tab new and click --new-tab
+// when listBeforeOpen failed before call (what ran: "the click",
+// "window.open").
+func notFollowedWarning(call string, err error) string {
+	return fmt.Sprintf("warning: the session stays on this page: the tab list right before %s could not be read, so no tab is taken for the new one (%v); run 'tab list', then 'tab <id>'", call, err)
 }
 
 // deviceKnownTabs are the page keys of the tabs of the device id listed
-// now, before click --new-tab opens a tab, for waitNewTab on that device.
+// now, before a command opens a tab, for waitNewTab on that device.
 // Only a complete listing of the device counts: its page list failing is
 // an error (Manager.DeviceTabs), and so is a listing that hides pages of
 // it (a reservation that ended), or a device without an id.

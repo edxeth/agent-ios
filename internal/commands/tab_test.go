@@ -418,6 +418,146 @@ func TestClickNewTabFollowsOnlyATabOfTheOpenersDevice(t *testing.T) {
 	}
 }
 
+// onWindowOpen makes the page served by s answer tab new's window.open
+// by running open, then reporting a window; other expressions get 1.
+func onWindowOpen(s *fakewebkit.Server, open func()) {
+	s.Handle("Runtime.evaluate", func(c fakewebkit.Call) (any, *fakewebkit.Error) {
+		var p struct{ Expression string }
+		_ = json.Unmarshal(c.Params, &p)
+		if strings.HasPrefix(p.Expression, "!!window.open(") {
+			open()
+			return map[string]any{"result": map[string]any{"type": "boolean", "value": true}}, nil
+		}
+		return map[string]any{"result": map[string]any{"type": "number", "value": 1}}, nil
+	})
+}
+
+// tabNewNotFollowed is the warning of tab new when the tab list right
+// before window.open could not be read (review 2 F9, as click --new-tab).
+const tabNewNotFollowed = "warning: the session stays on this page: the tab list right before window.open could not be read"
+
+// Review 2 F9 for tab new (instance 1): the listing right before
+// window.open is a complete listing of the opener's device. When that
+// device's page list fails, also for a local browser, whose failure
+// Manager.Tabs leaves out as a device without pages, window.open still
+// runs and the session stays on the opener with a warning; the opener is
+// not taken for the new tab.
+func TestTabNewStaysOnTheOpenerWhenItsDeviceListingFails(t *testing.T) {
+	m, f := newTabManager(t) // a local browser (WebKitGTK)
+	s := f.add("One", "http://one.test/")
+	var opened atomic.Bool
+	onWindowOpen(s, func() {
+		opened.Store(true)
+		f.failing.Store(false)
+		f.add("Opened", "http://next.test/page")
+	})
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("fixture: session a runs on %q", got)
+	}
+	f.failing.Store(true) // the listing right before window.open fails
+	r, err := runIn(t, m, "a", "tab", "new", "http://next.test/page")
+	if err != nil {
+		t.Fatalf("tab new: %v; want the warning %q and exit 0 (window.open ran)", err, tabNewNotFollowed)
+	}
+	if !opened.Load() {
+		t.Fatal("tab new did not run window.open")
+	}
+	if !strings.Contains(r.Text, tabNewNotFollowed) || !strings.Contains(r.Text, "fake page list failed") || strings.Contains(r.Text, "opened tab t") {
+		t.Fatalf("tab new: %q; want the warning %q with the listing's error, and no new tab", r.Text, tabNewNotFollowed)
+	}
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("after tab new session a runs on %q, want the opener One", got)
+	}
+}
+
+// Review 2 F9 for tab new (instance 2): when the listing right before
+// window.open fails, tab new still opens the tab, and no tab is guessed:
+// a tab without a lease that showed the URL before is not followed, and
+// neither is the new tab; the session stays on the opener with a warning.
+func TestTabNewTakesNoTabWhenTheListingBeforeOpenFails(t *testing.T) {
+	m, f := newTabManager(t)
+	// iwdp: a failed page list of a device with an open page is an error
+	// for Manager.Tabs too.
+	f.kind, f.device = transport.KindIWDP, "SIMULATOR"
+	s := f.add("One", "http://one.test/")
+	f.add("Old", "http://next.test/page") // opened before tab new, no lease
+	var opened atomic.Bool
+	onWindowOpen(s, func() {
+		opened.Store(true)
+		f.failing.Store(false)
+		// The browser lists the new tab a moment after window.open.
+		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
+	})
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("fixture: session a runs on %q", got)
+	}
+	f.failing.Store(true)
+	r, err := runIn(t, m, "a", "tab", "new", "http://next.test/page")
+	if err != nil || !opened.Load() {
+		t.Fatalf("tab new: %v (window.open ran: %v); want window.open run and exit 0", err, opened.Load())
+	}
+	if !strings.Contains(r.Text, tabNewNotFollowed) || strings.Contains(r.Text, "opened tab t") {
+		t.Fatalf("tab new: %q; want the warning %q and no new tab", r.Text, tabNewNotFollowed)
+	}
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("after tab new session a runs on %q, want the opener One", got)
+	}
+}
+
+// Review 2 F9 for tab new: when the listing right before window.open
+// fails in a session that held no lease on the opener, the session stays
+// there without the lease that tab new took only for window.open
+// (guide.md, tab new).
+func TestTabNewEndsTheBorrowedLeaseWhenTheListingBeforeOpenFails(t *testing.T) {
+	const session = "tab-new-borrowed" // the hook below acts only for it
+	m, f := newTabManager(t)
+	s := f.add("One", "http://one.test/")
+	onWindowOpen(s, func() { f.failing.Store(false) })
+	// Lease hooks are global and stay registered for the test binary: the
+	// listing fails from the lease that tab new takes on the opener.
+	core.OnLeaseStart(func(_ context.Context, _ *core.PageSession, sess string, _ uint64) error {
+		if sess == session {
+			f.failing.Store(true)
+		}
+		return nil
+	})
+	r, err := runInCtx(t, core.WithLeaseHooks(context.Background()), m, session, "tab", "new", "http://next.test/page")
+	if err != nil || !strings.Contains(r.Text, tabNewNotFollowed) {
+		t.Fatalf("tab new: %q, %v; want the warning %q", r.Text, err, tabNewNotFollowed)
+	}
+	for _, p := range m.Status() {
+		if p.Title == "One" && p.Lease != "none" {
+			t.Fatalf("the opener's lease after tab new: %q of %q, want none", p.Lease, p.Session)
+		}
+	}
+}
+
+// Review 2 F9 for tab new: only the opener's device is listed and polled.
+// A second device whose page list fails before window.open (Manager.Tabs
+// leaves it out) and lists a tab afterwards does not give the new tab;
+// the session follows the tab that opens on the opener's device.
+func TestTabNewFollowsOnlyATabOfTheOpenersDevice(t *testing.T) {
+	m, f := newTabManager(t)
+	f.second = "other"
+	s := f.add("One", "http://one.test/")
+	f.addOn("other", "Other", "http://other.test/")
+	onWindowOpen(s, func() {
+		f.secondFailing.Store(false)
+		time.AfterFunc(400*time.Millisecond, func() { f.add("Opened", "http://next.test/page") })
+	})
+	if got := pageOf(t, m, "a"); got != "One" {
+		t.Fatalf("fixture: session a runs on %q", got)
+	}
+	f.secondFailing.Store(true) // the other device's list fails until window.open
+	out := mustIn(t, m, "a", "tab", "new", "http://next.test/page")
+	if !strings.Contains(out, "(http://next.test/page); it is now the current page") || strings.Contains(out, "warning") {
+		t.Fatalf("tab new: %q; want the new tab followed", out)
+	}
+	if got := pageOf(t, m, "a"); got != "Opened" {
+		t.Fatalf("after tab new session a runs on %q, want the new tab Opened", got)
+	}
+}
+
 // Design 2.5 rule 4 (review finding 1): tab list shows no title or URL of
 // a physical device without the caller's reservation; it says how many
 // pages it left out and how to reserve the device.
@@ -762,6 +902,9 @@ func TestFailedTabNewKeepsAConcurrentLeaseOnAnotherPage(t *testing.T) {
 		return map[string]any{"result": map[string]any{"type": "number", "value": 1}}, nil
 	})
 	hooks := core.WithLeaseHooks(context.Background())
+	// The tab ids t1 and t2 come from a listing, as for a user who ran
+	// tab list (tab new lists only inside its operation on the opener).
+	mustIn(t, m, "lister", "tab", "list")
 	done := make(chan error, 1)
 	go func() {
 		_, err := runInCtx(t, hooks, m, "concurrent", "tab", "new", "--page", "t1")

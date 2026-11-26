@@ -365,11 +365,7 @@ func (w *w3bPage) openInNewTab(ctx context.Context, env Env, in Input, t string)
 	var known map[string]bool
 	var listErr error
 	if m != nil {
-		a.Ready = func() {
-			lctx, cancel := context.WithTimeout(ctx, newTabListBudget)
-			defer cancel()
-			known, listErr = deviceKnownTabs(lctx, m, in, device)
-		}
+		a.Ready = func() { known, listErr = listBeforeOpen(ctx, m, in, device) }
 	}
 	r, err := w.run(ctx, a)
 	if err != nil {
@@ -398,7 +394,7 @@ func (w *w3bPage) openInNewTab(ctx context.Context, env Env, in Input, t string)
 			res.Text = strings.TrimSuffix(res.Text, "\n")
 		}()
 		if listErr != nil {
-			lines = []string{fmt.Sprintf("warning: the session stays on this page: the tab list right before the click could not be read, so no tab is taken for the new one (%v); run 'tab list', then 'tab <id>'", listErr)}
+			lines = []string{notFollowedWarning("the click", listErr)}
 			return
 		}
 		// The wait ends newTabReserve before the command deadline, so
@@ -432,7 +428,7 @@ func (w *w3bPage) openInNewTab(ctx context.Context, env Env, in Input, t string)
 }
 
 // click --new-tab's budgets: the listing right before the call
-// (newTabListBudget), and how long before the command deadline the wait
+// (newTabListBudget, also tab new's), and how long before the command deadline the wait
 // for the new tab ends (newTabReserve) and the follow ends (newTabAnswer),
 // so that the result reaches the client before the deadline.
 const (
