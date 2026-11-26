@@ -293,8 +293,14 @@ func TestSimulatorTabChoiceOnEveryAdmission(t *testing.T) {
 		f.add("Earlier", "http://10.0.2.2:18080/")
 		mustIn(t, m, "a", "eval", "1+1")
 		f.add("Mine", "http://10.0.2.2:8791/")
-		if _, err := runIn(t, m, "a", "eval", "1+1"); ExitCodeOf(err) != ExitNoPage {
+		_, err := runIn(t, m, "a", "eval", "1+1")
+		if ExitCodeOf(err) != ExitNoPage {
 			t.Fatalf("the default page after a second tab appeared: %v (exit %d), want exit 5", err, ExitCodeOf(err))
+		}
+		// docs/guide.md: the refusal names both ways to your own tab, the id
+		// that 'sim up --url' prints and 'tab find'.
+		if msg := err.Error(); !strings.Contains(msg, "sim up --url <url>") || !strings.Contains(msg, "tab find --device SIMULATOR") {
+			t.Errorf("exit 5 in your simulator turn = %q, want the advice of 'sim up --url <url>' and 'tab find'", msg)
 		}
 	})
 	t.Run("tab that is not debuggable", func(t *testing.T) {

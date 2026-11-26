@@ -512,6 +512,23 @@ func (s *Server) CloseConnections() {
 	}
 }
 
+// CloseConnectionsWith closes every open connection from the server side
+// with a close frame of code and reason first, as iwdp ends the
+// connection of a page that another inspector claimed (1001, "Page
+// <port>/<n> claimed by remote").
+func (s *Server) CloseConnectionsWith(code int, reason string) {
+	s.mu.Lock()
+	conns := append([]*conn(nil), s.conns...)
+	s.mu.Unlock()
+	msg := websocket.FormatCloseMessage(code, reason)
+	for _, c := range conns {
+		c.wmu.Lock()
+		_ = c.ws.WriteControl(websocket.CloseMessage, msg, time.Now().Add(time.Second))
+		c.wmu.Unlock()
+		c.close()
+	}
+}
+
 func (s *Server) createProvisional(id string) <-chan struct{} {
 	s.mu.Lock()
 	s.targets[id] = true

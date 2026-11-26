@@ -163,4 +163,4 @@ Still open:
 - **Cookie delete.** The namesakes of the parent domain and of the other kind (host-only or domain cookie).
 - **ScriptProfiler.** CDP `Profiler` and traces with V8 categories through a CDP client.
 - **Interception.** The WIP rule texts with the bridge's NUL suffix on current iOS, and the interception of a cross-process navigation's document request through iwdp.
-- **Not reached by device check 3:** `set credentials` (enabled on WebKitGTK only), the direct transport, a second inspector moving the lease to lost, the busy hint with iwdp's frontend on, `diff screenshot`, `click --new-tab`, `frame` on a cross-origin iframe (checked on the iOS 26.5 Simulator on 2026-11-26, not on a physical device), and `wait --url` across a target swap.
+- **Not reached by device check 3:** `set credentials` (enabled on WebKitGTK only), the direct transport, the busy hint with iwdp's frontend on, `diff screenshot`, `click --new-tab`, `frame` on a cross-origin iframe (checked on the iOS 26.5 Simulator on 2026-11-26, not on a physical device), and `wait --url` across a target swap.

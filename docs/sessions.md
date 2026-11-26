@@ -26,7 +26,7 @@ A lease binds one page to one session. It carries an **epoch**, a number that in
 When a page connection closes without a request from the daemon (another inspector took the tab, the device went away), the lease becomes **lost**. The daemon cannot know who holds the page now, so:
 
 - it never reconnects by itself;
-- the next command fails with "connection to page was closed by someone else or by the device; ownership is unknown" (exit 4);
+- the next command fails with "connection to page was closed by someone else or by the device; ownership is unknown" (exit 4), however soon after the last command it comes. iwdp ends the connection (close 1001 "Page ... claimed by remote") when another inspector takes the tab, and the daemon often sees that end only when it writes the next command; that command then gets this error too: "... was not sent" when nothing was written, "the page may have run it" when the end came after the write;
 - only `--takeover` on a command, or `agent-ios lease takeover [page]`, reattaches the page. It needs the device reservation and **the approval of the device owner**: a takeover takes the page back from whoever holds it now.
 
 A page that stops answering is different: it is **stalled**. The daemon then tries one background reconnect (15 s at most), only while the lease is valid and the page is not lost. A command that arrives during that reconnect waits for it within its own deadline.

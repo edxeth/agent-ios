@@ -118,8 +118,19 @@ func (p *pageConn) ended(c webkit.Caller) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.cur != c || p.state == ConnClosed || p.state == ConnLost {
-		return
+	p.peerEndedLocked(c)
+}
+
+// peerEndedLocked marks the page lost when c, which has ended for a cause
+// other than a write timeout and not on the daemon's request, is the
+// installed connection of a page that the daemon has not closed. It
+// reports whether the page is lost, now or before. The caller holds p.mu.
+func (p *pageConn) peerEndedLocked(c webkit.Caller) bool {
+	if p.cur != c || p.state == ConnClosed {
+		return false
+	}
+	if p.state == ConnLost {
+		return true
 	}
 	p.state = ConnLost
 	// The other end closed it: the tab closed (also through tab close,
@@ -127,6 +138,37 @@ func (p *pageConn) ended(c webkit.Caller) {
 	// it, or another inspector took the page.
 	p.logf("page connection closed by its other end (a closed tab, iwdp or the device, or another inspector); the page is lost")
 	close(p.done)
+	return true
+}
+
+// lostCall is the error of a call to method that failed with err on c
+// when a peer ended c (endedByPeer): it takes watch's verdict at once, so
+// that the page is lost when the call returns, and the call fails with
+// ErrLost and its --takeover guidance (exit 4) instead of the bare close
+// error. iwdp closes a page's connection with 1001 "Page ... claimed by
+// remote" when another inspector takes the page, and the daemon sees the
+// close when it next writes, so without this the first command after a
+// claim within the idle-probe time (no liveness probe runs first) got the
+// bare error (exit 1). A call that was never written says it was not sent
+// and keeps webkit.ErrNotSent; a written one may have run. It returns nil
+// when c has not ended, ended on the daemon's request (expected) or with a
+// write timeout, or is not the installed connection of an open page, and
+// when the call failed because the tab closed (webkit.ErrPageClosed),
+// which keeps its own error; watch still marks that page lost.
+func (p *pageConn) lostCall(c webkit.Caller, method string, err error) error {
+	if !endedByPeer(c) || errors.Is(err, webkit.ErrPageClosed) {
+		return nil
+	}
+	p.mu.Lock()
+	lost := !p.expected[c] && p.peerEndedLocked(c)
+	p.mu.Unlock()
+	if !lost {
+		return nil
+	}
+	if errors.Is(err, webkit.ErrNotSent) {
+		return fmt.Errorf("%s: not sent: %w", method, notSentWrap(&CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: %w", ErrLost, err)}))
+	}
+	return &CodedError{Code: CodeBusy, Err: fmt.Errorf("%s: the connection ended before the reply, so the page may have run it: %w: %w", method, ErrLost, err)}
 }
 
 // writeFailed reports whether c ended because one of its socket writes
@@ -883,6 +925,9 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 		return nil, cut
 	}
 	p.noteDropped(&err)
+	if lerr := p.lostCall(c, method, err); lerr != nil {
+		return nil, lerr
+	}
 	if webkit.LivenessProbeOff(ctx) {
 		return nil, err // WithoutLivenessProbe: the caller only needs the error
 	}
