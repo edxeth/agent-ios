@@ -98,6 +98,12 @@ func (c *ManualClock) hasWaiterAt(at time.Duration) bool {
 	return false
 }
 
+// deadlineOf is ctx's deadline; ctx must have one.
+func deadlineOf(ctx context.Context) time.Time {
+	dl, _ := ctx.Deadline()
+	return dl
+}
+
 func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -197,7 +203,7 @@ func TestReadCallsInFlightAreBounded(t *testing.T) {
 func TestDetachedOperationAdmitsTheQueue(t *testing.T) {
 	h := newHarness(t, SchedulerOptions{})
 	h.f.Stall("Test.await")
-	ctx, _ := timeoutCtx(t, 5*time.Second)
+	ctx := testDeadlineCtx(t)
 	beginAsync := func() <-chan *Op {
 		ch := make(chan *Op, 1)
 		go func() {
@@ -209,7 +215,13 @@ func TestDetachedOperationAdmitsTheQueue(t *testing.T) {
 		}()
 		return ch
 	}
+	// admittedWithin waits up to d for the admission; d 0 waits until
+	// shortly before the test's deadline (an in-process fixture on a
+	// loaded host). Only the negative check below has a fixed d.
 	admittedWithin := func(ch <-chan *Op, d time.Duration) *Op {
+		if d == 0 {
+			d = time.Until(deadlineOf(ctx)) - time.Second
+		}
 		select {
 		case op := <-ch:
 			return op
@@ -228,7 +240,7 @@ func TestDetachedOperationAdmitsTheQueue(t *testing.T) {
 	}()
 	waitUntil(t, "the waiting call to reach the page", func() bool { return len(h.f.ReceivedMethod("Test.await")) == 1 })
 	a.Detach()
-	b := admittedWithin(beginAsync(), 2*time.Second)
+	b := admittedWithin(beginAsync(), 0)
 	if b == nil {
 		t.Fatal("a mutation queued behind a detached operation was not admitted")
 	}
@@ -240,12 +252,12 @@ func TestDetachedOperationAdmitsTheQueue(t *testing.T) {
 	eCh := beginAsync()
 	waitUntil(t, "e to queue behind b", func() bool { return h.queueLen() == 1 })
 	b.End()
-	e := admittedWithin(eCh, 2*time.Second)
+	e := admittedWithin(eCh, 0)
 	if e == nil {
 		t.Fatal("e was not admitted after b ended")
 	}
 	e.Detach()
-	c := admittedWithin(beginAsync(), 2*time.Second)
+	c := admittedWithin(beginAsync(), 0)
 	if c == nil {
 		t.Fatal("c was not admitted after e detached")
 	}
@@ -256,7 +268,7 @@ func TestDetachedOperationAdmitsTheQueue(t *testing.T) {
 		t.Fatal("the End of a detached operation admitted d while c runs")
 	}
 	c.End()
-	d := admittedWithin(dCh, 2*time.Second)
+	d := admittedWithin(dCh, 0)
 	if d == nil {
 		t.Fatal("d was not admitted after c ended")
 	}

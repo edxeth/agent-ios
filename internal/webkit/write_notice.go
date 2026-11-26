@@ -26,7 +26,8 @@ func MarkWritten(ctx context.Context) {
 	if w, ok := ctx.Value(writeNoticeKey{}).(*atomic.Bool); ok {
 		w.Store(true)
 	}
-	if s, ok := ctx.Value(writeSignalKey{}).(*writeSignal); ok {
+	s, _ := ctx.Value(writeSignalKey{}).(*writeSignal)
+	for ; s != nil; s = s.outer {
 		s.once.Do(func() { close(s.ch) })
 	}
 }
@@ -35,8 +36,9 @@ func MarkWritten(ctx context.Context) {
 type writeSignalKey struct{}
 
 type writeSignal struct {
-	once sync.Once
-	ch   chan struct{}
+	once  sync.Once
+	ch    chan struct{}
+	outer *writeSignal // the signal of the context it was derived from
 }
 
 // WithWriteSignal returns ctx with written, which MarkWritten closes once
@@ -44,7 +46,9 @@ type writeSignal struct {
 // from it, was written to the connection: the positive evidence that a
 // later call on the same connection reaches the page after it (WebKit runs
 // a target's commands in the order they arrive). written must be open and
-// used for one call.
+// used for one call. A signal of ctx itself is closed as well: a caller
+// layer can watch the write of a call whose sender watches it too.
 func WithWriteSignal(ctx context.Context, written chan struct{}) context.Context {
-	return context.WithValue(ctx, writeSignalKey{}, &writeSignal{ch: written})
+	outer, _ := ctx.Value(writeSignalKey{}).(*writeSignal)
+	return context.WithValue(ctx, writeSignalKey{}, &writeSignal{ch: written, outer: outer})
 }

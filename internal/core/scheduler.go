@@ -88,7 +88,8 @@ func CallRuntime(ctx context.Context, c webkit.Caller, fn string, args any) (jso
 }
 
 // AttemptEvent describes one attempt as the daemon sent it (log and test
-// hook). OnAttempt runs once per attempt, when its first send is admitted.
+// hook). OnAttempt runs once per attempt, when the send of its call is
+// admitted (the sends that only arm its reply come before it).
 type AttemptEvent struct {
 	OpID   string
 	Step   int
@@ -388,21 +389,34 @@ type Op struct {
 }
 
 type inflightAttempt struct {
-	boundary time.Duration // slot-release boundary H
-	replied  chan struct{}
-	gen      uint64 // document generation the attempt's clock mapping belongs to
+	replied chan struct{}
+	gen     uint64 // document generation the attempt's clock mapping belongs to
 
 	mu        sync.Mutex
-	committed bool // a Send of the attempt was admitted; the page may run it
-	closed    bool // RunSteps stopped waiting; no Send is admitted any more
+	boundary  time.Duration // slot-release boundary H; set again when the attempt is timed at its call
+	committed bool          // a Send of the attempt's call was admitted; the page may run it
+	closed    bool          // RunSteps stopped waiting; no Send is admitted any more
+}
+
+func (inf *inflightAttempt) setBoundary(b time.Duration) {
+	inf.mu.Lock()
+	inf.boundary = b
+	inf.mu.Unlock()
+}
+
+func (inf *inflightAttempt) bound() time.Duration {
+	inf.mu.Lock()
+	defer inf.mu.Unlock()
+	return inf.boundary
 }
 
 // admit admits one Send of the attempt's runtime call (design 2.6 rule 3):
 // only while RunSteps still waits for it, the operation is active (not
 // ended, canceled or expired, lease epoch current) and the page shows the
 // document the clock mapping was measured on. The first admitted Send
-// commits the attempt; commit runs once, after the admission.
-func (inf *inflightAttempt) admit(op *Op, commit func()) error {
+// that commits (not one that only arms the call's reply) commits the
+// attempt; commit runs once, after the admission.
+func (inf *inflightAttempt) admit(op *Op, commits bool, commit func()) error {
 	inf.mu.Lock()
 	if inf.closed {
 		inf.mu.Unlock()
@@ -420,6 +434,10 @@ func (inf *inflightAttempt) admit(op *Op, commit func()) error {
 	if op.s.o.Generation() != inf.gen {
 		inf.mu.Unlock()
 		return ErrDocumentChanged
+	}
+	if !commits {
+		inf.mu.Unlock()
+		return nil
 	}
 	first := !inf.committed
 	inf.committed = true
@@ -459,7 +477,9 @@ func (c attemptCaller) Send(ctx context.Context, method string, params any) (jso
 	if err := c.op.setupReady(ctx); err != nil {
 		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
 	}
-	if err := c.inf.admit(c.op, c.commit); err != nil {
+	// The sends that arm the call's reply run nothing of the call
+	// (runtime.Arming): only the call's own send commits the attempt.
+	if err := c.inf.admit(c.op, !runtime.Arming(ctx), c.commit); err != nil {
 		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
 	}
 	ctx, params = c.op.route(ctx, method, params)
@@ -690,7 +710,7 @@ func (op *Op) End() {
 		if inf != nil {
 			select {
 			case <-inf.replied:
-			case <-op.s.o.Clock.After(inf.boundary - op.s.o.Clock.Now()):
+			case <-op.s.o.Clock.After(inf.bound() - op.s.o.Clock.Now()):
 			}
 		}
 		op.runFinally(fin)
@@ -765,7 +785,8 @@ func (c opCaller) Send(ctx context.Context, method string, params any) (json.Raw
 	case <-op.ctx.Done():
 		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, context.Cause(op.ctx))
 	}
-	defer func() { <-op.s.sem }()
+	release := sync.OnceFunc(func() { <-op.s.sem })
+	defer release()
 	if err := op.active(); err != nil {
 		return nil, fmt.Errorf("%s: %w: %w", method, webkit.ErrNotSent, err)
 	}
@@ -778,8 +799,27 @@ func (c opCaller) Send(ctx context.Context, method string, params any) (json.Raw
 	stop := context.AfterFunc(op.ctx, func() { cancel(context.Cause(op.ctx)) })
 	defer stop()
 	callCtx, params = op.route(callCtx, method, params)
+	if method == awaitMethod {
+		// An await only waits for page progress (an armed runtime reply,
+		// a CDP awaited evaluation): it gives its in-flight slot back once
+		// it was written, so a pending await never holds the calls that
+		// would settle it. The operation's fence still ends it.
+		written := make(chan struct{})
+		callCtx = webkit.WithWriteSignal(callCtx, written)
+		go func() {
+			select {
+			case <-written:
+				release()
+			case <-callCtx.Done():
+			}
+		}()
+	}
 	return op.s.c.Send(callCtx, method, params)
 }
+
+// awaitMethod is the WIP method that waits for a promise and changes
+// nothing in the page (opCaller.Send).
+const awaitMethod = "Runtime.awaitPromise"
 
 func (c opCaller) Subscribe(method string, h webkit.EventHandler) func() {
 	return c.op.s.c.Subscribe(method, h)

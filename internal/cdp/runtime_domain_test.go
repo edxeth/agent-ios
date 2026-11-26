@@ -108,6 +108,36 @@ func TestAwaitedCallLetsLaterCallsRun(t *testing.T) {
 	}
 }
 
+// FIX-M F1: awaited calls beyond the page's 8 calls in flight, as one
+// chrome-devtools-mcp wait_for makes for 2 locators x texts x frames, do
+// not hold the page's other calls while their promises are pending: a
+// pending await gives its send slot back once it was written. Before, the
+// ninth call waited until an await ended at its call budget.
+func TestPendingAwaitsDoNotHoldOtherCalls(t *testing.T) {
+	r, _, c, sid, _ := attachPage(t)
+	f := r.fake["One"]
+	f.Result("Runtime.callFunctionOn", map[string]any{"result": map[string]any{"type": "object", "className": "Promise", "objectId": "p-1"}})
+	f.Stall("Runtime.awaitPromise")
+	f.Result("Runtime.getProperties", map[string]any{"properties": []any{}})
+	const awaits = 9
+	ended := make(chan struct{}, awaits)
+	for i := 0; i < awaits; i++ {
+		go func() {
+			_, _ = c.Call(testCtx(t), sid, "Runtime.callFunctionOn", map[string]any{
+				"objectId": "poller", "functionDeclaration": "function() { return this.result(); }", "awaitPromise": true, "returnByValue": true,
+			})
+			ended <- struct{}{}
+		}()
+	}
+	waitUntil(t, "every awaitPromise", func() bool { return len(f.ReceivedMethod("Runtime.awaitPromise")) == awaits })
+	call(t, c, sid, "Runtime.getProperties", map[string]any{"objectId": "args", "ownProperties": true})
+	select {
+	case <-ended:
+		t.Fatal("getProperties was answered only after an awaited call ended")
+	default:
+	}
+}
+
 // Runtime.getProperties maps WIP property descriptors; releaseObject and
 // releaseObjectGroup reach WIP.
 func TestGetPropertiesAndRelease(t *testing.T) {

@@ -503,6 +503,14 @@ func (r *Runtime) call(ctx context.Context, c webkit.Caller, fn string, args any
 			return nil, err
 		}
 		defer armed.cancel()
+		if at, ok := ctx.Value(argsAtCallKey{}).(func() (any, error)); ok {
+			if args, err = at(); err != nil {
+				return nil, fmt.Errorf("runtime call %s: %w (%w)", name, err, ErrNothingRan)
+			}
+			if expr, err = ownedExpression(fn, args, owner); err != nil {
+				return nil, err
+			}
+		}
 	}
 	coreSent, modsSent := false, false
 	for {
@@ -633,6 +641,30 @@ func settleExpression(expr, id string) string {
 		MissingSentinel, ModuleMissingSentinel, id, id, PendingSentinel, UnarmedSentinel, expr)
 }
 
+// argsAtCallKey is the context key of WithArgsAtCall.
+type argsAtCallKey struct{}
+
+// WithArgsAtCall returns ctx with at: an async call (CallAsync, and the
+// async functions of RuntimeCaller) made with ctx calls at once, after its
+// reply was armed and right before its call expression is built, and
+// sends at's value as the call's arguments instead of its own. An error
+// of at ends the call before its call expression is sent; it wraps
+// ErrNothingRan. It lets the attempt loop time an attempt from its call,
+// not from the arm's round trip before it (design 2.6). A synchronous
+// call ignores it: nothing is sent before its call expression.
+func WithArgsAtCall(ctx context.Context, at func() (any, error)) context.Context {
+	return context.WithValue(ctx, argsAtCallKey{}, at)
+}
+
+// armingKey marks the context of the sends that arm a reply (arm).
+type armingKey struct{}
+
+// Arming reports whether ctx is the context of a send that arms the reply
+// of an async call: the arm's Runtime.evaluate or its Runtime.awaitPromise.
+// Such a send runs nothing of the call: the page may run the call only
+// once its call expression is sent.
+func Arming(ctx context.Context) bool { return ctx.Value(armingKey{}) != nil }
+
 // UnarmedSentinel is what settleExpression answers for a promise in a
 // document without the armed promise of the call.
 const UnarmedSentinel = "__IWDP_UNARMED__"
@@ -710,6 +742,7 @@ func (r *Runtime) eval(ctx context.Context, c webkit.Caller, fn, expr string, ar
 // returned reply when the call ends.
 func (r *Runtime) arm(ctx context.Context, c webkit.Caller, fn string) (*armedReply, error) {
 	id := randomID()
+	ctx = context.WithValue(ctx, armingKey{}, true)
 	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": armExpression(id), "returnByValue": false})
 	if err != nil {
 		return nil, fmt.Errorf("runtime call %s: arming its reply: %w (%w)", fn, err, ErrNothingRan)
@@ -721,7 +754,12 @@ func (r *Runtime) arm(ctx context.Context, c webkit.Caller, fn string) (*armedRe
 	if res.WasThrown || res.Result.ObjectID == "" {
 		return nil, fmt.Errorf("runtime call %s: arming its reply: the page gave no promise (%s) (%w)", fn, res.Result.Desc, ErrNothingRan)
 	}
-	actx, cancel := context.WithCancel(ctx)
+	// The call ends the await when it does not need it (a by-value reply,
+	// the page threw, UNARMED, a failed install): that cancel, and an
+	// await that outlasts its budget after the call answered, say nothing
+	// about the page, so the page connection runs no liveness probe for
+	// it; the call itself is probed as usual.
+	actx, cancel := context.WithCancel(webkit.WithoutLivenessProbe(ctx))
 	a := &armedReply{id: id, awaited: make(chan armedResult, 1), cancel: cancel}
 	written := make(chan struct{})
 	go func() {

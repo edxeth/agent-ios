@@ -153,6 +153,7 @@ Found:
 
 Still open:
 
+- **Reply nudge on iOS 26.** The nudge of design 2.6 (a `Runtime.evaluate "0"` sent 250 ms after a call that has no reply, for a device that holds replies until the next message) exists in the session code but no daemon session enables it. On a physical device that holds replies, every call, the arm step of an action included, waits for its reply budget; an action whose arm reply is held past about 2.25 s stops and reports that the step did not run. Not checked on a physical iOS 26 device.
 - **Listing.** Whether a CDP client can work on an iwdp with the broken slot.
 - **Pause-on-start.** Whether iwdp relays the reply of `Target.setPauseOnStart` on iOS 26, which may hold it; the inline `confirm()` of a new document was not run.
 - **Oversized sources.** iwdp's upper limit to Safari (64 MiB as configured, not probed); the direct transport's (go-ios frame limit 16 MiB) with Playwright's injected script; and whether a staged evaluate works on iOS 16.7 on a page whose Content-Security-Policy forbids eval.

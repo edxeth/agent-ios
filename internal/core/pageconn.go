@@ -883,7 +883,7 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 		return nil, cut
 	}
 	p.noteDropped(&err)
-	if ctx.Value(noProbeKey{}) != nil {
+	if webkit.LivenessProbeOff(ctx) {
 		return nil, err // WithoutLivenessProbe: the caller only needs the error
 	}
 	switch {
@@ -914,8 +914,6 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 	return nil, err
 }
 
-type noProbeKey struct{}
-
 // WithoutLivenessProbe marks ctx so that a call made with it that gets no
 // reply, at its call budget or at the end of ctx, runs no liveness probe
 // and only fails. It is for a best-effort read after the command's work
@@ -923,7 +921,7 @@ type noProbeKey struct{}
 // that is busy for a moment could be declared stalled although the
 // command succeeded. A later command's call still probes as usual.
 func WithoutLivenessProbe(ctx context.Context) context.Context {
-	return context.WithValue(ctx, noProbeKey{}, true)
+	return webkit.WithoutLivenessProbe(ctx)
 }
 
 // replyOrder turns the WithReplyPosition handler of ctx into the reply

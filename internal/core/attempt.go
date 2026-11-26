@@ -276,6 +276,14 @@ func (op *Op) RunSteps(a Action) (StepsResult, error) {
 	return res, nil
 }
 
+// attemptTiming is the timing of one attempt (sendAttempt): when its call
+// is sent, its slot-release boundary, and the fence arguments that carry
+// them to the page.
+type attemptTiming struct {
+	sent, boundary time.Duration
+	args           AttemptArgs
+}
+
 // attemptOutcome is how one attempt of sendAttempt ended.
 type attemptOutcome int
 
@@ -301,7 +309,10 @@ const probedWindowFactor = 3
 // the fit and the projected uncertainty are checked for the new window.
 // So a call that WebKit can act on before the page's fence refuses it is
 // never sent with a window that a delivery as slow as the measured one
-// could miss.
+// could miss. The timing starts at the call: an async call that arms its
+// reply first times the attempt again, with these checks, right before
+// its call is sent (atCall), and the attempt is committed (the page may
+// have run it) only by the send of its call, not by the arm's.
 func (op *Op) sendAttempt(a Action, fn string, step int, probed bool) (AttemptReply, attemptOutcome, error) {
 	s := op.s
 	gen := s.o.Generation()
@@ -317,58 +328,68 @@ func (op *Op) sendAttempt(a Action, fn string, step int, probed bool) (AttemptRe
 		}
 		return s.o.AttemptBudget
 	}
-	window := sizeWindow()
 	end := op.deadline
 	if a.Reserve > 0 {
 		end -= a.Reserve
-	}
-	// fits reports whether an attempt sent at sent may start; it
-	// returns the reason when it may not.
-	fits := func(sent time.Duration) error {
-		switch {
-		case probed && sent+window > end:
-			return &ProbedWindowError{Fn: fn, Window: window, RoundTrip: cm.RoundTrip(), Left: max(end-sent, 0)}
-		case a.Reserve > 0 && sent >= end:
-			return ErrActionTimeout
-		}
-		return nil
-	}
-	sent := s.o.Clock.Now()
-	if err := fits(sent); err != nil {
-		return AttemptReply{}, attemptStopped, err
-	}
-	boundary := min(sent+window, end)
-	if u := cm.Uncertainty(boundary); u > s.o.MaxUncertainty {
-		if err := op.measureClock(cm, gen); err != nil {
-			return AttemptReply{}, attemptStopped, err
-		}
-		window = sizeWindow()
-		sent = s.o.Clock.Now()
-		if err := fits(sent); err != nil {
-			return AttemptReply{}, attemptStopped, err
-		}
-		boundary = min(sent+window, end)
-		if u := cm.Uncertainty(boundary); u > s.o.MaxUncertainty {
-			return AttemptReply{}, attemptStopped, &ClockUncertaintyError{Uncertainty: u}
-		}
 	}
 	var stepArgs any
 	if a.Args != nil {
 		stepArgs = a.Args(step)
 	}
-	args := AttemptArgs{
-		OpID: op.ID, Epoch: op.Spec.Epoch, Doc: cm.Doc(), Step: step, Steps: a.Steps,
-		AttemptEnd: toMS(cm.PageMin(boundary)), Deadline: toMS(cm.PageMin(op.deadline)),
-		Args: stepArgs,
+	// timeNow times the attempt as if its call were sent now: the attempt
+	// window, the slot-release boundary and the fence arguments that carry
+	// them. It returns the reason when the attempt may not start.
+	timeNow := func() (attemptTiming, error) {
+		window := sizeWindow()
+		// fits reports whether an attempt sent at sent may start; it
+		// returns the reason when it may not.
+		fits := func(sent time.Duration) error {
+			switch {
+			case probed && sent+window > end:
+				return &ProbedWindowError{Fn: fn, Window: window, RoundTrip: cm.RoundTrip(), Left: max(end-sent, 0)}
+			case a.Reserve > 0 && sent >= end:
+				return ErrActionTimeout
+			}
+			return nil
+		}
+		sent := s.o.Clock.Now()
+		if err := fits(sent); err != nil {
+			return attemptTiming{}, err
+		}
+		boundary := min(sent+window, end)
+		if u := cm.Uncertainty(boundary); u > s.o.MaxUncertainty {
+			if err := op.measureClock(cm, gen); err != nil {
+				return attemptTiming{}, err
+			}
+			window = sizeWindow()
+			sent = s.o.Clock.Now()
+			if err := fits(sent); err != nil {
+				return attemptTiming{}, err
+			}
+			boundary = min(sent+window, end)
+			if u := cm.Uncertainty(boundary); u > s.o.MaxUncertainty {
+				return attemptTiming{}, &ClockUncertaintyError{Uncertainty: u}
+			}
+		}
+		return attemptTiming{sent: sent, boundary: boundary, args: AttemptArgs{
+			OpID: op.ID, Epoch: op.Spec.Epoch, Doc: cm.Doc(), Step: step, Steps: a.Steps,
+			AttemptEnd: toMS(cm.PageMin(boundary)), Deadline: toMS(cm.PageMin(op.deadline)),
+			Args: stepArgs,
+		}}, nil
 	}
-	inf := &inflightAttempt{boundary: boundary, replied: make(chan struct{}), gen: gen}
+	tm, err := timeNow()
+	if err != nil {
+		return AttemptReply{}, attemptStopped, err
+	}
+	inf := &inflightAttempt{boundary: tm.boundary, replied: make(chan struct{}), gen: gen}
 	op.mu.Lock()
 	op.inflight = inf
 	op.mu.Unlock()
-	ev := AttemptEvent{OpID: op.ID, Step: step, SentAt: sent, Args: args}
+	// tm is the runtime goroutine's from here on (atCall, commit); this
+	// goroutine reads it again only after that goroutine's result.
 	caller := attemptCaller{op: op, inf: inf, commit: func() {
 		if s.o.OnAttempt != nil {
-			s.o.OnAttempt(ev)
+			s.o.OnAttempt(AttemptEvent{OpID: op.ID, Step: step, SentAt: tm.sent, Args: tm.args})
 		}
 	}}
 	type result struct {
@@ -379,39 +400,76 @@ func (op *Op) sendAttempt(a Action, fn string, step int, probed bool) (AttemptRe
 	// Every send of the call passes the operation's fence (caller);
 	// the reply wait is bound to the boundary plus the reply grace,
 	// not to the operation's context.
-	callCtx, cancelCall := context.WithTimeout(context.Background(), boundary-sent+s.o.ReplyGrace)
+	callCtx, cancelCall := context.WithCancelCause(context.Background())
+	replyWait := time.AfterFunc(tm.boundary-tm.sent+s.o.ReplyGrace, func() { cancelCall(context.DeadlineExceeded) })
+	// An async runtime call arms its reply first (FIX-K) and sends its call
+	// one round trip later: atCall times the attempt again right before
+	// that call (runtime.WithArgsAtCall), so the arm's round trip, however
+	// long, takes nothing from the attempt window, and a probed call whose
+	// window no longer fits is not sent. Its error stops the attempt: the
+	// call was not sent.
+	retimed := make(chan attemptTiming, 1)
+	var retimeErr error
+	atCall := func() (any, error) {
+		t, err := timeNow()
+		if err == nil && !replyWait.Stop() {
+			err = fmt.Errorf("arming the reply: %w", ErrReplyLost)
+		}
+		if err != nil {
+			retimeErr = err
+			return nil, err
+		}
+		replyWait.Reset(t.boundary - t.sent + s.o.ReplyGrace)
+		inf.setBoundary(t.boundary)
+		tm = t
+		retimed <- t
+		return t.args, nil
+	}
+	lost := s.o.Clock.After(tm.boundary + s.o.ReplyGrace - tm.sent)
+	args := tm.args
 	go func() {
-		defer cancelCall()
-		raw, err := s.o.Runtime(callCtx, caller, fn, args)
+		defer func() {
+			replyWait.Stop()
+			cancelCall(nil)
+		}()
+		raw, err := s.o.Runtime(runtime.WithArgsAtCall(callCtx, atCall), caller, fn, args)
 		done <- result{raw, err}
 		close(inf.replied)
 	}()
-	lost := s.o.Clock.After(boundary + s.o.ReplyGrace - sent)
 	var r result
-	select {
-	case r = <-done:
-	case <-op.ctx.Done():
-		if !inf.close() {
-			return AttemptReply{}, attemptStopped, context.Cause(op.ctx) // nothing was sent, and nothing will be
+wait:
+	for {
+		select {
+		case t := <-retimed:
+			lost = s.o.Clock.After(t.boundary + s.o.ReplyGrace - s.o.Clock.Now())
+		case r = <-done:
+			break wait
+		case <-op.ctx.Done():
+			if !inf.close() {
+				return AttemptReply{}, attemptStopped, context.Cause(op.ctx) // nothing was sent, and nothing will be
+			}
+			// The slot stays held until the reply or the boundary (End).
+			return AttemptReply{}, attemptAmbiguous, ErrOutcomeUnknown
+		case <-lost:
+			if !inf.close() {
+				return AttemptReply{}, attemptStopped, ErrReplyLost
+			}
+			return AttemptReply{}, attemptAmbiguous, ErrReplyLost
 		}
-		// The slot stays held until the reply or the boundary (End).
-		return AttemptReply{}, attemptAmbiguous, ErrOutcomeUnknown
-	case <-lost:
-		if !inf.close() {
-			return AttemptReply{}, attemptStopped, ErrReplyLost
-		}
-		return AttemptReply{}, attemptAmbiguous, ErrReplyLost
 	}
 	op.mu.Lock()
 	op.inflight = nil
 	op.mu.Unlock()
 	replyAt := s.o.Clock.Now()
 	if r.err != nil {
+		if retimeErr != nil {
+			return AttemptReply{}, attemptStopped, retimeErr
+		}
 		// runtime.ErrNothingRan: the page answered a missing sentinel,
 		// which it does before it runs anything of the call, also when
 		// the install that followed then lost its reply.
 		notRun := !inf.isCommitted() || errors.Is(r.err, webkit.ErrNotSent) || errors.Is(r.err, runtime.ErrNothingRan)
-		if errors.Is(r.err, context.DeadlineExceeded) && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+		if errors.Is(r.err, context.DeadlineExceeded) && errors.Is(context.Cause(callCtx), context.DeadlineExceeded) {
 			// The call's own reply wait (boundary plus ReplyGrace) ended
 			// it before the lost timer fired: the same lost reply, not the
 			// operation's deadline (which would exit 124).
@@ -426,14 +484,14 @@ func (op *Op) sendAttempt(a Action, fn string, step int, probed bool) (AttemptRe
 	if err := json.Unmarshal(r.raw, &rep); err != nil {
 		return AttemptReply{}, attemptAmbiguous, fmt.Errorf("decoding attempt reply: %w", err)
 	}
-	if rep.Doc != args.Doc {
+	if rep.Doc != tm.args.Doc {
 		// The page refuses an attempt for another document, so the
 		// step did not run; that document needs a new mapping.
 		s.dropClock(op.clockKey(gen), cm)
 		return AttemptReply{}, attemptStopped, ErrDocumentChanged
 	}
 	if rep.Now > 0 {
-		cm.Observe(ClockSample{H0: sent, H1: replyAt, P: fromMS(rep.Now)})
+		cm.Observe(ClockSample{H0: tm.sent, H1: replyAt, P: fromMS(rep.Now)})
 	}
 	return rep, attemptReplied, nil
 }
