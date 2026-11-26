@@ -14,7 +14,7 @@
 // Method recording: every CDP command goes through Connection._rawSend
 // (one per browser and session command), which this script wraps.
 import puppeteer, { Connection } from 'puppeteer-core';
-import { allPassed, checkpoint, expect, finish, newResult, observe, parseArgs, pngSize, record, step, withDeadline } from './result.mjs';
+import { allPassed, checkpoint, expect, expectScreenshotSize, finish, newResult, observe, parseArgs, pngSize, record, step, viewportPixels, withDeadline } from './result.mjs';
 
 const { scenario, url, file, rest } = parseArgs('node clients/puppeteer.mjs');
 const out = newResult('puppeteer-core', scenario, url, file);
@@ -117,8 +117,7 @@ const scenarios = {
     });
     await observe(out, 'screenshot', async () => {
       const size = pngSize(Buffer.from(await page.screenshot({ type: 'png' })));
-      const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-      expect('screenshot size', { width: size.width, height: size.height }, viewport);
+      expectScreenshotSize(size, await page.evaluate(viewportPixels));
       return size;
     });
     await observe(out, 'accessibility.snapshot', async () => {

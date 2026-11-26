@@ -191,9 +191,24 @@ func retiredBy(err error) error {
 // of a large message would wait again. A gorilla connection whose write
 // failed fails every later write too, so a failed write sets cut as well
 // (failed), and its owner ends the connection; the daemon replaces it.
+//
+// Reads acknowledge at once (quickAcker): ios_webkit_debug_proxy answers
+// each Target.sendMessageToTarget with two frames, its own empty result
+// and then the page's reply in Target.dispatchMessageFromTarget, on a
+// socket with Nagle's algorithm on, so the reply waited until the daemon
+// acknowledged the first frame, 40 ms later on Linux (FIX-R).
 type cutConn struct {
 	net.Conn
-	cut atomic.Bool
+	cut    atomic.Bool
+	ackNow func() // nil: not a TCP connection, or not Linux
+}
+
+func (c *cutConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 && c.ackNow != nil {
+		c.ackNow()
+	}
+	return n, err
 }
 
 // pastDeadline is a write deadline that has already passed.
@@ -252,7 +267,7 @@ func dialCuttable(ctx context.Context, d *websocket.Dialer, wsURL string) (*webs
 			if err != nil {
 				return nil, err
 			}
-			wire = &cutConn{Conn: c}
+			wire = &cutConn{Conn: c, ackNow: quickAcker(c)}
 			return wire, nil
 		}
 	}

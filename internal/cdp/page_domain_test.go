@@ -202,6 +202,39 @@ func TestCaptureScreenshot(t *testing.T) {
 	}
 }
 
+// FIX-R (iPhone X, zoomed in on an input): scrollX is 34 while the visual
+// viewport starts at pageLeft 33.92 and pageTop 5.5 (scrollY 6). A clip
+// at the visual viewport's page offset, which Playwright's viewport
+// screenshot takes from getLayoutMetrics, is the visible area: Viewport
+// coordinates (0, 0), not (-1, -1), which shifted the image by one CSS
+// pixel.
+func TestCaptureScreenshotClipAtTheVisualViewport(t *testing.T) {
+	r, fp, c, sid, _ := attachPage(t)
+	_, rects := screenshotPage(t, fp, r.fake["One"])
+	fp.mu.Lock()
+	fp.eval = func(expr string) (any, bool) {
+		if expr != viewportExpr {
+			return nil, false
+		}
+		return value(map[string]any{
+			"iw": 220, "ih": 362, "sx": 34, "sy": 6, "cw": 220, "ch": 362, "w": 980, "h": 1614,
+			"vx": 0, "vy": 0, "vpx": 33.921875, "vpy": 5.5, "vw": 220.0625, "vh": 362, "sc": 1.454,
+		}), true
+	}
+	fp.mu.Unlock()
+	call(t, c, sid, "Page.captureScreenshot", map[string]any{"clip": map[string]any{"x": 33.921875, "y": 5.5, "width": 220, "height": 362, "scale": 1}})
+	got := rects()
+	want := map[string]any{"x": 0.0, "y": 0.0, "width": 220.0, "height": 362.0, "coordinateSystem": "Viewport"}
+	if len(got) != 1 {
+		t.Fatalf("snapshotRect calls %v, want one", got)
+	}
+	for k, v := range want {
+		if got[0][k] != v {
+			t.Fatalf("snapshotRect %v, want %v", got[0], want)
+		}
+	}
+}
+
 // Page.getLayoutMetrics reports the page's viewports and content size in
 // CSS pixels, also as the css* fields.
 func TestGetLayoutMetrics(t *testing.T) {
@@ -221,6 +254,54 @@ func TestGetLayoutMetrics(t *testing.T) {
 		if got, ok := m[name]; !ok || got != want {
 			t.Fatalf("%s = %+v (present %v), want %+v", name, got, ok, want)
 		}
+	}
+}
+
+// FIX-R (iPhone X, Safari 16.6): on iOS, innerWidth is the visual
+// viewport and visualViewport.scale is the page's zoom (CSS pixels to
+// screen points), 0.33 on a page without a meta viewport. Playwright's
+// viewport screenshot divides innerWidth by visualViewport.scale of
+// getLayoutMetrics and passes that scale as clip.scale; with WebKit's
+// zoom there it captured 3x the visible area (2940x4842 instead of
+// 960x1582). The bridge reports the pinch scale relative to innerWidth
+// (Chrome's meaning, 1 on WebKit) and the zoom as zoom, so the clip is
+// the visible area.
+func TestLayoutMetricsOfAZoomedPage(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		iw, ih, vw, vh, sc  float64
+		wantScale, wantZoom float64
+	}{
+		{"zoomed out", 980, 1614, 980, 1614, 0.3265306, 1, 0.3265306},
+		{"zoomed in on an input", 220, 362, 220, 362, 1.454, 1, 1.454},
+		{"pinch-zoomed layout viewport", 1000, 800, 500, 400, 2, 2, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, fp, c, sid, _ := attachPage(t)
+			fp.mu.Lock()
+			fp.eval = func(expr string) (any, bool) {
+				if expr != viewportExpr {
+					return nil, false
+				}
+				return value(map[string]any{
+					"iw": tc.iw, "ih": tc.ih, "sx": 0, "sy": 0, "cw": tc.iw, "ch": tc.ih, "w": 980, "h": 3000,
+					"vx": 0, "vy": 0, "vpx": 0, "vpy": 0, "vw": tc.vw, "vh": tc.vh, "sc": tc.sc,
+				}), true
+			}
+			fp.mu.Unlock()
+			type viewport struct{ ClientWidth, ClientHeight, Scale, Zoom float64 }
+			m := decode[map[string]viewport](t, call(t, c, sid, "Page.getLayoutMetrics", nil))
+			for _, name := range []string{"visualViewport", "cssVisualViewport"} {
+				v := m[name]
+				if v.Scale != tc.wantScale || v.Zoom != tc.wantZoom {
+					t.Fatalf("%s = %+v, want scale %v and zoom %v", name, v, tc.wantScale, tc.wantZoom)
+				}
+				// Playwright's viewport clip: innerWidth / scale.
+				if w, h := tc.iw/v.Scale, tc.ih/v.Scale; w != tc.vw || h != tc.vh {
+					t.Fatalf("%s: a clip of innerWidth/scale is %vx%v CSS pixels, want the visible %vx%v", name, w, h, tc.vw, tc.vh)
+				}
+			}
+		})
 	}
 }
 

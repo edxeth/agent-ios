@@ -626,13 +626,30 @@ func (v *viewport) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// pinch splits the page's visualViewport.scale (CSS pixels to screen
+// points) into Chrome's two factors (FIX-R): scale, the pinch zoom of the
+// visual viewport relative to innerWidth, and zoom, the rest. On iOS
+// innerWidth is the visual viewport, so scale is 1 and zoom is the page's
+// zoom (0.33 on a page without a meta viewport on an iPhone): a client
+// that takes innerWidth/scale as the visible area, as Playwright's
+// viewport screenshot does, gets the visible area. In Chrome, innerWidth
+// is the layout viewport and scale is the pinch zoom; that case keeps it.
+func (v viewport) pinch() (scale, zoom float64) {
+	if v.VW <= 0 || v.IW <= 0 {
+		return v.SC, 1
+	}
+	scale = v.IW / v.VW
+	return scale, v.SC / scale
+}
+
 func getLayoutMetrics(ctx context.Context, call *Call) (any, Later, error) {
 	var v viewport
 	if err := call.session.evalInto(ctx, call.Method, viewportExpr, &v); err != nil {
 		return nil, nil, err
 	}
 	layout := map[string]any{"pageX": v.SX, "pageY": v.SY, "clientWidth": v.CW, "clientHeight": v.CH}
-	visual := map[string]any{"offsetX": v.VX, "offsetY": v.VY, "pageX": v.VPX, "pageY": v.VPY, "clientWidth": v.VW, "clientHeight": v.VH, "scale": v.SC, "zoom": 1}
+	scale, zoom := v.pinch()
+	visual := map[string]any{"offsetX": v.VX, "offsetY": v.VY, "pageX": v.VPX, "pageY": v.VPY, "clientWidth": v.VW, "clientHeight": v.VH, "scale": scale, "zoom": zoom}
 	content := map[string]any{"x": 0, "y": 0, "width": v.W, "height": v.H}
 	return map[string]any{
 		"layoutViewport": layout, "visualViewport": visual, "contentSize": content,
@@ -643,8 +660,9 @@ func getLayoutMetrics(ctx context.Context, call *Call) (any, Later, error) {
 // captureScreenshot uses WIP Page.snapshotRect: the viewport without a
 // clip; a clip (CDP page coordinates) in WebKit's Page coordinates with
 // captureBeyondViewport, else in Viewport coordinates after subtracting
-// the scroll offset. WebKit returns PNG; jpeg is encoded on the host.
-// clip.scale is not applied: the image has the device's pixel ratio.
+// the visual viewport's page offset. WebKit returns PNG; jpeg is encoded
+// on the host. clip.scale is not applied: the image has the page's zoom
+// times the device's pixel ratio (getLayoutMetrics zoom).
 func captureScreenshot(ctx context.Context, call *Call) (any, Later, error) {
 	var p struct {
 		Format  string `json:"format"`
@@ -676,7 +694,10 @@ func captureScreenshot(ctx context.Context, call *Call) (any, Later, error) {
 			x, y := c.X, c.Y
 			cs := "Page"
 			if !p.CaptureBeyondViewport {
-				x, y, cs = x-v.SX, y-v.SY, "Viewport"
+				// Viewport coordinates start at the visual viewport,
+				// whose page offset can differ from scrollX by a
+				// fraction on iOS (FIX-R).
+				x, y, cs = x-v.VPX, y-v.VPY, "Viewport"
 			}
 			rect = map[string]any{"x": int(math.Floor(x)), "y": int(math.Floor(y)), "width": int(math.Ceil(c.Width)), "height": int(math.Ceil(c.Height)), "coordinateSystem": cs}
 		}

@@ -107,6 +107,26 @@ export function pngSize(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20), bytes: buf.length };
 }
 
+// viewportPixels runs in the page (page.evaluate): the size of the
+// viewport in the pixels of a screenshot, the CSS viewport times the
+// page's zoom (visualViewport.scale; on iOS 0.33 on a page without a meta
+// viewport) times devicePixelRatio (3 on an iPhone X). On WebKitGTK both
+// factors are 1.
+export const viewportPixels = () => {
+  const scale = (window.visualViewport ? window.visualViewport.scale : 1) * window.devicePixelRatio;
+  return { width: innerWidth * scale, height: innerHeight * scale, cssWidth: innerWidth, cssHeight: innerHeight, scale };
+};
+
+// expectScreenshotSize throws unless the PNG size (pngSize) is the
+// viewport's size in pixels (viewportPixels). WebKit rounds a fractional
+// size, so a size less than 1 pixel apart counts; a whole size, as on
+// WebKitGTK, must be exact.
+export function expectScreenshotSize(size, viewport) {
+  if (Math.abs(size.width - viewport.width) >= 1 || Math.abs(size.height - viewport.height) >= 1) {
+    throw new Error(`screenshot size: got ${size.width}x${size.height}, want the viewport ${viewport.cssWidth}x${viewport.cssHeight} CSS pixels times ${viewport.scale} = ${viewport.width}x${viewport.height}`);
+  }
+}
+
 // withDeadline resolves like promise, or rejects after ms with what in the
 // message.
 export function withDeadline(promise, ms, what) {

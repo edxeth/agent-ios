@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -82,8 +83,9 @@ func stepValue(t *testing.T, r clientResult, name string, v any) {
 	t.Fatalf("%s did not run the step %s; steps %+v", r.Client, name, r.Steps)
 }
 
-// checkPNG checks that file is a PNG image of the given size.
-func checkPNG(t *testing.T, file string, width, height int) {
+// checkPNG checks that file is a PNG image of the viewport's size in
+// pixels (viewport).
+func checkPNG(t *testing.T, file string, v pixels) {
 	t.Helper()
 	f, err := os.Open(file)
 	if err != nil {
@@ -91,20 +93,37 @@ func checkPNG(t *testing.T, file string, width, height int) {
 	}
 	defer func() { _ = f.Close() }()
 	cfg, err := png.DecodeConfig(f)
-	if err != nil || cfg.Width != width || cfg.Height != height {
-		t.Fatalf("the screenshot %s: %dx%d (%v), want a %dx%d PNG", file, cfg.Width, cfg.Height, err, width, height)
+	if err != nil || !v.fits(cfg.Width, cfg.Height) {
+		t.Fatalf("the screenshot %s: %dx%d (%v), want a PNG of %s", file, cfg.Width, cfg.Height, err, v)
 	}
 }
 
-// viewport reads the page's viewport size in session.
-func viewport(t *testing.T, session string) (int, int) {
+// pixels is the viewport's size in the pixels of a screenshot: the CSS
+// viewport times the page's zoom (visualViewport.scale) times
+// devicePixelRatio, as clients/result.mjs viewportPixels computes it. On
+// WebKitGTK both factors are 1.
+type pixels struct{ W, H, Scale float64 }
+
+// fits reports whether an image of width x height has the viewport's
+// size: WebKit rounds a fractional size, so less than 1 pixel apart
+// counts; a whole size, as on WebKitGTK, must be exact.
+func (v pixels) fits(width, height int) bool {
+	return math.Abs(float64(width)-v.W) < 1 && math.Abs(float64(height)-v.H) < 1
+}
+
+func (v pixels) String() string {
+	return fmt.Sprintf("the viewport %vx%v CSS pixels times %v", v.W/v.Scale, v.H/v.Scale, v.Scale)
+}
+
+// viewport reads the page's viewport size in pixels in session.
+func viewport(t *testing.T, session string) pixels {
 	t.Helper()
-	var v struct{ W, H int }
-	out := cli(t, "--session", session, "eval", "JSON.stringify({w: innerWidth, h: innerHeight})")
-	if err := json.Unmarshal([]byte(out), &v); err != nil || v.W <= 0 || v.H <= 0 {
+	var v struct{ W, H, S, R float64 }
+	out := cli(t, "--session", session, "eval", "JSON.stringify({w: innerWidth, h: innerHeight, s: window.visualViewport ? visualViewport.scale : 1, r: devicePixelRatio})")
+	if err := json.Unmarshal([]byte(out), &v); err != nil || v.W <= 0 || v.H <= 0 || v.S <= 0 || v.R <= 0 {
 		t.Fatalf("the viewport: %q (%v)", out, err)
 	}
-	return v.W, v.H
+	return pixels{W: v.W * v.S * v.R, H: v.H * v.S * v.R, Scale: v.S * v.R}
 }
 
 // Design 7.8 test 8 on WebKitGTK: each client works through the URL that
@@ -155,8 +174,8 @@ func TestClientScenarios(t *testing.T) {
 		}
 		var shot struct{ Width, Height int }
 		stepValue(t, run.result, "take_screenshot", &shot)
-		if w, h := viewport(t, "chrome-devtools-mcp"); shot.Width != w || shot.Height != h {
-			t.Errorf("take_screenshot returned a %dx%d PNG, want the viewport %dx%d", shot.Width, shot.Height, w, h)
+		if v := viewport(t, "chrome-devtools-mcp"); !v.fits(shot.Width, shot.Height) {
+			t.Errorf("take_screenshot returned a %dx%d PNG, want %s", shot.Width, shot.Height, v)
 		}
 	})
 	t.Run("chrome-devtools-mcp-features", devtoolsMCPFeatures)
@@ -246,8 +265,7 @@ func agentBrowserScenario(t *testing.T, bin string) {
 	}
 	shot := filepath.Join(t.TempDir(), "shot.png")
 	must("screenshot", "screenshot", shot)
-	w, h := viewport(t, session)
-	checkPNG(t, shot, w, h)
+	checkPNG(t, shot, viewport(t, session))
 	checkUnknown(t, "agent-browser", newUnknown(before, unknownCounts(t)))
 }
 

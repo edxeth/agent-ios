@@ -16,7 +16,7 @@
 // Method recording: Playwright logs every CDP message it sends to its
 // "pw:protocol" debug logger ("SEND ► <message>"); this script turns that
 // logger on and reads its lines from stderr.
-import { allPassed, expect, finish, newResult, observe, parseArgs, pngSize, record, step, withDeadline } from './result.mjs';
+import { allPassed, expect, expectScreenshotSize, finish, newResult, observe, parseArgs, pngSize, record, step, viewportPixels, withDeadline } from './result.mjs';
 
 const { scenario, url, file, rest } = parseArgs('node clients/playwright.mjs');
 const out = newResult('playwright-core', scenario, url, file);
@@ -172,8 +172,7 @@ const scenarios = {
     });
     await observe(out, 'screenshot', async () => {
       const size = pngSize(await page.screenshot({ type: 'png' }));
-      const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-      expect('screenshot size', { width: size.width, height: size.height }, viewport);
+      expectScreenshotSize(size, await page.evaluate(viewportPixels));
       return size;
     });
     await observe(out, 'ariaSnapshot', async () => {
