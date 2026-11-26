@@ -103,3 +103,69 @@ func TestCDPCallFunctionOnInContextOnWebKitGTK(t *testing.T) {
 		t.Errorf("an object of the child frame in the main frame's context: %q, want WebKit's same-world refusal", msg)
 	}
 }
+
+// FIX-P (review F1, F2): on the one-round-trip path a declaration that is
+// not a function gets Chrome's error -32000 "Given expression does not
+// evaluate to a function" (V8 InjectedScript callFunctionOn), with and
+// without an argument object, and no text of the bridge's wrapper; and
+// the result of a call on an argument object of a named group belongs to
+// that group, so releasing the group releases it (documented in
+// docs/cdp.md, "Calls in an execution context").
+func TestCDPCallFunctionOnInContextContractsOnWebKitGTK(t *testing.T) {
+	p := cdp045Client(t, "cdp045.html")
+	var tree struct {
+		FrameTree struct{ Frame struct{ ID string } }
+	}
+	if err := json.Unmarshal(p.call(t, "Page.getFrameTree", nil), &tree); err != nil {
+		t.Fatal(err)
+	}
+	var w struct{ ExecutionContextID int64 }
+	_ = json.Unmarshal(p.call(t, "Page.createIsolatedWorld", map[string]any{"frameId": tree.FrameTree.Frame.ID, "worldName": "fixp"}), &w)
+	ctx := w.ExecutionContextID
+	if ctx == 0 {
+		t.Fatal("createIsolatedWorld gave no context")
+	}
+	var body struct {
+		Result struct{ ObjectID string }
+	}
+	_ = json.Unmarshal(p.call(t, "Runtime.evaluate", map[string]any{"expression": "document.body", "contextId": ctx, "objectGroup": "argGroup"}), &body)
+	if body.Result.ObjectID == "" {
+		t.Fatal("document.body has no object id")
+	}
+	for _, tc := range []struct {
+		name  string
+		args  []any
+		group string // the former path (evaluate, trampoline, release)
+	}{
+		{"no arguments", nil, ""},
+		{"a value argument", []any{map[string]any{"value": 1}}, ""},
+		{"an argument object", []any{map[string]any{"objectId": body.Result.ObjectID}}, ""},
+		{"an objectGroup", []any{map[string]any{"value": 1}}, "fixp"},
+	} {
+		for _, decl := range []string{"42", "({ a: 1 })", "undefined\n//# sourceURL=pptr:fixp\n"} {
+			params := map[string]any{"executionContextId": ctx, "functionDeclaration": decl}
+			if tc.args != nil {
+				params["arguments"] = tc.args
+			}
+			if tc.group != "" {
+				params["objectGroup"] = tc.group
+			}
+			msg := p.failCall(t, "Runtime.callFunctionOn", params)
+			if !strings.Contains(msg, "-32000") || !strings.Contains(msg, "Given expression does not evaluate to a function") || strings.Contains(msg, "apply") || strings.Contains(msg, "bind") {
+				t.Errorf("declaration %q with %s: %q, want error -32000 \"Given expression does not evaluate to a function\"", decl, tc.name, msg)
+			}
+		}
+	}
+
+	var res struct {
+		Result struct{ ObjectID string }
+	}
+	_ = json.Unmarshal(p.call(t, "Runtime.callFunctionOn", map[string]any{"executionContextId": ctx, "functionDeclaration": "b => ({ n: b.tagName })", "arguments": []any{map[string]any{"objectId": body.Result.ObjectID}}}), &res)
+	if res.Result.ObjectID == "" {
+		t.Fatal("the call on the argument object returned no object")
+	}
+	p.call(t, "Runtime.releaseObjectGroup", map[string]any{"objectGroup": "argGroup"})
+	if msg := p.failCall(t, "Runtime.callFunctionOn", map[string]any{"objectId": res.Result.ObjectID, "functionDeclaration": "function() { return this.n; }", "returnByValue": true}); !strings.Contains(msg, "Could not find object with given id") {
+		t.Errorf("the result after releasing its argument's group: %q, want it released with the group", msg)
+	}
+}

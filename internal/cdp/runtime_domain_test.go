@@ -471,10 +471,13 @@ func TestCallFunctionOnInContextRoundTrips(t *testing.T) {
 		switch {
 		case strings.Contains(expr, "throwIt"):
 			return map[string]any{"result": map[string]any{"type": "object", "className": "Error", "description": "Error: boom", "objectId": "err-1"}, "wasThrown": true}, true
+		case strings.Contains(expr, "((42\n)"):
+			// WebKit runs the guard: 42 is not a function.
+			return map[string]any{"result": map[string]any{"type": "string", "value": notFunctionValue}}, true
+		case strings.Contains(expr, "f.apply(undefined, a)"):
+			return map[string]any{"result": map[string]any{"type": "number", "value": 3, "description": "3"}}, true
 		case strings.HasPrefix(expr, "(function"):
 			return map[string]any{"result": map[string]any{"type": "function", "objectId": "fn-1"}}, true
-		case strings.Contains(expr, ".apply(undefined, ["):
-			return map[string]any{"result": map[string]any{"type": "number", "value": 3, "description": "3"}}, true
 		}
 		return nil, false
 	}
@@ -498,8 +501,18 @@ func TestCallFunctionOnInContextRoundTrips(t *testing.T) {
 		ReturnByValue bool   `json:"returnByValue"`
 	}
 	_ = json.Unmarshal(ev[len(ev)-1].Params, &ep)
-	if ep.Expression != "((a, b) => a + b.length\n//# sourceURL=pptr:x\n\n).apply(undefined, [1, \"xy\"])" || ep.ContextID != 1 || !ep.ReturnByValue {
+	if ep.Expression != "(function (f, a) { return typeof f === \"function\" ? f.apply(undefined, a) : \""+notFunctionValue+"\"; })(((a, b) => a + b.length\n//# sourceURL=pptr:x\n\n), [1, \"xy\"])" || ep.ContextID != 1 || !ep.ReturnByValue {
 		t.Fatalf("callFunctionOn with values evaluated %s", ev[len(ev)-1].Params)
+	}
+
+	// FIX-P F1: a declaration that is not a function is Chrome's error,
+	// not an exception of the bridge's expression.
+	before = counts()
+	if e := callErr(t, c, sid, "Runtime.callFunctionOn", map[string]any{"executionContextId": main, "functionDeclaration": "42", "arguments": []any{map[string]any{"value": 1}}}); e.Code != -32000 || e.Message != "Given expression does not evaluate to a function" {
+		t.Fatalf("callFunctionOn with a number declaration: %+v", e)
+	}
+	if d := sent(before); len(d) != 1 || d["Runtime.evaluate"] != 1 {
+		t.Fatalf("callFunctionOn with a number declaration sent %v, want one Runtime.evaluate", d)
 	}
 
 	// An argument object of the context: one callFunctionOn on it.
@@ -523,7 +536,7 @@ func TestCallFunctionOnInContextRoundTrips(t *testing.T) {
 		Arguments           []map[string]any `json:"arguments"`
 	}
 	_ = json.Unmarshal(cf[len(cf)-1].Params, &p)
-	if p.ObjectID != own || !strings.Contains(p.FunctionDeclaration, "(r => r.result()\n)") || p.Arguments[0]["value"] != "v" || p.Arguments[1]["objectId"] != own {
+	if p.ObjectID != own || p.FunctionDeclaration != "(f => typeof f === \"function\" ? f.bind(undefined) : f)((r => r.result()\n))" || p.Arguments[0]["value"] != "v" || p.Arguments[1]["objectId"] != own {
 		t.Fatalf("callFunctionOn with an object of the context sent %s", cf[len(cf)-1].Params)
 	}
 
@@ -558,5 +571,50 @@ func TestCallFunctionOnInContextRoundTrips(t *testing.T) {
 	}))
 	if d := sent(before); res.Result["value"] != "done" || len(d) != 2 || d["Runtime.callFunctionOn"] != 1 || d["Runtime.awaitPromise"] != 1 {
 		t.Fatalf("awaited callFunctionOn = %v, sent %v", res.Result, d)
+	}
+}
+
+// FIX-P F5: a child frame that never answers does not fail
+// Runtime.addBinding once the binding is recorded and installed in the
+// main frame (Chrome's addBinding does not fail per frame): the stalled
+// frame is skipped, the other child frame still gets the binding, and the
+// command succeeds.
+func TestAddBindingSkipsStalledChildFrame(t *testing.T) {
+	r, fp, c, sid, _ := attachPage(t)
+	f := r.fake["One"]
+	fp.children = []wipTree{
+		{Frame: wipFrame{ID: "stuck", ParentID: "main", LoaderID: "0.8", URL: "https://one.example/a.html", SecurityOrigin: "https://one.example"}},
+		{Frame: wipFrame{ID: "child", ParentID: "main", LoaderID: "0.9", URL: "https://one.example/b.html", SecurityOrigin: "https://one.example"}},
+	}
+	call(t, c, sid, "Page.enable", nil)
+	f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 7, "type": "normal", "frameId": "stuck"}})
+	f.Emit("Runtime.executionContextCreated", map[string]any{"context": map[string]any{"id": 8, "type": "normal", "frameId": "child"}})
+	call(t, c, sid, "Runtime.enable", nil)
+	contextOf(t, c, sid, "stuck")
+	contextOf(t, c, sid, "child")
+	const name = "fixpBinding"
+	f.DropRepliesIf("Runtime.evaluate", func(params json.RawMessage) bool {
+		var p struct {
+			Expression string
+			ContextID  int
+		}
+		_ = json.Unmarshal(params, &p)
+		return p.ContextID == 7 && strings.Contains(p.Expression, name)
+	})
+	call(t, c, sid, "Runtime.addBinding", map[string]any{"name": name})
+	token := bindingToken(t, fp, name)
+	got := map[int]bool{}
+	for _, ev := range f.ReceivedMethod("Runtime.evaluate") {
+		var p struct {
+			Expression string
+			ContextID  int
+		}
+		_ = json.Unmarshal(ev.Params, &p)
+		if strings.Contains(p.Expression, name) && strings.Contains(p.Expression, token) {
+			got[p.ContextID] = true
+		}
+	}
+	if !got[7] || !got[8] {
+		t.Fatalf("addBinding sent the frame install to contexts %v, want 7 (stalled) and 8", got)
 	}
 }

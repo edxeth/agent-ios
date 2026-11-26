@@ -145,8 +145,9 @@ func (m *Manager) BeginLeased(ctx context.Context, pg *Page, session string, epo
 	pg.mu.Lock()
 	l := pg.lease
 	if l == nil || l.session != session || l.epoch != epoch || pg.releasing || pg.PS == nil {
+		title := pg.target.title // read under pg.mu: an attach writes it (manager.go)
 		pg.mu.Unlock()
-		return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: the lease of session %q (epoch %d) on page %q ended, so %s was not sent", ErrLeased, session, epoch, pg.target.title, name)}
+		return nil, &CodedError{Code: CodeBusy, Err: fmt.Errorf("%w: the lease of session %q (epoch %d) on page %q ended, so %s was not sent", ErrLeased, session, epoch, title, name)}
 	}
 	l.lastUsed, pg.lastUsed = now, now
 	l.shared = true // an operation without the claim of the grant uses it

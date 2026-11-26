@@ -1,7 +1,6 @@
 package cdp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -330,7 +329,10 @@ func callFunctionOn(ctx context.Context, call *Call) (any, Later, error) {
 			return cdpResult(fr), nil, nil
 		}
 		this, _ = fr.Result["objectId"].(string)
-		if this == "" {
+		if this == "" || fr.Result["type"] != "function" {
+			if this != "" {
+				b.release(this, "a function object")
+			}
 			end()
 			return nil, nil, serverError("Given expression does not evaluate to a function")
 		}
@@ -358,13 +360,14 @@ func callFunctionOn(ctx context.Context, call *Call) (any, Later, error) {
 // undefined receiver; with only value arguments, a Runtime.evaluate in the
 // context that applies the declaration to them as literals. Both evaluate
 // the declaration at the context's global scope with an undefined
-// receiver, as the evaluate and trampoline path does. ok is false, and
-// no message was written, when that path must run instead: an argument object
-// of another context (WebKit refuses it there, as Chrome does), a value
-// that a literal does not keep (__proto__), or a message above the
-// transport's limit. The result object of the call on an argument object
-// belongs to that object's group, so a call with an objectGroup never
-// comes here.
+// receiver, as the evaluate and trampoline path does, and pass it to a
+// guard that answers a value that is not a function with Chrome's error.
+// ok is false, and no message was written, when that path must run
+// instead: an argument object of another context (WebKit refuses it
+// there, as Chrome does), or a message above the transport's limit. The
+// result object of the call on an argument object belongs to that
+// object's group (docs/cdp.md), so a call with an objectGroup never comes
+// here.
 func (b *boundOp) directCall(decl string, in []callArg, args []map[string]any, opts map[string]any) (wipResult, bool, error) {
 	if b.wipID == 0 {
 		return wipResult{}, false, nil
@@ -382,9 +385,6 @@ func (b *boundOp) directCall(decl string, in []callArg, args []map[string]any, o
 				target = a.ObjectID
 			}
 		case a.UnserializableValue == "" && a.Value != nil:
-			if bytes.Contains(a.Value, []byte("__proto__")) {
-				return wipResult{}, false, nil
-			}
 			lits[i] = string(a.Value)
 		default:
 			lits[i] = "undefined" // unserializable values are set in decl
@@ -394,16 +394,20 @@ func (b *boundOp) directCall(decl string, in []callArg, args []map[string]any, o
 	if target != "" {
 		method = "Runtime.callFunctionOn"
 		params["objectId"] = target
-		params["functionDeclaration"] = "(" + decl + "\n).bind(undefined)"
+		// WebKit answers a value that is not a function itself.
+		params["functionDeclaration"] = "(f => typeof f === \"function\" ? f.bind(undefined) : f)((" + decl + "\n))"
 		params["arguments"] = args
 	} else {
-		params["expression"] = "(" + decl + "\n).apply(undefined, [" + strings.Join(lits, ", ") + "])"
+		params["expression"] = "(function (f, a) { return typeof f === \"function\" ? f.apply(undefined, a) : " + notFunction + "; })((" + decl + "\n), [" + strings.Join(lits, ", ") + "])"
 		params["objectGroup"] = "iwdp-cdp-call"
 	}
 	maps.Copy(params, opts)
 	r, err := b.call(method, params)
 	if wireLimit(err) != nil {
 		return wipResult{}, false, nil
+	}
+	if err == nil && !r.WasThrown && r.Result["type"] == "string" && r.Result["value"] == notFunctionValue {
+		return wipResult{}, true, serverError("Given expression does not evaluate to a function")
 	}
 	var e *webkit.ErrorData
 	if errors.As(err, &e) && strings.Contains(e.Message, wipNoObjectContext) {
@@ -424,6 +428,14 @@ func objectContext(objectID string) (int64, bool) {
 	}
 	return *o.InjectedScriptID, true
 }
+
+// notFunctionValue is what directCall's evaluate returns, as the string
+// literal notFunction, for a declaration that is not a function: Chrome
+// answers it with an error, not an exception of the bridge's call.
+const (
+	notFunctionValue = "iwdp-cdp: not a function"
+	notFunction      = `"` + notFunctionValue + `"`
+)
 
 // wipNoObjectContext is the WebKit error text for a call on an object
 // whose context is gone (InspectorRuntimeAgent::callFunctionOn).
@@ -646,7 +658,11 @@ func (s *session) bindChildFrames(mo *core.ManagedOp, name, token string) error 
 			continue
 		}
 		if err != nil {
-			return err
+			// The binding is recorded and installed in the main frame;
+			// Chrome's addBinding does not fail for one frame. The
+			// frame's next context gets it from the next addBinding.
+			s.c.s.o.Logf("cdp: %s: installing a binding in frame context %d of %s session %s: %v", logsafe.ID(s.c.name), id, logsafe.ID(s.kind), logsafe.ID(shortID(s.id)), logsafe.Error(err))
+			continue
 		}
 		ps.mu.Lock()
 		ps.frameBound[frameBind{id, name, token}] = true

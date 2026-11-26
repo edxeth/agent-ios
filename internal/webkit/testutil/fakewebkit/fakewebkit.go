@@ -130,6 +130,7 @@ type Server struct {
 	holding      map[string][]held // release method -> replies
 	malformed    map[string]string
 	dropReply    map[string]int // method -> number of replies to drop
+	dropIf       map[string]func(params json.RawMessage) bool
 	delays       map[string]time.Duration
 	beforeRecord map[string]func(params json.RawMessage)
 	runtime      RuntimeHandler
@@ -176,6 +177,7 @@ func New(o Options) *Server {
 		holding:   make(map[string][]held),
 		malformed: make(map[string]string),
 		dropReply: make(map[string]int),
+		dropIf:    make(map[string]func(params json.RawMessage) bool),
 		delays:    make(map[string]time.Duration),
 	}
 	up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
@@ -285,6 +287,14 @@ func (s *Server) DropReplies(method string, n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dropReply[method] = n
+}
+
+// DropRepliesIf runs every call of method whose params match and drops
+// its reply (one stalled frame among several).
+func (s *Server) DropRepliesIf(method string, match func(params json.RawMessage) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dropIf[method] = match
 }
 
 // DelayReplies sends each reply to method d after the call arrived; the call
@@ -732,6 +742,9 @@ func (s *Server) handlePage(c *conn, call Call) {
 	drop := s.dropReply[call.Method] > 0
 	if drop {
 		s.dropReply[call.Method]--
+	}
+	if m := s.dropIf[call.Method]; m != nil && m(call.Params) {
+		drop = true
 	}
 	live := s.targets[call.Target]
 	delays := s.delays
