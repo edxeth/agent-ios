@@ -69,6 +69,8 @@ Input and actions:
 - The back and forward buttons send their events (button 3 and 4, auxclick) but do not move in history.
 - Held modifiers (`keydown Shift`) end with the document (navigation, reload) and with a new owner; agent-browser keeps them until its browser closes.
 - Unknown key names and unknown chord modifiers stay usage errors (agent-browser sends an unknown name as key and code with keyCode 0); F-keys are not named keys.
+- With the focus inside a cross-origin frame, keyboard commands without a target (`press`, `keydown`, `keyup`, `keyboard type|inserttext`, `type <text>`) are refused with `unsupported`: select that frame first (`frame <selector>`).
+- drag works within one document (the page, or one same-origin frame); a drag between documents is refused with `unsupported`.
 - A press interrupted mid-chord (attempt deadline) does not send the keyups of chord modifiers already pressed; a chord does not change the held modifiers, so no modifier stays held.
 - agent-ios dispatches synthetic events to the target element itself, so a stale press point cannot click another element (agent-browser 0.45 fixed real CDP input that landed elsewhere, #2587 and #2611). The point still matters for the receives-events check and for the clientX and clientY that the page sees; it is measured after the layout settled.
 - The action wait differs from agent-browser 0.45: no "up to 5 settle rounds, then press anyway" and no "re-scroll at most twice": agent-ios retries until the action deadline and fails with the last reason. hover keeps the receives-events check (agent-browser's hover only scrolls and settles). The error wording stays agent-ios's (`... stopped before step 1 of 1 (0 acknowledged): covered by <div id="banner">`).
@@ -90,7 +92,7 @@ Snapshots, frames and screenshots:
 - An iframe whose document the page cannot read (cross-origin, or a frame in its own target) shows as its Iframe line without content.
 - find, get, is and the other locator commands search same-origin iframes one level deep; refs from a snapshot reach every walked level (four).
 - **Frames in their own target.** WebKit with site isolation puts a cross-site iframe in its own target; agent-ios ignores non-page targets, and `frame` refuses such a frame with `unsupported`. Evidence (2026-11-26): Safari on the iOS 26.5 Simulator ran cross-site iframes, also nested ones, in the page's target with their own execution contexts: `frame`, `eval`, `check`, `find`, `wait`, `console`, `errors` and `screenshot --annotate` all worked there, so no frame target was seen and Target routing to frame targets was not built. When a future iOS enables site isolation, the refusal stays until that routing exists.
-- `screenshot --annotate` labels the refs of the top document's snapshot (which includes same-origin frames); refs of a selected cross-origin frame are not labelled. Boxes of rotated or skewed iframes use the frame's bounding box; only translation and scale are exact.
+- `screenshot --annotate` labels the refs of the top document's snapshot (which includes same-origin frames); refs of a selected cross-origin frame are not labelled. Boxes of rotated or skewed iframes use the frame's bounding box; only translation and scale are exact. Labels and boxes are clipped to frame viewports only: an iframe that an overflow-clipping ancestor in its parent document cuts is not clipped further.
 
 Diffs, states and tabs:
 
