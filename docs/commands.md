@@ -28,6 +28,8 @@ Global flags (any position): `--session`, `--page`, `--only-tab`, `--timeout`, `
 | [`cookies`](#cookies) | List the page's cookies (those Page.getCookies lists, httpOnly included): name, domain, path, sameSite, expiry or session, httpOnly, secure. Values are hidden unless --show-values. |
 | [`cookies clear`](#cookies-clear) | Delete the page's cookies (those Page.getCookies lists: the cookies of the page's frames and resources), read back. |
 | [`cookies set`](#cookies-set) | Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a file (--curl: a JSON list, a cURL command or a Cookie header), each read back. Values are redacted in the result. |
+| [`css computed`](#css-computed) | Show an element's computed style as the CSS domain reports it (all longhands and custom properties; get styles reads getComputedStyle in the page instead). |
+| [`css matched`](#css-matched) | Show the CSS rules that match an element (selector, source, declarations; overridden ones marked [overloaded]) with inline and inherited styles, from the CSS domain. |
 | [`daemon logs`](#daemon-logs) | Print the end of the daemon log ($XDG_STATE_HOME/agent-ios/daemon.log). |
 | [`daemon run`](#daemon-run) | Run the daemon in the foreground until SIGTERM, 'daemon stop' or the idle timeout (clients start it on demand). |
 | [`daemon start`](#daemon-start) | Start the daemon in the background unless it runs. |
@@ -357,6 +359,41 @@ Set one cookie (cookies set \<name\> \<value\> [flags]) or import cookies from a
 | `--http-only` | none | set HttpOnly |
 | `--secure` | none | set Secure |
 | `--same-site` | text | Lax, Strict or None (default Lax) |
+
+### `css computed`
+
+```
+agent-ios css computed <target> [<properties>...]
+```
+
+Show an element's computed style as the CSS domain reports it (all longhands and custom properties; get styles reads getComputedStyle in the page instead).
+
+- Page: leases the session's page
+
+| Argument | Required | Description |
+|---|---|---|
+| `<target>` | yes | element: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator |
+| `<properties>...` | no | properties to show; a shorthand such as margin also shows each property whose name starts with it and - (margin-top, margin-block-start); custom properties after --; default: all |
+
+### `css matched`
+
+```
+agent-ios css matched <target> [flags]
+```
+
+Show the CSS rules that match an element (selector, source, declarations; overridden ones marked [overloaded]) with inline and inherited styles, from the CSS domain.
+
+- Page: leases the session's page
+
+| Argument | Required | Description |
+|---|---|---|
+| `<target>` | yes | element: @eN ref, CSS selector, or text=, role=, label=, placeholder=, testid= locator |
+
+| Flag | Value | Description |
+|---|---|---|
+| `--computed` | text | comma-separated properties to add to the Computed styles entry, which always has display, width, height and the properties of the matched and inherited rules (a shorthand adds the properties whose names start with it and -) |
+| `--page-size` | integer | entries per page (the Computed styles entry, element.style and each rule count as one) (default `10`) |
+| `--page-index` | integer | page to show, from 0 (default `0`) |
 
 ### `daemon logs`
 

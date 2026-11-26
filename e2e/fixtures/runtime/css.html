@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head>
+<title>css</title>
+<style>
+:root { --brand: rgb(255, 0, 0); }
+body { font-size: 20px; color: green; margin: 0; }
+.box { color: blue; padding: 1px; text-decoration: underline !important; }
+#target { color: var(--brand); border: 2px solid var(--missing, rgb(0, 0, 255)); text-decoration: none; }
+@media (min-width: 1px) { #target { padding: 3px; } }
+#target.box { margin-top: 4px; }
+p { margin: 0; }
+</style>
+</head>
+<body>
+<div id="wrap" style="letter-spacing: 1px"><p id="target" class="box" style="font-weight: 700">Hello</p></div>
+</body>
+</html>
