@@ -25,11 +25,11 @@ func TestBundleWithinSourceBudget(t *testing.T) {
 	}
 }
 
-// Each module, and the core with every module (the largest install
-// message: a new document whose first call needs all modules), stay
-// within the 64 KiB source budget (parity-045 decision D5).
+// Each module stays within the 64 KiB source budget, and so does every
+// install message, also of an install that needs the core and every module
+// (parity-045 decisions D5 and D10: install splits what does not fit).
 func TestModulesWithinSourceBudget(t *testing.T) {
-	all, err := runtime.InstallSource(true, runtime.Modules())
+	all, err := runtime.InstallMessages(true, runtime.Modules(), runtime.MaxSourceBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,9 +43,47 @@ func TestModulesWithinSourceBudget(t *testing.T) {
 			t.Errorf("module %s is %d bytes; the budget is %d", m, len(s), runtime.MaxSourceBytes)
 		}
 	}
-	t.Logf("core %d bytes, core and all modules %d bytes", len(runtime.Source()), len(all))
-	if len(all) > runtime.MaxSourceBytes {
-		t.Fatalf("the core with all modules is %d bytes; the budget is %d (design 3.1)", len(all), runtime.MaxSourceBytes)
+	for i, src := range all {
+		t.Logf("install message %d of the core and all modules: %d bytes", i+1, len(src))
+		if len(src) > runtime.MaxSourceBytes {
+			t.Fatalf("install message %d of the core and all modules is %d bytes; the budget is %d (design 3.1)", i+1, len(src), runtime.MaxSourceBytes)
+		}
+	}
+}
+
+// An install that does not fit one message sends the core alone first and
+// joins the modules while they fit; one that fits stays one message, so a
+// first call keeps one install round trip (parity-045 decision D10).
+func TestInstallMessagesSplitWhatDoesNotFit(t *testing.T) {
+	core := len(runtime.Source())
+	mods := runtime.Modules()
+	sizes := make([]int, len(mods))
+	sum := 0
+	for i, m := range mods {
+		s, err := runtime.ModuleSource(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizes[i] = len(s)
+		sum += len(s) + len(";\n")
+	}
+	one, err := runtime.InstallMessages(true, mods, core+sum)
+	if err != nil || len(one) != 1 {
+		t.Fatalf("with room for everything: %d messages, %v; want 1", len(one), err)
+	}
+	split, err := runtime.InstallMessages(true, mods, core+sizes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(split) < 2 || split[0] != runtime.Source() {
+		t.Fatalf("over budget: %d messages, the first of %d bytes; want the core alone first, then the modules", len(split), len(split[0]))
+	}
+	joined := strings.Join(split, ";\n")
+	if joined != one[0] {
+		t.Fatalf("the split messages do not hold the same scripts in the same order as the single message")
+	}
+	if _, err := runtime.InstallMessages(false, mods[:1], sizes[0]-1); err == nil {
+		t.Fatalf("a module larger than the budget was accepted")
 	}
 }
 
@@ -138,14 +176,16 @@ func TestInstallAndBootstrapAgainstEachTransportLimit(t *testing.T) {
 					if i == 0 && !withCore {
 						continue
 					}
-					src, err := runtime.InstallSource(withCore, mods)
+					srcs, err := runtime.InstallMessages(withCore, mods, runtime.MaxSourceBytes)
 					if err != nil {
 						t.Fatal(err)
 					}
-					msgs = append(msgs, struct {
-						method string
-						params any
-					}{"Runtime.evaluate", map[string]any{"expression": src, "returnByValue": true}})
+					for _, src := range srcs {
+						msgs = append(msgs, struct {
+							method string
+							params any
+						}{"Runtime.evaluate", map[string]any{"expression": src, "returnByValue": true}})
+					}
 				}
 			}
 			for _, m := range msgs {

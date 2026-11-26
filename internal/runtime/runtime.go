@@ -513,46 +513,67 @@ func (r *Runtime) call(ctx context.Context, c webkit.Caller, fn string, args any
 	}
 }
 
-// installSource is the script that install sends: the core (withCore)
-// followed by the modules' install scripts, each of which installs its
-// module only on the core of this Version.
-func installSource(withCore bool, mods []Module) (string, error) {
-	var b strings.Builder
+// installMessages are the scripts that install sends, in order: the core
+// (withCore) and the modules' install scripts, each of which installs its
+// module only on the core of this Version. They go in one message when it
+// stays within budget, which keeps a first call at one install round trip;
+// otherwise the core goes alone first and the modules follow, joined while
+// they fit, so no message passes budget however many modules a call needs
+// (parity-045 decision D10). A module larger than budget is an error.
+func installMessages(withCore bool, mods []Module, budget int) ([]string, error) {
+	var parts []string
 	if withCore {
-		b.WriteString(Source())
+		parts = append(parts, Source())
 	}
 	for _, m := range mods {
 		s, err := ModuleSource(m)
 		if err != nil {
-			return "", err
+			return nil, err
+		}
+		if len(s) > budget {
+			return nil, fmt.Errorf("module %s is %d bytes; one install message may hold %d", m, len(s), budget)
+		}
+		parts = append(parts, s)
+	}
+	var msgs []string
+	var b strings.Builder
+	for _, p := range parts {
+		if b.Len() > 0 && b.Len()+len(";\n")+len(p) > budget {
+			msgs = append(msgs, b.String())
+			b.Reset()
 		}
 		if b.Len() > 0 {
 			b.WriteString(";\n")
 		}
-		b.WriteString(s)
+		b.WriteString(p)
 	}
-	return b.String(), nil
+	if b.Len() > 0 {
+		msgs = append(msgs, b.String())
+	}
+	return msgs, nil
 }
 
 // install installs the core (withCore) and mods in the document of c by
 // Runtime.evaluate, never by page-side eval, which page CSP can forbid
-// (design 3.1). The script's value is not read: the retried call checks
+// (design 3.1). The scripts' values are not read: the retried call checks
 // what is installed.
 func install(ctx context.Context, c webkit.Caller, withCore bool, mods []Module) error {
-	src, err := installSource(withCore, mods)
+	msgs, err := installMessages(withCore, mods, MaxSourceBytes)
 	if err != nil {
 		return fmt.Errorf("installing the agent runtime: %w", err)
 	}
-	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": src, "returnByValue": true})
-	if err != nil {
-		return fmt.Errorf("installing the agent runtime: %w", err)
-	}
-	var res evalResult
-	if err := json.Unmarshal(raw, &res); err != nil {
-		return fmt.Errorf("installing the agent runtime: decoding reply: %w", err)
-	}
-	if res.WasThrown {
-		return fmt.Errorf("installing the agent runtime: page threw %s", res.Result.Desc)
+	for _, src := range msgs {
+		raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": src, "returnByValue": true})
+		if err != nil {
+			return fmt.Errorf("installing the agent runtime: %w", err)
+		}
+		var res evalResult
+		if err := json.Unmarshal(raw, &res); err != nil {
+			return fmt.Errorf("installing the agent runtime: decoding reply: %w", err)
+		}
+		if res.WasThrown {
+			return fmt.Errorf("installing the agent runtime: page threw %s", res.Result.Desc)
+		}
 	}
 	return nil
 }

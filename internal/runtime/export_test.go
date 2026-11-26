@@ -1,5 +1,5 @@
 package runtime
 
-// InstallSource is installSource for the external size tests: the script
-// of one install message.
-var InstallSource = installSource
+// InstallMessages is installMessages for the external size tests: the
+// scripts of the install messages of one install.
+var InstallMessages = installMessages
