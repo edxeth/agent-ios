@@ -62,18 +62,20 @@ type header struct {
 	Type    string `json:"type"`
 }
 
-// body is the part of the JSON that the summary reads. Edges are not read:
-// a summary by class needs no graph.
-type body struct {
-	Nodes      []uint64 `json:"nodes"`
-	ClassNames []string `json:"nodeClassNames"`
-}
-
 // Parse reads a JavaScriptCore heap snapshot and summarizes it by class.
 // It fails on a version or type that it does not know, and on a node list
 // that does not have the format's shape.
+//
+// Parse reads data in place and allocates little beyond the class table:
+// the node list, the bulk of a snapshot, is summed while it is scanned and
+// never decoded into a slice, and the edges are only skipped (a summary by
+// class needs no graph). The members "nodes" and "nodeClassNames" are
+// matched exactly, as JavaScriptCore writes them; a repeated member counts
+// with its last value, as in encoding/json.
 func Parse(data []byte) (Snapshot, error) {
 	var h header
+	// The header decode also checks that data is one JSON value: the scans
+	// below rely on that.
 	if err := json.Unmarshal(data, &h); err != nil {
 		return Snapshot{}, fmt.Errorf("reading the heap snapshot: %w", err)
 	}
@@ -90,38 +92,61 @@ func Parse(data []byte) (Snapshot, error) {
 	default:
 		return Snapshot{}, fmt.Errorf("heap snapshot type %q is not supported: agent-ios reads Inspector snapshots", h.Type)
 	}
-	var r body
-	if err := json.Unmarshal(data, &r); err != nil {
-		return Snapshot{}, fmt.Errorf("reading the heap snapshot: %w", err)
-	}
-	if len(r.Nodes) < nodeFields || len(r.Nodes)%nodeFields != 0 {
-		return Snapshot{}, fmt.Errorf("heap snapshot: the node list has %d values; want the <root> node and %d values per node", len(r.Nodes), nodeFields)
+	// The header decoded into a struct, so data is an object.
+	nodes, namesRaw := members(data)
+	var names []string
+	if namesRaw != nil {
+		if err := json.Unmarshal(namesRaw, &names); err != nil {
+			return Snapshot{}, fmt.Errorf("reading the heap snapshot: nodeClassNames: %w", err)
+		}
 	}
 	s := Snapshot{Version: *h.Version, Type: h.Type}
 	type acc struct{ count, size int64 }
-	byName := make(map[string]*acc)
+	byClass := make([]acc, len(names))
 	var total uint64
-	// Skip the <root> node, as Web Inspector does.
-	for i := nodeFields; i < len(r.Nodes); i += nodeFields {
-		size, class := r.Nodes[i+1], r.Nodes[i+2]
-		if class >= uint64(len(r.ClassNames)) {
-			return Snapshot{}, fmt.Errorf("heap snapshot: node %d names class %d, but there are %d class names", i/nodeFields, class, len(r.ClassNames))
+	// The first error of a node in file order; a malformed value or a
+	// node list of the wrong length is reported before it.
+	var nodeErr error
+	n, err := scanNodes(nodes, func(i int, size, class uint64) {
+		if nodeErr != nil {
+			return
+		}
+		if class >= uint64(len(names)) {
+			nodeErr = fmt.Errorf("heap snapshot: node %d names class %d, but there are %d class names", i, class, len(names))
+			return
 		}
 		if size > math.MaxInt64-total {
-			return Snapshot{}, fmt.Errorf("heap snapshot: the total size exceeds %d bytes at node %d", int64(math.MaxInt64), i/nodeFields)
+			nodeErr = fmt.Errorf("heap snapshot: the total size exceeds %d bytes at node %d", int64(math.MaxInt64), i)
+			return
 		}
 		total += size
-		name := r.ClassNames[class]
-		a := byName[name]
-		if a == nil {
-			a = &acc{}
-			byName[name] = a
-		}
-		a.count++
-		a.size += int64(size)
+		byClass[class].count++
+		byClass[class].size += int64(size)
 		s.Nodes++
+	})
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if n < nodeFields || n%nodeFields != 0 {
+		return Snapshot{}, fmt.Errorf("heap snapshot: the node list has %d values; want the <root> node and %d values per node", n, nodeFields)
+	}
+	if nodeErr != nil {
+		return Snapshot{}, nodeErr
 	}
 	s.TotalSize = int64(total)
+	byName := make(map[string]*acc)
+	for class, a := range byClass {
+		if a.count == 0 {
+			continue
+		}
+		name := names[class]
+		if b := byName[name]; b != nil {
+			b.count += a.count
+			b.size += a.size
+			continue
+		}
+		byName[name] = &acc{a.count, a.size}
+	}
 	s.Classes = make([]Class, 0, len(byName))
 	for name, a := range byName {
 		s.Classes = append(s.Classes, Class{Name: name, Count: a.count, Size: a.size})

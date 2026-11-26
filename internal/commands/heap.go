@@ -2,15 +2,15 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/edxeth/agent-ios/internal/devtools"
 	"github.com/edxeth/agent-ios/internal/heapsnap"
+	"github.com/edxeth/agent-ios/internal/transport"
 	"github.com/edxeth/agent-ios/internal/webkit"
 )
 
@@ -91,6 +91,14 @@ func runHeapSnapshot(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// The output file is opened before the snapshot: a snapshot can take
+	// most of the deadline and costs the page a full collection, so a bad
+	// path fails first.
+	out, err := openHeapOutput(env, arg(in, 0))
+	if err != nil {
+		return Result{}, err
+	}
+	defer out.abort()
 	// The snapshot is one reply that can take most of the deadline: the
 	// call budget of the session (10 s) would end it early.
 	callCtx := ctx
@@ -101,34 +109,109 @@ func runHeapSnapshot(ctx context.Context, env Env, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("taking the heap snapshot: %w", err)
 	}
-	var snap webkit.HeapSnapshotData
-	if err := json.Unmarshal(res, &snap); err != nil {
-		return Result{}, fmt.Errorf("reading the Heap.snapshot reply: %w", err)
-	}
-	if snap.SnapshotData == "" {
-		// JavaScriptCore returns an empty string when the JSON outgrew
-		// its string builder.
-		return Result{}, errors.New("taking the heap snapshot: WebKit returned no snapshot data (the snapshot may be too large to serialize)")
-	}
-	data := []byte(snap.SnapshotData)
-	snap.SnapshotData = ""
-	path, err := outputPath(env, arg(in, 0), "agent-ios-heap-*.json")
+	s, size, err := saveHeapSnapshot(res, out)
 	if err != nil {
 		return Result{}, err
-	}
-	if err := devtools.WritePrivateFile(path, data); err != nil {
-		return Result{}, err
-	}
-	s, err := heapsnap.Parse(data)
-	if err != nil {
-		return Result{}, fmt.Errorf("the snapshot was written to %s, but it cannot be summarized: %w", path, err)
 	}
 	n := heapTop(in)
 	sum := heapSummary{
-		Path: path, Bytes: len(data), Version: s.Version, Nodes: s.Nodes, TotalSize: s.TotalSize,
+		Path: out.path, Bytes: size, Version: s.Version, Nodes: s.Nodes, TotalSize: s.TotalSize,
 		Classes: len(s.Classes), TopByCount: shortNames(s.TopByCount(n)), TopBySize: shortNames(s.TopBySize(n)),
 	}
 	return Result{Text: heapSnapshotText(sum), Data: sum}, nil
+}
+
+// heapOutput is the snapshot file, open for writing before the snapshot.
+type heapOutput struct {
+	f       *os.File
+	path    string
+	created bool // removed again when no snapshot is written
+	written bool
+}
+
+// openHeapOutput resolves p (empty: a new temp file) and opens it for
+// writing without changing an existing file yet. It refuses a path that
+// is not a regular file (a directory, a named pipe, a device) and a
+// directory that does not exist or cannot be written.
+func openHeapOutput(env Env, p string) (*heapOutput, error) {
+	if p == "" {
+		f, err := os.CreateTemp("", "agent-ios-heap-*.json") // mode 0600
+		if err != nil {
+			return nil, fmt.Errorf("creating an output file in the temp directory: %w", err)
+		}
+		return &heapOutput{f: f, path: f.Name(), created: true}, nil
+	}
+	path := env.ResolvePath(p)
+	// A named pipe would block the open below until a reader comes.
+	if st, err := os.Stat(path); err == nil && !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("writing %s: not a regular file (%s)", path, st.Mode().Type())
+	}
+	created := true
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		created = false
+		f, err = os.OpenFile(path, os.O_WRONLY, 0)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("writing %s: %w", path, err)
+	}
+	return &heapOutput{f: f, path: path, created: created}, nil
+}
+
+// write replaces the file's content with data, with mode 0600 (also for
+// an existing file, as devtools.WritePrivateFile), and closes it.
+func (o *heapOutput) write(data []byte) error {
+	o.written = true
+	err := o.f.Chmod(0o600)
+	if err == nil {
+		err = o.f.Truncate(0)
+	}
+	if err == nil {
+		_, err = o.f.Write(data)
+	}
+	if cerr := o.f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", o.path, err)
+	}
+	return nil
+}
+
+// abort closes a file that got no snapshot and removes it when
+// openHeapOutput created it.
+func (o *heapOutput) abort() {
+	if o.written {
+		return
+	}
+	_ = o.f.Close()
+	if o.created {
+		_ = os.Remove(o.path)
+	}
+}
+
+// saveHeapSnapshot writes the snapshotData of the Heap.snapshot reply res
+// to out and summarizes it. The data is unescaped inside res
+// (heapsnap.ReplyData), written from there and parsed from there, so the
+// snapshot is held once (review F5); res is overwritten.
+func saveHeapSnapshot(res []byte, out *heapOutput) (heapsnap.Snapshot, int, error) {
+	data, err := heapsnap.ReplyData(res)
+	if err != nil {
+		return heapsnap.Snapshot{}, 0, err
+	}
+	if len(data) == 0 {
+		// JavaScriptCore returns an empty string when the JSON outgrew
+		// its string builder.
+		return heapsnap.Snapshot{}, 0, errors.New("taking the heap snapshot: WebKit returned no snapshot data (the snapshot may be too large to serialize)")
+	}
+	if err := out.write(data); err != nil {
+		return heapsnap.Snapshot{}, 0, err
+	}
+	s, err := heapsnap.Parse(data)
+	if err != nil {
+		return heapsnap.Snapshot{}, 0, fmt.Errorf("the snapshot was written to %s, but it cannot be summarized: %w", out.path, err)
+	}
+	return s, len(data), nil
 }
 
 func shortNames(cs []heapsnap.Class) []heapsnap.Class {
@@ -199,11 +282,41 @@ type heapFileTotals struct {
 	TotalSize int64  `json:"totalSize"`
 }
 
+// heapFileMax bounds a file that heap diff reads: the WebSocket read
+// limit (transport.DefaultMaxIncoming, 512 MiB), above the direct
+// transport's 256 MiB. A Heap.snapshot reply larger than that never
+// reaches agent-ios, and the snapshot is one string inside the reply, so
+// no snapshot that heap snapshot wrote is larger.
+const heapFileMax = transport.DefaultMaxIncoming
+
+// readHeapFile reads and summarizes one snapshot file. Only a regular file
+// of at most heapFileMax bytes is read: a named pipe would block and a
+// device (/dev/zero) would not end.
 func readHeapFile(env Env, p string) (heapsnap.Snapshot, string, error) {
 	path := env.ResolvePath(p)
-	data, err := os.ReadFile(path)
+	st, err := os.Stat(path)
 	if err != nil {
 		return heapsnap.Snapshot{}, path, fmt.Errorf("reading the heap snapshot: %w", err)
+	}
+	if !st.Mode().IsRegular() {
+		return heapsnap.Snapshot{}, path, fmt.Errorf("reading the heap snapshot %s: not a regular file (%s)", path, st.Mode().Type())
+	}
+	if st.Size() > heapFileMax {
+		return heapsnap.Snapshot{}, path, fmt.Errorf("reading the heap snapshot %s: %d bytes, larger than %d bytes, the largest snapshot a page connection can carry", path, st.Size(), heapFileMax)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return heapsnap.Snapshot{}, path, fmt.Errorf("reading the heap snapshot: %w", err)
+	}
+	defer func() { _ = f.Close() }() // read only: a close error loses nothing
+	// The file may have changed since the Stat: read at most one byte
+	// beyond the limit to see it.
+	data, err := io.ReadAll(io.LimitReader(f, heapFileMax+1))
+	if err != nil {
+		return heapsnap.Snapshot{}, path, fmt.Errorf("reading the heap snapshot: %w", err)
+	}
+	if len(data) > heapFileMax {
+		return heapsnap.Snapshot{}, path, fmt.Errorf("reading the heap snapshot %s: larger than %d bytes, the largest snapshot a page connection can carry", path, heapFileMax)
 	}
 	s, err := heapsnap.Parse(data)
 	if err != nil {
@@ -212,15 +325,43 @@ func readHeapFile(env Env, p string) (heapsnap.Snapshot, string, error) {
 	return s, path, nil
 }
 
-func runHeapDiff(_ context.Context, env Env, in Input) (Result, error) {
-	a, pa, err := readHeapFile(env, arg(in, 0))
-	if err != nil {
+// heapDiffFiles is the two snapshots of heap diff.
+type heapDiffFiles struct {
+	a, b   heapsnap.Snapshot
+	pa, pb string
+}
+
+func runHeapDiff(ctx context.Context, env Env, in Input) (Result, error) {
+	// heap diff runs in the client (Local), where nothing else enforces
+	// the command deadline: the reads and parses end with ctx. A read
+	// still running at the deadline is left to the process exit.
+	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	b, pb, err := readHeapFile(env, arg(in, 1))
-	if err != nil {
-		return Result{}, err
+	type result struct {
+		files heapDiffFiles
+		err   error
 	}
+	done := make(chan result, 1) // the goroutine never blocks on the send
+	go func() {
+		var r result
+		r.files.a, r.files.pa, r.err = readHeapFile(env, arg(in, 0))
+		if r.err == nil {
+			r.files.b, r.files.pb, r.err = readHeapFile(env, arg(in, 1))
+		}
+		done <- r
+	}()
+	var files heapDiffFiles
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return Result{}, r.err
+		}
+		files = r.files
+	case <-ctx.Done():
+		return Result{}, fmt.Errorf("heap diff: %w", ctx.Err())
+	}
+	a, b, pa, pb := files.a, files.b, files.pa, files.pb
 	all := heapsnap.Diff(a, b)
 	shown := all
 	if n := heapTop(in); n < len(shown) {

@@ -92,6 +92,24 @@ func TestParseVersions(t *testing.T) {
 	}
 }
 
+// Review frames-heap F8: a version 1 snapshot as HeapSnapshotBuilder wrote
+// it from 2016 until WebKit 6a4a1033 (2018-08-24) added "type" has no type
+// member (HeapSnapshotBuilder.cpp at 0be502df: version, nodes,
+// nodeClassNames, edges, edgeTypes, edgeNames, compact). Web Inspector
+// accepts it (!type || type === "Inspector"), and so does Parse. The
+// summary is counted by hand: Object 1 node 48 bytes, string 1 node 32.
+func TestParseVersion1WithoutType(t *testing.T) {
+	v1 := `{"version":1,"nodes":[0,0,0,0,1,48,1,0,2,32,2,0],"nodeClassNames":["<root>","Object","string"],"edges":[0,1,0,0,1,2,1,0],"edgeTypes":["Internal","Property","Index","Variable"],"edgeNames":["name"]}`
+	s, err := Parse([]byte(v1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Snapshot{Version: 1, Type: "", Nodes: 2, TotalSize: 80, Classes: []Class{{Name: "Object", Count: 1, Size: 48}, {Name: "string", Count: 1, Size: 32}}}
+	if !reflect.DeepEqual(s, want) {
+		t.Fatalf("Parse(version 1 without type) = %+v\nwant %+v", s, want)
+	}
+}
+
 // ShortName bounds a page's class name to MaxNameBytes bytes, on a UTF-8
 // boundary, and marks the cut; shorter names stay as they are.
 func TestShortName(t *testing.T) {

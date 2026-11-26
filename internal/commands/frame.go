@@ -279,7 +279,7 @@ func runFrame(ctx context.Context, env Env, in Input) (Result, error) {
 	}
 	at := tree.FrameTree.find(parent)
 	for _, s := range info.Path {
-		if at == nil || len(at.ChildFrames) != s.Frames || s.Index >= len(at.ChildFrames) {
+		if at == nil || len(at.ChildFrames) != s.Frames || s.Index < 0 || s.Index >= len(at.ChildFrames) {
 			return Result{}, &runtime.Error{Code: "unsupported", Message: fmt.Sprintf("frame %s: the page lists %d frames here and the protocol another number; a frame in its own target (iOS 26 and later) or inside a shadow root is not supported (design 3.8, 4.3)", t, s.Frames)}
 		}
 		at = &at.ChildFrames[s.Index]

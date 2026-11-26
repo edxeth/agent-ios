@@ -3,9 +3,11 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -132,6 +134,94 @@ func TestHeapSnapshotRefusesUnknownVersion(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.dir, "empty.json")); !os.IsNotExist(err) {
 		t.Fatalf("empty snapshot wrote a file: %v", err)
+	}
+}
+
+// Review frames-heap F7: an output path in a directory that does not
+// exist, or that is a directory itself, fails at once and takes no
+// snapshot (a snapshot can take minutes and costs the page a full
+// collection); an existing file stays as it was when the snapshot fails.
+func TestHeapSnapshotChecksThePathFirst(t *testing.T) {
+	h := newDTHarness(t)
+	h.f.Result("Heap.snapshot", map[string]any{"timestamp": 1, "snapshotData": string(heapFixture(t))})
+	for _, p := range []string{"missing-dir/s.json", "."} {
+		code, _, errOut := h.run("heap", "snapshot", p)
+		if code != ExitError || !strings.Contains(errOut, "writing "+filepath.Join(h.dir, p)) {
+			t.Fatalf("heap snapshot %s: exit %d: %s", p, code, errOut)
+		}
+	}
+	if n := len(h.f.ReceivedMethod("Heap.snapshot")); n != 0 {
+		t.Fatalf("Heap.snapshot sent %d times for a path that cannot be written", n)
+	}
+	keep := filepath.Join(h.dir, "keep.json")
+	if err := os.WriteFile(keep, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.f.Result("Heap.snapshot", map[string]any{"timestamp": 1, "snapshotData": ""})
+	if code, _, _ := h.run("heap", "snapshot", "keep.json"); code != ExitError {
+		t.Fatalf("empty snapshot: exit %d", code)
+	}
+	if got, _ := os.ReadFile(keep); string(got) != "old" {
+		t.Fatalf("a failed snapshot changed the existing file: %q", got)
+	}
+}
+
+// Review frames-heap F6: heap diff reads regular files only, so a named
+// pipe or a device (which would block, or never end) fails at once, and
+// a file above heapFileMax, larger than any reply a transport accepts,
+// fails before it is read.
+func TestHeapDiffRefusesPipesDevicesAndOversizedFiles(t *testing.T) {
+	h := newDTHarness(t)
+	good := filepath.Join(h.dir, "a.json")
+	if err := os.WriteFile(good, heapFixture(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(h.dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	big := filepath.Join(h.dir, "big.json")
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(heapFileMax + 1); err != nil { // sparse: no disk space used
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	for _, c := range []struct{ path, want string }{
+		{fifo, "not a regular file"},
+		{"/dev/zero", "not a regular file"},
+		{big, "larger than"},
+	} {
+		done := make(chan struct{})
+		var code int
+		var errOut string
+		go func() {
+			defer close(done)
+			code, _, errOut = h.run("heap", "diff", "a.json", c.path)
+		}()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second): // the 5 s command deadline must not be needed
+			t.Fatalf("heap diff %s did not fail at once", c.path)
+		}
+		if code != ExitError || !strings.Contains(errOut, c.path) || !strings.Contains(errOut, c.want) {
+			t.Fatalf("heap diff %s: exit %d: %s", c.path, code, errOut)
+		}
+	}
+}
+
+// Review frames-heap F6: heap diff ends at the command deadline (exit
+// 124) instead of reading on.
+func TestHeapDiffEndsAtTheDeadline(t *testing.T) {
+	h := newDTHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	_, err := runHeapDiff(ctx, dtEnv{h: h}, Input{Args: []string{"a.json", "b.json"}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("heap diff after its deadline: %v", err)
 	}
 }
 

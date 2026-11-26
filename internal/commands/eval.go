@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/edxeth/agent-ios/internal/core"
 	"github.com/edxeth/agent-ios/internal/tools"
@@ -52,6 +53,11 @@ type evalData struct {
 // evalOriginExpr reads the URL of the evaluation's document.
 const evalOriginExpr = "location.href"
 
+// evalOriginBudget bounds the origin read. The evaluation already
+// succeeded; a page that turned busy after it (work the expression
+// scheduled) costs the command at most this, and the origin is omitted.
+const evalOriginBudget = time.Second
+
 func runEval(ctx context.Context, env Env, in Input) (Result, error) {
 	ps, c, err := pageAndCaller(ctx, env)
 	if err != nil {
@@ -76,13 +82,24 @@ func runEval(ctx context.Context, env Env, in Input) (Result, error) {
 	if res.Result.Value == nil {
 		data.Description = res.Result.Description
 	}
-	data.Origin = evalOrigin(ctx, c)
+	// The origin is read only where it is printed: the JSON data, and the
+	// content boundary marker. --json reaches the daemon; with
+	// --content-boundaries alone, a daemon run names the origin "unknown",
+	// as before the origin member (the daemon request does not carry it).
+	if in.Global.JSON || in.Global.ContentBoundaries {
+		data.Origin = evalOrigin(ctx, c)
+	}
 	return Result{Text: text, Data: data}, nil
 }
 
 // evalOrigin returns the URL of the document that c evaluates in, or ""
-// when it cannot be read (the expression navigated, or the frame went).
+// when it cannot be read within evalOriginBudget (the expression
+// navigated, the frame went, or the page is busy). A read without a reply
+// runs no liveness probe (core.WithoutLivenessProbe): the evaluation
+// succeeded, and a missing origin says nothing about the page.
 func evalOrigin(ctx context.Context, c webkit.Caller) string {
+	ctx, cancel := context.WithTimeout(core.WithoutLivenessProbe(ctx), evalOriginBudget)
+	defer cancel()
 	raw, err := c.Send(ctx, "Runtime.evaluate", map[string]any{"expression": evalOriginExpr, "returnByValue": true})
 	if err != nil {
 		return ""

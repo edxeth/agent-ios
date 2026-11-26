@@ -883,6 +883,9 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 		return nil, cut
 	}
 	p.noteDropped(&err)
+	if ctx.Value(noProbeKey{}) != nil {
+		return nil, err // WithoutLivenessProbe: the caller only needs the error
+	}
 	switch {
 	case errors.Is(err, webkit.ErrCallTimeout):
 		// Design 2.6 step 2: at the call budget, probe within the time left.
@@ -909,6 +912,18 @@ func (p *pageConn) send(ctx context.Context, control bool, method string, params
 		})
 	}
 	return nil, err
+}
+
+type noProbeKey struct{}
+
+// WithoutLivenessProbe marks ctx so that a call made with it that gets no
+// reply, at its call budget or at the end of ctx, runs no liveness probe
+// and only fails. It is for a best-effort read after the command's work
+// succeeded (eval's origin): a probe would hold the command, and a page
+// that is busy for a moment could be declared stalled although the
+// command succeeded. A later command's call still probes as usual.
+func WithoutLivenessProbe(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noProbeKey{}, true)
 }
 
 // replyOrder turns the WithReplyPosition handler of ctx into the reply

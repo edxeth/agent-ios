@@ -15,6 +15,9 @@ import (
 // non-ASCII) and nodes after the root.
 type model struct {
 	version int
+	// untyped omits the type member, as version 1 did before WebKit
+	// 6a4a1033 (2018) added it (HeapSnapshotBuilder.cpp at 0be502df).
+	untyped bool
 	names   []string
 	nodes   []modelNode
 }
@@ -29,6 +32,7 @@ var nameAtoms = []string{"Object", "Function", "string", "Structure", "Widget", 
 
 func (model) Generate(r *rand.Rand, size int) reflect.Value {
 	m := model{version: 1 + r.Intn(3), names: []string{"<root>"}}
+	m.untyped = m.version == 1 && r.Intn(2) == 0
 	for range 1 + r.Intn(6) {
 		m.names = append(m.names, nameAtoms[r.Intn(len(nameAtoms))])
 	}
@@ -56,7 +60,11 @@ func (model) Generate(r *rand.Rand, size int) reflect.Value {
 // from the root to each node.
 func (m model) encode() []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, `{"version":%d,"type":"Inspector","nodes":[0,0,0,0`, m.version)
+	typ := `"type":"Inspector",`
+	if m.untyped {
+		typ = ""
+	}
+	fmt.Fprintf(&b, `{"version":%d,%s"nodes":[0,0,0,0`, m.version, typ)
 	for _, n := range m.nodes {
 		fmt.Fprintf(&b, ",%d,%d,%d,%d", n.id, n.size, n.class, n.flags)
 	}
@@ -98,6 +106,14 @@ func TestParseSummaryProperty(t *testing.T) {
 			return false
 		}
 		by, total := m.oracle()
+		wantType := "Inspector"
+		if m.untyped {
+			wantType = ""
+		}
+		if s.Type != wantType {
+			t.Errorf("type %q, want %q", s.Type, wantType)
+			return false
+		}
 		if s.Version != m.version || s.Nodes != int64(len(m.nodes)) || s.TotalSize != total || len(s.Classes) != len(by) {
 			t.Errorf("got version %d, %d nodes, %d bytes, %d classes; model %d, %d, %d, %d", s.Version, s.Nodes, s.TotalSize, len(s.Classes), m.version, len(m.nodes), total, len(by))
 			return false

@@ -44,7 +44,9 @@ func (e *navEnv) data(session string, argv ...string) map[string]any {
 	e.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	r, err := e.c.Run(ctx, daemon.RunRequest{Argv: argv, Deadline: time.Now().Add(30 * time.Second), Owner: daemon.Owner{Session: session}}, nil)
+	// JSON: the request of a client run with --json, whose data this reads
+	// (eval reads the origin only then).
+	r, err := e.c.Run(ctx, daemon.RunRequest{Argv: argv, Deadline: time.Now().Add(30 * time.Second), JSON: true, Owner: daemon.Owner{Session: session}}, nil)
 	if err != nil {
 		var re *daemon.RemoteError
 		if errors.As(err, &re) {

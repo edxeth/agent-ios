@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/edxeth/agent-ios/internal/core"
 	"github.com/edxeth/agent-ios/internal/devtools/devtoolstest"
@@ -98,7 +100,7 @@ func TestEvalJSONData(t *testing.T) {
 		"u":   `{"type":"undefined","origin":"https://eval.test/"}`,
 		"sym": `{"type":"symbol","description":"Symbol(x)","origin":"https://eval.test/"}`,
 	} {
-		res, err := evalCmd(t, p, expr)
+		res, err := evalCmd(t, p, "--json", expr)
 		if err != nil {
 			t.Fatalf("eval %s: %v", expr, err)
 		}
@@ -106,6 +108,81 @@ func TestEvalJSONData(t *testing.T) {
 		if err != nil || string(data) != want {
 			t.Errorf("eval %s: data %s (%v), want %s", expr, data, err, want)
 		}
+	}
+}
+
+// Review frames-heap F4: the origin is read only when it is printed
+// (--json), so a plain eval sends exactly one Runtime.evaluate.
+func TestEvalReadsTheOriginOnlyForJSON(t *testing.T) {
+	p := evalPage(t, map[string]any{"n": evalResult(map[string]any{"type": "number", "value": 42, "description": "42"})})
+	if res, err := evalCmd(t, p, "n"); err != nil || res.Text != "42" {
+		t.Fatalf("eval n: %q, %v", res.Text, err)
+	}
+	if n := len(p.Server.ReceivedMethod("Runtime.evaluate")); n != 1 {
+		t.Fatalf("plain eval sent Runtime.evaluate %d times, want 1", n)
+	}
+	if _, err := evalCmd(t, p, "--json", "n"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(p.Server.ReceivedMethod("Runtime.evaluate")); n != 3 {
+		t.Fatalf("eval --json sent Runtime.evaluate %d times, want 2 (the expression and the origin)", n-1)
+	}
+}
+
+// Review frames-heap F4: an origin read that gets no reply (a page that
+// turned busy right after the expression) ends after evalOriginBudget;
+// eval --json still succeeds, without origin, runs no liveness probe
+// (which would hold the command and could mark the page stalled after
+// the evaluation succeeded), and the session stays usable.
+func TestEvalJSONWithoutAnOriginReplyStaysPromptAndUsable(t *testing.T) {
+	h := newDTHarness(t)
+	// After the origin read, the page answers neither it nor a liveness
+	// probe (Runtime.evaluate of "1"), so a probe would mark it stalled.
+	var mu sync.Mutex
+	originSeen, probes := false, 0
+	silent := func(expr string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if expr == evalOriginExpr {
+			originSeen = true
+			return true
+		}
+		if expr == "1" && originSeen {
+			probes++
+			return true
+		}
+		return false
+	}
+	h.f.BeforeRecord("Target.sendMessageToTarget", func(params json.RawMessage) {
+		var p struct {
+			Message string `json:"message"`
+		}
+		var inner struct {
+			Method string `json:"method"`
+			Params struct {
+				Expression string `json:"expression"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(params, &p) == nil && json.Unmarshal([]byte(p.Message), &inner) == nil &&
+			inner.Method == "Runtime.evaluate" && silent(inner.Params.Expression) {
+			h.f.DropReplies("Runtime.evaluate", 1)
+		}
+	})
+	start := time.Now()
+	out := h.mustRun(t, "--json", "eval", "6*7")
+	if took := time.Since(start); took > evalOriginBudget+2*time.Second {
+		t.Fatalf("eval --json took %v with a silent origin read; want about %v", took, evalOriginBudget)
+	}
+	if out != `{"type":"number","value":0}` {
+		t.Fatalf("eval --json = %s; want the result without origin", out)
+	}
+	if out := h.mustRun(t, "eval", "1+1"); out != "0" {
+		t.Fatalf("eval after the silent origin read = %q", out)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !originSeen || probes != 0 {
+		t.Fatalf("origin read sent: %v; liveness probes after it: %d, want 0", originSeen, probes)
 	}
 }
 

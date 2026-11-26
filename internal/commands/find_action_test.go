@@ -304,6 +304,27 @@ func TestFrameFollowsANestedPath(t *testing.T) {
 	}
 }
 
+// Review frames-heap F3: a path step with a negative index, which only a
+// page that replaced Array.prototype.unshift or the runtime reports, is
+// refused like a count mismatch; it must not index the frame tree (panic).
+func TestFrameRefusesANegativeIndexFromThePage(t *testing.T) {
+	fh := newFrameHarness(t)
+	fh.setInfo(map[string]any{"tag": "iframe", "src": "x.html", "path": []any{map[string]any{"index": -1, "frames": 2}}})
+	var code int
+	var errOut string
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("frame with a page-reported index -1 panicked: %v", r)
+			}
+		}()
+		code, _, errOut = fh.run("frame", "#x")
+	}()
+	if code != ExitError || !strings.Contains(errOut, "unsupported") {
+		t.Fatalf("frame with index -1: exit %d, %q; want exit 1, unsupported", code, errOut)
+	}
+}
+
 // A frame without a src (srcdoc, or filled by a script) is named without
 // an empty "()" (device check of 2026-11-11).
 func TestFrameWithoutASrc(t *testing.T) {
